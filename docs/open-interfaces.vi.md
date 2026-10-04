@@ -536,7 +536,7 @@ dạng `{ "kind": "install-approval", approvalId, packageId, version, displayNam
 operationDigest, requestedAt, expiresAt, reach?, reachChange?, unreadFields? }`: `permissions` là những quyền mà listing nói gói xin,
 `reach` là những gì gói tiếp cận ngoài vùng cách ly, `reachChange` (với bản cập nhật của gói đã cài) là những gì phiên
 bản đó thêm hoặc bỏ so với bản đang cài, cùng dạng như trên thông báo cập nhật, `unreadFields` (`{ count, names }`) là
-các trường listing mang mà node này không đọc được và đã bỏ đi, chỉ có tên (cùng trường này có trên mỗi dòng
+các trường listing mang mà node này không đọc được và đã bỏ đi, được đếm đủ và chỉ nêu tên khi là đường dẫn định danh thuần, tối đa 8 tên (cùng trường này có trên mỗi dòng
 `marketplace-results` và trên thông báo cập nhật package; xem
 [directory metadata](widget-development.vi.md#18-directory-metadata)), còn `operationDigest`
 là digest của artifact được liệt kê mà câu hỏi nói tới. Mục này chỉ được liệt kê khi thư mục vẫn còn liệt kê đúng

@@ -124,7 +124,8 @@ describe("readDirectoryIndex", () => {
     expect(ok === undefined ? "missing" : unreadFieldsOf(state, ok)).toBeUndefined();
     expect(readNewer === undefined ? undefined : unreadFieldsOf(state, readNewer)).toEqual({
       count: 2,
-      names: ["futureBinding", "preview.posterUrl"],
+      // In the order the entry lists them: `preview` keeps its place, the new field comes last.
+      names: ["preview.posterUrl", "futureBinding"],
     });
     expect(searchDirectory({ entries: state.entries, query: "newer" }).map((listed) => listed.packageId)).toEqual(["com.acme.newer"]);
   });

@@ -2719,9 +2719,12 @@ Every field the node knows is still checked with all its bounds, and `source`, `
 `resources` and `widgetAppearance` stay strict inside: a known field with a bad value, or an unknown field inside one of
 those, still makes the node refuse the whole index as unreadable, with the reason. What was dropped is said, never
 hidden: the `marketplace-results` row, the inbox install question and the package update notice carry `unreadFields`
-(`{ count, names }`, at most 8 names of at most 64 characters, never values), shown as "This listing has N details this
-version of Clark cannot read (…)… Update Clark to see all of it", because a field this node does not know may be one a
-newer node treats as binding. The install still refuses an artifact that does not match what this node does read.
+(`{ count, names }`, never values), shown as "This listing has N details this version of Clark cannot read… Update Clark
+to see all of it", because a field this node does not know may be one a newer node treats as binding. `count` counts
+every field left out. `names` holds at most 8 of them, in the order the entry lists them, and only plain identifier paths
+(`UNREAD_FIELD_PATH_PATTERN`: one or two dot-joined segments matching `[A-Za-z_$][A-Za-z0-9_$-]{0,63}`); a key with any
+other text (a bidi control, a line break, a space, an over-long name) is counted without being named. Each name is shown
+apart from the sentence, as code. The install still refuses an artifact that does not match what this node does read.
 Publishing stays strict: the entry `clark widget publish` writes is checked against the strict `directoryEntrySchema`,
 where an unknown field is a mistake rather than a newer format.
 

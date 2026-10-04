@@ -2708,9 +2708,12 @@ hỏi hay lần cài nào. Mọi trường node biết vẫn được kiểm tra
 `resources`, `widgetAppearance` vẫn nghiêm ngặt bên trong: một trường đã biết có giá trị sai, hoặc một trường lạ nằm
 trong một trong các trường đó, vẫn khiến node từ chối cả chỉ mục là không đọc được, kèm lý do. Những gì bị bỏ đều được
 nói ra, không bao giờ bị giấu: dòng `marketplace-results`, câu hỏi cài đặt trong hộp thư và thông báo cập nhật package
-mang `unreadFields` (`{ count, names }`, tối đa 8 tên, mỗi tên tối đa 64 ký tự, không bao giờ có giá trị), hiển thị là
-"Mục này có N thông tin mà bản Clark này không đọc được (…)… Hãy cập nhật Clark để xem đầy đủ", vì trường node không biết
-có thể là trường mà node mới hơn coi là ràng buộc. Lần cài vẫn từ chối artifact không khớp với những gì node này đọc
+mang `unreadFields` (`{ count, names }`, không bao giờ có giá trị), hiển thị là "Mục này có N thông tin mà bản Clark này
+không đọc được… Hãy cập nhật Clark để xem đầy đủ", vì trường node không biết có thể là trường mà node mới hơn coi là ràng
+buộc. `count` đếm mọi trường bị bỏ. `names` chứa tối đa 8 trường trong số đó, theo thứ tự mục liệt kê, và chỉ gồm đường
+dẫn định danh thuần (`UNREAD_FIELD_PATH_PATTERN`: một hoặc hai đoạn nối bằng dấu chấm, mỗi đoạn khớp
+`[A-Za-z_$][A-Za-z0-9_$-]{0,63}`); khóa có nội dung khác (ký tự điều khiển hướng chữ, xuống dòng, khoảng trắng, tên quá
+dài) được đếm mà không được nêu tên. Mỗi tên được hiển thị tách khỏi câu, dưới dạng mã. Lần cài vẫn từ chối artifact không khớp với những gì node này đọc
 được. Việc xuất bản vẫn nghiêm ngặt: mục mà `clark widget publish` viết ra được kiểm tra bằng `directoryEntrySchema` nghiêm
 ngặt, nơi một trường lạ là lỗi chứ không phải định dạng mới hơn.
 

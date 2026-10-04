@@ -242,7 +242,7 @@ describe("an install the policy asks about waits in the inbox", () => {
     const asked = await call("POST", "/packages/install", { packageId: PACKAGE_ID, version: otherVersion });
     expect(asked.status).toBe(202);
     const [item] = await waiting();
-    expect(item).toMatchObject({ version: otherVersion, unreadFields: { count: 2, names: ["futureBinding", "preview.posterUrl"] } });
+    expect(item).toMatchObject({ version: otherVersion, unreadFields: { count: 2, names: ["preview.posterUrl", "futureBinding"] } });
     expect(JSON.stringify(item)).not.toContain("required");
   });
 

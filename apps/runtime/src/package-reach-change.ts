@@ -16,7 +16,13 @@ type Runtime = { db: Database; dataDir: string; identity: { nodeId: string } };
 
 const UNKNOWN: ReachChangeView = { verdict: "unknown" };
 
-/** The listing of the version a package update notice names, when the directory lists it. */
+/**
+ * The listing of the version a package update notice names, when the directory lists it.
+ *
+ * Matched by package and version, not digest: the notice records no digest, and its `update` action is
+ * `POST /packages/install` with the package and version, which installs the first listing of them (`installPackage`).
+ * This is that same listing, so what the notice shows is about the artifact Update would fetch.
+ */
 function noticeEntry(notice: Notice, index: DirectoryIndexState): DirectoryEntry | undefined {
   const subject = notice.subject;
   if (notice.category !== "update" || subject?.kind !== "package" || subject.version === undefined) return undefined;

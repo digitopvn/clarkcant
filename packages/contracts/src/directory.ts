@@ -153,13 +153,35 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The fields of `value` the node knows, and the paths of the ones it does not, sorted. */
-function splitKnownFields(value: Record<string, unknown>): { known: Record<string, unknown>; unread: string[] } {
+/**
+ * One segment of a field path a note may name: an identifier, as every field a directory has added so far is. A key is
+ * the publisher's text, and a note shows it next to Clark's own words on an install question, so a key that is not a
+ * plain identifier (a bidi control, a line break, a space, wording made to look like the host's, an over-long name) is
+ * counted without being named.
+ */
+const FIELD_SEGMENT = "[A-Za-z_$][A-Za-z0-9_$-]{0,63}";
+const FIELD_SEGMENT_PATTERN = new RegExp(`^${FIELD_SEGMENT}$`, "u");
+/** A nameable field path: one segment, or two for a field inside `publisher`, `preview` or `hostApi`. */
+export const UNREAD_FIELD_PATH_PATTERN = new RegExp(`^${FIELD_SEGMENT}(?:\\.${FIELD_SEGMENT})?$`, "u");
+
+/** What an entry carried that this node does not read: the paths it can name, and how many others it cannot. */
+export type UnreadEntryFields = { names: string[]; unnamed: number };
+
+/**
+ * The fields of `value` the node knows, and what it does not. Names keep the order the entry lists them in: the
+ * publisher writes the entry either way, so no order would stop them choosing which names come first, and the count is
+ * what tells a person how much there is.
+ */
+function splitKnownFields(value: Record<string, unknown>): { known: Record<string, unknown>; unread: UnreadEntryFields } {
   const known: Record<string, unknown> = {};
-  const unread: string[] = [];
+  const unread: UnreadEntryFields = { names: [], unnamed: 0 };
+  const left = (segments: readonly string[]): void => {
+    if (segments.every((segment) => FIELD_SEGMENT_PATTERN.test(segment))) unread.names.push(segments.join("."));
+    else unread.unnamed += 1;
+  };
   for (const [key, field] of Object.entries(value)) {
     if (!ENTRY_KEYS.includes(key)) {
-      unread.push(key);
+      left([key]);
       continue;
     }
     const nestedKeys: readonly string[] | undefined = Object.hasOwn(OPEN_ENTRY_OBJECTS, key)
@@ -172,11 +194,11 @@ function splitKnownFields(value: Record<string, unknown>): { known: Record<strin
     const nested: Record<string, unknown> = {};
     for (const [nestedKey, nestedField] of Object.entries(field)) {
       if (nestedKeys.includes(nestedKey)) nested[nestedKey] = nestedField;
-      else unread.push(`${key}.${nestedKey}`);
+      else left([key, nestedKey]);
     }
     known[key] = nested;
   }
-  return { known, unread: unread.sort() };
+  return { known, unread };
 }
 
 /**
@@ -186,10 +208,10 @@ function splitKnownFields(value: Record<string, unknown>): { known: Record<strin
  * A directory gains fields over time (`declaredReach`, then `resources`), and an index is shared by nodes of different
  * ages. Refusing an entry for a field this node has never heard of made an older node read the whole directory as
  * unreadable, losing search, updates and installs for every package. So a field outside this schema, at the top of the
- * entry or inside `publisher`, `preview` or `hostApi`, is dropped and its path returned in `unreadFields`; it is never
- * passed on, so nothing downstream (the marketplace card, the install question) carries a value nobody validated. Every
- * known field is still checked against `directoryEntrySchema` with all its bounds, so a known field with a bad value
- * refuses the entry as before.
+ * entry or inside `publisher`, `preview` or `hostApi`, is dropped and reported in `unreadFields`; it is never passed on,
+ * so nothing downstream (the marketplace card, the install question) carries a value nobody validated. Every known
+ * field is still checked against `directoryEntrySchema` with all its bounds, so a known field with a bad value refuses
+ * the entry as before.
  *
  * `unreadFields` exists so what was dropped is said rather than hidden: a field this node does not know may be one the
  * newer directory treats as binding, and a listing shown without it would claim less than the listing says.
@@ -199,10 +221,12 @@ function splitKnownFields(value: Record<string, unknown>): { known: Record<strin
  */
 export function readDirectoryEntry(
   candidate: unknown,
-): { success: true; data: DirectoryEntry; unreadFields: string[] } | { success: false; error: z.ZodError } {
+): { success: true; data: DirectoryEntry; unreadFields: UnreadEntryFields } | { success: false; error: z.ZodError } {
   if (!isPlainObject(candidate)) {
     const result = directoryEntrySchema.safeParse(candidate);
-    return result.success ? { success: true, data: result.data, unreadFields: [] } : { success: false, error: result.error };
+    return result.success
+      ? { success: true, data: result.data, unreadFields: { names: [], unnamed: 0 } }
+      : { success: false, error: result.error };
   }
   const { known, unread } = splitKnownFields(candidate);
   const result = directoryEntrySchema.safeParse(known);
@@ -211,38 +235,26 @@ export function readDirectoryEntry(
 
 /** The most field names a listing note carries; the count says how many there were in all. */
 export const UNREAD_FIELD_NAMES_MAX = 8;
-/** The longest field name a listing note carries; a longer one is shortened. */
-export const UNREAD_FIELD_NAME_MAX = 64;
 
 /**
  * What a listing said that this node could not read, as a card, an install question or an update notice shows it:
- * how many fields, and the names of the first few. Names only, never values. A name is the publisher's text, so it is
- * bounded here like any other listing text.
+ * how many fields, and the names of the first few that are plain identifier paths. Names only, never values, and never
+ * a name outside `UNREAD_FIELD_PATH_PATTERN`, so a client can show each one as it is.
  */
-export const unreadListingFieldsSchema = z.strictObject({
-  count: z.int().positive(),
-  names: z.array(z.string().min(1).max(UNREAD_FIELD_NAME_MAX)).min(1).max(UNREAD_FIELD_NAMES_MAX),
-});
+export const unreadListingFieldsSchema = z
+  .strictObject({
+    count: z.int().positive(),
+    names: z.array(z.string().regex(UNREAD_FIELD_PATH_PATTERN)).max(UNREAD_FIELD_NAMES_MAX),
+  })
+  .refine((fields) => fields.names.length <= fields.count, { error: "names more fields than it counts" });
 export type UnreadListingFields = z.infer<typeof unreadListingFieldsSchema>;
 
-/** The note for `fields`, or undefined when the listing had none this node could not read. */
-export function unreadListingFields(fields: readonly string[]): UnreadListingFields | undefined {
-  if (fields.length === 0) return undefined;
-  return { count: fields.length, names: fields.slice(0, UNREAD_FIELD_NAMES_MAX).map(fitFieldName) };
+/** The note for what an entry left out, or undefined when the listing had nothing this node could not read. */
+export function unreadListingFields(fields: UnreadEntryFields): UnreadListingFields | undefined {
+  const count = fields.names.length + fields.unnamed;
+  if (count === 0) return undefined;
+  return { count, names: fields.names.slice(0, UNREAD_FIELD_NAMES_MAX) };
 }
-
-/** A field name within the note's bound, cut between code points behind an ellipsis; an empty name is shown quoted. */
-function fitFieldName(name: string): string {
-  if (name === "") return '""';
-  if (name.length <= UNREAD_FIELD_NAME_MAX) return name;
-  let out = "";
-  for (const char of name) {
-    if (out.length + char.length > UNREAD_FIELD_NAME_MAX - 1) break;
-    out += char;
-  }
-  return `${out}…`;
-}
-
 /**
  * The lane a package runs in.
  *

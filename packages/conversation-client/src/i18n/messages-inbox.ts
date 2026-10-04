@@ -49,8 +49,11 @@ export const MESSAGES_INBOX_VI = {
   "inbox.reachChange.unchanged": "Bản này với tới đúng như bản đang cài.",
   "inbox.unreadable": "{n} mục trong hộp thư không đọc được nên không hiện ở đây. Các mục còn lại vẫn hiện đầy đủ.",
   "inbox.reachChange.unknown": "Không so sánh được với bản đang cài, nên chưa biết bản này thay đổi những gì.",
-  "package.unreadFields":
-    "Mục này có {count} thông tin mà bản Clark này không đọc được ({names}), nên những gì hiện ở đây có thể ít hơn điều mục này ghi. Hãy cập nhật Clark để xem đầy đủ.",
+  "package.unreadFields.one":
+    "Mục này có 1 thông tin mà bản Clark này không đọc được, nên những gì hiện ở đây có thể ít hơn điều mục này ghi. Hãy cập nhật Clark để xem đầy đủ.",
+  "package.unreadFields.other":
+    "Mục này có {count} thông tin mà bản Clark này không đọc được, nên những gì hiện ở đây có thể ít hơn điều mục này ghi. Hãy cập nhật Clark để xem đầy đủ.",
+  "package.unreadFields.notNamed": "Còn {count} thông tin khác không được nêu tên ở đây.",
   "inbox.reachChange.addedOrigin": "Thêm: gửi yêu cầu tới {origin} qua Clark: {purpose}",
   "inbox.reachChange.removedOrigin": "Bỏ: yêu cầu tới {origin}",
   "inbox.reachChange.addedSecret": "Thêm: cần khóa {name} do bạn cung cấp: {purpose}",
@@ -332,8 +335,11 @@ export const MESSAGES_INBOX_EN = {
   "inbox.reachChange.unchanged": "This version reaches the same as the one installed.",
   "inbox.unreadable": "{n} items in the inbox could not be read, so they are not shown here. Everything else is.",
   "inbox.reachChange.unknown": "Could not compare with the installed version, so what this one changes is not known.",
-  "package.unreadFields":
-    "This listing has {count} details this version of Clark cannot read ({names}), so what is shown here may be less than the listing says. Update Clark to see all of it.",
+  "package.unreadFields.one":
+    "This listing has 1 detail this version of Clark cannot read, so what is shown here may be less than the listing says. Update Clark to see all of it.",
+  "package.unreadFields.other":
+    "This listing has {count} details this version of Clark cannot read, so what is shown here may be less than the listing says. Update Clark to see all of it.",
+  "package.unreadFields.notNamed": "{count} more not named here.",
   "inbox.reachChange.addedOrigin": "Adds: sends requests to {origin} through Clark: {purpose}",
   "inbox.reachChange.removedOrigin": "Drops: requests to {origin}",
   "inbox.reachChange.addedSecret": "Adds: needs a key you provide, {name}: {purpose}",

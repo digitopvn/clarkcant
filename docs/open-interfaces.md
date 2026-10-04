@@ -531,7 +531,7 @@ When the person's execution mode asks before installing, it answers `202` with
 description, operationDigest, requestedAt, expiresAt, reach?, reachChange?, unreadFields? }`: `permissions` is what the listing says the package asks for,
 `reach` what it reaches outside its sandbox, `reachChange` (for an update of an installed package) what that version
 adds to or drops from the installed one's reach, in the same shape as on the update notice, `unreadFields`
-(`{ count, names }`) the fields the listing carries that this node does not read and dropped, names only (the same
+(`{ count, names }`) the fields the listing carries that this node does not read and dropped, counted in full and named only as plain identifier paths, at most 8 (the same
 field is on each `marketplace-results` row and on a package update notice; see
 [directory metadata](widget-development.md#18-directory-metadata)),
 and `operationDigest` the listed artifact's digest the question is about. It is listed only while the directory still

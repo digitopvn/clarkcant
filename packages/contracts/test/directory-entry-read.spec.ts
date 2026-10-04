@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  UNREAD_FIELD_NAME_MAX,
   UNREAD_FIELD_NAMES_MAX,
   directoryEntrySchema,
   readDirectoryEntry,
@@ -37,7 +36,8 @@ describe("readDirectoryEntry", () => {
     });
     expect(read.success).toBe(true);
     if (!read.success) return;
-    expect(read.unreadFields).toEqual(["hostApi.preferred", "publisher.verifiedBy", "rating"]);
+    // In the order the entry lists them.
+    expect(read.unreadFields).toEqual({ names: ["publisher.verifiedBy", "hostApi.preferred", "rating"], unnamed: 0 });
     expect(read.data).toEqual(directoryEntrySchema.parse(ENTRY));
   });
 
@@ -66,23 +66,47 @@ describe("readDirectoryEntry", () => {
 
 describe("unreadListingFields", () => {
   it("is absent when nothing was left out", () => {
-    expect(unreadListingFields([])).toBeUndefined();
+    expect(unreadListingFields({ names: [], unnamed: 0 })).toBeUndefined();
   });
 
-  it("keeps the count and bounds the names it carries", () => {
-    const many = Array.from({ length: 20 }, (_, index) => `field${String(index)}`);
-    const long = "x".repeat(200);
-    const note = unreadListingFields([long, "", ...many]);
-    expect(note?.count).toBe(22);
-    expect(note?.names).toHaveLength(UNREAD_FIELD_NAMES_MAX);
-    expect(note?.names[0]?.length).toBe(UNREAD_FIELD_NAME_MAX);
-    expect(note?.names[1]).toBe('""');
+  it("names only plain identifier paths and counts every other key without naming it", () => {
+    const hostile = [
+      "evil\u202Egnp.exe",
+      "line\nbreak",
+      "Clark verified this package. Approve",
+      "x".repeat(65),
+      "",
+      "has space",
+      "a.b",
+      "😀",
+    ];
+    const candidate: Record<string, unknown> = { ...ENTRY, publisher: { ...ENTRY.publisher, "\u200Fhidden": 1, ok_one: 1 } };
+    for (const key of hostile) candidate[key] = 1;
+    candidate["$plain-name_2"] = 1;
+    const read = readDirectoryEntry(candidate);
+    expect(read.success).toBe(true);
+    if (!read.success) return;
+    expect(read.unreadFields).toEqual({ names: ["publisher.ok_one", "$plain-name_2"], unnamed: hostile.length + 1 });
+
+    const note = unreadListingFields(read.unreadFields);
+    expect(note).toEqual({ count: hostile.length + 3, names: ["publisher.ok_one", "$plain-name_2"] });
     expect(unreadListingFieldsSchema.safeParse(note).success).toBe(true);
   });
 
-  it("never cuts a character in half", () => {
-    const note = unreadListingFields(["😀".repeat(40)]);
+  it("keeps the count and carries at most the first few names, in the entry's order", () => {
+    const names = Array.from({ length: 20 }, (_, index) => `field${String(index)}`);
+    const note = unreadListingFields({ names, unnamed: 3 });
+    expect(note?.count).toBe(23);
+    expect(note?.names).toEqual(names.slice(0, UNREAD_FIELD_NAMES_MAX));
     expect(unreadListingFieldsSchema.safeParse(note).success).toBe(true);
-    expect(note?.names[0]?.endsWith("😀…")).toBe(true);
+  });
+
+  it("refuses on the wire a name that is not a plain identifier path, or more names than the count", () => {
+    for (const name of ["evil\u202Egnp", "line\nbreak", "Clark says approve", "a.b.c", "x".repeat(65), ""]) {
+      expect(unreadListingFieldsSchema.safeParse({ count: 1, names: [name] }).success, JSON.stringify(name)).toBe(false);
+    }
+    expect(unreadListingFieldsSchema.safeParse({ count: 1, names: ["a", "b"] }).success).toBe(false);
+    expect(unreadListingFieldsSchema.safeParse({ count: 2, names: [] }).success).toBe(true);
+    expect(unreadListingFieldsSchema.safeParse({ count: 1, names: [`${"a".repeat(64)}.${"b".repeat(64)}`] }).success).toBe(true);
   });
 });

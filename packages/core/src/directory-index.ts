@@ -4,6 +4,7 @@ import {
   readDirectoryEntry,
   unreadListingFields,
   type DirectoryEntry,
+  type UnreadEntryFields,
   type UnreadListingFields,
 } from "@clarkcant/contracts";
 
@@ -32,10 +33,10 @@ export type DirectoryIndexState =
       directory: string;
       entries: DirectoryEntry[];
       /**
-       * For each entry that carried fields this node does not read, their paths (`readDirectoryEntry`), keyed by
+       * For each entry that carried fields this node does not read, what it left out (`readDirectoryEntry`), keyed by
        * `listingKey`. Absent or without a key means the node read all of that entry. Read it with `unreadFieldsOf`.
        */
-      unreadFields?: ReadonlyMap<string, readonly string[]>;
+      unreadFields?: ReadonlyMap<string, UnreadEntryFields>;
     }
   /** No index is configured. A state, not an empty result list: "nothing configured" is not "nothing found". */
   | { kind: "not-configured"; reason: string }
@@ -56,7 +57,8 @@ export function unreadFieldsOf(
   entry: Pick<DirectoryEntry, "packageId" | "version" | "digest">,
 ): UnreadListingFields | undefined {
   if (index.kind !== "configured" || index.unreadFields === undefined) return undefined;
-  return unreadListingFields(index.unreadFields.get(listingKey(entry)) ?? []);
+  const unread = index.unreadFields.get(listingKey(entry));
+  return unread === undefined ? undefined : unreadListingFields(unread);
 }
 
 /**
@@ -89,7 +91,7 @@ export function readDirectoryIndex(path: string | undefined): DirectoryIndexStat
     return { kind: "unreadable", directory: path, reason: "the directory index is not a JSON array of entries" };
   }
   const entries: DirectoryEntry[] = [];
-  const unreadFields = new Map<string, readonly string[]>();
+  const unreadFields = new Map<string, UnreadEntryFields>();
   for (const candidate of parsed) {
     const result = readDirectoryEntry(candidate);
     if (!result.success) {
@@ -103,10 +105,14 @@ export function readDirectoryIndex(path: string | undefined): DirectoryIndexStat
       };
     }
     entries.push(result.data);
-    if (result.unreadFields.length > 0) {
+    if (result.unreadFields.names.length + result.unreadFields.unnamed > 0) {
       const key = listingKey(result.data);
       // The same listing twice keeps every field either copy carried, so neither is said to be read in full.
-      unreadFields.set(key, [...new Set([...(unreadFields.get(key) ?? []), ...result.unreadFields])].sort());
+      const before = unreadFields.get(key) ?? { names: [], unnamed: 0 };
+      unreadFields.set(key, {
+        names: [...new Set([...before.names, ...result.unreadFields.names])],
+        unnamed: Math.max(before.unnamed, result.unreadFields.unnamed),
+      });
     }
   }
   return { kind: "configured", directory: path, entries, ...(unreadFields.size === 0 ? {} : { unreadFields }) };
