@@ -1867,6 +1867,15 @@ nó (`EBUSY`), không bao giờ là đường dẫn. Chọn tệp và lưu tệp
 bề mặt máy ([open-interfaces.vi.md](open-interfaces.vi.md)), và widget không làm được việc nào trong hai việc đó nếu
 không có lời nhắc của host.
 
+Các thao tác ghi của chính widget (`create`, `write`, `finalize`, `attach`, `discard`) đến node qua host của nó và chạy
+như trước. Cũng những route đó khi do một bề mặt máy mang tới (MCP, relay WebSocket hoặc `clarkcant api`) là một client
+AI hoặc một máy từ xa đang ghi thay cho widget. Node quyết định từng lần ghi như vậy bằng chính sách thực thi của người
+dùng, như một tác động `local-write`, hoặc `destructive` khi bỏ một tệp không phải tệp đang ghi dở do chính kết nối relay đó (hoặc, với MCP và `clarkcant api`, chính bề mặt đó) bắt
+đầu: nó chạy, nó chờ người dùng trên một thẻ phê duyệt (mỗi tệp một thẻ, không bao giờ kèm byte), hoặc nó bị từ chối. Mỗi lần ghi
+như vậy được ghi vào nhật ký kiểm toán với bề mặt, instance, artifact và quyết định, không bao giờ kèm nội dung tệp
+([open-interfaces.vi.md](open-interfaces.vi.md)). Widget không cần xử lý việc này: các lời gọi của chính nó không bao giờ
+bị hỏi lại.
+
 Các yêu cầu tệp của một frame bị giới hạn tốc độ: một đợt 300 yêu cầu, sau đó 10 yêu cầu mỗi giây, được đếm trước khi
 yêu cầu được kiểm tra, và tối đa 4 yêu cầu chờ trả lời cùng lúc. Một tin nhắn đến từ cửa sổ khác bị từ chối trước khi
 được đếm, nên một widget không thể tiêu hết tốc độ của widget khác. SDK xếp hàng phần còn lại, nên một widget đọc tệp lớn

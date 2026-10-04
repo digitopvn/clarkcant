@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { isPersonOnlyRoute, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
+import { isPersonOnlyRoute, MACHINE_SURFACE_HEADER, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
 
 /**
  * The `clarkcant` command.
@@ -149,12 +149,18 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
   const asJson = flags.has("json");
   const doFetch = io.fetch ?? fetch;
 
-  const call = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> => {
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<{ status: number; body: unknown }> => {
     let response: Response;
     try {
       response = await doFetch(`${connection.url}${path}`, {
         method,
         headers: {
+          ...extraHeaders,
           ...(connection.token === undefined ? {} : { authorization: `Bearer ${connection.token}` }),
           ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
@@ -264,7 +270,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
           // An approval is the person's decision; a scriptable relay that an AI tool can drive does not carry it.
           throw new CliError(PERSON_ONLY_REFUSAL.message);
         }
-        const result = await call(method.toUpperCase(), path, payload);
+        // Marked as the `clarkcant api` surface, so a route the node gates on machine surfaces (a widget's artifact
+        // writes) decides it with the execution policy and records that it came through here.
+        const result = await call(method.toUpperCase(), path, payload, { [MACHINE_SURFACE_HEADER]: "cli-api" });
         io.stdout(`${typeof result.body === "string" ? result.body : JSON.stringify(result.body, null, 2)}\n`);
         return result.status < 400 ? 0 : 1;
       }
