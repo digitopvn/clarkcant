@@ -355,6 +355,13 @@ Provider + model là một control nhóm:
 - toast/status “Đã chuyển sang …”;
 - conversation command “đổi sang Claude/Gemini/…” làm cùng action.
 
+Khi provider của model đã chọn từ chối một lượt (báo lỗi rõ ràng, không viết gì), Clark trả lời chính tin nhắn đó bằng
+model dùng được tiếp theo — một profile trong pool đang bật và có credential, nếu không có thì model mà môi trường của node
+chỉ định — thay vì để người dùng nhận một thông báo lỗi. Việc này không bao giờ âm thầm: dòng dưới câu trả lời ghi "trả lời
+bằng model dự phòng" với tông cảnh báo, nêu model đã chọn và lý do nó không trả lời. Lựa chọn trong Cài đặt không bị ghi
+đè; model bị từ chối được bỏ qua vài phút rồi thử lại. Khi mọi model đã thử đều từ chối, thông báo lỗi nêu từng model kèm
+lý do, nói rằng tin nhắn vẫn được lưu và bước tiếp theo là gì.
+
 ### 5.3 Policy setup
 
 Không block onboarding bằng permission questionnaire.

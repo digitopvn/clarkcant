@@ -326,6 +326,12 @@ export interface ModelTurnReply {
    * turn's reply answers it, so this one carries nothing and no message is written for it.
    */
   steered?: true;
+  /**
+   * Present when the model the person chose refused this turn (or did moments ago) and another one answered it. The
+   * reply's own `provider`/`model` name the one that answered; this names the choice and why it did not, so the card
+   * can say so instead of the person discovering it.
+   */
+  fallback?: { from: string; reason: string };
 }
 
 /**
@@ -979,6 +985,7 @@ async function runModelTurn(
  * was produced, rather than as a finished answer on one path and a stopped one on another.
  */
 export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelTurnReply, at: Instant): MessageBlock {
+  const fallback = reply.stopped === true ? undefined : reply.fallback;
   return {
     type: "system-card",
     owner: "host",
@@ -986,15 +993,19 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
     subject: "connection",
     // A stopped turn says so on the one line that is always visible, so the partial reply above it is not read
     // as the whole answer.
-    title: reply.stopped === true ? "Đã dừng theo yêu cầu" : "Trả lời bằng model",
+    title: reply.stopped === true ? "Đã dừng theo yêu cầu" : fallback !== undefined ? "Trả lời bằng model dự phòng" : "Trả lời bằng model",
     status: "done",
     detail:
       reply.stopped === true
         ? (reply.stoppedDetail ??
           "Bạn đã dừng lượt trả lời này. Phần ở trên là những gì model đã viết trước khi dừng; sau đó không có thêm chữ hay công cụ nào chạy.")
-        : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
+        : fallback !== undefined
+          ? `${fallback.from} không trả lời được (${fallback.reason}), nên ${reply.provider}/${reply.model} đã trả lời thay. ` +
+            "Lựa chọn của bạn trong Cài đặt vẫn giữ nguyên; Clark sẽ thử lại model đó sau ít phút."
+          : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
     fields: [
       ...(reply.stopped === true ? [{ label: "Kết thúc", value: "dừng theo yêu cầu" }] : []),
+      ...(fallback === undefined ? [] : [{ label: "Model đã chọn", value: fallback.from }]),
       { label: "Provider", value: reply.provider },
       {
         label: "Model",

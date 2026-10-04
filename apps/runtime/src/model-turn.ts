@@ -442,6 +442,25 @@ export function redactLocalPaths(reason: string): string {
 /** A setup a Stop or the node's shutdown ended before it was done: the caller answers as a stopped turn does. */
 class SetupStopped extends Error {}
 
+/**
+ * A turn the model's provider refused outright: it said why, and nothing was written. The message is the person's
+ * sentence; `model` and `reason` are what a fallback needs to decide what to try next and to say what happened.
+ */
+class ProviderRefusal extends Error {
+  readonly model: string;
+  readonly reason: string;
+  constructor(message: string, model: string, reason: string) {
+    super(message);
+    this.model = model;
+    this.reason = reason;
+  }
+}
+
+/** How long a model that refused a turn is passed over before it is tried again. */
+const REFUSAL_COOLDOWN_MS = 10 * 60_000;
+/** Models tried for one message: the chosen one and at most two fallbacks, so a bad night costs seconds, not minutes. */
+const MAX_MODELS_PER_MESSAGE = 3;
+
 /** Settles once `signal` aborts, and lets go of its listener when `settled` does, so a long-lived signal collects none. */
 function untilAborted(signal: AbortSignal, settled: Promise<unknown>): Promise<"stopped"> {
   return new Promise<"stopped">((resolve) => {
@@ -937,6 +956,12 @@ export async function createModelTurn(options: {
    */
   model?: () => ModelTurn["selection"] | undefined;
   /**
+   * Models a conversation may answer on when the chosen one refuses a turn, best first — the node's enabled pool
+   * profiles it holds credentials for. Read only after a refusal. The model the environment names is always tried
+   * last, so a node with no pool still has somewhere to go.
+   */
+  fallbackModels?: () => Promise<readonly ModelSelection[]>;
+  /**
    * The language the person reads, for the few errors this module words itself (a failed model switch, a preparation
    * that ran out of time). Read when the error is raised; absent is English.
    */
@@ -974,6 +999,47 @@ export async function createModelTurn(options: {
    */
   const selection = options.model?.() ?? modelFromEnv(options.env);
   if (selection === undefined) return undefined;
+
+  /*
+   * Automatic fallback.
+   *
+   * A model that refuses a turn — a provider error with nothing written — is passed over for a while, and the same
+   * message is answered on the next usable model instead of leaving the person with an error. It is never silent: the
+   * reply says which model was chosen, why it did not answer, and which one did. The person's choice is not rewritten;
+   * the chosen model is tried again once its pause ends, or at once when the node restarts.
+   */
+  const refusals = new Map<string, { reason: string; untilMs: number }>();
+  const refusalOf = (model: ModelSelection | undefined): { reason: string; untilMs: number } | undefined => {
+    const key = modelKey(model);
+    const refusal = refusals.get(key);
+    if (refusal === undefined) return undefined;
+    if (refusal.untilMs > Date.now()) return refusal;
+    refusals.delete(key);
+    return undefined;
+  };
+  /** The fallbacks, read when a refusal is first met and kept until the next one; the environment's model is last. */
+  let fallbackChain: readonly ModelSelection[] = [];
+  const readFallbackChain = async (): Promise<readonly ModelSelection[]> => {
+    const pool = await (options.fallbackModels?.() ?? Promise.resolve([])).catch(() => []);
+    const fromEnv = modelFromEnv(options.env);
+    const seen = new Set<string>();
+    return [...pool, ...(fromEnv === undefined ? [] : [fromEnv])].filter((model) => {
+      const key = modelKey(model);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  /**
+   * The model a conversation's next session runs: the person's choice, unless it refused a turn moments ago — then the
+   * first fallback that has not. Nothing usable left is the choice again, so its own error is what the person reads.
+   */
+  const chosenModel = (): ModelSelection | undefined => {
+    const preferred = options.model?.();
+    const base = preferred ?? selection;
+    if (refusalOf(base) === undefined) return preferred;
+    return fallbackChain.find((model) => modelKey(model) !== modelKey(base) && refusalOf(model) === undefined) ?? preferred;
+  };
 
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
@@ -1155,6 +1221,15 @@ export async function createModelTurn(options: {
         "Tin nhắn của bạn đã được lưu và cuộc trò chuyện vẫn giữ nguyên. Hãy thử lại, hoặc chọn model khác trong Cài đặt."
       : `${model} could not answer this message: ${reason}. ` +
         "Your message is saved and the conversation is unchanged. Retry, or choose another model in Settings.";
+  /** Every model tried for one message refused it: each one and why, that the message is kept, and what to do next. */
+  const noModelAnswered = (tried: readonly { model: string; reason: string }[]): string => {
+    const list = tried.map((entry) => `${entry.model}: ${entry.reason}`).join("; ");
+    return language() === "vi"
+      ? `Không model nào trả lời được tin nhắn này — ${list}. ` +
+          "Tin nhắn của bạn đã được lưu và cuộc trò chuyện vẫn giữ nguyên. Hãy thử lại sau, hoặc chọn model khác trong Cài đặt."
+      : `No model could answer this message — ${list}. ` +
+          "Your message is saved and the conversation is unchanged. Retry later, or choose another model in Settings.";
+  };
   const startFailed = (model: string, reason: string): string =>
     language() === "vi"
       ? `Không bắt đầu được cuộc trò chuyện này trên ${model}: ${reason}. ` +
@@ -1338,7 +1413,7 @@ export async function createModelTurn(options: {
    */
   async function turnFor(conversationId: string, principal: Principal, setup: AbortSignal): Promise<Turn> {
     const existing = turns.get(conversationId);
-    const preferred = options.model?.();
+    const preferred = chosenModel();
     const preferredModel = preferred === undefined ? undefined : `${preferred.provider}/${preferred.id}`;
 
     /*
@@ -1432,7 +1507,7 @@ export async function createModelTurn(options: {
     // Recorded on the turn once a session holds these tools: a handoff that fails leaves the previous generation's.
     const registeredTools = customTools.map((tool) => tool.name);
 
-    const chosen = options.model?.();
+    const chosen = chosenModel();
 
     /**
      * The brief this conversation's session is created with — and re-created with after a model change.
@@ -1523,7 +1598,7 @@ export async function createModelTurn(options: {
 
     // Taken on by a handoff as well, so a later rebuild creates the session with this generation's tools.
     const rebuild = async (): Promise<boolean> => {
-      const model = options.model?.();
+      const model = chosenModel();
       const handle = await adapter.createWorkerSession(briefFor(model));
       // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
       // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
@@ -1855,7 +1930,7 @@ export async function createModelTurn(options: {
       const fresh = turn.fresh;
       // What the model this conversation runs may be sent (#433), read now: the recap and the memory brief withhold
       // anything of another class before a selector or the provider sees it.
-      const allowed = allowedFor(options.model?.() ?? selection);
+      const allowed = allowedFor(chosenModel() ?? selection);
       turn.allowed = allowed;
 
       let recap: { text: string; earlier: string };
@@ -2053,6 +2128,12 @@ export async function createModelTurn(options: {
           if (turns.get(input.conversationId) === turn) turns.delete(input.conversationId);
           turn.unsubscribe();
           void adapter.dispose(promptedSession).catch(() => undefined);
+          // The provider said why before the run failed: a refusal, which a fallback may answer.
+          if (turn.providerError !== undefined) {
+            const reason = redactSecrets(redactLocalPaths(turn.providerError));
+            const model = describe(input.conversationId);
+            throw new ProviderRefusal(turnFailed(model, reason), model, reason);
+          }
           throw cause;
         }
       } finally {
@@ -2107,13 +2188,19 @@ export async function createModelTurn(options: {
         // A settled run that produced nothing at all is not a reply. Saying so is better than
         // appending an empty message that reads as the assistant having nothing to say.
         // The provider's own refusal when there is one — the reason a person can act on — else that nothing came back.
-        const reason =
-          turn.providerError !== undefined
-            ? redactSecrets(redactLocalPaths(turn.providerError))
-            : language() === "vi"
+        if (turn.providerError !== undefined) {
+          const reason = redactSecrets(redactLocalPaths(turn.providerError));
+          const model = describe(input.conversationId);
+          throw new ProviderRefusal(turnFailed(model, reason), model, reason);
+        }
+        throw new Error(
+          turnFailed(
+            describe(input.conversationId),
+            language() === "vi"
               ? `model kết thúc lượt mà không viết gì sau ${elapsedMs} ms`
-              : `the model ended its turn without writing anything after ${elapsedMs} ms`;
-        throw new Error(turnFailed(describe(input.conversationId), reason));
+              : `the model ended its turn without writing anything after ${elapsedMs} ms`,
+          ),
+        );
       }
 
       // A reply that is only a view is a reply. Refusing it would make the one thing this node
@@ -2310,7 +2397,34 @@ export async function createModelTurn(options: {
       // once nothing holds it: an idle conversation keeps no scope.
       const release = holdStopScope(input.conversationId);
       try {
-        return await answerHeld(input);
+        const tried: { model: string; reason: string }[] = [];
+        for (;;) {
+          let reply: ModelTurnReply;
+          try {
+            reply = await answerHeld(input);
+          } catch (cause) {
+            if (!(cause instanceof ProviderRefusal)) throw cause;
+            tried.push({ model: cause.model, reason: cause.reason });
+            refusals.set(cause.model, { reason: cause.reason, untilMs: Date.now() + REFUSAL_COOLDOWN_MS });
+            fallbackChain = await readFallbackChain();
+            const next = chosenModel() ?? selection;
+            // Nothing left that has not refused, or as many models as one message may cost: the person hears all of it.
+            if (refusalOf(next) !== undefined || tried.length >= MAX_MODELS_PER_MESSAGE) {
+              throw tried.length === 1 ? cause : new Error(noModelAnswered(tried), { cause });
+            }
+            process.stderr.write(
+              `${JSON.stringify({ event: "model-fallback", from: cause.model, to: modelKey(next) })}\n`,
+            );
+            continue;
+          }
+          // Answered on another model while the chosen one is paused: said on the reply, never left to be guessed.
+          const preferred = options.model?.() ?? selection;
+          const refusal = refusalOf(preferred);
+          if (refusal !== undefined && `${reply.provider}/${reply.model}` !== modelKey(preferred) && reply.steered !== true) {
+            return { ...reply, fallback: { from: modelKey(preferred), reason: refusal.reason } };
+          }
+          return reply;
+        }
       } finally {
         release();
       }

@@ -5,6 +5,7 @@ import { allowedDataClassesFor, type DataClass, instantSchema, type TurnOrigin }
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
+import { keyVariableFor } from "@clarkcant/pi-adapter";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
@@ -251,6 +252,43 @@ export async function routeNodeBackgroundModel(
 }
 
 /**
+ * The models a conversation may answer on when the chosen one refuses a turn, best first.
+ *
+ * The same deterministic filters a background worker's route uses — enabled, credentialed, able to call tools — with
+ * the foreground role preferred where a profile declares it. No policy call: this runs while a person waits for a
+ * reply that already failed once, and every profile here is one the person put in their own pool.
+ */
+export async function nodeFallbackModels(
+  services: NodeServices,
+  env: NodeJS.ProcessEnv,
+): Promise<{ provider: string; id: string }[]> {
+  const owner = services.runtime.identity.ownerPrincipalId;
+  const pool = readModelPool(services.runtime.db, owner);
+  if (pool.profiles.length === 0) return [];
+  const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([])).catch(() => []);
+  const credentials = credentialNames(services.runtime.db, owner);
+  const { eligible } = filterBackgroundCandidates({
+    pool,
+    role: "foreground",
+    // A key the node holds by any route: the provider it runs, one stored under the provider's name, or the provider's
+    // own variable in the node's environment.
+    hasCredential: (provider) => {
+      const variable = keyVariableFor(provider);
+      return (
+        services.model?.provider === provider ||
+        credentials.includes(provider) ||
+        (variable !== undefined && (credentials.includes(variable) || (env[variable] ?? "") !== ""))
+      );
+    },
+    isHealthy: () => true,
+    contextWindowFor: () => undefined,
+    supportsTools: (provider, modelId) => toolCallsIn(catalogue, provider, modelId),
+    needsTools: true,
+  });
+  return eligible.map((candidate) => ({ provider: candidate.provider, id: candidate.modelId }));
+}
+
+/**
  * The node's route, with a failure answered as a fallback rather than thrown: the work runs on the configured model,
  * the same as when nothing is eligible, and the failure is said once on stderr — that it failed, never what with — the
  * same way the data-class fallback is. The services are asked for inside the same guard, so a node that cannot give them
@@ -293,6 +331,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
+    fallbackModels: async () => await nodeFallbackModels(deps.services(), deps.env),
     // The interface language the person chose, for the errors a turn words itself (a failed model switch).
     language: () =>
       preferredAppIntentLocale(

@@ -241,6 +241,19 @@ describe("the model answer note", () => {
     expect(textOf(element)).toContain("Câu trả lời này do model sinh ra.");
   });
 
+  it("marks a reply a fallback model wrote, so the line itself says the choice did not answer", () => {
+    const fellBack = SystemCardBlock({
+      block: {
+        ...note,
+        title: "Trả lời bằng model dự phòng",
+        fields: [...note.fields, { label: "Model đã chọn", value: "anthropic/claude-opus-5-5" }],
+      },
+    });
+    expect(fellBack?.props as Record<string, unknown>).toMatchObject({ "data-fallback": "true" });
+    expect(textOf(findAll(fellBack, "className").find((node) => node.type === "summary"))).toContain("dự phòng");
+    expect(SystemCardBlock({ block: note })?.props as Record<string, unknown>).not.toHaveProperty("data-fallback");
+  });
+
   it("still says a turn failed, at full size", () => {
     // A failure is not bookkeeping: the reason is the message, and it is not hidden behind a click.
     const failed = { ...note, status: "blocked", title: "Không gọi được model", detail: "provider exploded" };
