@@ -69,7 +69,9 @@ describe("what voice says after a widget action", () => {
   it("is what the voice session says for a refused, started or waiting action", () => {
     // The voice bootstrap has no harness of its own; what is asserted is that it speaks through these sentences.
     const bootstrap = readFileSync(join(import.meta.dirname, "..", "src", "bootstrap", "voice-bootstrap.ts"), "utf8");
-    const body = bootstrap.slice(bootstrap.indexOf("widgetAction: async"), bootstrap.indexOf("deps.services.voiceCapabilities ="));
+    const start = bootstrap.indexOf("export async function spokenWidgetAction(");
+    expect(start).toBeGreaterThan(-1);
+    const body = bootstrap.slice(start);
     expect(body).toContain("if (!result.ok) return { ok: false, say: spokenActionRefusal(");
     expect(body).toContain("preferredAppIntentLocale(");
     expect(body).not.toContain("result.message");

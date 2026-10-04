@@ -2090,8 +2090,12 @@ the same widget is refused with `PERFORM_OUTCOME_UNKNOWN`. A refusal frees the i
 again.
 
 **Voice.** A spoken request reaches the same tool through Clark's turn in the voice session. A spoken press of an
-offered action is refused, with nothing sent, and the person is told to ask Clark instead
-([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+offered action, matched by its label on the focused widget, goes through the same `invokeWidgetAction` path as the tool:
+the same declared schema, execution policy and host card, ledger, and origin (`voice`, asked by the person). The
+request reaches the frame through the voice session's own page, and only when that page sent `widgetPerform: 1` in its
+auth frame. Otherwise the press is refused before anything is sent, and the person is told to ask Clark instead. The
+voice resolver matches labels, so a sentence that implies the arguments without naming the label, such as `format
+this as a percentage`, is not matched yet ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Tests:
 

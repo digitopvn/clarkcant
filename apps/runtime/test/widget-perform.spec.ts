@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type TurnOrigin, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
+import { DEFAULT_EXECUTION_POLICY_CONFIG, type ConversationId, type Instant, type TurnOrigin, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
   type ModelTurnInput,
@@ -26,7 +26,8 @@ import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
-import { buildWidgetSemantic } from "../src/widget-semantic.ts";
+import { spokenWidgetAction } from "../src/bootstrap/voice-bootstrap.ts";
+import { buildWidgetSemantic, focusedSemanticView } from "../src/widget-semantic.ts";
 import { conversationOfferedActions, createPerformWidgetActionTool, placeWidget } from "../src/widget-perform-tool.ts";
 
 /**
@@ -689,6 +690,68 @@ describe("what a person or a spoken command can press", () => {
     const doc = buildWidgetSemantic(services.conductor, placed.instanceId);
     if (doc === undefined) throw new Error("the placed widget has no semantic document");
     expect(doc.availableActions.map((action) => action.actionBindingId)).not.toContain(placed.bindingId);
+  });
+});
+
+describe("a spoken press of an offered action", () => {
+  /** What the voice resolver hands over for a matched sentence, against the live view of the placed sheet. */
+  function spoken(placed: { instanceId: string; bindingId: string }, args: Record<string, unknown>) {
+    const focused = focusedSemanticView(services.conductor, placed.instanceId);
+    const offered = focused?.availableActions.find((action) => action.actionBindingId === placed.bindingId);
+    if (focused === undefined || offered === undefined) throw new Error("the voice view does not list the offered action");
+    return { conversationId: conversationId as ConversationId, action: { ...offered, args }, focused };
+  }
+
+  /** A voice session's page: the frame request goes out on the socket and the page reports back as told. */
+  function voicePage(answer: Awaited<ReturnType<WidgetPerformer>>) {
+    const sent: WidgetPerformRequest[] = [];
+    const onWidgetPerform = (request: WidgetPerformRequest) => {
+      sent.push(request);
+      queueMicrotask(() => services.widgetPerforms.settle(request.performId, answer as never));
+    };
+    return { sent, onWidgetPerform };
+  }
+
+  it("reaches the frame through the session's page, with the same ledger, audit and outcome as the typed path", async () => {
+    const placed = placeSheet();
+    const { sent, onWidgetPerform } = voicePage({ status: "done", output: "Đã định dạng B2:C3 thành phần trăm." });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+
+    expect(run).toMatchObject({ ok: true, instanceId: placed.instanceId, say: expect.stringContaining("Đã định dạng B2:C3 thành phần trăm.") });
+    expect(sent).toEqual([
+      expect.objectContaining({ instanceId: placed.instanceId, actionBindingId: placed.bindingId, action: "format", input: { format: "percent" } }),
+    ]);
+    expect(effects()).toEqual([expect.objectContaining({ capability_ref: `widget:${DEFINITION.id}#format`, state: "confirmed" })]);
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "done" })]);
+  });
+
+  it("is refused before anything is sent when the session's page cannot reach a frame", async () => {
+    const placed = placeSheet();
+    const run = await spokenWidgetAction(services, spoken(placed, { format: "percent" }));
+    expect(run).toEqual({ ok: false, say: expect.stringContaining("Định dạng vùng đang chọn") });
+    expect(effects()).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("refuses input the declared schema does not take, before the page is asked", async () => {
+    const placed = placeSheet();
+    const { sent, onWidgetPerform } = voicePage({ status: "done" });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, {}), onWidgetPerform });
+    expect(run).toMatchObject({ ok: false });
+    expect(sent).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+  });
+
+  it("puts the host card in the conversation when the policy asks, and sends nothing to the frame", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { sent, onWidgetPerform } = voicePage({ status: "done" });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(run).toMatchObject({ ok: true, say: expect.stringContaining("Định dạng vùng đang chọn") });
+    if (!run.ok) throw new Error("unreachable");
+    expect(run.say).not.toMatch(/^Đã /u);
+    expect(sent).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
   });
 });
 

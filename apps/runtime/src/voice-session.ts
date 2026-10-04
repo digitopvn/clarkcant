@@ -222,6 +222,12 @@ export interface VoiceGatewayOptions {
     conversationId: ConversationId;
     action: VoiceWidgetAction;
     focused: SemanticView | undefined;
+    /**
+     * Hands an offered action to the frame on the page this session runs on, as a typed turn's and an approval's
+     * performs are. Present only when the page said it runs the `widget-perform` version (`auth.widgetPerform`); absent,
+     * nobody can ask a frame and an offered action is refused before anything is sent.
+     */
+    onWidgetPerform?: (request: WidgetPerformRequest) => void;
   }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
@@ -423,6 +429,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let conversationId: ConversationId | undefined;
     /** Whether the page said it can hand a `widget-perform` to a mounted frame and report back (the auth frame). */
     let performsWidgets = false;
+    /** The `onWidgetPerform` a turn, a decided approval or a spoken press carries: present only when `performsWidgets`. */
+    const frameSink = (): { onWidgetPerform?: (request: WidgetPerformRequest) => void } =>
+      performsWidgets ? { onWidgetPerform: (request) => send({ type: "widget-perform", request }) } : {};
     let adapter: VoiceProviderAdapter | undefined;
 
     /*
@@ -564,7 +573,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       const runIn = conversationId;
       if (run === undefined || runIn === undefined) return;
       answerQueue = answerQueue.then(async () => {
-        const outcome = await run({ conversationId: runIn, action, focused: focusedViewNow() });
+        const outcome = await run({
+          conversationId: runIn,
+          action,
+          focused: focusedViewNow(),
+          ...frameSink(),
+        });
         // The page is told what changed rather than that something changed: it updates the same state a click updates,
         // and it can only do that from the node's own account of the revision it landed on.
         send({
@@ -631,7 +645,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             approvalId: pending.approvalId,
             decision,
             digest: pending.digest,
-            ...(performsWidgets ? { onWidgetPerform: (request: WidgetPerformRequest) => send({ type: "widget-perform", request }) } : {}),
+            ...frameSink(),
           });
           const said = decided.ok
             ? decision === "granted"
@@ -821,7 +835,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             onAppIntent: (decision) => send({ type: "app-intent", decision }),
             // Only to a page that said it can hand one to a frame and report back: any other surface is sent none, and
             // the node learns at once that nobody can ask a frame rather than waiting on a report that cannot come.
-            ...(performsWidgets ? { onWidgetPerform: (request: WidgetPerformRequest) => send({ type: "widget-perform", request }) } : {}),
+            ...frameSink(),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;

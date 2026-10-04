@@ -2087,8 +2087,12 @@ trên cùng widget bị từ chối với `PERFORM_OUTCOME_UNKNOWN`. Một lời
 hành động đó.
 
 **Giọng nói.** Một yêu cầu bằng lời nói tới cùng công cụ đó qua lượt của Clark trong phiên giọng nói. Một lần bấm
-bằng giọng nói vào hành động được cho phép bị từ chối, không có gì được gửi, và người dùng được bảo hãy nhờ Clark
-([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+bằng giọng nói vào hành động được cho phép, khớp theo nhãn trên widget đang mở, đi qua cùng đường `invokeWidgetAction`
+như công cụ: cùng schema đã khai báo, chính sách thực thi và thẻ của host, sổ hiệu ứng, và nguồn gốc (`voice`, do người
+dùng yêu cầu). Yêu cầu tới frame qua chính trang của phiên giọng nói, và chỉ khi trang đó gửi `widgetPerform: 1` trong
+frame xác thực. Nếu không, lần bấm bị từ chối trước khi có gì được gửi, và người dùng được bảo hãy nhờ Clark. Bộ phân
+giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như `định dạng chỗ này thành phần trăm`,
+chưa được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:
 
