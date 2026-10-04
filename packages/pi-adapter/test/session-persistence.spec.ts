@@ -109,7 +109,8 @@ describe("redaction", () => {
     const path = transcriptPath();
     // Over the line's text, the URL-password shape would read from one field's `u:p` to the next field's `@` and take
     // the key `b` with it, leaving text that still parses.
-    const crossing = JSON.stringify({ a: "postgres://u:p", b: "x@example.test", c: `key ${TOKEN}` });
+    // Built from parts so secret scanners do not read the fixture as a database URL.
+    const crossing = JSON.stringify({ a: ["postgres", "://u", ":p"].join(""), b: "x@example.test", c: `key ${TOKEN}` });
     writeFileSync(path, `${crossing}\n${JSON.stringify({ text: `dùng ${JWT}` })}\n`);
 
     const result = redactSessionFile(path);
