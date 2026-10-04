@@ -7,6 +7,7 @@ import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.t
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
+import { modelSwitchShortcut } from "../use-model-alias.ts";
 
 /**
  * Every credential the node holds, listed once. DESIGN.md 11.6 keeps a key's row in the domain that explains
@@ -218,6 +219,7 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
   const [checked, setChecked] = useState<{ alias: string; ok: boolean; message?: string }[]>([]);
   const [current, setCurrent] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState("");
+  const shortcut = modelSwitchShortcut(typeof navigator === "undefined" ? undefined : navigator.platform);
 
   useEffect(() => {
     let live = true;
@@ -255,10 +257,10 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
   return (
     <section className="cc-panel-section" data-model-pool="true">
       <h3>{t("settings.modelPool.heading")}</h3>
-      <p className="cc-panel-note">{t("settings.modelPool.intro")}</p>
+      <p className="cc-panel-note">{t("settings.modelPool.intro").replace("{shortcut}", shortcut)}</p>
       {pool.profiles.length === 0 ? (
         <p className="cc-panel-note" data-model-pool="none">
-          {t("settings.modelPool.empty")}
+          {t("settings.modelPool.empty").replace("{shortcut}", shortcut)}
         </p>
       ) : (
         // Scrolls on its own rather than widening the dialog: five columns do not fit a phone, and a table that
@@ -328,7 +330,7 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
               client
                 .putModelPool(pool)
                 .then((answer) => setPool(answer.pool))
-                .then(() => setStatus(t("settings.modelPool.saved")))
+                .then(() => setStatus(t("settings.modelPool.saved").replace("{shortcut}", shortcut)))
                 .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : t("settings.modelPool.saveFailed")));
             }}
           >
