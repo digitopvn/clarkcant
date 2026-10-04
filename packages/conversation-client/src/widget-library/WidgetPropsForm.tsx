@@ -122,7 +122,7 @@ export function WidgetPropsForm({ definition, props, onChange }: WidgetPropsForm
           aria-label={t("widgets.propsForm.jsonAria")}
           data-widget-props-raw="true"
         />
-        <button type="button" className="cc-badge" onClick={commitRaw} data-widget-props-apply="true">
+        <button type="button" className="cc-action" onClick={commitRaw} data-widget-props-apply="true">
           {t("widgets.propsForm.apply")}
         </button>
       </details>

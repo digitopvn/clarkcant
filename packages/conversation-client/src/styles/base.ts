@@ -332,7 +332,7 @@ body {
 }
 .cc-connection-notice p { margin: 0; min-width: 0; }
 .cc-connection-notice button { cursor: pointer; font: inherit; min-height: 32px; }
-.cc-connection-notice button:disabled { cursor: default; opacity: 0.6; }
+.cc-connection-notice button[aria-disabled="true"] { cursor: default; opacity: 0.6; }
 
 /*
  * The inbox mark and the inbox panel.

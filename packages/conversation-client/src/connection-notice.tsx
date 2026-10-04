@@ -165,7 +165,7 @@ function ConnectionNoticeBody({
       </p>
       {/* aria-disabled, not disabled: a disabled button drops keyboard focus to the body mid-check. A press during a
           check is ignored by the watch, which never runs two checks at once. */}
-      <button type="button" className="cc-badge" data-connection-check="true" aria-disabled={checking} onClick={onCheckNow}>
+      <button type="button" className="cc-action" data-connection-check="true" aria-disabled={checking} onClick={onCheckNow}>
         {t("shell.connection.checkNow")}
       </button>
     </div>
