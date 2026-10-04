@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ConversationId, Principal } from "@clarkcant/contracts";
+import type { ConversationId, DataClass, Principal } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
@@ -21,6 +21,8 @@ import {
   relevance,
   rerankTop,
   type RecapMessage,
+  WITHHELD_MESSAGE,
+  withheldLine,
 } from "../src/context-planner.ts";
 import { type DecideDeps, decideContextFocus } from "../src/jev-decider.ts";
 import { type JevConfig, type JevTransport, createJevBudget } from "../src/jev-selector.ts";
@@ -230,6 +232,74 @@ describe("the memory brief for one turn", () => {
   });
 });
 
+describe("data classes", () => {
+  it("withholds every note a model may not receive before anything is ranked, and states the count, never the words", async () => {
+    remember("Dự án Clark dùng SQLite làm cơ sở dữ liệu.");
+    remember("Người dùng thích câu trả lời ngắn.");
+    const jev = selector("item:1");
+    const planned = await focusedMemoryBrief(
+      { db, decider: jev.deps },
+      { principalId: PRINCIPAL, conversationId: CONVERSATION, query: "dự án clark dùng cơ sở dữ liệu nào", allowed: ["public"] },
+    );
+    expect(planned.text).toBe(["[Điều đã ghi nhớ cho người dùng này]", withheldLine(2, "memory")].join("\n"));
+    expect(planned.plan.withheld).toBe(2);
+    expect(jev.calls()).toBe(0);
+  });
+
+  it("is the brief it always was when nothing is withheld", async () => {
+    remember("Người dùng thích câu trả lời ngắn.");
+    const before = memoryBrief(memoryDeps(), { principalId: PRINCIPAL, conversationId: CONVERSATION });
+    const planned = await focusedMemoryBrief(
+      { db },
+      { principalId: PRINCIPAL, conversationId: CONVERSATION, query: "thời tiết hôm nay", allowed: ["public", "internal", "confidential"] },
+    );
+    expect(planned.text).toBe(before);
+    expect(planned.plan.withheld).toBe(0);
+  });
+
+  it("offers the selector only what it may be shown, and does not ask when fewer than two remain", async () => {
+    const token = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+    const jev = selector("item:1");
+    const result = await rerankTop(
+      [
+        { id: "a", text: `khóa ${token}`, score: 1 },
+        { id: "b", text: "Dự án dùng SQLite", score: 1 },
+        { id: "c", text: "Dự án dùng Postgres", score: 1 },
+      ],
+      "dự án",
+      jev.deps,
+    );
+    expect(jev.calls()).toBe(1);
+    expect(JSON.stringify(jev.offered())).not.toContain(token);
+    expect(result.ordered.map((entry) => entry.id)).toEqual(["c", "a", "b"]);
+
+    const lone = selector("item:1");
+    await rerankTop(
+      [
+        { id: "a", text: `khóa ${token}`, score: 1 },
+        { id: "b", text: "mail duy@example.com", score: 1 },
+        { id: "c", text: "Dự án dùng Postgres", score: 1 },
+      ],
+      "dự án",
+      lone.deps,
+    );
+    expect(lone.calls()).toBe(0);
+  });
+
+  it("keeps a recent message's place in the recap and drops its words when the model may not receive it", () => {
+    const messages: RecapMessage[] = [
+      { role: "user", text: "Gửi báo cáo cho duy@example.com nhé." },
+      { role: "assistant", text: "Đã ghi nhận." },
+    ];
+    const planned = planRecap({ messages, query: "thời tiết", earlier: [], allowed: ["public", "internal"] });
+    expect(planned.text).toContain(WITHHELD_MESSAGE);
+    expect(planned.text).not.toContain("example.com");
+    expect(planned.plan.withheld).toBe(1);
+    // Without a ceiling (the off switch) the recap is the old one.
+    expect(planRecap({ messages, query: "thời tiết", earlier: [] }).text).toBe(legacyRecap(messages));
+  });
+});
+
 describe("the selector is asked only when the ranking is close", () => {
   it("answers with the candidate it chose, by id", async () => {
     const jev = selector("item:1");
@@ -426,5 +496,35 @@ describe("the model turn hands the turn's text to the planner", () => {
     expect(prompt).toContain("Mạch hội thoại trước đó");
     expect(prompt).toContain("Người dùng: trước đó");
     expect(prompt).toContain("- (decision) về cơ sở dữ liệu");
+  });
+
+  it("passes the ceiling of the model that answers, and the narrowest when it cannot be read", async () => {
+    const asked: unknown[] = [];
+    const run = async (allowedDataClasses: () => readonly DataClass[]): Promise<void> => {
+      const turn = await createModelTurn({
+        env: ENV,
+        cwd: process.cwd(),
+        adapter: new FakePiAdapter({ script: ["một"] }),
+        history: async () => [{ role: "user", text: "trước đó" }],
+        allowedDataClasses,
+        recapPlanner: async ({ allowed }) => {
+          asked.push({ recap: allowed });
+          return { text: "", earlier: "" };
+        },
+        memoryBrief: async (_conversationId, _query, allowed) => {
+          asked.push({ memory: allowed });
+          return "";
+        },
+      });
+      await turn!.answer({ conversationId: "c1" as ConversationId, principal: PRINCIPAL_, text: "x", messageId: "m1" });
+    };
+    await run(() => ["public", "internal"]);
+    await run(() => {
+      throw new Error("pool unreadable");
+    });
+    // Read side by side, so in either order within a turn.
+    expect(asked.slice(0, 2)).toEqual(expect.arrayContaining([{ recap: ["public", "internal"] }, { memory: ["public", "internal"] }]));
+    expect(asked.slice(2)).toEqual(expect.arrayContaining([{ recap: ["public"] }, { memory: ["public"] }]));
+    expect(asked).toHaveLength(4);
   });
 });

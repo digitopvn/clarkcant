@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ConversationId, Principal } from "@clarkcant/contracts";
+import { type ConversationId, DEFAULT_ALLOWED_DATA_CLASSES, type Principal } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
@@ -80,7 +80,12 @@ describe("the recap, wired", () => {
     const wired = wiring();
     const messages = await wired.history!(CONVERSATION);
     expect(messages).toHaveLength(40);
-    const recap = await wired.recapPlanner!({ conversationId: CONVERSATION, query: "cơ sở dữ liệu dự án clark chốt là gì", messages });
+    const recap = await wired.recapPlanner!({
+      conversationId: CONVERSATION,
+      query: "cơ sở dữ liệu dự án clark chốt là gì",
+      messages,
+      allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+    });
     // Not one of the twelve it repeats, so not in the recap's words.
     expect(recap.text).not.toContain("SQLite");
     expect(recap.earlier.split("\n")[0]).toBe(EARLIER_DATA_HEADER);
@@ -100,10 +105,35 @@ describe("the recap, wired", () => {
     expect(wired.recapPlanner).toBeUndefined();
     expect(wired.backgroundContext).toBeUndefined();
     expect(wired.toolDisclosure).toBeUndefined();
-    const brief = await wired.memoryBrief!(CONVERSATION, "cơ sở dữ liệu dự án clark");
+    // Off ignores the classes too: the old brief, byte for byte, whatever the model may receive.
+    const brief = await wired.memoryBrief!(CONVERSATION, "cơ sở dữ liệu dự án clark", ["public"]);
     expect(brief).toBe(memoryBrief({ db, now: () => AT, newId }, { principalId: PRINCIPAL, conversationId: CONVERSATION }));
     // Still the newest forty: the window is not part of the planner.
     expect((await wired.history!(CONVERSATION)).at(-1)?.messageId).toBe("msg_39");
+  });
+
+  it("withholds an earlier match the model may not receive, before anything is ranked, and says how many", async () => {
+    // Stored first, so it is older than the forty the recap reads and can only be found as an earlier match.
+    seedMessage(db, {
+      messageId: "msg_secret",
+      role: "user",
+      text: "Cơ sở dữ liệu dự án Clark chốt dùng token sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c nhé.",
+      principalId: PRINCIPAL,
+      conversationId: CONVERSATION,
+      createdAt: new Date(Date.parse(AT) - 1000).toISOString(),
+    });
+    seedThread();
+    const wired = wiring();
+    const messages = await wired.history!(CONVERSATION);
+    const recap = await wired.recapPlanner!({
+      conversationId: CONVERSATION,
+      query: "cơ sở dữ liệu dự án clark chốt là gì",
+      messages,
+      allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+    });
+    expect(recap.earlier).toContain("SQLite");
+    expect(recap.earlier).not.toContain("sk-live");
+    expect(recap.text).toContain("[1 tin bị giữ lại: nhạy cảm hơn mức model này được nhận]");
   });
 
   it("offers progressive disclosure only when it is asked for", () => {

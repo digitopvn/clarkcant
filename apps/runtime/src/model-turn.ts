@@ -17,6 +17,10 @@
 
 import {
   type AttachmentRef,
+  type DataClass,
+  DEFAULT_ALLOWED_DATA_CLASSES,
+  dataClassOfText,
+  maxDataClass,
   type Instant,
   type MessageBlock,
   type Principal,
@@ -46,7 +50,7 @@ import {
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
-import { type ContextReader, readContextTool } from "./context-bundle.ts";
+import { type ContextSource, readContextTool } from "./context-bundle.ts";
 import { legacyRecap } from "./context-planner.ts";
 
 /**
@@ -160,7 +164,7 @@ export interface ModelTurn {
    * it: the policy layer's route among the node's pool when it gives one, else the model this node runs now (the
    * person's pick, else the environment's). Never a separate setting, so there is one place that decides.
    */
-  workerModel: () => Promise<ModelSelection & { via: "routed" | "configured" }>;
+  workerModel: (work?: { dataClass?: DataClass }) => Promise<ModelSelection & { via: "routed" | "configured" }>;
 
   /** The model this node runs now, the person's pick else the environment's: what a worker falls back to when routing chooses nothing. */
   configuredModel: () => ModelSelection;
@@ -335,6 +339,8 @@ export type RecapPlanner = (input: {
   conversationId: string;
   query: string;
   messages: readonly HistoryMessage[];
+  /** The data classes the model being briefed may receive (#433): a message of any other class is withheld. */
+  allowed: readonly DataClass[];
 }) => Promise<{ text: string; earlier: string }>;
 
 /**
@@ -360,6 +366,7 @@ async function recapFor(
   options: { history?: HistoryReader; recapPlanner?: RecapPlanner },
   conversationId: string,
   query: string,
+  allowed: readonly DataClass[],
 ): Promise<{ text: string; earlier: string }> {
   if (options.history === undefined) return { text: "", earlier: "" };
   let messages: readonly HistoryMessage[];
@@ -372,7 +379,7 @@ async function recapFor(
   }
   if (options.recapPlanner !== undefined) {
     try {
-      return await options.recapPlanner({ conversationId, query, messages });
+      return await options.recapPlanner({ conversationId, query, messages, allowed });
     } catch {
       // Planning is an improvement on the recap, never a condition for one.
     }
@@ -627,7 +634,13 @@ export async function createModelTurn(options: {
    * the policy layer — all of which are read at the moment a worker is about to start rather than at boot. Absent
    * means workers run whatever the node is configured with.
    */
-  backgroundModel?: () => Promise<{ provider: string; id: string } | undefined>;
+  backgroundModel?: (work?: { dataClass?: DataClass }) => Promise<{ provider: string; id: string } | undefined>;
+  /**
+   * The data classes a model may be sent (#433), from the profiles that name it. Read for the model about to receive
+   * context: the conversation's for a turn, the routed or fallback one for a background run. Absent means everything but
+   * credential-shaped text, the same default an unlabelled profile gets.
+   */
+  allowedDataClasses?: (model: { provider: string; id: string }) => readonly DataClass[];
   /**
    * The conversation so far, newest last, for briefing a session that has just been created.
    *
@@ -700,7 +713,7 @@ export async function createModelTurn(options: {
    * A function rather than a string because it must be read per turn: a record somebody deleted has to stop
    * being sent on the very next turn, and a value captured once would keep sending it until a restart.
    */
-  memoryBrief?: (conversationId: string, query: string) => string | Promise<string>;
+  memoryBrief?: (conversationId: string, query: string, allowed: readonly DataClass[]) => string | Promise<string>;
   /**
    * What the host retrieved for a background request (#433): remembered notes and earlier messages that match it.
    *
@@ -708,7 +721,7 @@ export async function createModelTurn(options: {
    * tool for an item in full, each read re-checked, so a note deleted mid-run is not sent. Undefined, or a retrieval
    * that fails, leaves the run without it.
    */
-  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<ContextReader | undefined>;
+  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<ContextSource | undefined>;
   /**
    * Which of the session's tools this turn is offered (#433), or absent to offer every one, as before.
    *
@@ -902,6 +915,18 @@ export async function createModelTurn(options: {
   const generationModels = new Map<string, string>();
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
+
+  /*
+   * What a model may be sent (#433). A pool that cannot be read is answered with `public` alone, which nothing the
+   * conversation holds is: the turn runs without retrieved context rather than with a guess at what was allowed.
+   */
+  const allowedFor = (model: { provider: string; id: string }): readonly DataClass[] => {
+    try {
+      return options.allowedDataClasses?.(model) ?? DEFAULT_ALLOWED_DATA_CLASSES;
+    } catch {
+      return ["public"];
+    }
+  };
 
   /**
    * The one tool.
@@ -1174,10 +1199,11 @@ export async function createModelTurn(options: {
       return turn?.inFlight === true && turn.startedAtMs !== undefined ? Date.now() - turn.startedAtMs : undefined;
     },
 
-    workerModel: async (): Promise<ModelSelection & { via: "routed" | "configured" }> => {
+    workerModel: async (work?: { dataClass?: DataClass }): Promise<ModelSelection & { via: "routed" | "configured" }> => {
       // Routing must never be the reason a worker does not start: a route that fails falls back like one that found
       // nothing eligible.
-      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel().catch(() => undefined);
+      const routed =
+        options.backgroundModel === undefined ? undefined : await options.backgroundModel(work).catch(() => undefined);
       if (routed !== undefined) return { provider: routed.provider, id: routed.id, via: "routed" };
       const current = options.model?.() ?? selection;
       return { ...current, via: "configured" };
@@ -1189,7 +1215,6 @@ export async function createModelTurn(options: {
       const signal = input.signal;
       const workId = input.workId ?? `bg-${input.conversationId}-${String(Date.now())}`;
       signal?.throwIfAborted();
-      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel();
       // What the host retrieved for this request, read before the session exists because its one tool is part of how
       // the session is created. A retrieval that fails is a run without it, not a run that fails.
       const context =
@@ -1198,7 +1223,18 @@ export async function createModelTurn(options: {
           : await options
               .backgroundContext({ conversationId: input.conversationId, principalId: input.principal.principalId, text: input.text })
               .catch(() => undefined);
-      const reader = context === undefined || context.items === 0 ? undefined : context;
+      // Routed by what the work carries (#433): the request, the caller's data and what was retrieved. The router only
+      // offers profiles that may receive that class, and whichever model then runs — routed or the fallback — is
+      // checked again below: the run reads only what that model may be sent.
+      const dataClass = maxDataClass([
+        dataClassOfText(`${input.text}\n${input.data ?? ""}`),
+        ...(context === undefined ? [] : [context.dataClass]),
+      ]);
+      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel({ dataClass });
+      const runsOn = routed ?? options.model?.() ?? selection;
+      const allowed = allowedFor(runsOn);
+      const narrowed = context?.readerFor(allowed);
+      const reader = narrowed === undefined || narrowed.items === 0 ? undefined : narrowed;
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
@@ -1299,6 +1335,9 @@ export async function createModelTurn(options: {
       // and repeating the brief each time would push the conversation out with its own summary.
       const fresh = turn.fresh;
       turn.fresh = false;
+      // What the model this conversation runs may be sent (#433), read now: the recap and the memory brief withhold
+      // anything of another class before a selector or the provider sees it.
+      const allowed = allowedFor(options.model?.() ?? selection);
 
       let preparedResolve: () => void = () => undefined;
       turn.preparing = new Promise<void>((resolve) => {
@@ -1319,12 +1358,12 @@ export async function createModelTurn(options: {
               });
         // Side by side rather than one after another, so a turn waits for the slowest of them and not their sum.
         [recap, memoryPart, referencePart] = await Promise.all([
-          fresh ? recapFor(options, input.conversationId, input.text) : Promise.resolve({ text: "", earlier: "" }),
+          fresh ? recapFor(options, input.conversationId, input.text, allowed) : Promise.resolve({ text: "", earlier: "" }),
           // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
           // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
           // Given the turn's text, so what is remembered about this subject comes first; a brief that cannot be read is
           // a less informed turn, not a failed one.
-          Promise.resolve(options.memoryBrief?.(input.conversationId, input.text))
+          Promise.resolve(options.memoryBrief?.(input.conversationId, input.text, allowed))
             .catch(() => "")
             .then((part) => part ?? ""),
           options.references === undefined

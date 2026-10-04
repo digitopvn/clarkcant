@@ -12,7 +12,7 @@ import { interactionDepsFor } from "../gateway.ts";
 import { guardOperation } from "../jev-decider.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../model-turn.ts";
-import { workerModelCandidates } from "./model-bootstrap.ts";
+import { nodeAllowedDataClasses, workerModelCandidates } from "./model-bootstrap.ts";
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
@@ -295,6 +295,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       // run reads, so both share a retrieval pass. Off with the context planner.
       contextBundles: () =>
         contextPlannerFromEnv(process.env) === "off" ? undefined : contextBundlesFor(deps.services.runtime.db),
+      // Narrowed to the model the worker launched on, so retrieved context above what it may receive is never offered.
+      allowedDataClasses: (model) => nodeAllowedDataClasses(deps.services, model),
       // A task that changes a repository works in a worktree kept here, never in the person's own tree.
       worktreesDir: () => join(deps.services.runtime.dataDir, "worktrees"),
       // The same command path the conversation uses, so a worker's command is decided and recorded the same way.

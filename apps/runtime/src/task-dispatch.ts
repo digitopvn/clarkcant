@@ -11,7 +11,7 @@ import type {
   Principal,
   TaskId,
 } from "@clarkcant/contracts";
-import { isTerminal } from "@clarkcant/contracts";
+import { DEFAULT_ALLOWED_DATA_CLASSES, type DataClass, dataClassOfText, isTerminal } from "@clarkcant/contracts";
 import {
   acquireLease,
   applyTaskEvent,
@@ -163,7 +163,11 @@ export interface WorkerModelLaunch {
  */
 export interface WorkerModelSource {
   available(): boolean;
-  launch(): Promise<WorkerModelLaunch | undefined>;
+  /**
+   * `work.dataClass` is how sensitive the task's own request reads: routing prefers a model allowed to receive it, and
+   * never refuses the work for it.
+   */
+  launch(work?: { dataClass?: DataClass }): Promise<WorkerModelLaunch | undefined>;
   /**
    * Whether the models a worker could be started on can call tools, as their catalogue states it: `false` only when
    * every one of them is stated not to, `true` only when every one is stated to, and `undefined` otherwise. Asked
@@ -204,6 +208,11 @@ export interface TaskDispatcherDeps {
    * context planner is off, or this caller predates it. Read for `ownerPrincipalId`, and never without it.
    */
   contextBundles?: () => ContextBundles | undefined;
+  /**
+   * The data classes a model may be sent, from its profiles in the node's pool. The worker's retrieved context is
+   * narrowed to the model it actually launched on. Absent means the default for an unlabelled profile.
+   */
+  allowedDataClasses?: (model: { provider: string; id: string }) => readonly DataClass[];
   /**
    * Reported once a run settles, so the conversation can say what happened without the caller asking.
    *
@@ -484,7 +493,10 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
    * peer delegated, an automation started or a signal raised carries a goal someone else wrote, and the owner's notes and
    * conversation are not part of what that grant covers.
    */
-  const taskContext = async (task: NonNullable<ReturnType<typeof getTask>>): Promise<ContextReader | undefined> => {
+  const taskContext = async (
+    task: NonNullable<ReturnType<typeof getTask>>,
+    launch: WorkerModelLaunch | undefined,
+  ): Promise<ContextReader | undefined> => {
     if (task.origin !== undefined && task.origin.kind !== "interactive") return undefined;
     const { conversationId, goal } = task;
     try {
@@ -493,7 +505,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (bundles === undefined || principalId === undefined) return undefined;
       const bundle = await bundles.bundleFor({ principalId, conversationId, query: goal });
       reportContextBundle({ conversationId, purpose: "task", bundle, stats: bundles.stats() });
-      const reader = bundles.reader(bundle, principalId);
+      const allowed =
+        launch === undefined || deps.allowedDataClasses === undefined
+          ? DEFAULT_ALLOWED_DATA_CLASSES
+          : deps.allowedDataClasses(launch.model);
+      const reader = bundles.reader(bundle, principalId, allowed);
       return reader.items > 0 ? reader : undefined;
     } catch {
       return undefined;
@@ -632,7 +648,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     if (deps.workerModel !== undefined) {
       let reason: string | undefined;
       try {
-        launch = await deps.workerModel.launch();
+        launch = await deps.workerModel.launch({ dataClass: dataClassOfText(task.goal) });
       } catch (cause) {
         reason = `the model for it could not be chosen (${cause instanceof Error ? cause.message : String(cause)})`;
       }
@@ -906,7 +922,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
      * the lease, the browser, the worktrees and the timer are still released below.
      */
     try {
-      const context = await taskContext(task);
+      const context = await taskContext(task, launch);
       const result = await runWorker({
         nodeId: job.executionNodeId,
         brief: {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ConversationId, Instant, Principal, TaskRecord } from "@clarkcant/contracts";
+import type { ConversationId, DataClass, Instant, Principal, TaskRecord } from "@clarkcant/contracts";
 import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from "@clarkcant/core";
 import { getTask } from "@clarkcant/storage";
 
@@ -105,19 +105,41 @@ interface Dispatched {
   settled: boolean;
   bundles: ContextBundles | undefined;
   leaseHeld: boolean;
+  launched: unknown[];
 }
 
 async function dispatch(
   goal: string,
-  overrides: { owner?: boolean; bundles?: boolean; origin?: TaskRecord["origin"]; throwing?: "owner" | "bundles" } = {},
+  overrides: {
+    owner?: boolean;
+    bundles?: boolean;
+    origin?: TaskRecord["origin"];
+    throwing?: "owner" | "bundles";
+    /** Start the worker on a model that may receive only these classes. */
+    allowed?: readonly DataClass[];
+  } = {},
 ): Promise<Dispatched> {
   const { conductor, task } = setup(goal, overrides.origin);
   const db = conductor.db;
   const bundles = overrides.bundles === false ? undefined : createContextBundles({ db });
   let seen: WorkerProcessOptions | undefined;
   let settled = false;
+  const launched: unknown[] = [];
+  const allowed = overrides.allowed;
   const dispatcher = createTaskDispatcher({
     conductor,
+    ...(allowed === undefined
+      ? {}
+      : {
+          workerModel: {
+            available: () => true,
+            launch: async (work) => {
+              launched.push(work);
+              return { model: { provider: "acme", id: "narrow" }, via: "configured" as const, credentialSource: "model-config" as const };
+            },
+          },
+          allowedDataClasses: (model: { provider: string; id: string }) => (model.id === "narrow" ? allowed : ["public", "internal"]),
+        }),
     projectRoots: () => [scratch ?? ""],
     ownedRoots: () => [scratch ?? ""],
     ...(overrides.owner === false
@@ -150,7 +172,7 @@ async function dispatch(
   const leaseHeld = db.prepare("SELECT COUNT(*) AS n FROM leases WHERE holder_task_id = ? AND released_at IS NULL").get(task.taskId) as {
     n: number;
   };
-  return { options: seen, settled, bundles, leaseHeld: leaseHeld.n > 0 };
+  return { options: seen, settled, bundles, leaseHeld: leaseHeld.n > 0, launched };
 }
 
 async function dispatchOnce(goal: string, overrides: { owner?: boolean; bundles?: boolean } = {}): Promise<WorkerProcessOptions> {
@@ -212,6 +234,21 @@ describe("a dispatched task's context", () => {
       runtime?.close();
       runtime = undefined;
     }
+  });
+
+  it("routes by the goal's data class, and is narrowed to what the launched model may receive", async () => {
+    const goal = `${GOAL}, gửi kết quả cho duy@example.com`;
+    const narrowed = await dispatch(goal, { allowed: ["public"] });
+    expect(narrowed.launched).toEqual([{ dataClass: "confidential" }]);
+    // The note is internal and this model may receive only public data: no reader, no count, nothing retrieved shown.
+    expect(narrowed.options?.brief.contextItems).toBeUndefined();
+    expect(narrowed.options?.onContext).toBeUndefined();
+    runtime?.close();
+    runtime = undefined;
+
+    const wide = await dispatch(GOAL, { allowed: ["public", "internal"] });
+    expect(wide.launched).toEqual([{ dataClass: "internal" }]);
+    expect(wide.options?.brief.contextItems).toBe(1);
   });
 
   it("gives no context tool for a goal nothing matches", async () => {

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { instantSchema, type TurnOrigin } from "@clarkcant/contracts";
+import { allowedDataClassesFor, type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -17,7 +17,7 @@ import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
 import { readCurrentAlias, readModelPool } from "../model-registry.ts";
-import { filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
+import { allowedDataClassesForModel, filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
 import { type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-turn.ts";
 import type { Runtime } from "../node.ts";
 import { createNodeTools, type CommandToolDeps } from "../node-tools.ts";
@@ -126,6 +126,14 @@ export function workerModelCandidates(
 }
 
 /**
+ * The data classes a model may be sent, read from the pool when asked: a profile changed in Settings applies to the next
+ * read. The same answer for the conversation's own model and a dispatched worker's.
+ */
+export function nodeAllowedDataClasses(services: NodeServices, model: { provider: string; id: string }): readonly DataClass[] {
+  return allowedDataClassesForModel(readModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId), model);
+}
+
+/**
  * Which model a background worker runs.
  *
  * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
@@ -136,6 +144,7 @@ export function workerModelCandidates(
  */
 export async function routeNodeBackgroundModel(
   services: NodeServices,
+  work: { dataClass?: DataClass } = {},
 ): Promise<{ provider: string; id: string } | undefined> {
   const owner = services.runtime.identity.ownerPrincipalId;
   const pool = readModelPool(services.runtime.db, owner);
@@ -157,6 +166,8 @@ export async function routeNodeBackgroundModel(
     // installation whose catalogue is thin, so only a stated "no" leaves a profile out.
     supportsTools: (provider, modelId) => toolCallsIn(catalogue, provider, modelId),
     needsTools: true,
+    // What the work carries (#433): a profile that may not be sent it is not a candidate, whatever the selector thinks.
+    ...(work.dataClass === undefined ? {} : { dataClass: work.dataClass }),
   });
 
   const decider = services.projects.decider;
@@ -169,8 +180,17 @@ export async function routeNodeBackgroundModel(
             await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
         }),
     ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
-    // Checked after the decision as well as before it: a pool can change while a selector is thinking.
-    verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
+    // Checked after the decision as well as before it: a pool can change while a selector is thinking, and the data
+    // class is re-checked with it, so a choice can never land on a profile that may not receive this work.
+    verify: (alias) => {
+      const latest = readModelPool(services.runtime.db, owner);
+      return latest.profiles.some(
+        (profile) =>
+          profile.alias === alias &&
+          profile.enabled &&
+          (work.dataClass === undefined || allowedDataClassesFor(profile).includes(work.dataClass)),
+      );
+    },
   });
   return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
 }
@@ -199,8 +219,9 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
-    backgroundModel: async () => await routeNodeBackgroundModel(deps.services()),
-
+    backgroundModel: async (work) => await routeNodeBackgroundModel(deps.services(), work),
+    // What a model may be sent (#433): context above it is withheld before it reaches the prompt.
+    allowedDataClasses: (model) => nodeAllowedDataClasses(deps.services(), model),
     /*
      * The user's own instructions, read on every turn rather than captured here.
      *
