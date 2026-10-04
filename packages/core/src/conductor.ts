@@ -236,6 +236,14 @@ export interface ModelTurnInput {
    */
   messageId: string;
   /**
+   * The identifier the message being answered was stored under.
+   *
+   * What the turn reads its attachments and references from. A turn may wait for another to finish, and by the time it
+   * starts a later message can be the newest one in the conversation; reading by this id keeps each turn on its own
+   * message. Optional for callers that answer without a stored message.
+   */
+  userMessageId?: string;
+  /**
    * Guidance for this turn, appended to the prompt by whoever runs it.
    *
    * Carried through rather than interpreted here: the conductor decides what is asked and the runner decides
@@ -256,6 +264,11 @@ export interface ModelTurnInput {
   channel?: "voice" | "chat";
   /** See `UserMessageInput.origin`, which this carries through unchanged. */
   origin?: TurnOrigin;
+  /**
+   * The message carries attachments or references. Its turn reads them for its own prompt, so it is never joined to a
+   * turn that is already running: it waits for that turn to end and is answered with what it carries.
+   */
+  attached?: true;
 }
 
 /**
@@ -302,6 +315,17 @@ export interface ModelTurnReply {
    * record says it was stopped on request rather than that it finished or failed.
    */
   stopped?: true;
+  /**
+   * With `stopped`: the sentence the stopped card says in place of its default, in the person's language. Given when
+   * the turn never started — a message that waited behind another and was stopped first — so the card does not say the
+   * model wrote anything.
+   */
+  stoppedDetail?: string;
+  /**
+   * Present when the message was added to a turn that was already running rather than answered on its own. The running
+   * turn's reply answers it, so this one carries nothing and no message is written for it.
+   */
+  steered?: true;
 }
 
 /**
@@ -464,7 +488,7 @@ export interface ConductorOutcome {
   /** Set when a durable task was created rather than answered immediately. */
   taskId: string | undefined;
   /** How the utterance was resolved, for tests and for the UI's honest labelling. */
-  resolution: "sample" | "model" | "model-failed" | "task-dispatched" | "task-parked" | "clarification";
+  resolution: "sample" | "model" | "model-failed" | "steered" | "task-dispatched" | "task-parked" | "clarification";
 }
 
 /** Append an assistant message and return the stored record. */
@@ -649,7 +673,7 @@ export async function handleUserMessage(
     input.surface,
     input.origin,
   );
-  void userMessage;
+
 
   // A host composer gets the first look, and only when one is configured. In production there is
   // none, so nothing about the ordering below changes.
@@ -714,7 +738,7 @@ export async function handleUserMessage(
   // demo, then the model's own words.
   const answer = deps.respondWithModel;
   if (!executionNode && answer !== undefined) {
-    return runModelTurn(deps, { ...input, at }, answer);
+    return runModelTurn(deps, { ...input, at }, userMessage.messageId, answer);
   }
 
   const task = createTask(deps, {
@@ -868,6 +892,7 @@ function formatTokens(count: number): string {
 async function runModelTurn(
   deps: ConductorDeps,
   input: UserMessageInput & { at: Instant },
+  userMessageId: string,
   answer: NonNullable<ConductorDeps["respondWithModel"]>,
 ): Promise<ConductorOutcome> {
   let reply: Awaited<ReturnType<typeof answer>>;
@@ -879,10 +904,12 @@ async function runModelTurn(
       principal: input.principal,
       text: input.text,
       messageId,
+      userMessageId,
       ...(input.note === undefined ? {} : { note: input.note }),
       ...(input.data === undefined ? {} : { data: input.data }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...((input.attachmentRefs?.length ?? 0) > 0 || (input.referenceBlocks?.length ?? 0) > 0 ? { attached: true as const } : {}),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),
@@ -912,6 +939,10 @@ async function runModelTurn(
     );
     return { messages: [message], taskId: undefined, resolution: "model-failed" };
   }
+
+  // Joined to the turn already running: that turn's reply is the answer, and an empty message here would read as the
+  // assistant having nothing to say.
+  if (reply.steered === true) return { messages: [], taskId: undefined, resolution: "steered" };
 
   const message = appendAssistant(
     deps,
@@ -959,7 +990,8 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
     status: "done",
     detail:
       reply.stopped === true
-        ? "Bạn đã dừng lượt trả lời này. Phần ở trên là những gì model đã viết trước khi dừng; sau đó không có thêm chữ hay công cụ nào chạy."
+        ? (reply.stoppedDetail ??
+          "Bạn đã dừng lượt trả lời này. Phần ở trên là những gì model đã viết trước khi dừng; sau đó không có thêm chữ hay công cụ nào chạy.")
         : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
     fields: [
       ...(reply.stopped === true ? [{ label: "Kết thúc", value: "dừng theo yêu cầu" }] : []),

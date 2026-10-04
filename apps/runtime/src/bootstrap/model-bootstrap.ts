@@ -10,8 +10,8 @@ import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
-import { attachmentRefsForLastUserMessage } from "../attachments.ts";
-import { referenceBrief, referencedWork, referencesForLastUserMessage } from "../composer-references.ts";
+import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../attachments.ts";
+import { referenceBrief, referencedWork, referencesForLastUserMessage, referencesForMessage } from "../composer-references.ts";
 import {
   type ConditionalInstructions,
   conditionalInstructionsFromEnv,
@@ -293,6 +293,12 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
+    // The interface language the person chose, for the errors a turn words itself (a failed model switch).
+    language: () =>
+      preferredAppIntentLocale(
+        { db: deps.runtime.db, now: () => instantSchema.parse(new Date().toISOString()) },
+        deps.runtime.identity.ownerPrincipalId,
+      ),
     backgroundModel: async (work) => await routeOrFallBack(deps.services, work),
     // What a model may be sent (#433): context above it is withheld before it reaches the prompt.
     allowedDataClasses: (model) => nodeAllowedDataClasses(deps.services(), model),
@@ -334,16 +340,21 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // binary by id; no path is ever part of it.
     attachments: {
       dataDir: deps.dataDir,
-      refsFor: (conversationId) =>
-        attachmentRefsForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+      refsFor: (conversationId, messageId) =>
+        messageId === undefined
+          ? attachmentRefsForLastUserMessage({ db: deps.services().runtime.db, conversationId })
+          : attachmentRefsForMessage({ db: deps.services().runtime.db, conversationId, messageId }),
     },
     // What the current message points at, read back from its stored row like the attachments above. A skill's
     // instructions are read through the adapter this turn runs on, so they are the installation's words, checked
     // against the version the message named.
     references: {
-      briefFor: (conversationId, skillBody) =>
+      briefFor: (conversationId, skillBody, messageId) =>
         referenceBrief({
-          blocks: referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+          blocks:
+            messageId === undefined
+              ? referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId })
+              : referencesForMessage({ db: deps.services().runtime.db, conversationId, messageId }),
           projects: deps.services().projects,
           skillBody,
           notice: (noticeId) =>
@@ -361,10 +372,14 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       : {
           instructions: turnInstructions({
             instructions: { active: (state) => nodeConditionalInstructions(deps.env, deps.services())?.active(state) ?? [] },
-            referenced: (conversationId) =>
+            // The turn's own message, so a turn that waited behind another one reads what it was asked, not what was
+            // stored after it.
+            referenced: (conversationId, messageId) =>
               referencedWork(
                 deps.services().projects,
-                referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+                messageId === undefined
+                  ? referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId })
+                  : referencesForMessage({ db: deps.services().runtime.db, conversationId, messageId }),
               ),
           }),
         }),

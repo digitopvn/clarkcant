@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 
-import { attachmentRefsForLastUserMessage } from "../src/attachments.ts";
+import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../src/attachments.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -93,9 +93,9 @@ function uploadText(filename: string, content: string): Promise<string> {
 /**
  * A node whose conversation turn runs against the fake adapter, wired the way the node wires it.
  *
- * The attachment reader is the node's own `attachmentRefsForLastUserMessage`, not a copy: a test that
- * reimplemented the lookup would prove that its own version works, and the thing under test is whether
- * the node's version reads back what was stored.
+ * The attachment readers are the node's own `attachmentRefsForMessage` and `attachmentRefsForLastUserMessage`, wired
+ * as the node wires them, not a copy: a test that reimplemented the lookup would prove that its own version works, and
+ * the thing under test is whether the node's version reads back what was stored.
  */
 async function turnWithModel(script: readonly string[] = ["Đã đọc tệp."]): Promise<FakePiAdapter> {
   const adapter = new FakePiAdapter({ script: [...script] });
@@ -105,7 +105,10 @@ async function turnWithModel(script: readonly string[] = ["Đã đọc tệp."])
     adapter,
     attachments: {
       dataDir: dir,
-      refsFor: (id) => attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId: id }),
+      refsFor: (id, messageId) =>
+        messageId === undefined
+          ? attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId: id })
+          : attachmentRefsForMessage({ db: services.runtime.db, conversationId: id, messageId }),
     },
   });
   if (turn === undefined) throw new Error("the test environment did not configure a model");
@@ -177,6 +180,36 @@ describe("a text attachment reaching the turn", () => {
     expect(inlined.length).toBeLessThanOrEqual(ATTACHMENT_LIMITS.inlineBudgetBytesPerTurn);
     // Every file is still named, so the model can ask for the rest instead of not knowing it exists.
     for (const id of ids) expect(prompt).toContain(id);
+  });
+
+  it("a message that waited for the running turn reads its own file, not the newer message's", async () => {
+    const adapter = await turnWithModel(["một", "hai"]);
+    const file = await uploadText("cua-tin-B.md", "Nội dung chỉ tin B mang theo.");
+    // The first reply is held inside the session, so it is answering while the next two arrive.
+    let open: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const run = adapter.run.bind(adapter);
+    vi.spyOn(adapter, "run").mockImplementationOnce(async (sessionId, text) => {
+      await held;
+      return await run(sessionId, text);
+    });
+
+    const first = send("một", []);
+    await vi.waitFor(() => expect(adapter.isProcessing("fake-session-1")).toBe(true));
+    // Carries a file, so it waits for a turn of its own.
+    const withFile = send("xem tệp này", [file]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Bare words, stored after it: they join the running turn, and become the newest user message.
+    expect((await send("thêm nữa", [])).body).toMatchObject({ resolution: "steered" });
+    open();
+    expect((await first).status).toBe(200);
+    expect((await withFile).status).toBe(200);
+
+    const prompt = adapter.allPrompts().find((text) => text.includes("xem tệp này")) ?? "";
+    expect(prompt).toContain("Nội dung chỉ tin B mang theo.");
+    expect(prompt).toContain(file);
   });
 
   it("a turn with no attachments gets exactly the prompt it got before", async () => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import {
   type ComposerReference,
+  type MessageRecord,
   type Notice,
   type ReferenceBlock,
   composerReferencesSchema,
@@ -10,7 +11,7 @@ import {
   referenceToken,
 } from "@clarkcant/contracts";
 import type { PiSkill, PiSkillBody } from "@clarkcant/pi-adapter";
-import { type Database, getConversation, getNotification, getProject, messagesSince } from "@clarkcant/storage";
+import { type Database, getConversation, getNotification, getProject, messageById, messagesSince } from "@clarkcant/storage";
 
 import { isWithinRoot } from "./path-roots.ts";
 import { type ProjectFinderDeps, relativePaths, verifyProject } from "./project-finder.ts";
@@ -245,13 +246,26 @@ export function referencesForLastUserMessage(input: { db: Database; conversation
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
     if (record === undefined || record.role !== "user") continue;
-    return record.blocks.flatMap((block) => {
-      if (block.type !== "reference") return [];
-      const parsed = referenceBlockSchema.safeParse(block);
-      return parsed.success ? [parsed.data] : [];
-    });
+    return referencesOf(record);
   }
   return [];
+}
+
+/**
+ * The references one stored user message carries, read by that message's id: what a turn reads when it knows which
+ * message it answers, so a turn that waited never reads a later message's references.
+ */
+export function referencesForMessage(input: { db: Database; conversationId: string; messageId: string }): ReferenceBlock[] {
+  const record = messageById(input.db, input.conversationId, input.messageId);
+  return record === undefined || record.role !== "user" ? [] : referencesOf(record);
+}
+
+function referencesOf(record: MessageRecord): ReferenceBlock[] {
+  return record.blocks.flatMap((block) => {
+    if (block.type !== "reference") return [];
+    const parsed = referenceBlockSchema.safeParse(block);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 /**

@@ -110,6 +110,13 @@ export class FakePiAdapter implements PiAdapter {
 
   #counter = 0;
   #aborted = new Set<string>();
+  /** Sessions answering a prompt right now. */
+  #processing = new Set<string>();
+  /** Sessions whose run has made its last check for steered messages and is only settling now. */
+  #pastLastCheck = new Set<string>();
+  /** Steered messages a run did not take, per session, oldest first. */
+  #queued = new Map<string, string[]>();
+  #holds = new Map<string, { held: Promise<void>; reached: () => void }>();
   readonly #options: { script?: ScriptedTurn[]; now?: () => Instant };
 
   #skills: readonly FakeSkill[];
@@ -274,9 +281,50 @@ export class FakePiAdapter implements PiAdapter {
     };
   }
 
+  /**
+   * As Pi does: a steer that reaches a run still taking messages is answered inside it, and one that arrives after the
+   * run's last check (or when no run is going) is queued until `continueQueued` runs the session on it.
+   */
   async steer(sessionId: string, text: string): Promise<void> {
     this.#require(sessionId);
-    this.#emit(sessionId, { type: "text-delta", sessionId, delta: `[steered: ${text}] ` });
+    if (this.#processing.has(sessionId) && !this.#pastLastCheck.has(sessionId)) {
+      this.#emit(sessionId, { type: "text-delta", sessionId, delta: `[steered: ${text}] ` });
+      return;
+    }
+    this.#queued.set(sessionId, [...(this.#queued.get(sessionId) ?? []), text]);
+  }
+
+  hasQueuedMessages(sessionId: string): boolean {
+    this.#require(sessionId);
+    return (this.#queued.get(sessionId) ?? []).length > 0;
+  }
+
+  async continueQueued(sessionId: string): Promise<void> {
+    this.#require(sessionId);
+    const queued = this.#queued.get(sessionId) ?? [];
+    if (queued.length === 0) return;
+    this.#queued.delete(sessionId);
+    await this.#answer(sessionId, async () => {
+      for (const text of queued) this.#emit(sessionId, { type: "text-delta", sessionId, delta: `[steered: ${text}] ` });
+      await this.run(sessionId, queued.join("\n"));
+    });
+  }
+
+  /**
+   * Test-only: hold the session's next run just after its last check for steered messages, so a test can land a steer
+   * in the window where Pi would queue it rather than answer it. Resolve the returned function to let the run settle.
+   */
+  holdAfterLastCheck(sessionId: string): { reached: Promise<void>; release: () => void } {
+    let release = () => undefined as void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached = () => undefined as void;
+    const reachedPromise = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    this.#holds.set(sessionId, { held, reached });
+    return { reached: reachedPromise, release };
   }
 
   async abort(sessionId: string, reason: string): Promise<void> {
@@ -291,6 +339,8 @@ export class FakePiAdapter implements PiAdapter {
     // Listeners must be released on dispose; keeping them would leak into the next
     // session and produce exactly the duplicate-handler failure T25 describes.
     session.listeners.clear();
+    this.#queued.delete(sessionId);
+    this.#holds.delete(sessionId);
     this.#sessions.delete(sessionId);
   }
 
@@ -299,9 +349,40 @@ export class FakePiAdapter implements PiAdapter {
     return { turns: session.turns, tokens: session.tokens };
   }
 
-  /** Satisfies the seam. Kept as a thin call so there is one implementation, not two. */
+  /**
+   * Satisfies the seam. Kept as a thin call so there is one implementation, not two.
+   *
+   * A session that is still answering refuses another prompt, as Pi's own session does ("Agent is already processing"):
+   * a second message belongs in the running turn through `steer`, and a test must not pass on a path Pi does not allow.
+   */
   async prompt(sessionId: string, text: string): Promise<void> {
-    await this.run(sessionId, text);
+    this.#require(sessionId);
+    await this.#answer(sessionId, () => this.run(sessionId, text).then(() => undefined));
+  }
+
+  async #answer(sessionId: string, body: () => Promise<void>): Promise<void> {
+    if (this.#processing.has(sessionId)) {
+      throw new Error("Agent is already processing. Use steer() to add a message to the running turn.");
+    }
+    this.#processing.add(sessionId);
+    try {
+      await body();
+      const hold = this.#holds.get(sessionId);
+      if (hold !== undefined) {
+        this.#holds.delete(sessionId);
+        this.#pastLastCheck.add(sessionId);
+        hold.reached();
+        await hold.held;
+      }
+    } finally {
+      this.#processing.delete(sessionId);
+      this.#pastLastCheck.delete(sessionId);
+    }
+  }
+
+  /** Test-only driver: whether a session is answering a prompt right now. */
+  isProcessing(sessionId: string): boolean {
+    return this.#processing.has(sessionId);
   }
 
   /** Test-only driver: the prompts a session has been given, oldest first. */

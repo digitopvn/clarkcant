@@ -826,6 +826,33 @@ export class RealPiAdapter implements PiAdapter {
    */
   async prompt(sessionId: string, text: string): Promise<void> {
     const entry = this.#require(sessionId);
+    await this.#bounded(sessionId, () => entry.session.prompt(text));
+  }
+
+  hasQueuedMessages(sessionId: string): boolean {
+    return this.#require(sessionId).session.agent.hasQueuedMessages();
+  }
+
+  /**
+   * Run again on a steer the last run did not take. Pi's agent loop reads its steering queue between model calls; a
+   * steer that lands after its last read stays queued once the run settles.
+   *
+   * Answered through the session rather than the agent underneath it: the queue is taken off and its sentences are sent
+   * as one prompt, so the session's own run applies — retry on a transient provider error, compaction, the streaming
+   * flag and its settle events — which a bare `agent.continue()` skips. The sentences were already expanded when they
+   * were steered, so they are not expanded again. Bounded and checked exactly as a prompt is.
+   */
+  async continueQueued(sessionId: string): Promise<void> {
+    const entry = this.#require(sessionId);
+    if (!entry.session.agent.hasQueuedMessages()) return;
+    const { steering, followUp } = entry.session.clearQueue();
+    const text = [...steering, ...followUp].join("\n\n");
+    if (text === "") return;
+    await this.#bounded(sessionId, () => entry.session.prompt(text, { expandPromptTemplates: false }));
+  }
+
+  async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
+    const entry = this.#require(sessionId);
     const budgetMs = entry.brief.maxWallClockMs;
 
     let timer: NodeJS.Timeout | undefined;
@@ -839,7 +866,7 @@ export class RealPiAdapter implements PiAdapter {
 
     entry.turns += 1;
     try {
-      await entry.session.prompt(text);
+      await start();
       await entry.session.agent.waitForIdle();
     } finally {
       if (timer !== undefined) clearTimeout(timer);

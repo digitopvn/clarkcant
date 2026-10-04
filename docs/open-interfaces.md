@@ -137,8 +137,27 @@ The origin stays with the work it started:
 - When the person approves a card a program's turn raised, the turn that carries on after the approval keeps the
   program's origin. The person approved that one effect, not the rest of the program's plan, so the next risky step
   is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
-- A message whose origin differs from the running turn's is never steered into it. It interrupts and becomes a turn
-  of its own with its own origin. A message sent to the background lane is recorded in the audit log with its origin.
+- On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the
+  running turn (a steer), interrupts it, or runs in the background. A message whose origin differs from the running
+  turn's, a typed message during a spoken turn, or a message that carries attachments, is never steered into it. When
+  a steer was chosen for such a
+  message, it does not interrupt the running turn either: it waits and is answered as a turn of its own, with its own
+  origin, and Stop cancels it while it waits. A running turn is interrupted only when the decider chose that, when the
+  new message carries references, or when a background run has no worker to take it. A message sent to the background lane is recorded in the audit log with its
+  origin.
+- A turn that is only being set up — its session still being created, or a model switch still pending — is not
+  answering yet. A Stop reaches it, but a new message is not decided against it: the message never stops it, and is
+  answered after it the way the next point describes. Two quick messages after a model switch are both answered.
+- Every other way a turn starts (the streaming route, an approval's continuation, an answered question, voice) never
+  sends a running turn a second prompt. Bare text of the same origin, with no attachments, references, guidance or
+  data and not spoken, is steered into the turn while its reply is being written; that reply answers it, and the
+  message response and the stream's `done` event report `resolution: "steered"` with no message ids (`clarkcant ask`
+  says so on stderr). Typed words never join a spoken turn. Anything else waits for the running turn to end and then
+  becomes a turn of its own, reading its own attachments and references. A waiting message holds its HTTP request (or
+  stream) open until its own turn has answered. A Stop, the emergency stop or the node shutting down ends every message
+  still waiting, so none of them starts; its reply card says it was stopped before it started and is still saved.
+- A widget action is refused with `TURN_IN_PROGRESS` while the conversation's turn is running or being set up; press
+  it again when the answer is done. A widget action for the background lane does not wait on the turn.
 
 `machineTurns` is part of the execution policy, and the policy routes (`PUT /preferences/execution.policy`,
 `execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and

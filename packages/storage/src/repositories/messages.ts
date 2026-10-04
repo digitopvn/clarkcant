@@ -39,6 +39,17 @@ export function messagesSince(db: Database, conversationId: string, afterSequenc
   return rows.map((row) => parseJson<MessageRecord>(row.document, "messages.document"));
 }
 
+/** One message of one conversation by its id, or `undefined` when that conversation holds no such message. */
+export function messageById(db: Database, conversationId: string, messageId: string): MessageRecord | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    "SELECT document FROM messages WHERE conversation_id = ? AND message_id = ?",
+    conversationId,
+    messageId,
+  );
+  return row === undefined ? undefined : parseJson<MessageRecord>(row.document, "messages.document");
+}
+
 /**
  * The newest `limit` messages of one conversation, oldest first.
  *

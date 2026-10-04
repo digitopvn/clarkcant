@@ -4,6 +4,7 @@ import {
   ATTACHMENT_LIMITS,
   type AttachmentRef,
   type AttachmentKind,
+  type MessageRecord,
 } from "@clarkcant/contracts";
 import {
   type AttachmentRecord,
@@ -12,6 +13,7 @@ import {
   deleteAttachmentsForConversation,
   getAttachment,
   inTransaction,
+  messageById,
   messagesSince,
 } from "@clarkcant/storage";
 
@@ -151,9 +153,29 @@ export function attachmentRefsForLastUserMessage(input: {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
     if (record === undefined || record.role !== "user") continue;
-    return record.blocks.flatMap((block) => (block.type === "attachment" ? [block.attachment] : []));
+    return attachmentRefsOf(record);
   }
   return [];
+}
+
+/**
+ * The files one stored user message carries, read by that message's id.
+ *
+ * What a turn reads when it knows which message it answers. A turn that waited for another to finish answers its own
+ * message, and by then a later message may already be the newest one in the conversation: reading "the last user
+ * message" would hand it someone else's files.
+ */
+export function attachmentRefsForMessage(input: {
+  db: Database;
+  conversationId: string;
+  messageId: string;
+}): AttachmentRef[] {
+  const record = messageById(input.db, input.conversationId, input.messageId);
+  return record === undefined || record.role !== "user" ? [] : attachmentRefsOf(record);
+}
+
+function attachmentRefsOf(record: MessageRecord): AttachmentRef[] {
+  return record.blocks.flatMap((block) => (block.type === "attachment" ? [block.attachment] : []));
 }
 
 /**

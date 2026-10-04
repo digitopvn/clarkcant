@@ -247,6 +247,19 @@ describe("commands", () => {
     expect(read.out.join("")).toContain("you: hello Clark");
   });
 
+  it("says on stderr when the message joined the reply already being written", async () => {
+    // The node answers a message steered into the running turn with `resolution: "steered"` and no message of its own.
+    const steered: typeof fetch = async (input, init) => {
+      if (!String(input).endsWith("/messages/stream")) return await fetch(input, init);
+      const done = JSON.stringify({ resolution: "steered", taskId: null, messageIds: [], timeline: { messages: [] } });
+      return new Response(`event: done\ndata: ${done}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    const run = io({ fetch: steered });
+    expect(await runCli(["ask", "-c", "conv_running", "and", "the", "tests"], run)).toBe(0);
+    expect(run.out.join("")).toBe("");
+    expect(run.err.join("")).toContain("joined the reply Clark is already writing");
+  });
+
   it("reaches any route through api", async () => {
     const run = io();
     expect(await runCli(["api", "GET", "/node"], run)).toBe(0);

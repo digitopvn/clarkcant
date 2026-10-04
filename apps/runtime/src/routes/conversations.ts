@@ -1186,11 +1186,17 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * interrupt — the recoverable direction rather than the silent one.
      */
     const control = services.turnControl;
+    /*
+     * Decided only against a turn that is answering. A conversation whose turn is still being set up — its session
+     * being created, or a model switch pending — has said nothing yet: this message is answered after it, as a turn of
+     * its own, rather than stopping a first message the person has not seen answered.
+     */
+    const answering = control !== undefined && (control.answering?.() ?? control.running()).includes(conversationId);
     // A message that points at something is its own turn: its references are briefed into the turn it starts, and
     // joining a running answer or a background worker would carry its words without them.
-    if (control !== undefined && control.running().includes(conversationId) && references.blocks.length > 0) {
+    if (control !== undefined && answering && references.blocks.length > 0) {
       control.interrupt(conversationId);
-    } else if (control !== undefined && control.running().includes(conversationId)) {
+    } else if (control !== undefined && answering) {
       const decided = await decideTurnAction(
         {
           jev: services.jev.deps,
@@ -1199,15 +1205,26 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         { text, runningMs: control.runningMs?.(conversationId) ?? 0 },
       );
       const action = decided.status === "decided" ? decided.action : "interrupt";
-      // A steer joins only a turn of the same origin; a program's message beside the person's turn becomes its own.
-      if (action === "steer" && (await control.steer(conversationId, text, composerSurface(request).origin))) {
-        return json(202, {
-          accepted: true,
-          resolution: "steered",
-          ...(decided.status === "decided" ? {} : { reason: decided.reason }),
-        });
-      }
-      if (action === "background") {
+      /*
+       * A steer joins only a turn of the same origin and channel. One the turn will not take — a program's message
+       * beside the person's turn, or a typed one during a spoken turn — waits and is answered as a turn of its own, and
+       * Stop still cancels it while it waits. It does not cut the running turn off: joining was what the decider chose,
+       * and taking the running turn's place was not.
+       *
+       * A message with attachments is not joined at all: a steer carries only its words, so it waits the same way, and
+       * is stored with its files and answered in a turn of its own that reads them.
+       */
+      if (action === "steer") {
+        const ids: unknown = parsed.value.attachmentIds;
+        const attachedFiles = Array.isArray(ids) && ids.length > 0;
+        if (!attachedFiles && (await control.steer(conversationId, text, composerSurface(request).origin))) {
+          return json(202, {
+            accepted: true,
+            resolution: "steered",
+            ...(decided.status === "decided" ? {} : { reason: decided.reason }),
+          });
+        }
+      } else if (action === "background") {
         const started = startBackgroundWork(services, principal, () => at() as never, conversationId, text);
         if ("refusal" in started && started.busy === true) {
           // Every place and the whole queue are taken. Ending the turn that is answering would not free one, so the
@@ -1240,9 +1257,10 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
             ...(started.position === undefined ? {} : { position: started.position }),
           });
         }
+      } else {
+        // An interrupt: this message takes the running turn's place.
+        control.interrupt(conversationId);
       }
-      // An interrupt, or a steer that found nothing left to join: either way this message becomes its own turn.
-      control.interrupt(conversationId);
     }
 
     const at_ = at() as never;

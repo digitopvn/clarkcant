@@ -446,6 +446,31 @@ describe("a catch-all recipe never displaces a configured model", () => {
     if (card?.type !== "system-card") throw new Error("a failed turn must record a host card");
     expect(card.detail).toContain("provider is unreachable");
   });
+
+  it("writes no reply for a message steered into the turn already running", async () => {
+    // The running turn's reply answers it; an empty assistant message would read as Clark having nothing to say.
+    const withModel = {
+      ...build(),
+      respondWithModel: async () => ({
+        text: "",
+        segments: [],
+        provider: "fake",
+        model: "fake-model",
+        elapsedMs: 1,
+        steered: true as const,
+      }),
+    };
+
+    const outcome = await handleUserMessage(withModel, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: askAboutAnything,
+      at: AT,
+    });
+
+    expect(outcome.resolution).toBe("steered");
+    expect(outcome.messages).toEqual([]);
+  });
 });
 
 /**
