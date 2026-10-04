@@ -35,7 +35,7 @@ export function initTheme(root: string): void {
 }
 
 export async function runThemeCli(args: readonly string[], delivery: {
-  pack: (root: string, report: ConformanceReport) => number;
+  pack: (root: string, report: ConformanceReport, conform: (root: string) => ConformanceReport) => number;
   report: (report: ConformanceReport) => string;
 }): Promise<number> {
   const [command, ...rest] = args;
@@ -74,7 +74,7 @@ export async function runThemeCli(args: readonly string[], delivery: {
       return 0;
     }
     const result = runThemeConformance(root);
-    if (command === "pack") return delivery.pack(root, result);
+    if (command === "pack") return delivery.pack(root, result, runThemeConformance);
     process.stdout.write(`${delivery.report(result)}\n`);
     return result.ok ? 0 : 1;
   } catch (error) {

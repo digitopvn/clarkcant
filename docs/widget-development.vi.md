@@ -2777,11 +2777,55 @@ Chạy conformance suite.
 
 ### pack
 
-Validate manifest, build immutable artifact, generate digest + metadata.
+Chạy conformance suite rồi build artifact cùng các digest. Khi package có `package.json`, pack còn build archive npm
+bằng `pnpm pack` vào `dist/<name>-<version>.tgz`, giải nén bằng chính bộ đọc của runtime, và từ chối nếu archive đã
+giải nén không tự pass conformance suite, không giữ cùng `clarkcant.json`, hoặc chứa file có dạng credential
+(`.npmrc`, `.env*`, `.dev.vars`, `.git-credentials`, `.pypirc`, private key, `node_modules`, `.git`). Vì vậy một danh sách `files` bỏ sót asset
+runtime bị pack chặn lại, chứ không phải trên máy người khác. Không có `package.json` thì package vẫn là package
+local/git và pack không ghi archive.
+
+`dist/artifact.json` (`schemaVersion: 2`) ghi ba digest, mỗi cái trả lời một câu hỏi khác nhau:
+
+| Field | Bao phủ | Ai kiểm tra |
+| --- | --- | --- |
+| `npm.integrity` | sha512 SRI của byte `.tgz` | npm registry và bước fetch của node |
+| `npm.contentDigest` | digest runtime của các file trong archive đã giải nén | node, sau khi giải nén đúng version npm; đây là `digest` của directory entry npm |
+| `authorDigest` | danh tính, version, definition, theme document và hash file của source | pack, để một version đã pack mà đổi byte bị từ chối; đây là `digest` của entry local |
+
+`pnpm pack` có tính tái lập: pack lại các file không đổi cho ra archive giống hệt từng byte. Pack lại một version
+mà author digest hoặc content digest của archive đã đổi sẽ bị từ chối; hãy tăng version.
+
+Quy tắc cho `package.json`, kiểm tra trước khi pack và nêu tên từng lỗi khi vi phạm:
+
+- `name` là tên package npm hợp lệ, và `version` bằng `version` trong `clarkcant.json`;
+- `license`, khi manifest có `publisher`, bằng `publisher.license`;
+- `keywords` gồm `clarkcant` và một keyword cho mỗi loại facet (`clarkcant-widget`, `clarkcant-service`,
+  `clarkcant-skill`, `clarkcant-prompt`, `clarkcant-theme`, `clarkcant-setup`, `clarkcant-driver`,
+  `clarkcant-voice`), là cách Marketplace tìm ra package;
+- một danh sách `files` tường minh, không rỗng;
+- không có `dependencies`, `optionalDependencies` hay `bundle(d)Dependencies`: package mang theo đúng thứ nó chạy;
+- không có script `preinstall`, `install` hay `postinstall`, và không có script `prepack`, `prepare` hay `postpack`:
+  pack không chạy code của package, và một archive do script sinh ra thì không ai dựng lại được từ source. Hãy đưa
+  sẵn các file được sinh ra vào package.
+
+`clark widget init` ghi một `package.json` đáp ứng các quy tắc này cho mọi template, đặt tên theo đoạn cuối của
+package id. Tên đó có thể đã có người dùng trên npm: hãy đổi tên, hoặc dùng scope của bạn (`@you/quick-notes`),
+trước khi publish. Pack cần `pnpm` (`corepack enable pnpm`). Thêm `package.json` vào một package đã pack sẽ đổi
+author digest của nó, vì file này trở thành một phần của package; hãy tăng version khi thêm.
 
 ### publish
 
-Publish package source/artifact rồi submit directory metadata. Directory không phải nơi duy nhất package có thể chạy: local/git source vẫn là first-class development path.
+Chuẩn bị directory entry; lệnh này không bao giờ upload gì. `dist/directory-entry.json` trỏ tới đúng version npm
+(`source: { kind: "npm", name, version }`) và `contentDigest` của archive khi pack đã build archive, hoặc tới thư mục
+của chính package cùng `authorDigest` trong trường hợp còn lại. `--source npm|local` chọn tường minh. Output nêu
+riêng ba kết quả — prepared: yes; published to npm: no; Marketplace submission: no — và in lệnh publish đúng archive
+đã được kiểm tra:
+
+    npm publish dist/<name>-<version>.tgz
+
+Hãy publish file đó thay vì chạy `npm publish` trong thư mục package, để registry phục vụ đúng các byte có integrity
+và content digest mà entry đã nêu. Sau đó Marketplace index các package npm mang keyword `clarkcant`, hoặc nhận một
+bản submit. Source local/git vẫn là development path first-class.
 
 Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
 từ chối version vi phạm quy tắc ở §20. File này là mốc so sánh nên cần được commit cùng source; nếu đã có
@@ -2907,11 +2951,13 @@ Developer:
       ↓
     clark widget pack
       ↓
-    artifact + digest
+    npm archive + integrity + content digest
       ↓
-    publish npm/git/release
+    clark widget publish        (chuẩn bị entry; không upload gì)
       ↓
-    clark widget publish
+    npm publish dist/<name>-<version>.tgz
+      ↓
+    Marketplace index keyword "clarkcant", hoặc nhận submit
       ↓
     directory validation
       ↓
@@ -3002,8 +3048,10 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   pin, state migration, text fallback, effect action. Các check cần frame đã render (keyboard, touch size,
   narrow/compact/expanded, reduced motion, voice/click parity) được báo `requires-dev-host` — **không** được
   báo pass chỉ vì có fixture.
-- `clark widget pack` — validate manifest, tính digest trên danh tính + nội dung, và từ chối pack lại một
-  version đã pack với digest khác (một version đổi byte là một package khác mang cùng số).
+- `clark widget pack` — validate manifest, tính author digest trên danh tính + nội dung, build archive npm khi
+  package có `package.json` (§16), ghi integrity và content digest runtime của nó, và từ chối pack lại một version
+  đã pack với digest khác (một version đổi byte là một package khác mang cùng số). Node fetch đúng version npm đó
+  tính ra cùng content digest.
 - `clark widget dev` — dev host ở §16: hot reload qua SSE, fixtures, viewport switcher (320px là lựa chọn
   thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
@@ -3019,6 +3067,8 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   với đủ field mà §18 yêu cầu và digest của artifact đã pack (đọc từ `dist/artifact.json`, không tính lại —
   hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
   người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.
+  Khi có archive npm, entry nêu đúng version npm và content digest của archive, và output in lệnh `npm publish`
+  cho archive đó; việc publish lên npm là bước của tác giả.
   Đường local/git/npm vẫn là first-class nên không cần account để chạy widget của mình.
 - **Directory search** — đã có ở mức đọc một index: `CC_DIRECTORY_INDEX` trỏ tới một file JSON các entry theo
   §18, và `search_directory` trả về card `marketplace-results` hiển thị **source, version, digest và risk lane**,

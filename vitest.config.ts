@@ -46,6 +46,12 @@ export default defineConfig({
       // exist.
       { find: /^@clarkcant\/widget-catalog$/, replacement: `${root}packages/widget-catalog/src/index.ts` },
       { find: /^@clarkcant\/widget-catalog\/preview$/, replacement: `${root}packages/widget-catalog/src/preview.ts` },
+      // Exact, as above: core's `./test-support/fake-npm-registry` subpath lets the CLI and runtime suites serve a
+      // packed archive the way npm does, without a prefix alias rewriting it under core's barrel.
+      {
+        find: /^@clarkcant\/core\/test-support\/fake-npm-registry$/,
+        replacement: `${root}packages/core/src/test-support/fake-npm-registry.ts`,
+      },
       ...Object.entries(aliases).map(([name, rel]) => ({ find: name, replacement: `${root}${rel}` })),
     ],
   },
