@@ -139,17 +139,24 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 - Khi người dùng duyệt một thẻ do lượt của một chương trình tạo ra, lượt tiếp tục sau khi duyệt vẫn giữ nguồn gốc của
   chương trình đó. Người dùng chỉ duyệt đúng một tác động, không duyệt phần còn lại trong kế hoạch của chương trình, nên
   với `"ask"` bước rủi ro tiếp theo vẫn được hỏi lại. Dòng audit và hoạt động của tác động đã duyệt cũng giữ nguồn gốc.
-- Trên route `/messages` thường, một tin nhắn tới khi có lượt đang chạy được quyết định ngay tại đó: nhập (steer) vào
+- Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào
   lượt đang chạy, ngắt lượt đó, hoặc chạy nền. Một tin nhắn có nguồn gốc khác với lượt đang chạy không bao giờ được
   nhập (steer) vào lượt đó; nó ngắt lượt đang chạy và trở thành một lượt riêng với nguồn gốc của chính nó. Tin nhắn được
   chuyển sang làn chạy nền được ghi vào nhật ký audit cùng nguồn gốc.
-- Mọi cách khác để bắt đầu một lượt (route streaming, phần tiếp tục sau khi duyệt, một câu hỏi đã được trả lời, thao tác
-  widget, giọng nói) không bao giờ gửi prompt thứ hai cho một lượt đang chạy. Văn bản thuần cùng nguồn gốc, không có tệp
-  đính kèm, tham chiếu, chỉ dẫn hay dữ liệu và không phải lời nói, được nhập (steer) vào lượt đó trong lúc câu trả lời
-  đang được viết; câu trả lời đó trả lời luôn tin nhắn này, và phản hồi của tin nhắn cùng event `done` của stream báo
-  `resolution: "steered"` và không có message id nào (`clarkcant ask` báo điều này trên stderr). Mọi tin nhắn khác chờ
-  lượt đang chạy kết thúc rồi trở thành một lượt riêng. Stop hoặc dừng khẩn cấp cũng kết thúc mọi tin nhắn còn đang chờ,
-  nên không tin nhắn nào trong số đó được bắt đầu.
+- Một lượt chỉ đang được chuẩn bị — phiên của nó còn đang được tạo, hoặc việc đổi model còn chưa xong — thì chưa trả
+  lời. Stop vẫn chạm tới nó, nhưng tin nhắn mới không được quyết định dựa trên nó: tin nhắn đó không bao giờ dừng nó, và
+  được trả lời sau nó như mục tiếp theo mô tả. Hai tin nhắn gửi liên tiếp ngay sau khi đổi model đều được trả lời.
+- Mọi cách khác để bắt đầu một lượt (route streaming, phần tiếp tục sau khi duyệt, một câu hỏi đã được trả lời, giọng
+  nói) không bao giờ gửi prompt thứ hai cho một lượt đang chạy. Văn bản thuần cùng nguồn gốc, không có tệp đính kèm, tham
+  chiếu, chỉ dẫn hay dữ liệu và không phải lời nói, được nhập (steer) vào lượt đó trong lúc câu trả lời đang được viết;
+  câu trả lời đó trả lời luôn tin nhắn này, và phản hồi của tin nhắn cùng event `done` của stream báo
+  `resolution: "steered"` và không có message id nào (`clarkcant ask` báo điều này trên stderr). Chữ gõ không bao giờ
+  nhập vào một lượt nói. Mọi tin nhắn khác chờ lượt đang chạy kết thúc rồi trở thành một lượt riêng, đọc tệp đính kèm và
+  tham chiếu của chính nó. Một tin nhắn đang chờ giữ request HTTP (hoặc stream) của nó mở cho tới khi lượt của chính nó
+  trả lời xong. Stop, dừng khẩn cấp hoặc node tắt đều kết thúc mọi tin nhắn còn đang chờ, nên không tin nhắn nào trong số
+  đó được bắt đầu; thẻ trả lời của nó nói rằng nó đã được dừng trước khi bắt đầu và vẫn được lưu.
+- Thao tác widget bị từ chối với `TURN_IN_PROGRESS` khi lượt của cuộc trò chuyện đang chạy hoặc đang được chuẩn bị; hãy
+  bấm lại khi câu trả lời đã xong. Thao tác widget cho làn chạy nền không chờ lượt.
 
 `machineTurns` là một phần của chính sách thực thi, và các route chính sách (`PUT /preferences/execution.policy`,
 `execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
