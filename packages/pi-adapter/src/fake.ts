@@ -110,6 +110,8 @@ export class FakePiAdapter implements PiAdapter {
 
   #counter = 0;
   #aborted = new Set<string>();
+  /** Sessions answering a prompt right now. */
+  #processing = new Set<string>();
   readonly #options: { script?: ScriptedTurn[]; now?: () => Instant };
 
   #skills: readonly FakeSkill[];
@@ -299,9 +301,28 @@ export class FakePiAdapter implements PiAdapter {
     return { turns: session.turns, tokens: session.tokens };
   }
 
-  /** Satisfies the seam. Kept as a thin call so there is one implementation, not two. */
+  /**
+   * Satisfies the seam. Kept as a thin call so there is one implementation, not two.
+   *
+   * A session that is still answering refuses another prompt, as Pi's own session does ("Agent is already processing"):
+   * a second message belongs in the running turn through `steer`, and a test must not pass on a path Pi does not allow.
+   */
   async prompt(sessionId: string, text: string): Promise<void> {
-    await this.run(sessionId, text);
+    this.#require(sessionId);
+    if (this.#processing.has(sessionId)) {
+      throw new Error("Agent is already processing. Use steer() to add a message to the running turn.");
+    }
+    this.#processing.add(sessionId);
+    try {
+      await this.run(sessionId, text);
+    } finally {
+      this.#processing.delete(sessionId);
+    }
+  }
+
+  /** Test-only driver: whether a session is answering a prompt right now. */
+  isProcessing(sessionId: string): boolean {
+    return this.#processing.has(sessionId);
   }
 
   /** Test-only driver: the prompts a session has been given, oldest first. */
