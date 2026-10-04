@@ -3,6 +3,7 @@ import { memo, type ReactElement } from "react";
 import type { GatewayClient, Timeline } from "./api.ts";
 import { TranscriptRow } from "./transcript-row.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
+import { echoesCommandReceipt } from "./command-receipts.ts";
 import { useT } from "./i18n/locale-context.tsx";
 
 export interface TimelineMessageRowProps {
@@ -42,7 +43,11 @@ function TimelineMessageRowComponent({
   const t = useT();
   return (
     <TranscriptRow role={message.role} index={index} settled={settled}>
-      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client, t))}
+      {message.blocks.map((block, blockIndex) =>
+        echoesCommandReceipt(message.blocks, blockIndex)
+          ? null
+          : renderBlock(block, blockIndex, renderSurface, blockActions, client, t),
+      )}
     </TranscriptRow>
   );
 }
