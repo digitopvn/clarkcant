@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 
 import { decideExecution, guardrailCovers, recordEffectExecution } from "@clarkcant/core";
-import { SECRET_SHAPES, nowInstant } from "@clarkcant/contracts";
+import { SECRET_SHAPES, type TurnOrigin, nowInstant } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import { decideGuardrailForCommand, type CommandToolDeps } from "./node-tools.ts";
@@ -101,11 +101,12 @@ async function gateCommand(
   if (preflight.envelope.kind !== "command") return { kind: "refuse", text: "Chỉ gõ được lệnh shell vào terminal." };
   const policy = deps.autonomy();
   const envelope = preflight.envelope;
+  const origin = deps.origin?.();
   const decision = decideExecution({
     policy,
     action: { kind: "effect", category: envelope.effectCategory, operationDigest: commandDigest(envelope.command, envelope.cwd) },
     // As in `run_command`: the turn exists because the user acted. It lifts nothing a rule or a hard boundary denies.
-    intent: { kind: "interactive" },
+    intent: origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin },
   });
   if (decision.kind === "deny") {
     return {
@@ -117,7 +118,7 @@ async function gateCommand(
   if (guardrailCovers(policy, envelope)) {
     const judgment = await decideGuardrailForCommand(deps, { policy, envelope, why: input.why });
     if (judgment.kind === "refuse") {
-      deps.audit?.({ summary: judgment.text, outcome: "refused" });
+      deps.audit?.({ summary: judgment.text, outcome: "refused", ...(origin === undefined ? {} : { origin }) });
       return { kind: "refuse", text: judgment.text };
     }
     if (judgment.kind === "ask") return { kind: "refuse", text: `${judgment.question} Hỏi người dùng rồi đề xuất lại. Chưa có gì được gõ.` };
@@ -138,9 +139,16 @@ async function gateCommand(
         operationDigest: commandDigest(guarded.command, guarded.cwd),
         ...(effectAudit.conversationId === undefined ? {} : { conversationId: effectAudit.conversationId }),
         description: `terminal: ${guarded.command} — ${guarded.cwd}`,
+        ...(origin === undefined ? {} : { origin }),
       });
     },
   };
+}
+
+/** The turn's origin for a trail entry, read when the entry is written. */
+function originOf(deps: CommandToolDeps): { origin?: TurnOrigin } {
+  const origin = deps.origin?.();
+  return origin === undefined ? {} : { origin };
 }
 
 function auditOutcome(record: TerminalCommandRecord): "done" | "failed" {
@@ -254,7 +262,7 @@ export function createTerminalTools(
       if (result.status === "finished" || result.status === "running") gate.record();
       const card = terminalCard(input.newCardId, info, { ran: gate.envelope.command });
       if (result.status === "finished") {
-        input.audit?.({ summary: `terminal: ${gate.envelope.command}`, outcome: auditOutcome(result.record), ref: info.terminalId });
+        input.audit?.({ summary: `terminal: ${gate.envelope.command}`, outcome: auditOutcome(result.record), ref: info.terminalId, ...originOf(input) });
         return { text: `Đã mở terminal ${info.terminalId} trong ${info.cwd} và chạy lệnh.\n\n${describeRecord(result.record)}`, hostBlocks: [card] };
       }
       if (result.status === "running") {
@@ -325,7 +333,7 @@ export function createTerminalTools(
       const result = await input.terminals.run(terminalId, gate.envelope.command, { waitMs: waitSeconds * 1000 });
       if (result.status === "finished" || result.status === "running") gate.record();
       if (result.status === "finished") {
-        input.audit?.({ summary: `terminal: ${gate.envelope.command}`, outcome: auditOutcome(result.record), ref: terminalId });
+        input.audit?.({ summary: `terminal: ${gate.envelope.command}`, outcome: auditOutcome(result.record), ref: terminalId, ...originOf(input) });
         return { text: describeRecord(result.record) };
       }
       if (result.status === "running") {

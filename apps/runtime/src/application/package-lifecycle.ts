@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { nowInstant, type DirectoryEntry, type PackageGeneration } from "@clarkcant/contracts";
+import { nowInstant, type DirectoryEntry, type PackageGeneration, type TurnOrigin } from "@clarkcant/contracts";
 import {
   decideExecution,
   declaredWidgetIds,
@@ -120,7 +120,14 @@ function isNative(deps: PackageInstallDeps, packageId: string): boolean {
 
 export function changePackage(
   deps: PackageInstallDeps,
-  input: { action: PackageChange; packageId: string; source: PackageChangeSource; conversationId?: string },
+  input: {
+    action: PackageChange;
+    packageId: string;
+    source: PackageChangeSource;
+    conversationId?: string;
+    /** Who asked for the turn, when Clark asked for this change (`TurnOrigin`). A click is the person. */
+    origin?: TurnOrigin;
+  },
 ): PackageChangeOutcome {
   const principalId = deps.runtime.identity.ownerPrincipalId;
   const operationDigest = `package.${input.action}:${input.packageId}`;
@@ -130,7 +137,7 @@ export function changePackage(
     policy,
     action: { kind: "effect", category: "local-write", operationDigest },
     // The person named this package and this action; the policy still decides whether that is enough.
-    intent: { kind: "interactive" },
+    intent: input.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: input.origin },
   });
   if (decided.kind === "deny") {
     return { kind: "refused", status: 403, code: "POLICY_REFUSED", message: decided.reason };
@@ -187,6 +194,7 @@ export function changePackage(
       operationDigest,
       description: `${input.action} ${input.packageId}${outcome.activeVersion === undefined ? "" : ` → ${outcome.activeVersion}`} (${input.source})`,
       ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
     },
   );
   return {

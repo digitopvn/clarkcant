@@ -56,8 +56,9 @@ describe("what is written down", () => {
     // into the colour-scheme preference; 37 records the files a task handed to a paired node brought back; 38 holds the files a widget holds by reference;
     // 39 lets a person delete a conversation; 40 keeps package jobs; 41 keeps the accounts package services connect to;
     // 42 lets a finished install plan whose generation no longer runs leave the live set.
+    // 43 records which surface asked for each audited action.
     // The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(42);
+    expect(currentSchemaVersion(db)).toBe(43);
   });
 
   it("reads back newest first, with the fields it was given", () => {
@@ -67,6 +68,16 @@ describe("what is written down", () => {
     const events = listAuditEvents(db, "owner_1");
     expect(events.map((event) => event.auditId)).toEqual(["audit_new", "audit_old"]);
     expect(events[0]).toMatchObject({ outcome: "failed", ref: "run_9", kind: "command" });
+  });
+
+  it("keeps who asked for the turn, and leaves out a value that is not an origin", () => {
+    append({ auditId: "audit_mcp", at: "2026-09-19T10:00:00.000Z" as Instant, origin: "mcp" });
+    append({ auditId: "audit_none", at: "2026-09-19T10:01:00.000Z" as Instant });
+    db.prepare("UPDATE audit_log SET origin = 'admin' WHERE audit_id = 'audit_none'").run();
+
+    const [none, mcp] = listAuditEvents(db, "owner_1");
+    expect(mcp?.origin).toBe("mcp");
+    expect(none).not.toHaveProperty("origin");
   });
 
   it("survives the process that wrote it", () => {

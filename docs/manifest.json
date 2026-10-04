@@ -100,13 +100,13 @@
     },
     {
       "path": "platform-smoke.md",
-      "bytes": 7978,
-      "sha256": "5e00b6a2139ccc7d5e832f24ea5ba9c04663f9488f8edd9764b1df5b11e66ada"
+      "bytes": 8524,
+      "sha256": "95119bdbd174e334017916ded88319c88e1385de5f68910379b793398e06a2d1"
     },
     {
       "path": "platform-smoke.vi.md",
-      "bytes": 9354,
-      "sha256": "4b74c4a55ea21be98b7d5680f22d91cddae9902b38258e53adb7f0ca93c85b1a"
+      "bytes": 9993,
+      "sha256": "c54ab50fd4c1b225fd3bbe8047a20b4b5f7d7218a25f324cbce49948d562c973"
     },
     {
       "path": "research-and-decisions.md",
@@ -140,13 +140,13 @@
     },
     {
       "path": "widget-development.md",
-      "bytes": 269123,
-      "sha256": "30ddfb1dcb83cab435801f0a8119fee45d2f455780c257cbe74fe23860cbce85"
+      "bytes": 270003,
+      "sha256": "59a77ccb25cee0c6ef0778ee4f3907c4de4cd4db92205ba116443d01d6be2359"
     },
     {
       "path": "widget-development.vi.md",
-      "bytes": 324493,
-      "sha256": "f84b291aeaa282d8caabe20b8312b7758a8bb2d3dd7a9470af844465d8a4c43b"
+      "bytes": 325575,
+      "sha256": "ab7b0c3239434609a8db13cf4af72a0eb2e318685e0645c71f983e28152ba663"
     },
     {
       "path": "widgets-and-extensions.md",

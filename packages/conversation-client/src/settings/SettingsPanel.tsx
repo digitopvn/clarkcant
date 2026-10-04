@@ -86,6 +86,7 @@ interface RecentEffect {
   action?: RecentEffectAction;
   operationDigest: string;
   because: string;
+  origin?: string;
 }
 
 export interface SettingsPanelProps {

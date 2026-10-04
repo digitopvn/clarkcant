@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
+import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type TurnOrigin, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
   type ModelTurnInput,
@@ -135,7 +135,7 @@ function placeSheet(action: "format" | "note" = "format"): { instanceId: string;
 async function perform(
   placed: { instanceId: string; bindingId: string },
   input: Record<string, unknown>,
-  options: { source?: "click" | "voice" | "agent"; perform?: WidgetPerformer; invocationId?: string } = {},
+  options: { source?: "click" | "voice" | "agent"; perform?: WidgetPerformer; invocationId?: string; origin?: TurnOrigin } = {},
 ) {
   const instance = getInstance(services.conductor, placed.instanceId);
   const binding = getActionBinding(services.conductor, placed.bindingId);
@@ -152,6 +152,7 @@ async function perform(
       invocationId: options.invocationId ?? `inv_${String(++counter)}`,
     },
     options.source ?? "agent",
+    options.origin,
     options.perform === undefined ? {} : { perform: options.perform },
   );
 }
@@ -525,6 +526,49 @@ describe("Clark performing an offered action", () => {
     expect(await decide(card, performer)).toMatchObject({ ok: false, code: "APPROVAL_FORGED" });
     expect(asked).toHaveLength(0);
     expect(receipts()).toEqual([expect.objectContaining({ status: "failed", label: expect.stringContaining("APPROVAL_FORGED") })]);
+  });
+
+  it("decides an MCP turn's perform as the person's under machineTurns ask, because a widget's local write is not a risky effect, and records who asked", async () => {
+    const placed = placeSheet();
+    const { asked, performer } = page({ status: "done", output: "xong" });
+    setPolicy({ machineTurns: "ask" });
+    expect(await perform(placed, { format: "percent" }, { perform: performer, origin: "mcp" })).toMatchObject({ ok: true, status: 200 });
+    expect(asked).toHaveLength(1);
+    expect(rows<{ origin: string | null }>("SELECT origin FROM audit_log WHERE kind = 'interaction'")).toEqual([{ origin: "mcp" }]);
+  });
+
+  it("asks about an MCP turn's perform when the policy asks, and keeps who asked on the card, the approval and the perform's records", async () => {
+    const placed = placeSheet();
+    const { asked, performer } = page({ status: "done" });
+    setPolicy({ machineTurns: "ask", rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const waiting = await perform(placed, { format: "percent" }, { perform: performer, origin: "mcp" });
+    expect(waiting).toMatchObject({ ok: true, status: 202, body: { outcome: "approval-required", card: { origin: "mcp" } } });
+    if (!waiting.ok) throw new Error("unreachable");
+    expect(asked).toHaveLength(0);
+    const card = waiting.body.card as { approvalId: string; operationDigest: string };
+    showCard(card as never);
+    expect(await decide(card, performer)).toMatchObject({ ok: true });
+    expect(asked).toHaveLength(1);
+    expect(rows<{ kind: string; origin: string | null }>("SELECT kind, origin FROM audit_log WHERE kind IN ('approval', 'interaction') AND ref IS NOT NULL ORDER BY rowid")).toEqual(
+      expect.arrayContaining([
+        { kind: "interaction", origin: "mcp" },
+        { kind: "approval", origin: "mcp" },
+      ]),
+    );
+  });
+
+  it("hands the turn's origin from the perform_widget_action tool to the policy and the card", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const tool = createPerformWidgetActionTool({
+      services: () => services,
+      conversationId,
+      onEvent: () => () => undefined,
+      channel: () => "chat",
+      origin: () => "relay",
+    });
+    const waiting = (await tool.execute({ action: "perform", actionBindingId: placed.bindingId, input: { format: "percent" } })) as { hostCard?: Record<string, unknown> };
+    expect(waiting.hostCard).toMatchObject({ type: "approval-card", origin: "relay" });
   });
 
   it("refuses a click naming the action, because it is Clark's to ask for and the page reaches the widget itself", async () => {

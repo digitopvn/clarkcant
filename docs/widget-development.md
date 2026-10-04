@@ -2011,6 +2011,10 @@ path as a press:
 - the effect ledger;
 - the audit line "Clark asked widget … to perform …".
 
+The policy is told who asked for the turn (`TurnOrigin`). A perform is a `local-write`, which is not a risky effect, so
+`machineTurns: "ask"` alone does not ask about it; a rule or mode that asks does. Who asked is written on the approval
+card and on the audit lines, also after the person approves.
+
 The result is marked as Clark's (`performedBy: "clark"`). What the widget said is given to the model as data, never as
 instructions. A person's click on a perform binding is refused (`NOT_AUTHORIZED`): the frame's own buttons do the work
 directly. Perform bindings are not listed among the widget's presses, so neither the frame nor a spoken command can
@@ -2201,7 +2205,12 @@ profiles existed, value for value, so an existing package runs exactly as it did
 | `background-compute` | 2 GiB / 2 / 256 / 256 MiB | 60 s | 4 h | 2 | unmounted |
 
 Every profile has no network of its own (`--network none`; a service reaches a provider only through the node, §14.2)
-and a `noexec` `/tmp`. Services and jobs keep running whether or not a
+and a `noexec` `/tmp` as its only scratch space: the rest of the root, `/run`, `/var/tmp` and `/dev` included, is
+read-only under both Docker and Podman. There is no writable `/dev/shm`: Docker mounts none, and Podman's is read-only,
+so a dependency that needs POSIX shared memory (`shm_open`, some native addons, headless Chromium) does not work in a
+service. Neither engine keeps a copy of what a service writes to its standard output (`--log-driver none`). CI checks
+this on Linux; Docker Desktop and Podman machine on macOS and Windows are checked by hand
+([platform-smoke.md](platform-smoke.md)). Services and jobs keep running whether or not a
 frame is mounted. The largest result file stays the attachment maximum, because a file a service returns must stay
 attachable to a conversation. The three larger profiles are engineering defaults a reviewer can change in that file.
 The bounds reach the container's `--memory`, `--cpus`, `--pids-limit` and `/tmp` size, the call and job deadlines, and

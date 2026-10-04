@@ -1,4 +1,4 @@
-import { MAP_TILE_SECRET_NAME } from "@clarkcant/contracts";
+import { MAP_TILE_SECRET_NAME, type TurnOrigin } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import {
@@ -25,6 +25,8 @@ export interface MapTilesToolDeps {
   conversationId?: string;
   /** Which surface the message came in on, read at call time: the tool list outlives any one message. */
   channel: () => "voice" | "chat";
+  /** Who asked for the turn, read at call time like `channel`, and handed to the execution policy. Absent is the person. */
+  origin?: () => TurnOrigin | undefined;
 }
 
 const ACTIONS = ["status", "set", "clear"] as const;
@@ -116,9 +118,11 @@ export function createMapTilesTool(input: MapTilesToolDeps): ToolDefinition {
               ? {}
               : { credential: { secret: MAP_TILE_SECRET_NAME, ...(header === undefined ? {} : { header }), ...(query === undefined ? {} : { query }) } }),
           };
+      const origin = input.origin?.();
       const outcome = requestMapTilePolicy(deps, {
         value,
         source,
+        ...(origin === undefined ? {} : { origin }),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
       });
       return {

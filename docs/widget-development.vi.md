@@ -2008,6 +2008,10 @@ với một lần bấm:
 - sổ hiệu ứng (effect ledger);
 - dòng audit "Clark asked widget … to perform …".
 
+Chính sách thực thi được biết ai đã yêu cầu lượt đó (`TurnOrigin`). Một perform là `local-write`, không phải hiệu ứng
+rủi ro, nên riêng `machineTurns: "ask"` không hỏi về nó; một quy tắc hoặc chế độ có hỏi thì sẽ hỏi. Ai đã yêu cầu được
+ghi trên thẻ phê duyệt và trên các dòng audit, kể cả sau khi người dùng duyệt.
+
 Kết quả được đánh dấu là của Clark (`performedBy: "clark"`). Điều widget nói được đưa cho model như dữ liệu, không bao
 giờ như chỉ dẫn. Một cú bấm của người dùng vào binding perform bị từ chối (`NOT_AUTHORIZED`): các nút của chính frame
 làm việc đó trực tiếp. Binding perform không nằm trong danh sách nút bấm của widget, nên cả frame lẫn một câu lệnh
@@ -2197,7 +2201,12 @@ profile, nên package hiện có chạy y như trước.
 | `background-compute` | 2 GiB / 2 / 256 / 256 MiB | 60 giây | 4 giờ | 2 | gỡ khỏi trang |
 
 Mọi profile đều không có mạng riêng (`--network none`; service chỉ gọi tới nhà cung cấp qua node, §14.2) và `/tmp` là
-`noexec`. Service và job vẫn chạy dù frame có đang được
+`noexec` và là vùng nháp duy nhất: phần còn lại của root, kể cả `/run`, `/var/tmp` và `/dev`, là chỉ-đọc trên cả Docker
+lẫn Podman. Không có `/dev/shm` ghi được: Docker không mount nó, còn của Podman là chỉ-đọc, nên một dependency cần bộ
+nhớ chia sẻ POSIX (`shm_open`, một số native addon, Chromium headless) không chạy được trong service. Không engine nào
+giữ bản sao những gì service ghi ra standard output (`--log-driver none`). CI kiểm tra điều này trên Linux; Docker
+Desktop và Podman machine trên macOS và Windows được kiểm tra thủ công ([platform-smoke.vi.md](platform-smoke.vi.md)). Service và job
+vẫn chạy dù frame có đang được
 mount hay không. Tệp kết quả lớn nhất vẫn là mức tối đa của tệp đính kèm, vì tệp mà service trả về phải đính kèm được vào
 cuộc trò chuyện. Ba profile lớn hơn là mặc định kỹ thuật mà người review có thể đổi trong file đó. Các giới hạn được áp vào
 `--memory`, `--cpus`, `--pids-limit` và dung lượng `/tmp` của container, hạn chót của mỗi lần gọi và mỗi job, và số job

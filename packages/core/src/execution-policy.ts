@@ -24,7 +24,9 @@
  * 4. Otherwise the mode decides, with the effect category, the rules the user wrote, and whether the user
  *    asked for this particular act in this turn.
  *
- * Declared once and in full: `prohibition > hard boundary > rules > mode`. The judgment layer stands beside
+ * Declared once and in full: `prohibition > hard boundary > rules > mode`. Between a deny rule and the mode sit the two
+ * checks about who asked: a peer's handed-over work outside what its owner allowed, and — only when the person opted in
+ * with `machineTurns: "ask"` — a risky effect a program on a machine surface asked for. The judgment layer stands beside
  * this decision rather than inside it — `guardrailCovers` answers whether it is consulted for an effect the
  * decision allowed, and it may only narrow what was allowed.
  */
@@ -37,7 +39,9 @@ import {
   type Instant,
   type IntentOrigin,
   type RegisteredPreference,
+  type TurnOrigin,
   executionModeSchema,
+  isMachineSurfaceOrigin,
   executionProhibitionSchema,
   executionRulesPreferenceSchema,
   guardClassFor,
@@ -48,7 +52,7 @@ import { appendEvent, type Database } from "@clarkcant/storage";
 import type { BrowserPress } from "./browser-press.ts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, migrateExecutionPolicy } from "./execution-policy-migration.ts";
 import { readRegisteredPreference } from "./preference-registry.ts";
-import { deletePreference, type PreferenceDeps } from "./preferences.ts";
+import { deletePreference, getPreference, type PreferenceDeps } from "./preferences.ts";
 
 /** A consent boundary this application does not own and therefore cannot lift. */
 export type HardBoundaryKind = "os-permission" | "oauth" | "browser-permission" | "vendor-consent";
@@ -80,9 +84,13 @@ export interface EffectAction {
  * - `persistent`: an automation a person set up earlier. It is their intent, but only for the effects they gave
  *   it; anything outside `allowedCategories` is treated as the agent's own initiative.
  * - `system`: the node's own work, which nobody asked for.
+ *
+ * An interactive intent carries who asked for the turn (`TurnOrigin`), as the node recorded it when it accepted the
+ * message. By default it changes nothing: a program on a machine surface is decided exactly like the person. It matters
+ * only when the person opted into `machineTurns: "ask"`. Absent is the person.
  */
 export type ExecutionIntent =
-  | { kind: "interactive" }
+  | { kind: "interactive"; origin?: TurnOrigin }
   | { kind: "delegated"; allowedCategories: readonly EffectCategory[] }
   | { kind: "persistent"; allowedCategories: readonly EffectCategory[] }
   | { kind: "system" };
@@ -113,7 +121,7 @@ export function executionIntentOf(origin: IntentOrigin | undefined): ExecutionIn
   if (origin === undefined) return { kind: "interactive" };
   switch (origin.kind) {
     case "interactive":
-      return { kind: "interactive" };
+      return origin.turnOrigin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: origin.turnOrigin };
     case "delegated":
       return { kind: "delegated", allowedCategories: origin.allowedCategories };
     case "persistent":
@@ -122,6 +130,23 @@ export function executionIntentOf(origin: IntentOrigin | undefined): ExecutionIn
       return { kind: "system" };
     default:
       return { kind: "system" };
+  }
+}
+
+/**
+ * Who asked, as a task's stored origin says: the turn's origin for a task a turn started, an automation, or a peer. The
+ * node's own work, and an interactive task recorded before origins were, name nobody.
+ */
+export function turnOriginOfIntent(origin: IntentOrigin | undefined): TurnOrigin | undefined {
+  switch (origin?.kind) {
+    case "interactive":
+      return origin.turnOrigin;
+    case "persistent":
+      return "automation";
+    case "delegated":
+      return "peer";
+    default:
+      return undefined;
   }
 }
 
@@ -178,6 +203,18 @@ const RISKY_CATEGORIES: ReadonlySet<EffectCategory> = new Set<EffectCategory>([
   "communication",
   "media-capture",
 ]);
+
+/** Who asked, in the fixed English an approval's `because` is written in. */
+function machineOriginWords(origin: TurnOrigin | undefined): string {
+  switch (origin) {
+    case "mcp":
+      return "an AI client over MCP";
+    case "relay":
+      return "a program on the WebSocket API";
+    default:
+      return "a program on the HTTP API";
+  }
+}
 
 function askFor(
   action: EffectAction,
@@ -255,6 +292,26 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
       action,
       `another node handed this over and this node's owner did not allow it ${action.category} effects`,
       "work a peer handed over runs only within what this node's owner allowed that peer",
+    );
+  }
+
+  /*
+   * A turn a program asked for on a machine surface, when the person chose to be asked about those.
+   *
+   * By default (`machineTurns` absent or `as-person`) such a turn is decided exactly as the person's own: this is read
+   * only after the person opted in. Like the delegated check, it stands above an "execute" rule and every mode, because
+   * the opt-in is the person's decision about who may cause a risky effect without them, not about the category.
+   */
+  if (
+    question.policy.machineTurns === "ask" &&
+    question.intent.kind === "interactive" &&
+    isMachineSurfaceOrigin(question.intent.origin) &&
+    RISKY_CATEGORIES.has(action.category)
+  ) {
+    return askFor(
+      action,
+      `${machineOriginWords(question.intent.origin)} asked for a ${action.category} effect`,
+      "the person asks to be asked before a program on a machine surface causes a risky effect",
     );
   }
 
@@ -409,7 +466,8 @@ function declaresAnyAxis(value: unknown): boolean {
     (Array.isArray(source.rules) &&
       source.rules.length > 0 &&
       executionRulesPreferenceSchema.safeParse(source.rules).success) ||
-    (typeof source.guardrails === "object" && source.guardrails !== null)
+    (typeof source.guardrails === "object" && source.guardrails !== null) ||
+    source.machineTurns === "ask"
   );
 }
 
@@ -466,6 +524,23 @@ export function readExecutionPolicyPreference(
 }
 
 /**
+ * The person's choice about machine-surface turns now, and before the last write to the policy.
+ *
+ * The choice is one axis of the policy row, and undoing the row would undo every axis its last write changed; a caller
+ * that undoes only this choice needs to know what it was before that write, and whether that write changed it at all.
+ * Absent when no policy was ever written. A value the schema does not read counts as the default.
+ */
+export function readMachineTurnsLastChange(
+  deps: PreferenceDeps,
+  principalId: string,
+): { current: "as-person" | "ask"; previous: "as-person" | "ask" } | undefined {
+  const row = getPreference(deps, { principalId, key: EXECUTION_POLICY_PREFERENCE_KEY, scope: "global" });
+  if (row === undefined) return undefined;
+  const turnsOf = (value: unknown): "as-person" | "ask" => (parseExecutionPolicyConfig(value).machineTurns === "ask" ? "ask" : "as-person");
+  return { current: turnsOf(row.value), previous: turnsOf(row.previousValue) };
+}
+
+/**
  * Leave evidence that an effect ran without an approval card.
  *
  * The audit is the thing that makes autonomy checkable rather than merely trusted: an approval card is
@@ -486,6 +561,8 @@ export function recordEffectExecution(
     description: string;
     /** A press on a page, as data, so each surface can say it in the person's language. */
     action?: BrowserPress;
+    /** Who asked for the turn that caused it, when a turn did. */
+    origin?: TurnOrigin;
   },
 ): number {
   return appendEvent(deps.db, {
@@ -501,6 +578,7 @@ export function recordEffectExecution(
       operationDigest: input.operationDigest,
       description: input.description,
       ...(input.action === undefined ? {} : { action: input.action }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       because: input.decision.reason,
       approvedBy: "policy",
     },

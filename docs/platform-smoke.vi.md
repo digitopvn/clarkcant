@@ -124,6 +124,12 @@ media render package's service on a real engine" đều pass. Chỉ hai test gi�
 khi engine báo rằng nó không áp dụng giới hạn; hãy ghi lại test nào. Ở lần chạy với Podman,
 `CC_EXPECT_ROOTLESS_PODMAN=1` sẽ khiến bộ test thất bại nếu Podman không báo rằng các giới hạn được áp dụng.
 
+Trên hai hệ điều hành này, chính lần chạy đó là phép kiểm tra duy nhất cho những chỗ container có thể ghi: probe yêu
+cầu `/run`, `/var/tmp` và `/dev` là chỉ-đọc, `/dev/shm` không tồn tại (Docker) hoặc chỉ-đọc (Podman), `/tmp` và thư mục
+riêng là hai mount duy nhất ghi được, và không thứ gì ghi vào `/tmp` chạy được. Test media render đọc log driver mà
+engine ghi cho service đang chạy và yêu cầu nó là `none`. Podman machine nhận các cờ này (`--log-driver none`,
+`--read-only-tmpfs=false`) qua client từ xa, thứ mà CI không chạy tới.
+
 Ghi lại vào PR hoặc vào mục này: hệ điều hành và phiên bản của nó, engine và phiên bản của engine, cùng output verbose
 của bộ test. Một lỗi là một finding cho change riêng của nó. Đừng chỉnh test cho vừa máy.
 

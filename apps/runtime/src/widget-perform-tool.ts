@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ModelTurnEvent } from "@clarkcant/core";
-import { principalIdSchema, type WidgetDefinition } from "@clarkcant/contracts";
+import { principalIdSchema, type TurnOrigin, type WidgetDefinition } from "@clarkcant/contracts";
 import { activeGenerations, captureSnapshot, createInstance, getActionBinding, getInstance, saveActionBindingWithinTransaction } from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { listConversationInstanceIds, transaction } from "@clarkcant/storage";
@@ -42,6 +42,8 @@ export async function pressWidgetBinding(
     actionBindingId: string;
     input: Record<string, unknown>;
     source: "voice" | "agent";
+    /** Who asked for the turn pressing it (`TurnOrigin`), handed to the execution policy. Absent is the person. */
+    origin?: TurnOrigin;
     options?: WidgetActionOptions;
   },
 ): Promise<{ kind: "gone" } | { kind: "result"; result: WidgetActionResult }> {
@@ -60,6 +62,7 @@ export async function pressWidgetBinding(
       invocationId: `inv_${randomUUID()}`,
     },
     call.source,
+    call.origin,
     call.options ?? {},
   );
   return { kind: "result", result };
@@ -106,6 +109,8 @@ export interface PerformWidgetActionToolDeps {
   /** The live turn's event sink, read at call time; absent, no page is streaming this turn and nothing can be asked. */
   onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
   channel: () => "voice" | "chat";
+  /** Who asked for the turn, read at call time like `channel`, and handed to the execution policy. Absent is the person. */
+  origin?: () => TurnOrigin | undefined;
 }
 
 const PERFORM_ACTIONS = ["list", "perform"] as const;
@@ -221,12 +226,14 @@ export function createPerformWidgetActionTool(deps: PerformWidgetActionToolDeps)
       const input =
         params.input !== null && typeof params.input === "object" && !Array.isArray(params.input) ? (params.input as Record<string, unknown>) : {};
       const perform = livePerformer(deps);
+      const origin = deps.origin?.();
       const pressed = await pressWidgetBinding(services, {
         conversationId: deps.conversationId,
         instanceId: target.instanceId,
         actionBindingId: target.actionBindingId,
         input,
         source: deps.channel() === "voice" ? "voice" : "agent",
+        ...(origin === undefined ? {} : { origin }),
         options: perform === undefined ? {} : { perform },
       });
       if (pressed.kind === "gone") return { text: `“${target.label}” is no longer on that widget. Nothing was performed.` };

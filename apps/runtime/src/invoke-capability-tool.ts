@@ -1,4 +1,5 @@
 import { getCapability } from "@clarkcant/core";
+import type { TurnOrigin } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import {
@@ -28,6 +29,8 @@ export interface InvokeCapabilityToolDeps {
   conversationId?: string;
   /** Which surface the message came in on, read at call time: the tool list outlives any one message. */
   channel: () => "voice" | "chat";
+  /** Who asked for the turn, read at call time like `channel`, and handed to the execution policy. Absent is the person. */
+  origin?: () => TurnOrigin | undefined;
   /**
    * The node's widget-action services, read at call time. A long-running (job) capability is started through one of
    * this conversation's widget bindings to it, which is what follows the job; without these, such a call is refused.
@@ -64,6 +67,7 @@ async function startJobThroughWidget(
     instanceId?: string;
     actionBindingId?: string;
     source: "voice" | "agent";
+    origin?: TurnOrigin;
   },
 ): Promise<string> {
   const all = conversationCapabilityBindings(services, call.conversationId, call.ref);
@@ -93,6 +97,7 @@ async function startJobThroughWidget(
     actionBindingId: target.actionBindingId,
     input: call.args,
     source: call.source,
+    ...(call.origin === undefined ? {} : { origin: call.origin }),
   });
   if (pressed.kind === "gone") return `Không gọi được: nút “${target.label}” không còn trên widget đó. Không có gì được chạy.`;
   const result = pressed.result;
@@ -207,6 +212,7 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
           ? (params.args as Record<string, unknown>)
           : {};
       const source = input.channel() === "voice" ? "voice" : "agent";
+      const origin = input.origin?.();
       const widgets = input.widgets?.();
       if (deps.serviceHost?.execution?.(ref)?.kind === "job" && widgets !== undefined && input.conversationId !== undefined) {
         const named = (value: unknown): string | undefined => (typeof value === "string" && value.trim() !== "" ? value.trim() : undefined);
@@ -218,6 +224,7 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
             ref,
             args,
             source,
+            ...(origin === undefined ? {} : { origin }),
             ...(instanceId === undefined ? {} : { instanceId }),
             ...(actionBindingId === undefined ? {} : { actionBindingId }),
           }),
@@ -228,6 +235,7 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
         args,
         source,
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+        ...(origin === undefined ? {} : { origin }),
       });
       return {
         text: describeCapabilityOutcome(outcome),

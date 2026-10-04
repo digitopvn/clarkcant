@@ -7,6 +7,7 @@ import {
   type Instant,
   type ListItem,
   type WidgetInstance,
+  type TurnOrigin,
   type WidgetPerformRequest,
   type WorkflowRunReport,
   PAGE_PERFORM_REFUSAL_CODES,
@@ -560,6 +561,7 @@ async function invokeCapabilityAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: CapabilityInvokeSource,
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const checked = checkInvokeAction(services.conductor, request);
   if (!checked.ok) return gateRefusal(checked);
@@ -587,6 +589,7 @@ async function invokeCapabilityAction(
         jobOrigin: { instanceId: request.instanceId, actionBindingId: request.actionBindingId, invocationId: request.invocationId },
         ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
         signal: admitted.controller.signal,
+        ...(origin === undefined ? {} : { origin }),
       },
     });
   } catch (cause) {
@@ -690,6 +693,7 @@ async function invokeAgentAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: "click" | "voice",
+  origin: TurnOrigin = "person",
 ): Promise<WidgetActionResult> {
   const checked = checkBoundAction(services.conductor, request, "agent");
   if (!checked.ok) return gateRefusal(checked);
@@ -783,6 +787,9 @@ async function invokeAgentAction(
       note,
       ...(data === "" ? {} : { data }),
       channel: source === "voice" ? "voice" : "chat",
+      // The button's request is sent as the words of whoever pressed it: the person on their page or voice, or a
+      // program that relayed the press.
+      origin,
     });
     indexMessages(services.search, { conversationId: request.conversationId, messages: outcome.messages, at });
     const reply = outcome.messages
@@ -824,6 +831,7 @@ async function invokeWorkflowAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: CapabilityInvokeSource,
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const checked = checkBoundAction(services.conductor, request, "workflow");
   if (!checked.ok) return gateRefusal(checked);
@@ -856,6 +864,7 @@ async function invokeWorkflowAction(
               bindingGeneration: checked.binding.packageGeneration,
               timeoutMs: options.timeoutMs,
               signal: options.signal,
+              ...(origin === undefined ? {} : { origin }),
             },
           }),
         audit: (step, report) => {
@@ -1003,6 +1012,8 @@ function auditPerform(
   label: string,
   outcome: "done" | "failed" | "refused" | "stopped",
   said: string,
+  /** Who asked for the turn that asked Clark to perform it (`TurnOrigin`). Absent is the person. */
+  origin?: TurnOrigin,
 ): void {
   try {
     appendAuditEvent(services.runtime.db, {
@@ -1014,6 +1025,7 @@ function auditPerform(
       outcome,
       at: new Date().toISOString() as Instant,
       ref: request.invocationId,
+      ...(origin === undefined ? {} : { origin }),
     });
   } catch {
     // The audit line is a record of what happened, not a condition of it.
@@ -1069,6 +1081,7 @@ async function runPerform(
   request: WidgetActionRequest,
   target: Extract<PerformChecked, { ok: true }>,
   perform: WidgetPerformer,
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const { checked, proposal, label } = target;
   const limits = bindingLimits(checked.binding);
@@ -1136,7 +1149,7 @@ async function runPerform(
           : `the widget refused “${label}” and says it changed nothing: ${answered.message}`;
     settleActionEffect(services, opened, { kind: "not-sent", reason: message });
     forgetStartedInvokeAction(services.conductor, request.invocationId);
-    auditPerform(services, request, label, "refused", message);
+    auditPerform(services, request, label, "refused", message, origin);
     // The widget's own code is its word, kept apart from the host's codes so neither the model nor the audit can mistake
     // a widget's "POLICY_REFUSED" for the host's.
     const widgetCode = typeof answered === "object" && pageCode === undefined ? answered.code : undefined;
@@ -1146,7 +1159,7 @@ async function runPerform(
     const output = answered.output ?? "";
     settleActionEffect(services, opened, { kind: "answered", evidence: `the widget performed it${output === "" ? "" : `: ${output.slice(0, 200)}`}` });
     settle(services, checked, request, { kind: "done", output });
-    auditPerform(services, request, label, "done", output === "" ? "done" : output.slice(0, 200));
+    auditPerform(services, request, label, "done", output === "" ? "done" : output.slice(0, 200), origin);
     return {
       ok: true,
       status: 200,
@@ -1173,7 +1186,7 @@ async function runPerform(
     message: said,
     ...(ledger.recorded ? { taskId: opened.taskId } : {}),
   });
-  auditPerform(services, request, label, stoppedNow ? "stopped" : "failed", said);
+  auditPerform(services, request, label, stoppedNow ? "stopped" : "failed", said, origin);
   return refusal(stoppedNow ? "WIDGET_PERFORM_STOPPED" : "WIDGET_NO_ANSWER", said, {
     outcome: "uncertain",
     mayHaveRun: true,
@@ -1233,6 +1246,7 @@ async function invokePerformAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   perform: WidgetPerformer | undefined,
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const target = checkPerform(services, request);
   if (!target.ok) return target.result;
@@ -1252,10 +1266,11 @@ async function invokePerformAction(
   const decided = decideExecution({
     policy,
     action: { kind: "effect", category: "local-write", operationDigest: operationDigest as never },
-    intent: { kind: "interactive" },
+    // Who asked for the turn: a program on a machine surface is asked about when the person chose `machineTurns: "ask"`.
+    intent: origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin },
   });
   if (decided.kind === "deny") {
-    auditPerform(services, request, label, "refused", decided.reason);
+    auditPerform(services, request, label, "refused", decided.reason, origin);
     return refusal("POLICY_REFUSED", `${decided.reason}. Nothing was sent to the widget.`, { outcome: "refused" });
   }
   if (decided.kind === "ask") {
@@ -1319,6 +1334,8 @@ async function invokePerformAction(
       expiresAt: approval.expiresAt,
       decider: "user" as const,
       decision: approval.decision,
+      // Written on the host's card, so the decision route keeps who asked when the person approves.
+      ...(origin === undefined ? {} : { origin }),
     });
     // Checked against the block schema before an approval exists, so a card that could not be drawn never waits unseen.
     if (!approvalCardBlockSchema.safeParse(cardOf({ approvalId: "appr_check", expiresAt: at, decision: "pending" })).success) {
@@ -1349,7 +1366,7 @@ async function invokePerformAction(
       }),
     };
   }
-  return runPerform(services, request, target, perform);
+  return runPerform(services, request, target, perform, origin);
 }
 
 /**
@@ -1369,6 +1386,8 @@ export async function runApprovedPerform(
     conversationId: string;
     principalId: string;
     perform: WidgetPerformer | undefined;
+    /** Who asked for the perform, read from the card: the person decided it, but the record keeps who asked. */
+    origin?: TurnOrigin;
   },
 ): Promise<{ ok: true; label: string; result: WidgetActionResult } | { ok: false; code: string; message: string }> {
   let parsed: Partial<PerformApprovalPayload>;
@@ -1430,13 +1449,13 @@ export async function runApprovedPerform(
   const decided = decideExecution({
     policy: readExecutionPolicy({ db: services.runtime.db, now }, services.runtime.identity.ownerPrincipalId),
     action: { kind: "effect", category: "local-write", operationDigest: input.expectedDigest as never },
-    intent: { kind: "interactive" },
+    intent: input.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: input.origin },
   });
   if (decided.kind === "deny") {
-    auditPerform(services, request, label, "refused", decided.reason);
+    auditPerform(services, request, label, "refused", decided.reason, input.origin);
     return { ok: true, label, result: refusal("POLICY_REFUSED", `${decided.reason}. Nothing was sent to the widget.`, { outcome: "refused" }) };
   }
-  return { ok: true, label, result: await runPerform(services, request, target, input.perform) };
+  return { ok: true, label, result: await runPerform(services, request, target, input.perform, input.origin) };
 }
 
 /**
@@ -1500,6 +1519,12 @@ export async function invokeWidgetAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: "click" | "voice" | "agent" = "click",
+  /**
+   * Who pressed it (`TurnOrigin`), decided by the caller and never read from a request body: the route reads the
+   * gateway's surface mark (the page marks its own presses), voice is the person, and Clark's own press carries its
+   * turn's origin. Handed to the execution policy with a service call and to the turn an agent button starts.
+   */
+  origin?: TurnOrigin,
   options: WidgetActionOptions = {},
 ): Promise<WidgetActionResult> {
   // The guard main added at the route, kept where the invocation actually happens so both callers get it.
@@ -1519,23 +1544,23 @@ export async function invokeWidgetAction(
   // whose gate refuses it with the reason.
   const kind = getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind;
   const capabilitySource: CapabilityInvokeSource = source === "voice" ? "voice" : source === "agent" ? "agent" : "widget";
-  if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource);
+  if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource, origin);
   if (kind === "agent") {
     // An agent button sends its request to Clark as the person's own message. Clark pressing one would put words in the
     // person's mouth and record Clark's choice as their click, so it is refused rather than relabelled.
     if (source === "agent") {
       return refusal("NOT_AUTHORIZED", "Clark cannot press a button that asks Clark: it would be sent as the person's own message. Nothing was sent.");
     }
-    return invokeAgentAction(services, request, source);
+    return invokeAgentAction(services, request, source, origin);
   }
-  if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource);
+  if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource, origin);
   if (kind === "perform") {
     // An offered action is Clark's to perform on the widget. A press or a frame naming its binding would be the widget
     // asking itself through the host, which is not a path anything needs and not one the gate should open.
     if (source === "click") {
       return refusal("NOT_AUTHORIZED", "an action a widget offers to Clark is performed by Clark, not pressed. Nothing was sent.");
     }
-    return invokePerformAction(services, request, options.perform);
+    return invokePerformAction(services, request, options.perform, origin);
   }
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take

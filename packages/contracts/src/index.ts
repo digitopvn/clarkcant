@@ -10,6 +10,7 @@
  */
 
 export * from "./primitives.ts";
+export * from "./turn-origin.ts";
 export * from "./redaction.ts";
 export * from "./themes.ts";
 export * from "./preferences.ts";
