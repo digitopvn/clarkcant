@@ -37,16 +37,18 @@ import {
   type ExecutionAuditDeps,
   readDirectoryIndex,
   searchDirectory,
+  unreadFieldsOf,
 } from "@clarkcant/core";
 import type { Database } from "@clarkcant/storage";
 
 import { blobsDir, readBlob } from "./blobs.ts";
+import { fitHead, fitTail } from "./card-text.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "./request-secret.ts";
 import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
-import { createQuestion } from "./interactions.ts";
+import { SECRET_REQUEST_MESSAGE, asksForSecret, buildQuestionCard, createQuestion } from "./interactions.ts";
 import type { SecretBroker } from "./secret-broker.ts";
 import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
 import { extractPdfText } from "./pdf-text.ts";
@@ -947,6 +949,10 @@ function askClarify(
   };
 }
 
+/** `approvalCardBlockSchema`'s bounds on the operation's description and on the payload an approval runs. */
+const APPROVAL_DESCRIPTION_MAX = 2000;
+const APPROVAL_PAYLOAD_MAX = 4000;
+
 /**
  * Running a command, as the model may ask for it.
  *
@@ -1140,12 +1146,35 @@ export function createRunCommandTool(
          * a guardrail may have narrowed the directory, and the approval has to be bound to what actually runs.
          */
         const approvedDigest = commandDigest(guarded.command, guarded.cwd);
+        /*
+         * The payload is what runs on approval, and the digest above is what proves it is unchanged. It carries the
+         * narrowed envelope whole — the directory and the budget — because a guardrail's narrowing is policy: a card that
+         * displayed one envelope and ran another would be the same inversion this ordering fixed.
+         *
+         * It cannot be shortened to fit the card, since a shortened command is a different command, so a command and
+         * folder too long for the card are refused here, before an approval exists, with what to do instead.
+         */
+        const payload = JSON.stringify({
+          command: guarded.command,
+          cwd: guarded.cwd,
+          timeoutMs: guarded.budget.timeoutMs,
+          maxOutputBytes: guarded.budget.maxOutputBytes,
+        });
+        if (payload.length > APPROVAL_PAYLOAD_MAX) {
+          return {
+            text:
+              `Lệnh này cùng thư mục của nó dài ${payload.length} ký tự khi ghi vào thẻ duyệt, quá ${APPROVAL_PAYLOAD_MAX} ký tự ` +
+              `thẻ chứa được, nên không thể hỏi người dùng. Không có gì được chạy. Hãy rút ngắn lệnh, hoặc ghi nó vào một ` +
+              `tệp script rồi chạy tệp đó.`,
+          };
+        }
         const approval = requestApproval(input.approvals(), {
           operationDigest: approvedDigest,
-          operationDescription:
-            `Chạy một lệnh trong ${guarded.cwd}` +
-            (reason === "" ? "" : ` (${reason})`) +
-            (why === "" ? "" : `: ${why}`),
+          // Only read, so a long reason is shortened to what the card holds; the record keeps the same words.
+          operationDescription: fitHead(
+            `Chạy một lệnh trong ${guarded.cwd}` + (reason === "" ? "" : ` (${reason})`) + (why === "" ? "" : `: ${why}`),
+            APPROVAL_DESCRIPTION_MAX,
+          ),
           effectCategory: guarded.effectCategory,
           // A quarter of an hour: long enough to read the command and decide, short enough that a card left
           // on screen overnight cannot be approved the next morning for a stale reason.
@@ -1166,17 +1195,7 @@ export function createRunCommandTool(
             decider: approval.decider,
             decision: approval.decision,
             ...(origin === undefined ? {} : { origin }),
-            /*
-             * The payload is what runs on approval, and the digest above is what proves it is unchanged. It carries
-             * the narrowed envelope whole — the directory and the budget — because a guardrail's narrowing is policy:
-             * a card that displayed one envelope and ran another would be the same inversion this ordering fixed.
-             */
-            payload: JSON.stringify({
-              command: guarded.command,
-              cwd: guarded.cwd,
-              timeoutMs: guarded.budget.timeoutMs,
-              maxOutputBytes: guarded.budget.maxOutputBytes,
-            }),
+            payload,
           },
         };
       }
@@ -1441,11 +1460,16 @@ export function createSearchDirectoryTool(input: {
       if (state.kind === "unreadable") return { text: `Không đọc được directory: ${state.reason}` };
 
       const results = searchDirectory({ entries: state.entries, query });
+      // A listing with fields this node does not read is shown without them, and said so on its row and here.
+      const partlyRead = results.filter((entry) => unreadFieldsOf(state, entry) !== undefined).length;
       return {
         text:
-          results.length === 0
+          (results.length === 0
             ? `Không có gói nào trong ${state.directory} khớp “${query}”.`
-            : `Tìm thấy ${results.length} gói trong ${state.directory}.`,
+            : `Tìm thấy ${results.length} gói trong ${state.directory}.`) +
+          (partlyRead === 0
+            ? ""
+            : ` ${partlyRead} gói có thông tin mà bản Clark này không đọc được; thẻ kết quả ghi rõ, và bản Clark mới hơn sẽ hiện đủ.`),
         // The conductor drops a host card that fails its contract, so every value here fits it: the query and the
         // directory name are shortened, and every row field already has the same or a tighter bound in the directory
         // entry, `version` included (`directoryVersionSchema`); a listing whose version is longer is refused when read.
@@ -1455,7 +1479,10 @@ export function createSearchDirectoryTool(input: {
           cardId: input.newId("market"),
           query: fitCardQuery(query),
           directory: fitDirectoryName(state.directory),
-          results: results.map((entry) => ({
+          results: results.map((entry) => {
+            // The names of what the listing says that this node does not read, never their values.
+            const unreadFields = unreadFieldsOf(state, entry);
+            return {
             packageId: entry.packageId,
             version: entry.version,
             displayName: entry.displayName,
@@ -1470,10 +1497,12 @@ export function createSearchDirectoryTool(input: {
             ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
               ? {}
               : { declaredReach: canonicalReach(entry.declaredReach) }),
+            ...(unreadFields === undefined ? {} : { unreadFields }),
             // A directory entry may repeat a kind; the card lists each once, which also keeps it within its bound.
             facets: [...new Set(entry.facets)],
             platforms: [...new Set(entry.platforms)],
-          })),
+            };
+          }),
         },
       };
     },
@@ -1489,37 +1518,12 @@ const CARD_DIRECTORY_MAX = 300;
  * as what was searched. The search itself used the whole query.
  */
 function fitCardQuery(query: string): string {
-  return query.length <= CARD_QUERY_MAX ? query : `${headWithin(query, CARD_QUERY_MAX - 1)}…`;
+  return fitHead(query, CARD_QUERY_MAX);
 }
 
 /** A directory path too long for the card keeps its end, which names the index, behind an ellipsis. */
 function fitDirectoryName(directory: string): string {
-  return directory.length <= CARD_DIRECTORY_MAX ? directory : `…${tailWithin(directory, CARD_DIRECTORY_MAX - 1)}`;
-}
-
-/**
- * The longest start of `value` that fits `max` UTF-16 units, the unit the card schema counts, cut between code points
- * so a character that takes two units is never split in half.
- */
-function headWithin(value: string, max: number): string {
-  let out = "";
-  for (const char of value) {
-    if (out.length + char.length > max) break;
-    out += char;
-  }
-  return out;
-}
-
-/** The longest end of `value` that fits `max` UTF-16 units, cut between code points like `headWithin`. */
-function tailWithin(value: string, max: number): string {
-  const chars = Array.from(value);
-  let out = "";
-  for (let index = chars.length - 1; index >= 0; index -= 1) {
-    const char = chars[index] ?? "";
-    if (out.length + char.length > max) break;
-    out = char + out;
-  }
-  return out;
+  return fitTail(directory, CARD_DIRECTORY_MAX);
 }
 
 /**
@@ -1532,7 +1536,10 @@ function tailWithin(value: string, max: number): string {
  * The tool does not wait for the answer. The turn ends, the card stays in the transcript, and the answer arrives
  * as the user's next message — which is the only shape that works for a conversation that outlives this process.
  */
-export function createAskUserTool(newId: (prefix: string) => string): ToolDefinition {
+export function createAskUserTool(
+  newId: (prefix: string) => string,
+  now: () => Instant = () => new Date().toISOString() as Instant,
+): ToolDefinition {
   return {
     name: "ask_user",
     label: "Hỏi người dùng một câu",
@@ -1586,76 +1593,112 @@ export function createAskUserTool(newId: (prefix: string) => string): ToolDefini
     promptSnippet: "ask_user — ask one question with the answers you will accept, then end your turn",
     execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
       const question = typeof params.question === "string" ? params.question.trim() : "";
-      const raw = Array.isArray(params.options) ? params.options : [];
-      const options = raw
-        .map((entry, index) => {
-          const record = (entry ?? {}) as Record<string, unknown>;
-          const label = typeof record.label === "string" ? record.label.trim() : "";
-          if (label === "") return undefined;
-          return {
-            id: `option-${index + 1}`,
-            label,
-            ...(typeof record.detail === "string" && record.detail.trim() !== ""
-              ? { detail: record.detail.trim() }
-              : {}),
-          };
-        })
-        .filter((entry): entry is { id: string; label: string; detail?: string } => entry !== undefined);
 
       /*
        * Fields make it a form; options make it a question. One tool rather than two, because the agent's
        * decision is "I need something from the user" and which shape fits is a detail of that.
        */
       const rawFields = Array.isArray(params.fields) ? params.fields : [];
-      const fields = rawFields
-        .map((entry, index) => {
-          const record = (entry ?? {}) as Record<string, unknown>;
-          const label = typeof record.label === "string" ? record.label.trim() : "";
-          if (label === "") return undefined;
-          const kind = record.kind === "textarea" || record.kind === "select" ? record.kind : ("text" as const);
-          const choices = Array.isArray(record.options)
-            ? record.options.filter((option): option is string => typeof option === "string" && option.trim() !== "")
-            : [];
-          // A select with nothing to choose from is a control the user cannot use, so it becomes text.
-          const usable = kind === "select" && choices.length === 0 ? ("text" as const) : kind;
-          return {
-            id: `field-${index + 1}`,
-            label,
-            kind: usable,
-            ...(usable === "select" ? { options: choices } : {}),
-            ...(record.required === true ? { required: true } : {}),
-            ...(typeof record.placeholder === "string" && record.placeholder.trim() !== ""
-              ? { placeholder: record.placeholder.trim() }
-              : {}),
-          };
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+      const fields: Record<string, unknown>[] = [];
+      for (const [index, entry] of rawFields.entries()) {
+        const record = (entry ?? {}) as Record<string, unknown>;
+        const label = typeof record.label === "string" ? record.label.trim() : "";
+        if (label === "") continue;
+        const kind = record.kind === "textarea" || record.kind === "select" ? record.kind : ("text" as const);
+        // A choice is what the form sends back, so one too long for the card is refused rather than shortened, and a
+        // repeated one is offered once.
+        const choices = Array.isArray(record.options)
+          ? [
+              ...new Set(
+                record.options
+                  .filter((option): option is string => typeof option === "string")
+                  .map((option) => option.trim())
+                  .filter((option) => option !== ""),
+              ),
+            ]
+          : [];
+        const overlong = choices.find((choice) => choice.length > FORM_TEXT_MAX);
+        if (overlong !== undefined) {
+          return { text: `Lựa chọn “${fitHead(overlong, 60)}” của trường “${fitHead(label, 60)}” dài quá ${FORM_TEXT_MAX} ký tự. Rút ngắn rồi hỏi lại.` };
+        }
+        if (choices.length > FORM_CHOICES_MAX) {
+          return { text: `Trường “${fitHead(label, 60)}” có ${choices.length} lựa chọn; một trường select nhận tối đa ${FORM_CHOICES_MAX}.` };
+        }
+        // A select with nothing to choose from is a control the user cannot use, so it becomes text.
+        const usable = kind === "select" && choices.length === 0 ? ("text" as const) : kind;
+        const placeholder = typeof record.placeholder === "string" ? record.placeholder.trim() : "";
+        fields.push({
+          id: `field-${index + 1}`,
+          // The label and the placeholder are only read, so a long one is shortened to what the card holds.
+          label: fitHead(label, FORM_TEXT_MAX),
+          kind: usable,
+          ...(usable === "select" ? { options: choices } : {}),
+          ...(record.required === true ? { required: true } : {}),
+          ...(placeholder === "" ? {} : { placeholder: fitHead(placeholder, FORM_TEXT_MAX) }),
+        });
+      }
 
+      if (fields.length > FORM_FIELDS_MAX) {
+        return { text: `Một biểu mẫu có tối đa ${FORM_FIELDS_MAX} trường; lần này có ${fields.length}. Gộp hoặc bớt trường rồi hỏi lại.` };
+      }
       if (fields.length > 0) {
         const title = typeof params.title === "string" && params.title.trim() !== "" ? params.title.trim() : question;
+        if (title === "") return { text: "Một biểu mẫu cần `title` hoặc `question` nói nó dùng để làm gì." };
+        // A submitted form reaches the model as an ordinary message, so a form that asks for a secret is refused like a
+        // question that does, on the words the person reads before typing into it.
+        if (asksForSecret(title, ...fields.flatMap((field) => [String(field.label), String(field.placeholder ?? "")]))) {
+          return { text: SECRET_REQUEST_MESSAGE };
+        }
+        const shown = fitHead(title, FORM_TITLE_MAX);
         return {
-          text: `Đã gửi một biểu mẫu để hỏi người dùng: “${title}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này.`,
-          hostCard: { type: "form-card", owner: "host", formId: newId("form"), title, fields },
+          text: `Đã gửi một biểu mẫu để hỏi người dùng: “${shown}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này.`,
+          hostCard: { type: "form-card", owner: "host", formId: newId("form"), title: shown, fields },
         };
+      }
+
+      // A label is the answer, so a repeated one is offered once; its detail is only read, so a long one is shortened.
+      const raw = Array.isArray(params.options) ? params.options : [];
+      const options: { id: string; label: string; description?: string }[] = [];
+      for (const entry of raw) {
+        const record = (entry ?? {}) as Record<string, unknown>;
+        const label = typeof record.label === "string" ? record.label.trim() : "";
+        if (label === "" || options.some((option) => option.label === label)) continue;
+        const detail = typeof record.detail === "string" ? record.detail.trim() : "";
+        options.push({
+          id: `option-${options.length + 1}`,
+          label,
+          ...(detail === "" ? {} : { description: fitHead(detail, OPTION_DETAIL_MAX) }),
+        });
       }
 
       if (question === "" || options.length < 2) {
         // Refused in the same turn, so the model corrects itself rather than the user seeing an empty card.
-        return { text: "Cần một câu hỏi kèm ít nhất hai lựa chọn, hoặc một biểu mẫu có ít nhất một trường." };
+        return { text: "Cần một câu hỏi kèm ít nhất hai lựa chọn khác nhau, hoặc một biểu mẫu có ít nhất một trường." };
       }
+      if (options.length > QUESTION_OPTIONS_MAX) {
+        return { text: `Một câu hỏi có tối đa ${QUESTION_OPTIONS_MAX} lựa chọn; lần này có ${options.length}. Bớt lựa chọn rồi hỏi lại.` };
+      }
+
+      // The one card shape `ask_user_question` builds, with its bounds and its refusals: the question and the labels are
+      // refused rather than shortened when they are too long, because a shortened label could match a different answer.
+      const built = buildQuestionCard({ newId, now }, { question, kind: "single-choice", options });
+      if (!built.ok) return { text: built.message };
 
       return {
         text:
           `Đã hỏi người dùng: “${question}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này và đừng ` +
           `tự trả lời thay họ.`,
-        hostCard: {
-          type: "question-card",
-          owner: "host",
-          questionId: newId("q"),
-          question,
-          options,
-        },
+        hostCard: built.card,
       };
     },
   };
 }
+
+/** `formCardSchema`'s bounds: the title, a label, a placeholder or a choice, and how many fields and choices it holds. */
+const FORM_TITLE_MAX = 300;
+const FORM_TEXT_MAX = 200;
+const FORM_FIELDS_MAX = 12;
+const FORM_CHOICES_MAX = 20;
+/** `questionCardBlockSchema`'s bound on an option's description, and the two to six answers the tool offers. */
+const OPTION_DETAIL_MAX = 500;
+const QUESTION_OPTIONS_MAX = 6;

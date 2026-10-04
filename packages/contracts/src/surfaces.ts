@@ -3,7 +3,13 @@ import { z } from "zod";
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
-import { DIRECTORY_VERSION_MAX, packageSourceSchema, riskLaneSchema, widgetAppearanceClaimsSchema } from "./directory.ts";
+import {
+  DIRECTORY_VERSION_MAX,
+  packageSourceSchema,
+  riskLaneSchema,
+  unreadListingFieldsSchema,
+  widgetAppearanceClaimsSchema,
+} from "./directory.ts";
 import { facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
 import { turnOriginSchema } from "./turn-origin.ts";
@@ -260,6 +266,12 @@ export const marketplaceResultSchema = z.strictObject({
    * the claims: the install refuses an artifact whose manifest declares a different reach.
    */
   declaredReach: declaredReachSchema.optional(),
+  /**
+   * Fields the listing carries that this node does not read (`readDirectoryEntry`): how many and the first few names,
+   * never their values. Present only when there were some, so the row says it shows less than the listing does; a newer
+   * Clark reads them.
+   */
+  unreadFields: unreadListingFieldsSchema.optional(),
   facets: z.array(facetKindSchema).max(10),
   platforms: z.array(platformSchema).max(10),
 });
