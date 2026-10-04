@@ -1030,6 +1030,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-setting-control { flex: initial; flex-wrap: wrap; justify-content: flex-start; }
   .cc-segmented-wrap, .cc-toggle-wrap, .cc-range { align-items: flex-start; }
   .cc-segmented { justify-content: flex-start; }
+  /*
+   * Under the label, a choice spans the width it now has, and each line of segments shares it out. Left to their own
+   * widths, four choices broke as three and a stray fourth, which read as a control that had come apart.
+   */
+  .cc-setting-control > .cc-segmented-wrap { width: 100%; }
+  .cc-segmented-wrap > .cc-segmented { align-self: stretch; }
+  .cc-segmented > .cc-badge { flex: 1 1 auto; justify-content: center; text-align: center; }
+  /* Four choices break evenly, two and two, rather than three and one. */
+  .cc-segmented:has(> .cc-badge:nth-child(4):last-child) > .cc-badge { flex-basis: 40%; }
   .cc-segmented-wrap > .cc-panel-note, .cc-toggle-wrap > .cc-panel-note { text-align: left; max-width: none; contain: none; min-width: 0; }
   .cc-range { min-width: 0; width: 100%; }
   .cc-range > .cc-setting-desc { align-self: flex-start; }
