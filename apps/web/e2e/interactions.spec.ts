@@ -47,6 +47,9 @@ test("a question is asked, answered, and the answer opens the next turn", async 
   // Waiting, and asking nothing of the model's judgement: the options are the ones the host offered.
   await expect(card).toHaveAttribute("data-answered", "false");
   await expect(card.locator('[data-question-option="production"]')).toBeVisible();
+  // Drawn once, in the reply that asked it. Written as a message of its own as well, the same question showed twice.
+  await expect(page.getByText("lượt này kết thúc ở đây").first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-host-card="question"]')).toHaveCount(1);
 
   await card.locator('[data-question-option="production"]').click();
 

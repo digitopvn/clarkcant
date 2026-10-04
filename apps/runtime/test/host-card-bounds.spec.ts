@@ -227,7 +227,7 @@ describe("the question and form cards ask_user builds", () => {
   });
 });
 
-describe("the question card ask_user_question records", () => {
+describe("the question card ask_user_question raises", () => {
   function interactions(): { deps: InteractionDeps; appended: MessageBlock[] } {
     const appended: MessageBlock[] = [];
     return {
@@ -250,8 +250,8 @@ describe("the question card ask_user_question records", () => {
     const parsed = expectValidCard(card);
     if (parsed.type !== "question-card") throw new Error("expected a question card");
     expect(parsed.voicePrompt).toHaveLength(500);
-    // The card the transcript keeps is the same one.
-    expect(appended).toEqual([card]);
+    // The turn's reply is the only place it goes: nothing is written beside it.
+    expect(appended).toEqual([]);
   });
 
   it("records an answer, a drop and an ask-again for the longest question in blocks that parse", () => {

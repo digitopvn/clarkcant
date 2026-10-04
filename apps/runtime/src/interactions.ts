@@ -107,8 +107,10 @@ const RECORD_LABEL_MAX = 300;
 /**
  * The question card for a question, or the reason there is none, without recording anything.
  *
- * Shared by `ask_user_question`, which records the card itself, and `ask_user`, which hands it to the conductor, so
- * both build the one shape the card contract accepts and refuse the same questions. Every value the card carries is
+ * Shared by every question a model turn raises — `ask_user_question`, `ask_user`, and the finder's and guardrail's
+ * questions — which hand the card to the turn's reply rather than recording it a second time, and by `createQuestion`,
+ * which records it for callers outside a turn. So all of them build the one shape the card contract accepts and refuse
+ * the same questions. Every value the card carries is
  * within its bound: the question, the labels and the ids are checked by `askUserQuestionSchema`, which has the card's
  * own bounds, and refused with the field that failed, because a label is what an answer is matched against and a
  * shortened one could match another; the spoken form, which the host derives and nobody sends back, is shortened.
