@@ -75,6 +75,44 @@ message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a 
 Only a message with a surface counts as the person's own words where that matters, such as which sites a browser task
 may act on; any other value of the header is ignored.
 
+### Who asked: a turn's origin
+
+The node also records who started each turn, as the user message's `origin`, when it accepts the message. It is read
+from what the gateway already knows and never from the request body:
+
+| `origin` | Set when |
+|---|---|
+| `person` | the node's own page sent the message (`x-clarkcant-surface: composer`), it was spoken, or the person answered a card or pressed a widget action in the page |
+| `mcp` | MCP `ask_clark`, which posts with `x-clarkcant-surface: mcp` |
+| `relay` | the WebSocket relay, which posts with `x-clarkcant-surface: relay` |
+| `cli-api` | any other token holder: `clarkcant api`, a script, or any other value of the header |
+| `automation` | a scheduled or standing automation's task |
+| `peer` | a task another node delegated to this one |
+
+A body field such as `"origin": "person"` is ignored, so a machine surface cannot claim to be the person. The token
+is the trust boundary, as it is for `surface`: a holder that sends the composer's header itself is treated as the page.
+
+The origin is passed to the execution policy as part of the intent, and is written on the approval card a turn
+causes, on its row in `GET /activity` (`origin`), and in the audit log. By default it changes no decision: a turn an
+AI client started over MCP is decided exactly as the person's own message is. A person who wants more sets the
+policy's `machineTurns` to `"ask"` (the `execution.machineTurns` preference, or Settings → Control → Requests from
+other programs). Then a turn from `mcp`, `relay` or `cli-api` asks before a risky effect (`external-write`,
+`destructive`, `financial`, `communication`, `media-capture`) the policy would otherwise have run. A deny rule or a
+prohibition still wins; reads, local writes, the person's own turns, automations and peers are unchanged.
+
+The origin stays with the work it started:
+
+- When the person approves a card a program's turn raised, the turn that carries on after the approval keeps the
+  program's origin. The person approved that one effect, not the rest of the program's plan, so the next risky step
+  is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
+- A message whose origin differs from the running turn's is never steered into it. It interrupts and becomes a turn
+  of its own with its own origin. A message sent to the background lane is recorded in the audit log with its origin.
+
+`machineTurns` is part of the execution policy, and the policy routes (`PUT /preferences/execution.policy`,
+`execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and
+`clarkcant api`. So a program holding the node token can change this setting. Undoing `execution.machineTurns` puts
+back only that choice; it answers `undone: false` when the last policy write did not change it.
+
 ### Conversation deletion
 
 The person's text command “delete this conversation” and spoken equivalent resolve to the same `conversation.delete`
@@ -311,7 +349,9 @@ keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, each s
 removedMore? }` with at most 32 items per list and the rest counted, `keyDestinations` as each (key, origin) pair a key
 is sent to, and `profile` as the two profile names with each bounded limit that changes; or `{ verdict: "unknown" }`
 when the package is installed at another version and the two cannot be compared
-(`packages/contracts/src/reach-change.ts`). The web client parses `GET /inbox` item by item, so one item that does not
+(`packages/contracts/src/reach-change.ts`). It also carries `unreadFields` (`{ count, names }`) when the listing of the
+named version has fields this node does not read and dropped, so the change it shows does not pass for everything the
+listing says. The web client parses `GET /inbox` item by item, so one item that does not
 match the contract is left out and counted rather than failing the whole inbox. An action
 listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) says why it cannot be
 taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
@@ -566,9 +606,12 @@ npm artifacts, so a snapshot no generation uses any more stays on disk until the
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
-description, operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` is what the listing says the package asks for,
+description, operationDigest, requestedAt, expiresAt, reach?, reachChange?, unreadFields? }`: `permissions` is what the listing says the package asks for,
 `reach` what it reaches outside its sandbox, `reachChange` (for an update of an installed package) what that version
-adds to or drops from the installed one's reach, in the same shape as on the update notice,
+adds to or drops from the installed one's reach, in the same shape as on the update notice, `unreadFields`
+(`{ count, names }`) the fields the listing carries that this node does not read and dropped, counted in full and named only as plain identifier paths, at most 8 (the same
+field is on each `marketplace-results` row and on a package update notice; see
+[directory metadata](widget-development.md#18-directory-metadata)),
 and `operationDigest` the listed artifact's digest the question is about. It is listed only while the directory still
 lists that artifact; a package or version republished since is left out, and installing it again asks about what it is
 now. The person decides it with `POST /packages/approvals/:id/decision`

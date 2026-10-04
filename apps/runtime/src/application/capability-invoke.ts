@@ -12,6 +12,7 @@ import {
   SERVICE_ARTIFACT_READ_BUDGET,
   serviceArtifactReadBudget,
   unsafeSchemaPattern,
+  type TurnOrigin,
 } from "@clarkcant/contracts";
 import {
   type ApprovalRecord,
@@ -128,6 +129,12 @@ export interface CapabilityInvokeRequest {
   args: Record<string, unknown>;
   source: CapabilityInvokeSource;
   conversationId?: string;
+  /**
+   * Who asked for the turn this call came from (`TurnOrigin`), set by the node — the agent's tool from its turn, never
+   * from a body. Handed to the execution policy and written on the approval card and the activity record. Absent is
+   * the person, which is what a widget press or a spoken command is.
+   */
+  origin?: TurnOrigin;
   /**
    * What a widget binding recorded as its package generation.
    *
@@ -372,7 +379,7 @@ export async function invokeCapability(
     action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
     // A click, a sentence or a spoken command is the person asking; the policy still decides whether that is
     // enough, and a prohibition or a hard boundary is read before the intent matters.
-    intent: { kind: "interactive" },
+    intent: request.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: request.origin },
   });
   // An approval answers the policy's question; it does not outrank a refusal the person set after the card was shown.
   const decided =
@@ -427,6 +434,7 @@ export async function invokeCapability(
         expiresAt: approval.expiresAt,
         decider: approval.decider,
         decision: approval.decision,
+        ...(request.origin === undefined ? {} : { origin: request.origin }),
       } as Extract<MessageBlock, { type: "approval-card" }>,
     };
   }
@@ -454,6 +462,7 @@ export async function invokeCapability(
       operationDigest,
       description,
       ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }),
+      ...(request.origin === undefined ? {} : { origin: request.origin }),
     },
   );
 
@@ -682,6 +691,8 @@ export async function runApprovedCapability(
     conversationId: string;
     checkJobOrigin?: ApprovedJobOriginCheck;
     ledger?: (call: { ref: string; args: Record<string, unknown> }) => CapabilityLedgerHooks;
+    /** Who asked for the call, read from the card: the person decided it, but the record keeps who asked. */
+    origin?: TurnOrigin;
   },
 ): Promise<
   | {
@@ -754,6 +765,7 @@ export async function runApprovedCapability(
     approvedBy: { approvalId: input.approvalId, generation, effectCategory: effect.data },
     ...(jobOrigin === undefined ? {} : { jobOrigin }),
     ...(bindingGeneration === undefined ? {} : { bindingGeneration }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
     ...(input.ledger?.({ ref, args }) ?? {}),
   });
   const succeeded = outcome.kind === "done" || outcome.kind === "job";

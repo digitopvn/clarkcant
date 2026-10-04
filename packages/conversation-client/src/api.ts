@@ -890,13 +890,21 @@ export class GatewayClient {
    * `keepalive` lets a request outlive the page that sent it, for the last write a page makes as it goes away. `signal`
    * aborts the request, for a caller that gives up waiting.
    */
-  async #call<T>(method: string, path: string, body?: unknown, init: { keepalive?: true; signal?: AbortSignal } = {}): Promise<T> {
+  async #call<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    init: { keepalive?: true; signal?: AbortSignal; composer?: true } = {},
+  ): Promise<T> {
+    const { composer, ...fetchInit } = init;
     const response = await this.#fetch(`${this.#baseUrl}${path}`, {
-      ...init,
+      ...fetchInit,
       method,
       headers: {
         authorization: `Bearer ${this.#token}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
+        // This page's own mark, on what the person does here that starts a turn: the node records them as who asked.
+        ...(composer === true ? { [COMPOSER_SURFACE_HEADER]: "composer" } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
@@ -1198,6 +1206,8 @@ export class GatewayClient {
       action?: RecentEffectAction;
       operationDigest: string;
       because: string;
+      /** Who asked for the effect, when the host recorded it: the person, an AI client over MCP, a relay, and so on. */
+      origin?: string;
     }[];
   }> {
     return this.#call("GET", "/activity");
@@ -1494,6 +1504,8 @@ export class GatewayClient {
       "POST",
       `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/answer`,
       answer,
+      // The answer opens a turn, and it is the person's, clicked or said on this page.
+      { composer: true },
     );
   }
 
@@ -1561,7 +1573,8 @@ export class GatewayClient {
       "POST",
       `/conversations/${conversationId}/widgets/${instanceId}/actions`,
       { instanceId, ...invocation },
-      options.keepalive === true ? { keepalive: true } : {},
+      // A press on this page is the person's: the node records them as who asked for whatever it starts.
+      options.keepalive === true ? { keepalive: true, composer: true } : { composer: true },
     );
   }
 

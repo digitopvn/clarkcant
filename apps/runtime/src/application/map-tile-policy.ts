@@ -5,6 +5,7 @@ import {
   type MapTilePolicy,
   type MapTilePolicyView,
   type MessageBlock,
+  type TurnOrigin,
   mapTilePolicySchema,
   mapTilePolicyView,
 } from "@clarkcant/contracts";
@@ -149,7 +150,13 @@ export type MapTilePolicyRequestOutcome =
  */
 export function requestMapTilePolicy(
   deps: MapTilePolicyRequestDeps,
-  input: { value: unknown; source: Exclude<MapTilePolicySource, "click">; conversationId?: string },
+  input: {
+    value: unknown;
+    source: Exclude<MapTilePolicySource, "click">;
+    conversationId?: string;
+    /** Who asked for the turn that wants this (`TurnOrigin`). Absent is the person. */
+    origin?: TurnOrigin;
+  },
 ): MapTilePolicyRequestOutcome {
   const parsed = mapTilePolicySchema.safeParse(input.value);
   if (!parsed.success) {
@@ -163,7 +170,7 @@ export function requestMapTilePolicy(
   const decided = decideExecution({
     policy: execution,
     action: { kind: "effect", category, operationDigest },
-    intent: { kind: "interactive" },
+    intent: input.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: input.origin },
   });
   if (decided.kind === "deny") return { kind: "refused", code: "POLICY_REFUSED", message: decided.reason };
   const description = describeMapTilePolicy(policy, readMapTileKey({ db: deps.db, principalId: deps.principalId }));
@@ -178,6 +185,7 @@ export function requestMapTilePolicy(
       operationDigest,
       ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
       description: `Clark: ${description}`,
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
     });
     const written = writeMapTilePolicy(deps, { principalId: deps.principalId, value: policy, source: input.source });
     if (!written.ok) return { kind: "refused", code: written.code, message: written.message };
@@ -205,6 +213,7 @@ export function requestMapTilePolicy(
       expiresAt: approval.expiresAt,
       decider: approval.decider,
       decision: approval.decision,
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
     },
   };
 }

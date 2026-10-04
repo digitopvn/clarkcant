@@ -81,8 +81,32 @@ describe("the service container's command line", () => {
     expect(mountSource(resolve("plain folder (1)"))).toBe(resolve("plain folder (1)"));
   });
 
-  it("keeps no copy of what the service writes to its standard output in Docker's log files", () => {
+  it("keeps no copy of what the service writes to its standard output in either engine's log driver", () => {
     expect(flag(serviceRunArgs(SPEC), "--log-driver")).toBe("none");
+    expect(flag(serviceRunArgs({ ...SPEC, rootless: true }), "--log-driver")).toBe("none");
+    // Podman's driver is usually the person's journal, which `--rm` does not clear.
+    expect(flag(serviceRunArgs({ ...SPEC, engine: "podman" }), "--log-driver")).toBe("none");
+  });
+
+  it("leaves /tmp as the only scratch space under Podman, so /run and /var/tmp stay read-only as under Docker", () => {
+    const podman = serviceRunArgs({ ...SPEC, engine: "podman" });
+    expect(podman).toContain("--read-only");
+    // Podman's `--read-only` would otherwise mount its own writable tmpfs on /run, /var/tmp and /tmp.
+    expect(podman).toContain("--read-only-tmpfs=false");
+    const tmpfs = podman.flatMap((value, index, all) => (all[index - 1] === "--tmpfs" ? [value] : []));
+    expect(tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=16m"]);
+    // Docker does not know the flag; its own writable mounts are handled below.
+    expect(serviceRunArgs(SPEC).some((arg) => arg.startsWith("--read-only-tmpfs"))).toBe(false);
+  });
+
+  it("gives Docker a read-only /dev, so neither /dev nor a /dev/shm outside the profile can be written", () => {
+    for (const rootless of [false, true]) {
+      const docker = serviceRunArgs({ ...SPEC, rootless });
+      const tmpfs = docker.flatMap((value, index, all) => (all[index - 1] === "--tmpfs" ? [value] : []));
+      expect(tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=16m", "/dev:ro,nosuid,noexec,dev,mode=755"]);
+    }
+    // Podman's own read-only `/dev` comes with `--read-only-tmpfs=false`; it is not given a second one.
+    expect(serviceRunArgs({ ...SPEC, engine: "podman" }).some((arg) => arg.startsWith("/dev"))).toBe(false);
   });
 
   it("gives the engine's command line only what it needs to find itself, not the node's provider keys", () => {

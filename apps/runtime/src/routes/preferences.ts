@@ -1,4 +1,4 @@
-import { MAP_TILE_POLICY_PREFERENCE, accentPreferenceSchema, parseThemeRef, type Instant } from "@clarkcant/contracts";
+import { MAP_TILE_POLICY_PREFERENCE, accentPreferenceSchema, parseThemeRef, turnOriginSchema, type Instant } from "@clarkcant/contracts";
 import { CLARK_THEME, customizedTheme, themeDrawProblem } from "@clarkcant/design-tokens";
 import {
   BROWSER_PRESS_LABEL_MAX,
@@ -114,6 +114,8 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
           ? event.document
           : {}) as Record<string, unknown>;
         const action = activityAction(document.action);
+        // Who asked: kept only when it is one of the origins the host records, so a stray value is never shown as one.
+        const origin = turnOriginSchema.safeParse(document.origin);
         return {
           at: event.occurredAt,
           kind: event.kind,
@@ -121,6 +123,7 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
           category: typeof document.category === "string" ? document.category : "unknown",
           description: typeof document.description === "string" ? document.description : "",
           ...(action === undefined ? {} : { action }),
+          ...(origin.success ? { origin: origin.data } : {}),
           operationDigest: typeof document.operationDigest === "string" ? document.operationDigest : "",
           because: typeof document.because === "string" ? document.because : "",
         };

@@ -3,9 +3,16 @@ import { z } from "zod";
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
-import { DIRECTORY_VERSION_MAX, packageSourceSchema, riskLaneSchema, widgetAppearanceClaimsSchema } from "./directory.ts";
+import {
+  DIRECTORY_VERSION_MAX,
+  packageSourceSchema,
+  riskLaneSchema,
+  unreadListingFieldsSchema,
+  widgetAppearanceClaimsSchema,
+} from "./directory.ts";
 import { facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
+import { turnOriginSchema } from "./turn-origin.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
 
 /**
@@ -259,6 +266,12 @@ export const marketplaceResultSchema = z.strictObject({
    * the claims: the install refuses an artifact whose manifest declares a different reach.
    */
   declaredReach: declaredReachSchema.optional(),
+  /**
+   * Fields the listing carries that this node does not read (`readDirectoryEntry`): how many and the first few names,
+   * never their values. Present only when there were some, so the row says it shows less than the listing does; a newer
+   * Clark reads them.
+   */
+  unreadFields: unreadListingFieldsSchema.optional(),
   facets: z.array(facetKindSchema).max(10),
   platforms: z.array(platformSchema).max(10),
 });
@@ -432,6 +445,12 @@ export const approvalCardBlockSchema = z.strictObject({
   decider: z.literal("user"),
   decision: z.enum(["pending", "granted", "denied", "expired"]),
   decidedAt: instantSchema.optional(),
+  /**
+   * Who asked for the turn that wants this, as the node recorded it when it accepted the message. The card names it
+   * when it is not the person, so an approval asked for by an AI client over MCP says so. Absent on cards made before
+   * it was recorded and on cards no turn asked for.
+   */
+  origin: turnOriginSchema.optional(),
 });
 
 export const credentialCardBlockSchema = z.strictObject({
@@ -887,6 +906,13 @@ export const messageRecordSchema = z.strictObject({
    * act on — reads only messages that carry it.
    */
   surface: messageSurfaceSchema.optional(),
+  /**
+   * Who asked, on a user message: the person, an AI client over MCP, a program on the relay or the HTTP API, an
+   * automation, or a paired peer (`TurnOrigin`). Set by the node that accepted it, from the surface mark its own
+   * relays set and the code path that took the message — never from a body. Absent on messages stored before it was
+   * recorded.
+   */
+  origin: turnOriginSchema.optional(),
 });
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 

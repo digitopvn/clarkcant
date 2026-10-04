@@ -16,7 +16,10 @@ import {
   type ResourceProfile,
   type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
+  type TurnOrigin,
   VIEW_STATE_WRITE_VARIANT,
+  turnOriginOfSurfaceMark,
+  turnOriginSchema,
   actionInvocationSchema,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
@@ -634,6 +637,8 @@ export async function answerQuestionForNode(
     confirmed?: unknown;
     viaVoice?: boolean;
     at: Instant;
+    /** Who answered (`TurnOrigin`), decided by the caller from the path the answer came on. Absent is the person. */
+    origin?: TurnOrigin;
   },
 ): Promise<{ ok: true; note: string } | { ok: false; code: string; message: string }> {
   const answered = answerQuestion(interactionDepsFor(services, input.conversationId), input.questionId, {
@@ -658,6 +663,7 @@ export async function answerQuestionForNode(
     text: answered.note,
     note: `${answered.note}\n\nĐây là câu trả lời của người dùng cho câu hỏi bạn đã hỏi. Hãy tiếp tục công việc đang làm dở.`,
     at: input.at,
+    origin: input.origin ?? "person",
   });
   return { ok: true, note: answered.note };
 }
@@ -912,9 +918,12 @@ function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: strin
  * Whether a message was typed into the page's composer: the header the page sends, which no relay forwards
  * (`COMPOSER_SURFACE_HEADER`). Anything else — no header, another value, a list of them — is not the composer.
  */
-function composerSurface(request: GatewayRequest): { surface?: MessageSurface } {
+function composerSurface(request: GatewayRequest): { surface?: MessageSurface; origin: TurnOrigin } {
   const value = request.headers[COMPOSER_SURFACE_HEADER];
-  return value === "composer" ? { surface: "composer" } : {};
+  // Who asked, from the same mark: the composer is the person, MCP and the relay overwrite the header with their own
+  // name, and anything else is a program on the HTTP API. Never from the body (`turnOriginOfSurfaceMark`).
+  const origin = turnOriginOfSurfaceMark(value);
+  return value === "composer" ? { surface: "composer", origin } : { origin };
 }
 
 export function appendHostReply(
@@ -1135,7 +1144,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         { text, runningMs: control.runningMs?.(conversationId) ?? 0 },
       );
       const action = decided.status === "decided" ? decided.action : "interrupt";
-      if (action === "steer" && (await control.steer(conversationId, text))) {
+      // A steer joins only a turn of the same origin; a program's message beside the person's turn becomes its own.
+      if (action === "steer" && (await control.steer(conversationId, text, composerSurface(request).origin))) {
         return json(202, {
           accepted: true,
           resolution: "steered",
@@ -1154,6 +1164,19 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         if ("refusal" in started) {
           control.interrupt(conversationId);
         } else {
+          // A background request is never stored as a message, so who asked for it is written here: the run's id, not
+          // its words, which stay in the conversation's own record.
+          appendAuditEvent(services.runtime.db, {
+            auditId: services.conductor.newId("audit"),
+            principalId: runtime.identity.ownerPrincipalId,
+            nodeId: runtime.identity.nodeId,
+            kind: "interaction",
+            summary: "started a background request beside the running turn",
+            outcome: "done",
+            ref: started.sessionId,
+            origin: composerSurface(request).origin,
+            at: at() as never,
+          });
           return json(202, {
             accepted: true,
             resolution: "background",
@@ -1363,6 +1386,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       confirmed: parsed.value.confirmed,
       viaVoice: parsed.value.viaVoice === true,
       at: at() as never,
+      // Who answered, from the surface mark like a message: the page's card, or a program on a machine surface.
+      origin: composerSurface(request).origin,
     });
     if (!answered.ok) {
       const status = answered.code === "QUESTION_NOT_FOUND" ? 404 : 409;
@@ -1526,7 +1551,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       principalId: runtime.identity.ownerPrincipalId,
       ...(sequence === undefined ? {} : { sequence }),
     };
-    const result = variant === VIEW_STATE_WRITE_VARIANT ? writeWidgetViewState(services, invocation) : await invokeWidgetAction(services, invocation);
+    const result = variant === VIEW_STATE_WRITE_VARIANT ? writeWidgetViewState(services, invocation) : await invokeWidgetAction(services, invocation, "click", composerSurface(request).origin);
 
     if (result.ok) {
       touchWidget(runtime.db, conversationId, instanceId);
@@ -1889,6 +1914,13 @@ export async function decideApprovalForNode(
   if (payload === undefined) {
     return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
   }
+  /*
+   * Who asked for the operation, from the host-written card. The person decides it, but the person approved this one
+   * effect, not the rest of a program's plan: the records keep who asked, and the turn that carries on after the
+   * approval keeps that origin too, so a program's next risky step is still asked about under "Ask me first".
+   */
+  const askedBy = card?.type === "approval-card" ? turnOriginSchema.safeParse(card.origin).data : undefined;
+  const askedByRecord = askedBy === undefined ? {} : { origin: askedBy };
 
   const decided = decideApproval(coordination, {
     approvalId: input.approvalId as never,
@@ -1953,6 +1985,7 @@ export async function decideApprovalForNode(
       summary: written.description,
       outcome: "done",
       ref: input.approvalId,
+      ...askedByRecord,
       at: input.at,
     });
     return { ok: true, outcome: written.description };
@@ -1986,6 +2019,7 @@ export async function decideApprovalForNode(
       approvalId: input.approvalId,
       conversationId: input.conversationId,
       checkJobOrigin: (origin, ref) => checkApprovedJobOrigin(services, input.conversationId, origin, ref),
+      ...askedByRecord,
       ledger: (call) => {
         ledger = actionLedgerHooks(services, {
           conversationId: input.conversationId,
@@ -2026,6 +2060,7 @@ export async function decideApprovalForNode(
       summary: invoked.description,
       outcome: invoked.succeeded ? "done" : "failed",
       ref: input.approvalId,
+      ...askedByRecord,
       at: input.at,
     });
     return { ok: true, outcome: invoked.description };
@@ -2054,6 +2089,7 @@ export async function decideApprovalForNode(
     summary: ran.description,
     outcome: ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
     ref: input.approvalId,
+    ...askedByRecord,
     at: input.at,
   });
 
@@ -2083,6 +2119,9 @@ export async function decideApprovalForNode(
      */
     note: `${receipt}\n\nĐây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.`,
     at: input.at,
+    // The turn carries on with the plan of whoever asked for the command, so it keeps their origin: approving one
+    // effect is not approving the rest. A card without an origin was raised by the person's own turn.
+    origin: askedBy ?? "person",
   });
   // Indexed where the messages were written, so a continuation is findable like anything else said.
   indexMessages(services.search, {
@@ -2130,6 +2169,7 @@ async function streamUserMessage(
     referenceBlocks?: readonly ReferenceBlock[];
     demo?: boolean;
     surface?: MessageSurface;
+    origin?: TurnOrigin;
   },
   send: (chunk: string) => void,
 ): Promise<void> {
@@ -2143,6 +2183,7 @@ async function streamUserMessage(
       referenceBlocks: input.referenceBlocks ?? [],
       ...(input.demo === true ? { demo: true } : {}),
       ...(input.surface === undefined ? {} : { surface: input.surface }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would
         // mean two vocabularies for the same facts, and the transcript stores one of them.

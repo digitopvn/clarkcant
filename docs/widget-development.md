@@ -2095,7 +2095,12 @@ profiles existed, value for value, so an existing package runs exactly as it did
 | `background-compute` | 2 GiB / 2 / 256 / 256 MiB | 60 s | 4 h | 2 | unmounted |
 
 Every profile has no network of its own (`--network none`; a service reaches a provider only through the node, §14.2)
-and a `noexec` `/tmp`. Services and jobs keep running whether or not a
+and a `noexec` `/tmp` as its only scratch space: the rest of the root, `/run`, `/var/tmp` and `/dev` included, is
+read-only under both Docker and Podman. There is no writable `/dev/shm`: Docker mounts none, and Podman's is read-only,
+so a dependency that needs POSIX shared memory (`shm_open`, some native addons, headless Chromium) does not work in a
+service. Neither engine keeps a copy of what a service writes to its standard output (`--log-driver none`). CI checks
+this on Linux; Docker Desktop and Podman machine on macOS and Windows are checked by hand
+([platform-smoke.md](platform-smoke.md)). Services and jobs keep running whether or not a
 frame is mounted. The largest result file stays the attachment maximum, because a file a service returns must stay
 attachable to a conversation. The three larger profiles are engineering defaults a reviewer can change in that file.
 The bounds reach the container's `--memory`, `--cpus`, `--pids-limit` and `/tmp` size, the call and job deadlines, and
@@ -2202,9 +2207,11 @@ anything is recorded, so consent covers what was shown.
 A directory entry may also state the resource profile the package requests in `resources` (`{ version: 1, profile, gpu? }`,
 the same shape as the manifest's); a listing without it means `interactive-light` and no GPU, and `clark widget publish`
 writes it from the manifest only when the request is not that default. It binds the same way: an artifact that requests
-another profile is refused with `409 DECLARED_REACH_MISMATCH`. A node released before this field refuses a whole
-directory index that holds an entry field it does not know, so an index that lists a non-default `resources` needs
-nodes at least as new as this field.
+another profile is refused with `409 DECLARED_REACH_MISMATCH`. A node released before this field and before the
+tolerant reading in §18 refuses a whole directory index that holds an entry field it does not know, so an index that
+lists a non-default `resources` needs nodes at least as new as this field to be read by all of them. A node with the
+tolerant reading reads such an entry without the field and says so on the card, the install question and the update
+notice (§18).
 
 **What an update shows.** A package update notice, and the install question an update raises when the execution mode
 asks first, carry `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): the new version's listing
@@ -2716,6 +2723,23 @@ of guessing `web` and handing a native package to something that cannot run it.
 - changelog link.
 
 Signals such as downloads/reviews may be added later; do not use popularity in place of security/trust facts.
+
+**Reading an index a newer directory wrote.** An index is a JSON array of entries with no format version, and nodes of
+different ages share one. A node reads each entry with `readDirectoryEntry`
+([directory.ts](../packages/contracts/src/directory.ts)): a field it does not know, at the top of the entry or inside
+`publisher`, `preview` or `hostApi`, is dropped and never passed on, so its value reaches no card, question or install.
+Every field the node knows is still checked with all its bounds, and `source`, `isolations`, `declaredReach`,
+`resources` and `widgetAppearance` stay strict inside: a known field with a bad value, or an unknown field inside one of
+those, still makes the node refuse the whole index as unreadable, with the reason. What was dropped is said, never
+hidden: the `marketplace-results` row, the inbox install question and the package update notice carry `unreadFields`
+(`{ count, names }`, never values), shown as "This listing has N details this version of Clark cannot read… Update Clark
+to see all of it", because a field this node does not know may be one a newer node treats as binding. `count` counts
+every field left out. `names` holds at most 8 of them, in the order the entry lists them, and only plain identifier paths
+(`UNREAD_FIELD_PATH_PATTERN`: one or two dot-joined segments matching `[A-Za-z_$][A-Za-z0-9_$-]{0,63}`); a key with any
+other text (a bidi control, a line break, a space, an over-long name) is counted without being named. Each name is shown
+apart from the sentence, as code. The install still refuses an artifact that does not match what this node does read.
+Publishing stays strict: the entry `clark widget publish` writes is checked against the strict `directoryEntrySchema`,
+where an unknown field is a mistake rather than a newer format.
 
 The Pi package catalog is a good reference for discovery: packages have manifest resources and a preview image/video, are shared via npm/git and indexed in the catalog. ClarkCant should keep those ergonomics, but executable widgets default to isolation instead of full-process trust.
 

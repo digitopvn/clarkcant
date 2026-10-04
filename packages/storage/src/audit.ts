@@ -1,4 +1,4 @@
-import type { Instant } from "@clarkcant/contracts";
+import { type Instant, type TurnOrigin, turnOriginSchema } from "@clarkcant/contracts";
 
 import type { Database } from "./db.ts";
 
@@ -51,6 +51,8 @@ export interface AuditEvent {
   outcome: AuditOutcome;
   /** The id of the thing this is about — a run, an approval, a secret by name. */
   ref?: string;
+  /** Who asked for the turn this act came from, when a turn did (`TurnOrigin`). */
+  origin?: TurnOrigin;
 }
 
 interface AuditRow {
@@ -62,6 +64,7 @@ interface AuditRow {
   summary: string;
   outcome: string;
   ref: string | null;
+  origin: string | null;
 }
 
 export function appendAuditEvent(
@@ -75,11 +78,12 @@ export function appendAuditEvent(
     at: Instant;
     nodeId?: string;
     ref?: string;
+    origin?: TurnOrigin;
   },
 ): void {
   db.prepare(
-    `INSERT INTO audit_log (audit_id, principal_id, node_id, at, kind, summary, outcome, ref)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO audit_log (audit_id, principal_id, node_id, at, kind, summary, outcome, ref, origin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.auditId,
     input.principalId,
@@ -91,6 +95,7 @@ export function appendAuditEvent(
     input.summary.slice(0, 500),
     input.outcome,
     input.ref ?? null,
+    input.origin ?? null,
   );
 }
 
@@ -121,5 +126,7 @@ export function listAuditEvents(
     summary: row.summary,
     outcome: row.outcome as AuditOutcome,
     ...(row.ref === null ? {} : { ref: row.ref }),
+    // A value this build does not know is left out rather than shown as someone it is not.
+    ...(turnOriginSchema.safeParse(row.origin).success ? { origin: row.origin as TurnOrigin } : {}),
   }));
 }
