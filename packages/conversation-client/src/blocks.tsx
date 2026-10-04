@@ -881,7 +881,10 @@ export function ApprovalCardBlock({
   return (
     <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision} data-approval-id={approvalId}>
       <header className="cc-card-head">
-        <span className="cc-card-title">{t("blocks.approval.needsConfirm")}</span>
+        {/* A card that has been decided no longer asks: the title says what it was, and the badge below says how it ended. */}
+        <span className="cc-card-title">
+          {decision === "pending" && !decided ? t("blocks.approval.needsConfirm") : t("blocks.approval.request")}
+        </span>
         {/* In the words the Control settings use for the same kind of effect, so a rule and the card it raises match. */}
         <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"} data-effect={effect}>
           {(effectCategoryLabels(t) as Record<string, string>)[effect] ?? effect}

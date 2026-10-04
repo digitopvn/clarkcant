@@ -59,6 +59,7 @@ export const MESSAGES_TIMELINE_VI = {
 
   // blocks.tsx — approval card
   "blocks.approval.needsConfirm": "Cần bạn xác nhận",
+  "blocks.approval.request": "Yêu cầu xác nhận",
   "blocks.approval.commandLabel": "lệnh sẽ chạy",
   "blocks.approval.tilePolicyLabel": "chính sách ô bản đồ sẽ ghi",
   "blocks.approval.performInputLabel": "toàn bộ dữ liệu sẽ gửi cho widget",
@@ -1049,6 +1050,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.question.askedAgainNote": "This question was asked again below; answer the new one.",
 
   "blocks.approval.needsConfirm": "Needs your confirmation",
+  "blocks.approval.request": "Confirmation request",
   "blocks.approval.commandLabel": "command to run",
   "blocks.approval.tilePolicyLabel": "map tile policy to write",
   "blocks.approval.performInputLabel": "everything the widget will be sent",

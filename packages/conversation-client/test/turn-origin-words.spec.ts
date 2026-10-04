@@ -69,6 +69,9 @@ describe("an approval card read back from history says what was decided", () => 
     expect(granted).toContain(CATALOGS.vi["blocks.approval.granted"]);
     expect(granted).not.toContain(">granted<");
     expect(granted).not.toContain(CATALOGS.vi["blocks.approval.onlyYouCanConfirm"]);
+    expect(granted).not.toContain(CATALOGS.vi["blocks.approval.needsConfirm"]);
+    expect(granted).toContain(CATALOGS.vi["blocks.approval.request"]);
+    expect(inLocale("vi", card())).toContain(CATALOGS.vi["blocks.approval.needsConfirm"]);
     expect(inLocale("en", card(undefined, "expired"))).toContain(CATALOGS.en["blocks.approval.expired"]);
     expect(inLocale("en", card(undefined, "denied"))).toContain(CATALOGS.en["blocks.approval.denied"]);
   });
