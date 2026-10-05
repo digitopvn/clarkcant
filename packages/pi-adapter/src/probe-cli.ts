@@ -49,30 +49,77 @@ function record(step: string, status: StepStatus, detail: string, evidence: stri
   process.stderr.write(`        ${detail}\n`);
 }
 
-/** The model named by `--model <provider>/<id>`, when one was. A provider id has no slash; a model id may. */
-function requestedModel(): { provider: string; id: string } | undefined {
-  const value = process.argv[process.argv.indexOf("--model") + 1];
-  if (!process.argv.includes("--model") || value === undefined) return undefined;
-  const slash = value.indexOf("/");
-  if (slash <= 0 || slash === value.length - 1) {
-    throw new Error(`--model expects <provider>/<id>, for example anthropic/claude-opus-5-5; got ${value}`);
-  }
-  return { provider: value.slice(0, slash), id: value.slice(slash + 1) };
+interface ProbeArguments {
+  json: boolean;
+  write: boolean;
+  live: boolean;
+  /** The model `--live` runs; absent means the configured default. */
+  model: { provider: string; id: string } | undefined;
 }
 
 /**
- * One real turn through the adapter, with no tools and nothing of the operator's in the prompt.
+ * Reads the command line once, before any step runs.
  *
- * Three outcomes, because they need different responses: the model answered (pass); the provider refused for a
- * reason that belongs to the account — no credential, no quota — so the SDK path is still unproven (blocked); or
- * it refused for any other reason, which is what an incompatible SDK looks like (fail).
+ * An argument that is not understood stops the probe rather than being skipped: `--model=x` read as nothing would
+ * spend the operator's quota on a model they did not pick.
  */
-async function liveCompletion(): Promise<void> {
-  const model = requestedModel();
+function parseArguments(argv: readonly string[]): ProbeArguments {
+  const parsed: ProbeArguments = { json: false, write: false, live: false, model: undefined };
+  let named: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index] ?? "";
+    if (argument === "--json") parsed.json = true;
+    else if (argument === "--write") parsed.write = true;
+    else if (argument === "--live") parsed.live = true;
+    else if (argument === "--model") {
+      index += 1;
+      named = argv[index] ?? "";
+    } else if (argument.startsWith("--model=")) named = argument.slice("--model=".length);
+    else throw new Error(`unknown argument ${argument}`);
+  }
+  if (named !== undefined) {
+    if (!parsed.live) throw new Error("--model only applies to --live");
+    // A provider id has no slash; a model id may.
+    const slash = named.indexOf("/");
+    if (slash <= 0 || slash === named.length - 1) {
+      throw new Error(`--model expects <provider>/<id>, for example anthropic/claude-opus-5-5; got "${named}"`);
+    }
+    parsed.model = { provider: named.slice(0, slash), id: named.slice(slash + 1) };
+  }
+  return parsed;
+}
+
+/**
+ * What a provider or the SDK said, made fit to keep: `--write` puts it in a committed file.
+ *
+ * Its first line only, without this machine's paths or anything shaped like a key — some providers repeat part of
+ * the key they refuse.
+ */
+function reasonToRecord(raw: string): string {
+  const firstLine = raw.split(/\r?\n/).find((line) => line.trim() !== "") ?? "";
+  return firstLine
+    // A path of this machine, not the path part of an address: it does not follow a host name or a scheme.
+    .replace(/(?<![\w.:\\/])(?:[A-Za-z]:)?[\\/](?:[^\\/\s"'`:]+[\\/])+[^\\/\s"'`:]*/g, "[path]")
+    .replace(/\b(?:sk|pk|rk|key|xox[a-z])[-_][A-Za-z0-9*._-]{6,}/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted]")
+    .trim()
+    .slice(0, 300);
+}
+
+/**
+ * One real turn through the adapter, with no tools and nothing of the operator's in the prompt: the session is
+ * isolated, so no extension, skill or instructions file found on this machine is sent or can change the turn.
+ *
+ * Three outcomes, because they need different responses: the model answered (pass); the turn could not be made for
+ * a reason that belongs to the account — no credential, no quota — so the SDK path is still unproven (blocked); or
+ * it failed for any other reason, which is what an incompatible SDK looks like (fail). Recorded exactly once.
+ */
+async function liveCompletion(model: ProbeArguments["model"]): Promise<void> {
   const named = model === undefined ? "the configured default model" : `${model.provider}/${model.id}`;
-  const adapter = new RealPiAdapter({ cwd: process.cwd(), builtinTools: [] });
+  const adapter = new RealPiAdapter({ cwd: process.cwd(), builtinTools: [], isolated: true });
   let text = "";
   const errors: string[] = [];
+  let usage: { inputTokens?: number; outputTokens?: number } = {};
   try {
     const handle = await adapter.createWorkerSession({
       goal: "P0.1 live completion probe",
@@ -81,50 +128,57 @@ async function liveCompletion(): Promise<void> {
       thinkingLevel: "off",
       ...(model === undefined ? {} : { model }),
     });
-    adapter.subscribe(handle.sessionId, (event) => {
-      if (event.type === "text-delta") text += event.delta;
-      if (event.type === "error") errors.push(event.message);
-    });
     try {
+      adapter.subscribe(handle.sessionId, (event) => {
+        if (event.type === "text-delta") text += event.delta;
+        if (event.type === "error") errors.push(event.message);
+      });
       await adapter.prompt(handle.sessionId, "Reply with exactly: pong");
     } finally {
-      const usage = adapter.usage(handle.sessionId);
+      usage = adapter.usage(handle.sessionId);
       await adapter.dispose(handle.sessionId);
-      const evidence = [
-        `model: ${named}`,
-        `input tokens: ${String(usage.inputTokens ?? "not reported")}; output tokens: ${String(usage.outputTokens ?? "not reported")}`,
-      ];
-      if (errors.length === 0 && text.trim() !== "") {
-        record("live-model-completion", "pass", `${named} answered a real turn (${text.trim().length} characters)`, evidence);
-      } else if (errors.length === 0) {
-        record("live-model-completion", "fail", `${named} settled without text and without an error`, evidence);
-      } else {
-        const reason = errors.join("; ");
-        const account = /usage|quota|credit|billing|api[_ -]?key|credential|auth|log ?in|HTTP 40[123]|HTTP 429/i.test(reason);
-        record(
-          "live-model-completion",
-          account ? "blocked" : "fail",
-          account
-            ? `${named} was reached, and the provider refused the turn for a reason that belongs to the account: ${reason}`
-            : `${named} did not answer: ${reason}`,
-          [
-            ...evidence,
-            ...(account ? ["unblock condition: a credential for this provider with usable quota, then re-run with --live"] : []),
-          ],
-        );
-      }
     }
   } catch (cause) {
+    // A turn that threw is a turn that did not complete, whatever had streamed before it did.
+    errors.push(cause instanceof Error ? cause.message : String(cause));
+  }
+
+  const evidence = [
+    `model: ${named}`,
+    `input tokens: ${String(usage.inputTokens ?? "not reported")}; output tokens: ${String(usage.outputTokens ?? "not reported")}`,
+  ];
+  if (errors.length === 0) {
+    const answered = text.trim() !== "";
     record(
       "live-model-completion",
-      "blocked",
-      `no live turn could be started on ${named}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ["unblock condition: configure a credential for this provider (~/.pi/agent/auth.json or an API-key variable), then re-run with --live"],
+      answered ? "pass" : "fail",
+      answered
+        ? `${named} answered a real turn (${text.trim().length} characters)`
+        : `${named} settled without text and without an error`,
+      evidence,
     );
+    return;
   }
+  const account = errors.some((reason) =>
+    /usage|quota|credit|billing|api[_ -]?key|credential|auth|log ?in|HTTP 40[123]|HTTP 429/i.test(reason),
+  );
+  const reason = errors.map(reasonToRecord).join("; ");
+  record(
+    "live-model-completion",
+    account ? "blocked" : "fail",
+    account
+      ? `${named} gave no answer, for a reason that belongs to the account: ${reason}`
+      : `${named} did not answer: ${reason}`,
+    [
+      ...evidence,
+      ...(account
+        ? ["unblock condition: a credential for this provider with usable quota, then re-run with --live"]
+        : []),
+    ],
+  );
 }
 
-async function main(): Promise<void> {
+async function main(options: ProbeArguments): Promise<void> {
   const sdk = await sdkVersion();
 
   /* 1. The module loads at all. */
@@ -256,8 +310,8 @@ async function main(): Promise<void> {
     ]);
 
     /* 8. A real completion needs a credentialed model, so it runs only when asked for. */
-    if (process.argv.includes("--live")) {
-      await liveCompletion();
+    if (options.live) {
+      await liveCompletion(options.model);
     } else {
       record(
         "live-model-completion",
@@ -320,11 +374,11 @@ async function main(): Promise<void> {
     steps: results,
   };
 
-  if (process.argv.includes("--json")) {
+  if (options.json) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   }
 
-  if (process.argv.includes("--write")) {
+  if (options.write) {
     const target = join(process.cwd(), "docs", "research", "compatibility-lock.md");
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, renderMarkdown(report));
@@ -393,8 +447,17 @@ function renderMarkdown(report: ProbeReport): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** One table cell: a pipe would end it and a line break would end the row. */
 function escapePipes(text: string): string {
-  return text.replaceAll("|", "\\|");
+  return text.replaceAll("|", "\\|").replace(/\s*\r?\n\s*/g, " ");
 }
 
-await main();
+let probeArguments: ProbeArguments;
+try {
+  probeArguments = parseArguments(process.argv.slice(2));
+} catch (cause) {
+  process.stderr.write(`${cause instanceof Error ? cause.message : String(cause)}\n`);
+  process.stderr.write("usage: node packages/pi-adapter/src/probe-cli.ts [--json] [--write] [--live [--model <provider>/<id>]]\n");
+  process.exit(2);
+}
+await main(probeArguments);

@@ -22,8 +22,8 @@ import type {
 /**
  * One scripted turn: either the model's own words, or a tool call the model decides to make before
  * replying. A worker session's tools arrive with `WorkerBrief.customTools`, active, as on the real
- * adapter, and `setActiveTools` narrows the created ones, so
- * this is the seam by which a scripted prompt can exercise a tool the worker really registered:
+ * adapter, and `setActiveTools` narrows the created ones, so this is the seam by which a scripted
+ * prompt can exercise a tool the worker really registered:
  * `run()` calls it through the same `callToolResult` path a live agent loop would use, which means the
  * call is observed by every subscriber exactly like a real tool call, including the `tool-start`/
  * `tool-end` events the worker's evidence collection depends on.

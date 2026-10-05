@@ -13,6 +13,7 @@ import {
   type RealPiAdapterOptions,
   type ToolDefinition,
   type WorkerBrief,
+  type WorkerEvent,
 } from "../src/index.ts";
 import { toSdkTool } from "../src/real.ts";
 
@@ -665,6 +666,29 @@ describe("a brief confined to its approved project roots", () => {
         confineToProjectRoots: true,
       }),
     ).rejects.toThrow(new RegExp(missing.replace(/[/\\.]/g, "\\$&")));
+  });
+
+  it("reports a turn the provider refused, read from the session's own transcript", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+    const events: WorkerEvent[] = [];
+    adapter.subscribe(handle.sessionId, (event) => events.push(event));
+    // What the SDK leaves behind when a provider refuses: the run settles, and the last message carries the reason.
+    (sdk.session as unknown as { messages: unknown[] }).messages = [
+      { role: "user" },
+      { role: "assistant", stopReason: "error", errorMessage: "this model is not available to your account" },
+    ];
+
+    await adapter.prompt(handle.sessionId, "hello");
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        sessionId: handle.sessionId,
+        message: "the model's provider refused the turn: this model is not available to your account",
+      },
+    ]);
   });
 
   it("has no way to add a tool to a session after it was created", () => {

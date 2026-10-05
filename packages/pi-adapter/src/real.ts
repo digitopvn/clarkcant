@@ -21,7 +21,7 @@ import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./sco
  *
  * Behaviour the application depends on, and how each is obtained:
  *
- * - Which tools are active is a state assignment on the session, not a reload.
+ * - Which tools are active is a call to the session's `setActiveToolsByName`, not a reload.
  *   Treating a tool-set change as a resource reload is what causes an unnecessary
  *   worker restart, which acceptance test T24 forbids.
  * - Subscriptions attach to a specific session and do not follow a replacement.
