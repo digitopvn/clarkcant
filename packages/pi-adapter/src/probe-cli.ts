@@ -9,9 +9,10 @@
  * environment, and why.
  *
  * Usage:
- *   node packages/pi-adapter/src/probe-cli.ts [--json] [--write]
+ *   node packages/pi-adapter/src/probe-cli.ts [--json] [--write] [--live [--model <provider>/<id>]]
  *
- * `--write` records the result into docs/research/compatibility-lock.md.
+ * `--write` records the result into docs/research/compatibility-lock.md. `--live` sends one short prompt to a
+ * real model — the named one, or the configured default — which spends the operator's own quota.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -46,6 +47,81 @@ function record(step: string, status: StepStatus, detail: string, evidence: stri
   const icon = status === "pass" ? "PASS   " : status === "blocked" ? "BLOCKED" : "FAIL   ";
   process.stderr.write(`${icon} ${step}\n`);
   process.stderr.write(`        ${detail}\n`);
+}
+
+/** The model named by `--model <provider>/<id>`, when one was. A provider id has no slash; a model id may. */
+function requestedModel(): { provider: string; id: string } | undefined {
+  const value = process.argv[process.argv.indexOf("--model") + 1];
+  if (!process.argv.includes("--model") || value === undefined) return undefined;
+  const slash = value.indexOf("/");
+  if (slash <= 0 || slash === value.length - 1) {
+    throw new Error(`--model expects <provider>/<id>, for example anthropic/claude-opus-5-5; got ${value}`);
+  }
+  return { provider: value.slice(0, slash), id: value.slice(slash + 1) };
+}
+
+/**
+ * One real turn through the adapter, with no tools and nothing of the operator's in the prompt.
+ *
+ * Three outcomes, because they need different responses: the model answered (pass); the provider refused for a
+ * reason that belongs to the account — no credential, no quota — so the SDK path is still unproven (blocked); or
+ * it refused for any other reason, which is what an incompatible SDK looks like (fail).
+ */
+async function liveCompletion(): Promise<void> {
+  const model = requestedModel();
+  const named = model === undefined ? "the configured default model" : `${model.provider}/${model.id}`;
+  const adapter = new RealPiAdapter({ cwd: process.cwd(), builtinTools: [] });
+  let text = "";
+  const errors: string[] = [];
+  try {
+    const handle = await adapter.createWorkerSession({
+      goal: "P0.1 live completion probe",
+      projectRoots: [],
+      allowedCapabilityRefs: [],
+      thinkingLevel: "off",
+      ...(model === undefined ? {} : { model }),
+    });
+    adapter.subscribe(handle.sessionId, (event) => {
+      if (event.type === "text-delta") text += event.delta;
+      if (event.type === "error") errors.push(event.message);
+    });
+    try {
+      await adapter.prompt(handle.sessionId, "Reply with exactly: pong");
+    } finally {
+      const usage = adapter.usage(handle.sessionId);
+      await adapter.dispose(handle.sessionId);
+      const evidence = [
+        `model: ${named}`,
+        `input tokens: ${String(usage.inputTokens ?? "not reported")}; output tokens: ${String(usage.outputTokens ?? "not reported")}`,
+      ];
+      if (errors.length === 0 && text.trim() !== "") {
+        record("live-model-completion", "pass", `${named} answered a real turn (${text.trim().length} characters)`, evidence);
+      } else if (errors.length === 0) {
+        record("live-model-completion", "fail", `${named} settled without text and without an error`, evidence);
+      } else {
+        const reason = errors.join("; ");
+        const account = /usage|quota|credit|billing|api[_ -]?key|credential|auth|log ?in|HTTP 40[123]|HTTP 429/i.test(reason);
+        record(
+          "live-model-completion",
+          account ? "blocked" : "fail",
+          account
+            ? `${named} was reached, and the provider refused the turn for a reason that belongs to the account: ${reason}`
+            : `${named} did not answer: ${reason}`,
+          [
+            ...evidence,
+            ...(account ? ["unblock condition: a credential for this provider with usable quota, then re-run with --live"] : []),
+          ],
+        );
+      }
+    }
+  } catch (cause) {
+    record(
+      "live-model-completion",
+      "blocked",
+      `no live turn could be started on ${named}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      ["unblock condition: configure a credential for this provider (~/.pi/agent/auth.json or an API-key variable), then re-run with --live"],
+    );
+  }
 }
 
 async function main(): Promise<void> {
@@ -179,15 +255,19 @@ async function main(): Promise<void> {
       "no listener was left attached",
     ]);
 
-    /* 8. A real completion needs a credentialed model. */
-    record(
-      "live-model-completion",
-      "blocked",
-      "not attempted by the probe: a live completion would consume the operator's provider quota and requires an account this repository does not hold",
-      [
-        "unblock condition: run `pnpm probe:pi -- --live` with a configured provider credential",
-      ],
-    );
+    /* 8. A real completion needs a credentialed model, so it runs only when asked for. */
+    if (process.argv.includes("--live")) {
+      await liveCompletion();
+    } else {
+      record(
+        "live-model-completion",
+        "blocked",
+        "not attempted by the probe: a live completion would consume the operator's provider quota and requires an account this repository does not hold",
+        [
+          "unblock condition: run `pnpm probe:pi --live [--model <provider>/<id>]` with a configured provider credential",
+        ],
+      );
+    }
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     const looksLikeAuth = /api[_ -]?key|credential|auth|no model|not authenticated|login/i.test(message);
@@ -218,7 +298,7 @@ async function main(): Promise<void> {
     "ctx.reload() is only available inside a Pi extension command handler; this probe runs as an embedded SDK consumer, so the step cannot be exercised from here",
     [
       "unblock condition: load an extension through DefaultResourceLoader that calls ctx.reload() from a registered command",
-      "what the app relies on instead: DefaultResourceLoader.reload() plus agent.state.tools assignment",
+      "what the app relies on instead: DefaultResourceLoader.reload() plus session.setActiveToolsByName()",
     ],
   );
 

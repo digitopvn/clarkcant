@@ -192,3 +192,125 @@ describe("the discovery switches an isolated worker session relies on", () => {
     expect(factoryCalled).toBe(true);
   });
 });
+
+describe("the public tool surface the adapter relies on instead of the session's own tool list", () => {
+  /**
+   * A real session, with no provider and no credential: creating one and changing its tools sends nothing.
+   *
+   * The adapter's tool boundary is three SDK behaviours, and each is a fact about the installed package rather
+   * than about the adapter: the allowlist decides what exists at all, `setActiveToolsByName` can only choose from
+   * that, and a tool with the default exposure stops being callable from other tools once it is narrowed away.
+   */
+  async function session(tools: string[], created: { name: string; exposure?: string }[]) {
+    const sdk = await loadSdk();
+    const { toSdkTool } = await import("../src/real.ts");
+    const dir = mkdtempSync(join(tmpdir(), "cc-compat-tools-"));
+    dirs.push(dir);
+    const Loader = sdk.DefaultResourceLoader as new (options: Record<string, unknown>) => { reload(): Promise<unknown> };
+    const loader = new Loader({
+      cwd: dir,
+      agentDir: dir,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
+    await loader.reload();
+    type Session = {
+      getActiveToolNames(): string[];
+      getCallableToolNames(): string[];
+      getAllTools(): { name: string; exposure: string }[];
+      setActiveToolsByName(names: string[]): void;
+      readonly systemPrompt: string;
+      readonly messages: unknown[];
+      dispose(): void;
+    };
+    const create = sdk.createAgentSession as (options: Record<string, unknown>) => Promise<{ session: Session }>;
+    const manager = sdk.SessionManager as { inMemory(cwd: string): unknown };
+    const result = await create({
+      cwd: dir,
+      agentDir: dir,
+      sessionManager: manager.inMemory(dir),
+      resourceLoader: loader,
+      tools,
+      customTools: created.map(({ name, exposure }) => ({
+        // The adapter's own conversion, so what is asserted is the exposure its tools really get.
+        ...toSdkTool(sdk as never, {
+          name,
+          label: name,
+          description: name,
+          // What puts a tool in the prompt's "Available tools" list; unique so the prompt can be searched for it.
+          promptSnippet: `snippet-of-${name}`,
+          parameters: { type: "object", properties: {} },
+          execute: async () => ({ text: name }),
+        }),
+        ...(exposure === undefined ? {} : { exposure }),
+      })),
+    });
+    return result.session;
+  }
+
+  it("has the accessors the adapter reads and the one method it writes through", async () => {
+    const live = await session(["a"], [{ name: "a" }]);
+    try {
+      expect(typeof live.getActiveToolNames).toBe("function");
+      expect(typeof live.getCallableToolNames).toBe("function");
+      expect(typeof live.setActiveToolsByName).toBe("function");
+      expect(Array.isArray(live.messages)).toBe(true);
+    } finally {
+      live.dispose();
+    }
+  });
+
+  it("never registers a tool the allowlist leaves out, however it is asked for afterwards", async () => {
+    const live = await session(["a", "b"], [{ name: "a" }, { name: "b" }, { name: "c" }]);
+    try {
+      expect(live.getActiveToolNames()).toEqual(["a", "b"]);
+      expect(live.getAllTools().map((tool) => tool.name)).toEqual(["a", "b"]);
+
+      // Neither a created tool outside the allowlist nor one of the SDK's own file tools can be activated.
+      live.setActiveToolsByName(["a", "b", "c", "read", "bash"]);
+      expect(live.getActiveToolNames()).toEqual(["a", "b"]);
+      expect(live.getCallableToolNames()).toEqual(["a", "b"]);
+    } finally {
+      live.dispose();
+    }
+  });
+
+  it("gives the adapter's tools the direct exposure, so narrowing one away also stops other tools calling it", async () => {
+    const live = await session(["a", "b"], [{ name: "a" }, { name: "b" }]);
+    try {
+      expect(live.getAllTools().map((tool) => tool.exposure)).toEqual(["direct", "direct"]);
+
+      live.setActiveToolsByName(["a"]);
+      expect(live.getActiveToolNames()).toEqual(["a"]);
+      // Not callable through a nested call either, and no longer described to the model.
+      expect(live.getCallableToolNames()).toEqual(["a"]);
+      expect(live.systemPrompt).toContain("snippet-of-a");
+      expect(live.systemPrompt).not.toContain("snippet-of-b");
+
+      live.setActiveToolsByName(["a", "b"]);
+      expect(live.getActiveToolNames()).toEqual(["a", "b"]);
+      expect(live.systemPrompt).toContain("snippet-of-b");
+    } finally {
+      live.dispose();
+    }
+  });
+
+  it("keeps a tool with a non-direct exposure callable from other tools after it is narrowed away", async () => {
+    /*
+     * The control for the test above, and the reason visibility is never treated as authorization: the day a tool
+     * is given `codemode` or `deferred` exposure, taking it out of the active set no longer takes it out of reach.
+     * Only the allowlist and the host's own check on each call do that.
+     */
+    const live = await session(["a", "d"], [{ name: "a" }, { name: "d", exposure: "codemode" }]);
+    try {
+      live.setActiveToolsByName(["a"]);
+      expect(live.getActiveToolNames()).toEqual(["a"]);
+      expect(live.getCallableToolNames()).toEqual(["a", "d"]);
+    } finally {
+      live.dispose();
+    }
+  });
+});

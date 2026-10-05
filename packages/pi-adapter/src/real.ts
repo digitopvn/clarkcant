@@ -38,13 +38,13 @@ import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./sco
 type SdkModule = typeof import("@earendil-works/pi-coding-agent");
 type SdkSession = Awaited<ReturnType<SdkModule["createAgentSession"]>>["session"];
 type SdkEvent = Parameters<Parameters<SdkSession["subscribe"]>[0]>[0];
-type SdkTool = SdkSession["agent"]["state"]["tools"][number];
+type SdkTool = NonNullable<NonNullable<Parameters<SdkModule["createAgentSession"]>[0]>["customTools"]>[number];
 
 /**
  * Convert one of our tool definitions into the SDK's shape.
  *
- * SAFETY: `defineTool` is an identity function at runtime, and the SDK accepts the result in both
- * `customTools` and `agent.state.tools`. The declaration's generic parameter is not inferred from
+ * SAFETY: `defineTool` is an identity function at runtime, and the SDK accepts the result in
+ * `customTools`. The declaration's generic parameter is not inferred from
  * our JSON-Schema-typed `parameters` — the SDK's type expects a TypeBox schema — so the structural
  * match fails at compile time even though the runtime shape is the documented one. `pi-ai` detects
  * the missing TypeBox marker and validates against plain JSON Schema instead.
@@ -230,8 +230,6 @@ export class RealPiAdapter implements PiAdapter {
       unsubscribe: () => void;
       listeners: Set<(event: WorkerEvent) => void>;
       loader: SdkModule["DefaultResourceLoader"] extends new (options: infer _O) => infer R ? R : never;
-      /** Tools added by `registerTool` after creation, by name, kept so narrowing the session never drops them. */
-      registeredTools: Map<string, SdkTool>;
       /**
        * The tool names the session was created with, captured once and never changed.
        *
@@ -240,14 +238,13 @@ export class RealPiAdapter implements PiAdapter {
        * needs to widen as often as it narrows. Choosing only from this list is also what keeps it from widening past
        * what the session was created with.
        */
-      baseline: readonly SdkTool[];
+      baseline: readonly string[];
       brief: WorkerBrief;
       /**
        * Whether this session's filesystem reach is the approved project roots and nothing else.
        *
-       * Kept so the two paths that could hand the session a tool after creation — `registerTool` and
-       * `setActiveTools` — can be answered from the session's own state rather than from what a caller
-       * believed it was creating.
+       * Kept so the one path that changes the session's tools after creation — `setActiveTools` — can be
+       * answered from the session's own state rather than from what a caller believed it was creating.
        */
       confined: boolean;
       /**
@@ -735,8 +732,9 @@ export class RealPiAdapter implements PiAdapter {
       unsubscribe,
       listeners,
       loader,
-      registeredTools: new Map(),
-      baseline: Object.freeze([...session.agent.state.tools]),
+      // Read through the SDK's own accessor: these are the tools it declared to the model at creation, after its
+      // allowlist. The adapter keeps names only and never holds or edits the SDK's tool objects.
+      baseline: Object.freeze([...session.getActiveToolNames()]),
       brief,
       confined,
       turns: 0,
@@ -759,39 +757,17 @@ export class RealPiAdapter implements PiAdapter {
     // Chosen from the creation-time baseline, in its order: a name the session was not created with is never
     // activated from here, so a confined session cannot be widened, and a tool narrowed away on one turn can be
     // brought back on the next.
-    const wanted = entry.baseline.filter((tool) => allowed.has(tool.name));
+    const wanted = entry.baseline.filter((name) => allowed.has(name));
     const session = entry.session as SdkSession & { setActiveToolsByName?: (names: string[]) => void };
     if (typeof session.setActiveToolsByName !== "function") {
       // The pinned SDK has it; one without it would leave the system prompt describing tools the model cannot call.
       throw new Error(`the agent SDK in use cannot change ${sessionId}'s active tools`);
     }
-    // Only the SDK's own path (#402): it activates from its registry and rebuilds the system prompt, so the "Available
-    // tools" list the model reads matches the tools it can call.
-    session.setActiveToolsByName(wanted.map((tool) => tool.name));
-    // Registered tools are kept whatever was asked, as before. The SDK has no public way to add a tool after creation,
-    // so `registerTool` appends to the live list and the registry this activates from never holds it; re-adding here is
-    // the one write outside the SDK's path, and goes away with that registration path (#402).
-    const active = new Set(session.agent.state.tools.map((tool) => tool.name));
-    const registered = [...entry.registeredTools.values()].filter((tool) => !active.has(tool.name));
-    if (registered.length > 0) session.agent.state.tools = [...session.agent.state.tools, ...registered];
-  }
-
-  async registerTool(sessionId: string, tool: ToolDefinition): Promise<void> {
-    const entry = this.#require(sessionId);
-    if (entry.confined) {
-      throw new Error(
-        `tool ${tool.name} cannot be registered on ${sessionId}: this session is confined to its approved project roots, and a tool added after creation never passes the SDK allowlist — it is appended to the session's tool list directly, which is how a confined worker would get a filesystem primitive back`,
-      );
-    }
-    if (entry.registeredTools.has(tool.name)) {
-      throw new Error(
-        `tool ${tool.name} is already registered on ${sessionId}; re-registering would install a duplicate handler`,
-      );
-    }
-    const sdk = await this.#load();
-    const sdkTool = toSdkTool(sdk, tool);
-    entry.session.agent.state.tools = [...entry.session.agent.state.tools, sdkTool];
-    entry.registeredTools.set(tool.name, sdkTool);
+    // Only the SDK's own path: it activates from its registry and rebuilds the system prompt, so the "Available
+    // tools" list the model reads matches the tools it can call. Nothing here writes the session's tool list, and
+    // there is no way to add a tool after creation — the SDK's allowlist is fixed when the session is made, so a
+    // tool set that has to grow belongs to a new session.
+    session.setActiveToolsByName([...wanted]);
   }
 
   async refreshResources(
@@ -963,7 +939,7 @@ export class RealPiAdapter implements PiAdapter {
      * a stop this adapter asked for has already said so.
      */
     // Read structurally: an SDK stand-in in a test may keep no message list at all.
-    const messages = (entry.session.agent.state as { messages?: readonly unknown[] }).messages;
+    const messages = (entry.session as { messages?: readonly unknown[] }).messages;
     const last = messages?.at(-1) as { role?: unknown; stopReason?: unknown; errorMessage?: unknown } | undefined;
     if (last?.role === "assistant" && last.stopReason === "error" && !this.#aborted.has(sessionId)) {
       const reason = providerErrorReason(last.errorMessage);
