@@ -221,6 +221,8 @@ test("on a phone the start screen's suggestions take two even rows and the orb f
   for (const model of [false, true]) {
     // Both start screens: with the setup card, and with a model, when nothing hedges about a missing one.
     await page.route("**/readiness", (route) => route.fulfill({ json: { model, credentials: [] } }));
+    // The written chips, not what the node offers: an earlier spec's session would otherwise come back as a resume chip.
+    await page.route("**/suggestions", (route) => route.fulfill({ json: { items: [] } }));
     await page.setViewportSize({ width: 375, height: 812 });
     await openApp(page);
     await expect(page.locator("[data-needs-model='true']")).toHaveCount(model ? 0 : 1);
@@ -250,6 +252,7 @@ test("on a phone the start screen's suggestions take two even rows and the orb f
     expect(layout.spills).toBeLessThanOrEqual(1);
     await expect(page.locator(".cc-empty > p.cc-freshness")).toHaveCount(0);
     await page.unroute("**/readiness");
+    await page.unroute("**/suggestions");
   }
 });
 test("on a narrow window the transcript starts at the composer's edge, not a gutter inside it", async ({ page }) => {
