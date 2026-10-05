@@ -494,7 +494,10 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     `update:<npm|git|local>:<packageId>@<newVersion>` (package/widget) or `update:pi:<package name>@<newVersion>`
     (Pi SDK), so a later check does not create a second row for the same version while the earlier row still exists
     (a dismissed notice is cleaned up after 30 days, and the same version may then be announced again); a newer
-    version still gets its own row. The text states the current → new version and the risk lane
+    version still gets its own row, and writing it retires every earlier undismissed update notice for the same
+    package (from any source) or SDK — matched on that key prefix, so rows from before notices had a subject are
+    included — with the ordinary dismissal, so the rows stay for the retention window and the inbox shows only the
+    newest offer. A check that finds a version it already announced retires nothing. The text states the current → new version and the risk lane
     (`trusted-native`/`isolated-ui`/`service`/`declarative`, named the same way as the marketplace — AGENTS.md treats
     mixing the two namings as the mistake to avoid). The inbox does not draw an "Update" button yet: the real update
     route goes through an install/rollback lifecycle that is not wired to this notice.

@@ -10,7 +10,14 @@ import {
 import { sdkVersion } from "@clarkcant/pi-adapter";
 import { skippedVersionsOf, type SkippedVersionKind } from "@clarkcant/storage";
 
-import { packageUpdateNotice, piUpdateNotice, tryRecordNodeNotice, type NoticeServices } from "./notices.ts";
+import {
+  packageUpdateKeyPrefixes,
+  packageUpdateNotice,
+  piUpdateKeyPrefix,
+  piUpdateNotice,
+  tryRecordUpdateNotice,
+  type NoticeServices,
+} from "./notices.ts";
 
 /**
  * Checking whether an installed package, widget or the Pi SDK has a newer version published.
@@ -174,9 +181,11 @@ function isInstallableCandidate(candidate: UpdateCandidate, platform: Platform):
 /**
  * The pure check: given what is installed and what the two upstreams say, write the notices that are new.
  *
- * Every notice goes through `tryRecordNodeNotice`, so a storage failure is reported on stderr and never turns a
+ * Every notice goes through `tryRecordUpdateNotice`, so a storage failure is reported on stderr and never turns a
  * finished check into a thrown error — and every notice's `dedupKey` names the exact package+version, so calling
  * this again (the periodic job does, every interval) writes nothing new until an actually newer version appears.
+ * When one does, its notice retires the earlier update notices for the same package or SDK, so the inbox offers only
+ * the newest.
  *
  * A directory commonly lists several versions of the same package. Every entry for a given `packageId` is
  * filtered to the ones `isInstallableCandidate` accepts and then to the ones actually newer than what is
@@ -205,7 +214,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
           undefined,
         );
       if (newest === undefined) continue;
-      tryRecordNodeNotice(
+      tryRecordUpdateNotice(
         input.services,
         packageUpdateNotice({
           packageId: installed.packageId,
@@ -215,6 +224,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
           lane: newest.lane,
           at: input.now(),
         }),
+        packageUpdateKeyPrefixes(installed.packageId),
       );
       packageUpdates += 1;
     }
@@ -236,7 +246,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
   if (!isNewerVersion(latest.version, input.piInstalledVersion) || skippedFor(input.services, "pi", piPackageName)(latest.version)) {
     return { packageUpdates, piUpdate: false, piOffline: false };
   }
-  tryRecordNodeNotice(
+  tryRecordUpdateNotice(
     input.services,
     piUpdateNotice({
       packageName: piPackageName,
@@ -244,6 +254,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
       newVersion: latest.version,
       at: input.now(),
     }),
+    [piUpdateKeyPrefix(piPackageName)],
   );
   return { packageUpdates, piUpdate: true, piOffline: false };
 }

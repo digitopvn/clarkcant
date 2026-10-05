@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instant, Platform } from "@clarkcant/contracts";
 import type { InstalledPackageView } from "@clarkcant/core";
 
-import { listNotifications } from "@clarkcant/storage";
+import { getNotification, listNotifications, recordNotification } from "@clarkcant/storage";
 
 import {
   checkForUpdates,
@@ -264,7 +264,61 @@ describe("checkForUpdates — packages and widgets", () => {
     expect(notices.filter((notice) => notice.sourceKind === "package")).toHaveLength(1);
   });
 
-  it("writes a new notice once a version newer still is published, keyed by the exact version", async () => {
+  it("writes a new notice once a version newer still is published, and retires the older one for the same package", async () => {
+    const check = (version: string, sourceKind: UpdateCandidate["sourceKind"] = "npm") =>
+      checkForUpdates({
+        services,
+        installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
+        directory: [directoryCandidate({ packageId: "com.example.widget", version, sourceKind })],
+        piInstalledVersion: "1.0.0",
+        fetchImpl: fetchReturning("1.0.0"),
+        now: () => AT,
+        platform: HOST,
+      });
+    await check("1.1.0");
+    const [older] = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
+    expect(older?.body).toContain("1.1.0");
+
+    await check("1.2.0");
+    let notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
+    expect(notices.filter((notice) => notice.sourceKind === "package")).toHaveLength(1);
+    expect(notices[0]?.body).toContain("1.0.0 → 1.2.0");
+    // Retired the way a person's dismissal is: the row stays, dismissed, so 1.1.0 checked again does not come back.
+    expect(getNotification(services.runtime.db, services.runtime.identity.ownerPrincipalId, older?.noticeId ?? "")?.dismissed).toBe(true);
+    await check("1.1.0");
+    notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
+    expect(notices.map((notice) => notice.body)).toEqual([expect.stringContaining("1.0.0 → 1.2.0")]);
+
+    // The same package announced from another source is still the same update to offer.
+    await check("1.3.0", "git");
+    notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
+    expect(notices.map((notice) => notice.body)).toEqual([expect.stringContaining("1.0.0 → 1.3.0 · nguồn git")]);
+  });
+
+  it("retires a legacy update notice with no stored subject, and never a package whose id only starts the same", async () => {
+    const principalId = services.runtime.identity.ownerPrincipalId;
+    const legacy = recordNotification(services.runtime.db, {
+      notificationId: "ntf_legacy_update",
+      principalId,
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật: com.example.widget",
+      dedupKey: "update:npm:com.example.widget@1.0.5",
+      at: AT,
+    });
+    const neighbour = recordNotification(services.runtime.db, {
+      notificationId: "ntf_neighbour_update",
+      principalId,
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật: com.example.widget@beta",
+      subject: { kind: "package", packageId: "com.example.widget@beta", version: "2.0.0", source: "npm" },
+      dedupKey: "update:npm:com.example.widget@beta@2.0.0",
+      at: AT,
+    });
+
     await checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
@@ -274,18 +328,11 @@ describe("checkForUpdates — packages and widgets", () => {
       now: () => AT,
       platform: HOST,
     });
-    await checkForUpdates({
-      services,
-      installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
-      directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.2.0" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
-      now: () => AT,
-      platform: HOST,
-    });
 
-    const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
-    expect(notices.filter((notice) => notice.sourceKind === "package")).toHaveLength(2);
+    expect(getNotification(services.runtime.db, principalId, legacy.notificationId)?.dismissed).toBe(true);
+    expect(getNotification(services.runtime.db, principalId, neighbour.notificationId)?.dismissed).toBe(false);
+    const titles = listNotifications(services.runtime.db, principalId).map((notice) => notice.title);
+    expect(titles.sort()).toEqual(["Có bản cập nhật: com.example.widget", "Có bản cập nhật: com.example.widget@beta"]);
   });
 });
 
@@ -310,6 +357,38 @@ describe("checkForUpdates — Pi SDK", () => {
     expect(notices[0]?.body).toContain("0.85.1");
     expect(notices[0]?.body).toContain("0.86.0");
     expect(notices[0]?.body).toContain("extension Pi gốc");
+  });
+
+  it("retires the older Pi SDK update notices, legacy ones without a subject included, when a newer SDK is announced", async () => {
+    const principalId = services.runtime.identity.ownerPrincipalId;
+    const legacy = recordNotification(services.runtime.db, {
+      notificationId: "ntf_legacy_pi",
+      principalId,
+      sourceKind: "pi",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật cho Pi SDK",
+      body: "0.85.1 → 0.86.0",
+      dedupKey: "update:pi:@earendil-works/pi-coding-agent@0.86.0",
+      at: AT,
+    });
+    const check = (latest: string) =>
+      checkForUpdates({
+        services,
+        installedPackages: [],
+        directory: [],
+        piInstalledVersion: "0.85.1",
+        fetchImpl: fetchReturning(latest),
+        now: () => AT,
+        platform: HOST,
+      });
+
+    await check("0.87.1");
+    await check("1.0.2");
+
+    const notices = listNotifications(services.runtime.db, principalId);
+    expect(notices.map((notice) => notice.body)).toEqual([expect.stringContaining("0.85.1 → 1.0.2")]);
+    expect(getNotification(services.runtime.db, principalId, legacy.notificationId)?.dismissed).toBe(true);
   });
 
   it("writes nothing when the registry's latest is not newer than what is pinned", async () => {
