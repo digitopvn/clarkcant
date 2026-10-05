@@ -25,7 +25,24 @@ interface SignIn {
   view: ProviderSignInView;
   controller: AbortController;
   answer?: ((value: string) => void) | undefined;
+  /**
+   * What the person typed during this sign-in, held only while it runs.
+   *
+   * A provider may repeat a key in the reason it refuses it, or in a progress line. These are what is taken out of
+   * anything the provider says before the card can read it, and they are dropped when the sign-in settles.
+   */
+  typed: string[];
   expiresAtMs: number;
+}
+
+/** Shorter than this, a typed value is a menu choice or a short code, and blanking it would garble ordinary words. */
+const REDACTED_FROM_LENGTH = 8;
+
+/** The provider's words with everything the person typed during this sign-in taken out. */
+function withoutTyped(signIn: SignIn, text: string): string {
+  let out = text;
+  for (const value of signIn.typed) out = out.replaceAll(value, "[redacted]");
+  return out;
 }
 
 export type SignInAnswerOutcome = { ok: true; view: ProviderSignInView } | { ok: false; code: "SIGN_IN_NOT_FOUND" | "NOT_WAITING"; message: string };
@@ -35,8 +52,9 @@ export type SignInAnswerOutcome = { ok: true; view: ProviderSignInView } | { ok:
  *
  * A sign-in is a conversation between the provider and the person, carried by the card that started it: the provider
  * shows a page or asks for a code, the card shows that, and what the person types comes back here and goes straight to
- * the provider. Nothing typed is kept — the view never holds an answer — and a sign-in nobody finishes is given up
- * after ten minutes, so a forgotten card does not hold a provider's login open.
+ * the provider. The view never holds an answer, nor the provider's repetition of one: what was typed is remembered
+ * only until the sign-in settles, to take it out of what the provider says back. A sign-in nobody finishes is given
+ * up after ten minutes, so a forgotten card does not hold a provider's login open.
  *
  * In memory on purpose: a sign-in is a few minutes of a person at the screen, and a restart ends it the way closing
  * the provider's page would.
@@ -62,6 +80,7 @@ export class ProviderSignIns {
     const signIn: SignIn = {
       view: { signInId: `signin-${randomBytes(8).toString("hex")}`, providerId, method, state: "running", events: [] },
       controller: new AbortController(),
+      typed: [],
       expiresAtMs: this.#now() + SIGN_IN_TTL_MS,
     };
     this.#signIns.set(signIn.view.signInId, signIn);
@@ -77,10 +96,10 @@ export class ProviderSignIns {
             }
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
             signIn.answer = resolve;
-            this.#update(signIn, { state: "waiting", prompt: promptView(prompt) });
+            this.#update(signIn, { state: "waiting", prompt: promptView(signIn, prompt) });
           }),
         notify: (event) => {
-          this.#update(signIn, { events: [...signIn.view.events, eventView(event)].slice(-EVENTS_KEPT) });
+          this.#update(signIn, { events: [...signIn.view.events, eventView(signIn, event)].slice(-EVENTS_KEPT) });
         },
       })
       .then(
@@ -90,7 +109,7 @@ export class ProviderSignIns {
             signIn,
             signal.aborted
               ? { state: "cancelled" }
-              : { state: "failed", error: (cause instanceof Error ? cause.message : String(cause)).slice(0, 1000) },
+              : { state: "failed", error: withoutTyped(signIn, cause instanceof Error ? cause.message : String(cause)).slice(0, 1000) },
           ),
       );
     return signIn.view;
@@ -101,7 +120,7 @@ export class ProviderSignIns {
     return this.#signIns.get(signInId)?.view;
   }
 
-  /** Hands the person's answer to the provider. The value goes straight through and is not kept anywhere. */
+  /** Hands the person's answer to the provider. The value goes straight through and is never part of a view. */
   answer(signInId: string, value: string): SignInAnswerOutcome {
     const signIn = this.#signIns.get(signInId);
     if (signIn === undefined) return { ok: false, code: "SIGN_IN_NOT_FOUND", message: "This sign-in has ended; start it again from /login." };
@@ -110,6 +129,7 @@ export class ProviderSignIns {
       return { ok: false, code: "NOT_WAITING", message: "This sign-in is not asking for anything right now." };
     }
     signIn.answer = undefined;
+    if (value.length >= REDACTED_FROM_LENGTH && !signIn.typed.includes(value)) signIn.typed.push(value);
     this.#update(signIn, { state: "running" }, true);
     answer(value);
     return { ok: true, view: signIn.view };
@@ -136,6 +156,7 @@ export class ProviderSignIns {
     if (signIn.view.state === "done" || signIn.view.state === "failed" || signIn.view.state === "cancelled") return;
     signIn.answer = undefined;
     this.#update(signIn, patch, true);
+    signIn.typed = [];
   }
 
   /** Gives up sign-ins past their time, and forgets settled ones once their card has had time to read the outcome. */
@@ -154,23 +175,28 @@ export class ProviderSignIns {
   }
 }
 
-function promptView(prompt: ProviderSignInPrompt): ProviderSignInView["prompt"] {
+function promptView(signIn: SignIn, prompt: ProviderSignInPrompt): ProviderSignInView["prompt"] {
+  const message = withoutTyped(signIn, prompt.message).slice(0, 2000);
   if (prompt.type === "select") {
-    return { type: "select", message: prompt.message.slice(0, 2000), options: prompt.options.slice(0, 30).map((option) => ({ ...option })) };
+    return { type: "select", message, options: prompt.options.slice(0, 30).map((option) => ({ ...option })) };
   }
   return {
     type: prompt.type,
-    message: prompt.message.slice(0, 2000),
+    message,
     ...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder.slice(0, 200) }),
   };
 }
 
-function eventView(event: ProviderSignInEvent): ProviderSignInView["events"][number] {
+function eventView(signIn: SignIn, event: ProviderSignInEvent): ProviderSignInView["events"][number] {
   if (event.type === "auth_url") {
-    return { type: "auth_url", url: event.url, ...(event.instructions === undefined ? {} : { instructions: event.instructions.slice(0, 2000) }) };
+    return {
+      type: "auth_url",
+      url: event.url,
+      ...(event.instructions === undefined ? {} : { instructions: withoutTyped(signIn, event.instructions).slice(0, 2000) }),
+    };
   }
   if (event.type === "device_code") return { type: "device_code", userCode: event.userCode, verificationUri: event.verificationUri };
-  return { type: event.type, message: event.message.slice(0, 2000) };
+  return { type: event.type, message: withoutTyped(signIn, event.message).slice(0, 2000) };
 }
 
 const registries = new WeakMap<ProviderAuthPort, ProviderSignIns>();

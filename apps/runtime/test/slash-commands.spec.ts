@@ -1,14 +1,14 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type CommandCard, type ProviderSignInView, isPersonOnlyRoute, parseSlashCommand } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { messagesSince } from "@clarkcant/storage";
 
-import { ProviderSignIns, providerAuthPort } from "../src/application/provider-sign-in.ts";
+import { type ProviderAuthPort, ProviderSignIns, providerAuthPort } from "../src/application/provider-sign-in.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -198,6 +198,95 @@ describe("provider sign-in routes", () => {
 
     const signedOut = await call("POST", "/providers/fake-other/sign-out", {});
     expect(signedOut.body).toMatchObject({ signedOut: true });
+  });
+
+  it("leaves a key typed into the /login card nowhere on the node: no table, no file, no log line, no later reply", async () => {
+    const KEY = "sk-sentinel-4f9c2e7a1b8d4c63-must-not-persist";
+    // The control: a string the node does store, which the same scan has to find for its silence about the key to
+    // mean anything.
+    const MARKER = "marker-7c1d-conversation-title";
+    let markerInTable = false;
+    let markerInFile = false;
+    const written: string[] = [];
+    const capture = (chunk: unknown): boolean => {
+      written.push(typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString("utf8"));
+      return true;
+    };
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(capture);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(capture);
+    const replies: unknown[] = [];
+    try {
+      // The whole journey a person takes: the command in a conversation, the card's sign-in, the key, then more
+      // commands in the same conversation that read back what the node knows.
+      const conversationId = await createConversation(MARKER);
+      replies.push(await command(conversationId, "/login"));
+      const started = await call("POST", "/providers/fake-other/sign-in", { method: "api_key" });
+      const { signInId } = started.body as ProviderSignInView;
+      await waitFor(signInId, "waiting");
+      replies.push((await call("POST", `/providers/sign-ins/${signInId}/answer`, { value: KEY })).body);
+      replies.push(await waitFor(signInId, "done"));
+      replies.push((await call("GET", "/providers/auth")).body);
+      replies.push(await command(conversationId, "/login"));
+      replies.push(await command(conversationId, "/logout"));
+      replies.push(await command(conversationId, "/sessions"));
+      replies.push((await call("GET", `/conversations/${conversationId}`)).body);
+    } finally {
+      stderr.mockRestore();
+      stdout.mockRestore();
+    }
+
+    expect(JSON.stringify(replies)).not.toContain(KEY);
+    expect(written.join("")).not.toContain(KEY);
+
+    // Every table, which is where the transcript, the search index, the audit trail and the context a later turn is
+    // built from all live. Read by name from the schema, so a table added later is covered without being listed here.
+    const db = services.runtime.db;
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((row) => row.name);
+    expect(tables.length).toBeGreaterThan(10);
+    for (const table of tables) {
+      const rows = db.prepare(`SELECT * FROM "${table.replaceAll('"', '""')}"`).all();
+      const dump = JSON.stringify(rows, (_key, value: unknown) => (value instanceof Uint8Array ? Buffer.from(value).toString("latin1") : value));
+      expect(dump.includes(KEY), `table ${table} holds the key`).toBe(false);
+      markerInTable ||= dump.includes(MARKER);
+    }
+    expect(markerInTable).toBe(true);
+
+    // And every file under the node's data directory, the database's own pages and write-ahead log included.
+    const files = readdirSync(join(dir, "node"), { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile());
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const bytes = readFileSync(join(file.parentPath, file.name));
+      expect(bytes.includes(KEY), `${file.name} holds the key`).toBe(false);
+      markerInFile ||= bytes.includes(MARKER);
+    }
+    expect(markerInFile).toBe(true);
+  });
+
+  it("keeps a typed key out of what the provider says back about it", async () => {
+    const KEY = "sk-sentinel-9d1e5b2c7a3f4e80-echoed-by-provider";
+    // A provider that repeats the key it was given: once as progress, once in the reason it refuses it.
+    const echoing: ProviderAuthPort = {
+      providerAuth: async () => [],
+      signOut: async () => undefined,
+      signIn: async (_providerId, _method, interaction) => {
+        const value = await interaction.prompt({ type: "secret", message: "API key" });
+        interaction.notify({ type: "progress", message: `checking ${value}` });
+        throw new Error(`401 Unauthorized: the key ${value} is not valid`);
+      },
+    };
+    const signIns = new ProviderSignIns(echoing);
+
+    const { signInId } = signIns.start("echoing", "api_key");
+    await vi.waitFor(() => expect(signIns.view(signInId)?.state).toBe("waiting"));
+    const answered = signIns.answer(signInId, KEY);
+    await vi.waitFor(() => expect(signIns.view(signInId)?.state).toBe("failed"));
+
+    const view = signIns.view(signInId);
+    expect(JSON.stringify([answered, view])).not.toContain(KEY);
+    // The reason is still told, with the key's place marked.
+    expect(view?.error).toContain("401 Unauthorized");
+    expect(view?.error).toContain("[redacted]");
+    expect(view?.events).toEqual([{ type: "progress", message: "checking [redacted]" }]);
   });
 
   it("shows the provider's page on an account sign-in, and cancels it without storing anything", async () => {
