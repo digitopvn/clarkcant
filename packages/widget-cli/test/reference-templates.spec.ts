@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -133,6 +133,27 @@ describe("the reference image generator templates", () => {
       expect(json(root, "widgets/main/widget.json"), template).toMatchObject({ id: "com.example.copy.main@1", version: "0.1.0" });
       expect(readFileSync(join(root, "README.md"), "utf8"), template).toBe(copy.readme);
       expect(readFileSync(join(root, "LICENSE"), "utf8"), template).toBe("MIT\n");
+      // The copy's npm identity is its own: a reference app's package.json names an npm scope the author does not own.
+      const pkg = json(root, "package.json");
+      expect(pkg, template).toMatchObject({ name: "copy", version: "0.1.0", license: "MIT", repository: { url: copy.sourceUrl } });
+      expect(JSON.stringify(pkg), template).not.toContain("@clarkcant/");
+      expect(JSON.stringify(pkg), template).not.toContain("digitopvn/clarkcant");
+    }
+  });
+
+  /*
+   * The copier rewrites package.json, LICENSE and README.md after copying (the test above checks their content), so
+   * only a file it does not rewrite shows the skip itself: the reference's translated README describes the reference.
+   */
+  it("leaves the reference app's translated README behind", () => {
+    const withTranslation = REFERENCE_TEMPLATES.filter((template) => existsSync(join(referenceCopy(template).source, "README.vi.md")));
+    expect(withTranslation.length).toBeGreaterThan(0);
+    for (const template of withTranslation) {
+      const parent = mkdtempSync(join(tmpdir(), "clark-reference-identity-"));
+      created.push(parent);
+      const root = join(parent, "copy");
+      initFromReference(root, "com.example.copy", template);
+      expect(existsSync(join(root, "README.vi.md")), template).toBe(false);
     }
   });
 });

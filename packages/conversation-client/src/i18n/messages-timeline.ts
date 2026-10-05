@@ -21,6 +21,10 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.evidence.not-verified": "chưa kiểm chứng",
   "blocks.evidence.contradicted": "mâu thuẫn",
 
+  // TimelineMessageRow.tsx — a turn the host opened, not words anyone typed
+  "timeline.hostWritten.continuation": "Đã duyệt — Clark tiếp tục",
+  "timeline.hostWritten.other": "Clark tiếp tục",
+
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
@@ -1024,6 +1028,9 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.evidence.verified": "verified",
   "blocks.evidence.not-verified": "not verified",
   "blocks.evidence.contradicted": "contradicted",
+
+  "timeline.hostWritten.continuation": "Approved — Clark carries on",
+  "timeline.hostWritten.other": "Clark carries on",
 
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",

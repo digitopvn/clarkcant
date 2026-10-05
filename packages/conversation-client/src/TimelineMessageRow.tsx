@@ -1,10 +1,11 @@
 import { memo, type ReactElement } from "react";
 
-import type { GatewayClient, Timeline } from "./api.ts";
+import type { GatewayClient, Timeline, TimelineMessage } from "./api.ts";
 import { TranscriptRow } from "./transcript-row.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
 import { echoesCommandReceipt } from "./command-receipts.ts";
 import { repeatsDrawnSurface } from "./surface-refs.ts";
+import type { MessageKey } from "./i18n/messages.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { WorkStepsFold } from "./work-steps-fold.tsx";
 import { countsAsStep, foldWorkSteps, isWorkBlock } from "./work-steps.ts";
@@ -27,6 +28,17 @@ export interface TimelineMessageRowProps {
 }
 
 /**
+ * What the transcript says for a message the host wrote, in the reader's language.
+ *
+ * The stored text is the sentence the model read, and it is never shown: it is not anyone's words, and it is written in
+ * whatever language the node used. A kind this build does not know still reads as the host carrying on, never as the
+ * person speaking.
+ */
+export function hostWrittenLineKey(hostWritten: NonNullable<TimelineMessage["hostWritten"]>): MessageKey {
+  return hostWritten.kind === "host-continuation" ? "timeline.hostWritten.continuation" : "timeline.hostWritten.other";
+}
+
+/**
  * One row of the transcript: a stored user or assistant message.
  *
  * Wrapped in `React.memo` so that while a turn streams — which re-renders `Conversation` on every
@@ -45,6 +57,14 @@ function TimelineMessageRowComponent({
 }: TimelineMessageRowProps): ReactElement {
   const t = useT();
   const locale = useLocale();
+  if (message.hostWritten !== undefined && message.hostWritten !== null) {
+    // A quiet, centred line rather than a bubble: nobody typed it, so it must not sit where the person's words do.
+    return (
+      <div className="cc-row cc-host-line" data-host-written={message.hostWritten.kind}>
+        <p className="cc-host-line-text">{t(hostWrittenLineKey(message.hostWritten))}</p>
+      </div>
+    );
+  }
   // A block that only echoes a command receipt, or only names a widget a surface above already draws, is left out
   // before folding, so it neither splits a run nor counts in it.
   const shown = message.blocks

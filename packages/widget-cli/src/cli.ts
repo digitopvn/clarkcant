@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,8 +21,10 @@ import { runConformance, type ConformanceReport } from "./conformance.ts";
 import type { FrameFacts } from "./dev-shell.ts";
 import { startDevHost } from "./dev-host.ts";
 import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
-import { installedThemes, readPackage } from "@clarkcant/core";
+import { inspectNpmTarball, installedThemes, readPackage } from "@clarkcant/core";
+import { credentialShaped, pnpmPack, readNpmPackageJson, scaffoldPackageJson } from "./npm-package.ts";
 import { packageFiles } from "./package-files.ts";
+import { packageVersion, skippedFromReference } from "./package-assets.ts";
 import { REFERENCE_TEMPLATES, referenceCopy, type ReferenceTemplate } from "./reference-templates.ts";
 import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
 
@@ -53,12 +56,15 @@ type Template = (typeof TEMPLATES)[number];
 export const WIDGET_COMMANDS = [
   { name: "init", usage: `clark widget init <dir> [--template ${TEMPLATES.join("|")}]   scaffold a package` },
   { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
-  { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
+  { name: "pack", usage: "clark widget pack [dir]                                     build the npm archive and its digests" },
   {
     name: "dev",
     usage: "clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell",
   },
-  { name: "publish", usage: "clark widget publish [dir]                                  prepare the directory submission" },
+  {
+    name: "publish",
+    usage: "clark widget publish [dir] [--source npm|local]              prepare the directory entry (does not upload)",
+  },
 ] as const;
 
 function usage(): string {
@@ -80,7 +86,7 @@ function usage(): string {
  * `positional` has to step over that same value. While only the first of them knew, `clark widget dev --port 4000`
  * read `4000` as the package directory.
  */
-const FLAGS_WITH_VALUES: readonly string[] = ["--template", "--frames", "--port", "--builtin"];
+const FLAGS_WITH_VALUES: readonly string[] = ["--template", "--frames", "--port", "--builtin", "--source"];
 
 function flag(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -136,10 +142,8 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
   };
 }
 
-/** The reference app's own files that describe or test that app rather than the package a person starts from. */
-export function skippedFromReference(path: string): boolean {
-  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md" || path === "LICENSE";
-}
+// Defined beside the asset lists the release build reads, so the published templates leave out the same files.
+export { skippedFromReference };
 
 /** Files whose text can name the reference's id — a skill names a capability ref. Anything else is copied byte for byte. */
 const REFERENCE_TEXT = /\.(json|js|mjs|html|css|md)$/;
@@ -185,6 +189,22 @@ export function initFromReference(root: string, id: string, template: ReferenceT
   mkdirSync(join(root, "test"), { recursive: true });
   writeFileSync(join(root, "README.md"), copy.readme);
   writeFileSync(join(root, "LICENSE"), "MIT\n");
+  // What the archive ships: every top-level entry the copy holds except its tests and the reference's own dev
+  // fixtures, which describe this repository's checks rather than the package a person installs.
+  const shipped = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => !["test", "dev", "dist", "README.md", "LICENSE", "package.json"].includes(entry.name))
+    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .sort();
+  const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as PackageManifest;
+  writeFileSync(join(root, "package.json"), asJson(scaffoldPackageJson({ name: npmNameFor(id), manifest, files: shipped, repository: copy.sourceUrl })));
+}
+
+/**
+ * The npm name a new package starts with: the last segment of its id, which is already lower case and hyphenated.
+ * Unscoped, because a scope is an npm account the author has to own; they rename it before publishing if they want one.
+ */
+export function npmNameFor(id: string): string {
+  return id.split(".").at(-1) ?? "widget";
 }
 
 const isReferenceTemplate = (template: Template): template is ReferenceTemplate => (REFERENCE_TEMPLATES as readonly string[]).includes(template);
@@ -242,8 +262,22 @@ function init(root: string, template: Template): void {
   writeFileSync(join(root, "fixtures", "empty.json"), `${JSON.stringify({ title: "" }, null, 2)}\n`);
   writeFileSync(join(root, "fixtures", "error.json"), `${JSON.stringify({ title: "Không tải được" }, null, 2)}\n`);
   writeFileSync(join(root, "fixtures", "compact.json"), `${JSON.stringify({ title: "Gọn" }, null, 2)}\n`);
-  writeFileSync(join(root, "README.md"), `# My Widget\n\nRun \`clark widget test\` then \`clark widget pack\`.\n`);
+  writeFileSync(
+    join(root, "README.md"),
+    "# My Widget\n\nRun `clark widget test`, then `clark widget pack` to build the npm archive in `dist/`, then\n" +
+      "`clark widget publish` to prepare its directory entry. Publishing to npm is `npm publish dist/<archive>.tgz`.\n",
+  );
   writeFileSync(join(root, "LICENSE"), "MIT\n");
+  writeFileSync(
+    join(root, "package.json"),
+    asJson(
+      scaffoldPackageJson({
+        name: npmNameFor(id),
+        manifest: manifest as unknown as PackageManifest,
+        files: ["clarkcant.json", "widgets/", "fixtures/", "previews/"],
+      }),
+    ),
+  );
 }
 
 /* ------------------------------------------------------------------ test */
@@ -288,7 +322,7 @@ function readFrames(path: string): FrameFacts | undefined {
   }
 }
 
-function pack(root: string, result = runConformance(root)): number {
+function pack(root: string, result = runConformance(root), conform: (root: string) => ConformanceReport = runConformance): number {
   if (!result.ok) {
     process.stderr.write(`${report(result)}\n\nRefusing to pack a package that fails conformance.\n`);
     return 1;
@@ -325,14 +359,31 @@ function pack(root: string, result = runConformance(root)): number {
     ...(themeDigests === undefined ? {} : { themes: themeDigests }),
     files,
   };
-  const digest = `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
+  const authorDigest = `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
+
+  // The npm archive, when the package has a package.json. Without one the package stays a local/git package and
+  // the artifact describes the author bytes alone, as it always has.
+  const npmJson = readNpmPackageJson(root, pkg.manifest);
+  if (npmJson.kind === "invalid") {
+    process.stderr.write(`package.json is not ready for npm:\n${npmJson.problems.map((problem) => `  - ${problem}`).join("\n")}\n`);
+    return 1;
+  }
+  let npm: { artifact: NpmArtifact; bytes: Buffer } | undefined;
+  if (npmJson.kind === "ok") {
+    const archived = packNpmArchive(root, pkg.manifest.version, npmJson.packageJson.name, conform);
+    if (!archived.ok) {
+      process.stderr.write(`${archived.message}\n`);
+      return 1;
+    }
+    npm = archived;
+  }
 
   const dist = join(root, "dist");
   const artifactPath = join(dist, "artifact.json");
   if (existsSync(artifactPath)) {
-    let previous: { version?: string; digest?: string } | undefined;
+    let previous: { version?: string; digest?: string; authorDigest?: string; npm?: { contentDigest?: string } } | undefined;
     try {
-      previous = JSON.parse(readFileSync(artifactPath, "utf8")) as { version?: string; digest?: string };
+      previous = JSON.parse(readFileSync(artifactPath, "utf8")) as typeof previous;
     } catch {
       // A previous artifact that cannot be read is not a reason to overwrite it: refusing is the safe half of an
       // immutability check, since the alternative is silently replacing bytes nobody can compare against.
@@ -340,7 +391,11 @@ function pack(root: string, result = runConformance(root)): number {
 `);
       return 1;
     }
-    if (previous.version === pkg.manifest.version && previous.digest !== digest) {
+    // `digest` is what a schemaVersion 1 artifact called the author digest.
+    const previousAuthor = previous?.authorDigest ?? previous?.digest;
+    const previousContent = previous?.npm?.contentDigest;
+    const contentChanged = previousContent !== undefined && npm !== undefined && previousContent !== npm.artifact.contentDigest;
+    if (previous?.version === pkg.manifest.version && (previousAuthor !== authorDigest || contentChanged)) {
       process.stderr.write(
         `version ${pkg.manifest.version} was already packed with a different digest.\n` +
           `A version whose bytes changed is a different package wearing the same number; bump the version.\n`,
@@ -350,14 +405,16 @@ function pack(root: string, result = runConformance(root)): number {
   }
 
   mkdirSync(dist, { recursive: true });
+  if (npm !== undefined) writeFileSync(join(dist, npm.artifact.tarball), npm.bytes);
   const artifact = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: pkg.manifest.id,
     version: pkg.manifest.version,
-    digest,
+    authorDigest,
     ...(definition === undefined ? {} : { definitionDigest: definition }),
     ...(themeDigests === undefined ? {} : { themeDigests }),
     files,
+    ...(npm === undefined ? {} : { npm: npm.artifact }),
     // Recorded rather than omitted: the artifact says what was not verified, so a reader of the metadata is not
     // left assuming the browser checks passed.
     unverifiedChecks: result.checks.filter((check) => check.status === "requires-dev-host").map((check) => check.id),
@@ -365,8 +422,93 @@ function pack(root: string, result = runConformance(root)): number {
     publisher: pkg.manifest.publisher,
   };
   writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
-  process.stdout.write(`${report(result)}\n\npacked ${pkg.manifest.id}@${pkg.manifest.version}\n  ${digest}\n  ${artifactPath}\n`);
+  process.stdout.write(
+    `${report(result)}\n\npacked ${pkg.manifest.id}@${pkg.manifest.version}\n  author digest:  ${authorDigest}\n` +
+      (npm === undefined
+        ? "  no package.json, so no npm archive (a local or git package needs none)\n"
+        : `  npm archive:    ${join(dist, npm.artifact.tarball)}\n  integrity:      ${npm.artifact.integrity}\n  content digest: ${npm.artifact.contentDigest}\n`) +
+      `  ${artifactPath}\n`,
+  );
   return 0;
+}
+
+/**
+ * The npm block of `dist/artifact.json`: what `pnpm pack` produced, measured the way a node measures it.
+ *
+ * Three digests, three questions. `integrity` is npm's: are these the bytes the registry serves? `contentDigest` is
+ * the runtime's: is what was extracted the package the directory entry named? The artifact's `authorDigest` is the
+ * author's own: did this version's files change since it was last packed?
+ */
+export interface NpmArtifact {
+  name: string;
+  version: string;
+  /** The archive's file name inside `dist/`. */
+  tarball: string;
+  /** npm's `dist.integrity` for exactly these bytes. */
+  integrity: string;
+  /** The runtime content digest of the extracted archive: what an npm directory entry publishes as `digest`. */
+  contentDigest: string;
+  fileCount: number;
+  unpackedBytes: number;
+}
+
+/**
+ * Build the npm archive and check it the way an install will see it: extracted by the runtime's own reader, with
+ * nothing credential-shaped inside, the same `clarkcant.json` as the source, and passing the conformance suite on
+ * its own — so a `files` list that forgot a runtime asset is caught here rather than on someone else's machine.
+ */
+function packNpmArchive(
+  root: string,
+  version: string,
+  name: string,
+  conform: (root: string) => ConformanceReport,
+): { ok: true; artifact: NpmArtifact; bytes: Buffer } | { ok: false; message: string } {
+  const packed = pnpmPack(root);
+  if (!packed.ok) return packed;
+  const problems: string[] = [];
+  // A directory of this run's own, removed afterwards: a fixed shared name would be raced by two packs at once.
+  const scratch = mkdtempSync(join(tmpdir(), "clark-pack-inspect-"));
+  let inspected: ReturnType<typeof inspectNpmTarball>;
+  try {
+    inspected = inspectNpmTarball(packed.bytes, scratch, (extracted) => {
+      const archivedManifest = join(extracted, "clarkcant.json");
+      if (!existsSync(archivedManifest)) {
+        problems.push('the archive has no clarkcant.json; add it to package.json "files"');
+        return;
+      }
+      if (!readFileSync(archivedManifest).equals(readFileSync(join(root, "clarkcant.json")))) {
+        problems.push("the archived clarkcant.json differs from the package's own");
+      }
+      const archivedReport = conform(extracted);
+      if (!archivedReport.ok) {
+        const failed = archivedReport.checks.filter((check) => check.status === "fail").map((check) => `${check.name} — ${check.detail}`);
+        problems.push(
+          `the archive does not pass the conformance suite on its own, so package.json "files" leaves out something it needs:\n    ${failed.join("\n    ")}`,
+        );
+      }
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  if (!inspected.ok) return { ok: false, message: `the npm archive is unsafe: ${inspected.message}` };
+  const credentials = inspected.facts.files.filter((file) => credentialShaped(file.path)).map((file) => file.path);
+  if (credentials.length > 0) {
+    problems.push(`the archive would publish ${credentials.join(", ")}; narrow package.json "files" so it does not`);
+  }
+  if (problems.length > 0) return { ok: false, message: `Refusing to pack the npm archive:\n  - ${problems.join("\n  - ")}` };
+  return {
+    ok: true,
+    bytes: packed.bytes,
+    artifact: {
+      name,
+      version,
+      tarball: packed.filename,
+      integrity: inspected.facts.integrity,
+      contentDigest: inspected.facts.contentDigest,
+      fileCount: inspected.facts.files.length,
+      unpackedBytes: inspected.facts.files.reduce((sum, file) => sum + file.bytes, 0),
+    },
+  };
 }
 
 /* --------------------------------------------------------------- publish */
@@ -379,24 +521,25 @@ function requestedSummary(permissions: PackageManifest["permissions"]): string[]
   return out;
 }
 
-/**
- * `clark widget publish` — prepare the directory submission.
- *
- * "Prepare" is the whole of it, and the plan says as much ("publish command may initially prepare directory
- * submission"). It writes the entry a directory would carry — every field the standard requires, plus the digest
- * of the packed artifact — and stops there. Submitting needs an account, and a command that looked as though it
- * had already submitted would be a control whose action does not exist.
- *
- * It reads `dist/artifact.json` rather than recomputing anything, so the digest in the entry is by construction
- * the digest of the artifact that was packed. Two computations of the same thing is how a listing comes to name
- * an artifact nobody can produce.
- */
 /** Whether a resource request says anything an absent one does not: another profile, or a GPU. */
 function requestsMoreThanDefault(resources: PackageManifest["resources"]): resources is NonNullable<PackageManifest["resources"]> {
   return resources !== undefined && (resources.profile !== DEFAULT_RESOURCE_PROFILE || resources.gpu === true);
 }
 
-function publish(root: string): number {
+/**
+ * `clark widget publish` — prepare the directory entry.
+ *
+ * "Prepare" is the whole of it. It writes the entry a directory would carry — every field the standard requires,
+ * plus the digest of the packed artifact — and stops there. It never uploads to npm and never submits to a
+ * Marketplace, and it says so in its output, because a command that looked as though it had already published would
+ * be a control whose action does not exist. npm publication is the author's `npm publish` of the packed archive.
+ *
+ * It reads `dist/artifact.json` rather than recomputing anything, so the digest in the entry is by construction
+ * the digest of the artifact that was packed. Two computations of the same thing is how a listing comes to name
+ * an artifact nobody can produce. An npm entry names the archive's runtime content digest — what a node computes
+ * after fetching that exact version — and a local entry keeps the author digest it always named.
+ */
+function publish(root: string, requested: "npm" | "local" | undefined): number {
   const result = runConformance(root);
   if (!result.ok) {
     process.stderr.write(report(result));
@@ -406,14 +549,20 @@ function publish(root: string): number {
   if (pack(root) !== 0) return 1;
 
   const artifactPath = join(root, "dist", "artifact.json");
-  let artifact: { digest?: string; files?: { bytes: number }[] } | undefined;
+  let artifact: { authorDigest?: string; files?: { bytes: number }[]; npm?: NpmArtifact } | undefined;
   try {
-    artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as { digest?: string; files?: { bytes: number }[] };
+    artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as typeof artifact;
   } catch {
     process.stderr.write(artifactPath + " is missing or unreadable, so there is nothing to describe.");
     return 1;
   }
-  const digest = artifact.digest ?? "";
+  const npm = artifact?.npm;
+  if (requested === "npm" && npm === undefined) {
+    process.stderr.write("--source npm needs a package.json, so that pack builds an npm archive to name.\n");
+    return 1;
+  }
+  const source = requested ?? (npm === undefined ? "local" : "npm");
+  const digest = (source === "npm" ? npm?.contentDigest : artifact?.authorDigest) ?? "";
   if (digest === "") {
     // An entry with no digest names bytes nobody can check, and "no digest" must never behave like a match.
     process.stderr.write("the packed artifact carries no digest, so an entry would name bytes nobody can check.");
@@ -433,9 +582,8 @@ function publish(root: string): number {
     version: pkg.manifest.version,
     displayName: pkg.manifest.displayName,
     description: pkg.manifest.description,
-    // The package's own directory. A submission would name the published source (a git ref or an npm version);
-    // preparing from a checkout can only honestly say where it is now.
-    source: { kind: "local", path: root },
+    // The exact npm version the archive will be published as, or the package's own directory for a local entry.
+    source: source === "npm" && npm !== undefined ? { kind: "npm", name: npm.name, version: npm.version } : { kind: "local", path: root },
     // The signature is verified against the artifact, never listed as though the listing vouched for it.
     publisher: { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
     // Empty rather than absent: a package without preview media is listed, not hidden.
@@ -456,7 +604,7 @@ function publish(root: string): number {
     ...(requestsMoreThanDefault(pkg.manifest.resources) ? { resources: pkg.manifest.resources } : {}),
     // From the isolation the facets declare, never from what the publisher says about their own package.
     riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
-    sizeBytes: (artifact.files ?? []).reduce((sum, file) => sum + file.bytes, 0),
+    sizeBytes: source === "npm" && npm !== undefined ? npm.unpackedBytes : (artifact?.files ?? []).reduce((sum, file) => sum + file.bytes, 0),
     digest,
   };
 
@@ -474,15 +622,16 @@ function publish(root: string): number {
 
   const entryPath = join(root, "dist", "directory-entry.json");
   if (existsSync(entryPath)) {
-    let previous: { version?: string; digest?: string } | undefined;
+    let previous: { version?: string; digest?: string; source?: { kind?: string } } | undefined;
     try {
-      previous = JSON.parse(readFileSync(entryPath, "utf8")) as { version?: string; digest?: string };
+      previous = JSON.parse(readFileSync(entryPath, "utf8")) as typeof previous;
     } catch {
       process.stderr.write(entryPath + " exists but is not readable JSON; refusing to overwrite it.");
       return 1;
     }
-    // The same rule as packing: a version whose bytes changed is a different package wearing the same number.
-    if (previous.version === entry.version && previous.digest !== digest) {
+    // The same rule as packing: a version whose bytes changed is a different package wearing the same number. An
+    // npm entry and a local entry name different digests of the same version, so only like is held against like.
+    if (previous?.version === entry.version && previous.source?.kind === entry.source.kind && previous.digest !== digest) {
       process.stderr.write("version " + entry.version + " was already prepared with a different digest; bump the version.");
       return 1;
     }
@@ -515,12 +664,27 @@ function publish(root: string): number {
   mkdirSync(join(root, "dist"), { recursive: true });
   writeFileSync(entryPath, JSON.stringify(parsed.data, null, 2));
   writeFileSync(definitionsPath, JSON.stringify(nextDefinitions, null, 2));
-  process.stdout.write("prepared the directory entry for " + entry.packageId + "@" + entry.version);
-  process.stdout.write("  risk lane: " + entry.riskTier);
-  process.stdout.write("  digest: " + digest);
-  process.stdout.write("  " + entryPath);
-  // Named, so the limit is not mistaken for a failure: a local path needs no account, which is why dev and pack do not.
-  process.stdout.write("Submitting needs a directory account; a local path needs none.");
+  const lines = [
+    `prepared the directory entry for ${entry.packageId}@${entry.version}`,
+    `  source:    ${source === "npm" && npm !== undefined ? `npm ${npm.name}@${npm.version}` : "local"}`,
+    `  risk lane: ${entry.riskTier}`,
+    `  digest:    ${digest}`,
+    `  ${entryPath}`,
+    "",
+    // Three outcomes, stated separately, so preparing is never read as having published or submitted anything.
+    "  prepared:               yes",
+  ];
+  if (source === "npm" && npm !== undefined) {
+    lines.push(
+      `  published to npm:       no; publish this exact archive with: npm publish ${join(root, "dist", npm.tarball)}`,
+      `                          (its integrity is ${npm.integrity})`,
+      '  Marketplace submission: no; a Marketplace indexes npm packages carrying the "clarkcant" keyword, or takes a submission',
+    );
+  } else {
+    // Named, so the limit is not mistaken for a failure: a local path needs no account, which is why dev and pack do not.
+    lines.push("  published to npm:       not applicable (local entry)", "  Marketplace submission: no; a local path needs no account");
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
 }
 /* ------------------------------------------------------------------- run */
@@ -531,6 +695,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   // Help that was asked for is a success; help shown because the command was wrong is not.
   if (group === "--help" || group === "-h" || group === "help") {
     process.stdout.write(`${usage()}\n`);
+    return 0;
+  }
+  if (group === "--version" || group === "-v" || group === "version") {
+    process.stdout.write(`${packageVersion()}\n`);
     return 0;
   }
   if (group !== "widget" || command === undefined) {
@@ -589,11 +757,27 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   ${builtin === undefined ? `package: ${dir}` : `catalog widget: ${builtin}`}
   ctrl-c để dừng
 `);
-    // Stay alive until ctrl-c: the listening server keeps the event loop busy, which is the whole of "running".
-    await new Promise(() => {});
+    // Stay alive until ctrl-c or a termination request, then close the host the way `clark theme dev` does, so its
+    // module server's scratch cache and the lease store are released rather than left behind by the exit.
+    await new Promise<void>((done, failed) => {
+      const stop = (): void => {
+        process.removeListener("SIGINT", stop);
+        process.removeListener("SIGTERM", stop);
+        void host.close().then(done, failed);
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
     return 0;
   }
-  if (command === "publish") return publish(dir);
+  if (command === "publish") {
+    const source = flag(rest, "--source");
+    if (source !== undefined && source !== "npm" && source !== "local") {
+      process.stderr.write(`unknown source "${source}"; expected npm or local\n`);
+      return 2;
+    }
+    return publish(dir, source);
+  }
   process.stdout.write(`${usage()}\n`);
   return 2;
 }

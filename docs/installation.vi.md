@@ -78,7 +78,7 @@ và chú thích khác trong file được giữ nguyên.
 
 ```sh
 DEEPSEEK_API_KEY=... node tools/setup.mjs --yes --mode docker \
-  --provider deepseek --model deepseek-v4-flash --label "vps clark"
+  --provider deepseek --model deepseek-flash --label "vps clark"
 ```
 
 Với `--yes`, key được đọc từ biến môi trường của provider nên không phải xuất hiện trên dòng

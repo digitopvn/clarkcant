@@ -338,9 +338,6 @@ function candidate(version: string): UpdateCandidate {
   };
 }
 
-const latestPi = (version: string): typeof fetch =>
-  vi.fn(async () => new Response(JSON.stringify({ version }), { status: 200 })) as unknown as typeof fetch;
-
 describe("an update notice", () => {
   it("offers Update and Review first while the package runs an older version, and Skip this version behind More", async () => {
     installPackageGeneration("1.0.0");
@@ -389,52 +386,36 @@ describe("an update notice", () => {
         services,
         installedPackages: [installed("1.0.0")],
         directory: versions.map(candidate),
-        piInstalledVersion: "1.0.0",
-        fetchImpl: latestPi("1.0.0"),
         now: () => now as Instant,
         platform: HOST,
       });
     // 1.1.0 is newer than what runs but older than what was skipped: not worth a notice.
-    expect((await check(["1.1.0"])).packageUpdates).toBe(0);
-    expect((await check(["1.3.0"])).packageUpdates).toBe(1);
+    expect(check(["1.1.0"]).packageUpdates).toBe(0);
+    expect(check(["1.3.0"]).packageUpdates).toBe(1);
 
     const undone = await request("POST", `/inbox/notices/${notice.notificationId}/unskip-version`);
     expect(undone.body).toEqual({ skipped: false, restored: true });
     expect((await inbox()).notices.map((item) => item.noticeId)).toContain(notice.notificationId);
-    expect((await check(["1.1.0"])).packageUpdates).toBe(1);
+    expect(check(["1.1.0"]).packageUpdates).toBe(1);
   });
 
-  it("skips a Pi SDK version the same way, where updating is not offered from the inbox", async () => {
-    const check = (latest: string) =>
-      checkForUpdates({
-        services,
-        installedPackages: [],
-        directory: [],
-        piInstalledVersion: "1.0.0",
-        fetchImpl: latestPi(latest),
-        now: () => now as Instant,
-        platform: HOST,
-      });
-    expect((await check("1.2.0")).piUpdate).toBe(true);
-    const pi = (await inbox()).notices.find((item) => item.subject?.kind === "pi-update");
-    if (pi === undefined) throw new Error("the Pi update was not reported");
-    // It asks nothing of the person, so the buttons put it away rather than start a conversation about it.
-    expect(pi.actions?.slice(0, 2)).toEqual([{ id: "dismiss", placement: "primary" }, { id: "skip-version", placement: "secondary" }]);
-    expect(pi.actions).toContainEqual({ id: "ask-clark", placement: "menu" });
-    expect(pi.actions?.filter((action) => action.id === "dismiss")).toHaveLength(1);
-    expect(pi.actions?.map((action) => action.id)).not.toContain("update");
-    expect(pi.body).toMatch(/không cần làm gì/);
-    // One written before notices named their subject is treated the same, without a version to skip.
-    const { subject: _subject, actions: _actions, ...older } = pi;
-    const olderActions = noticeActionsFor(services.runtime.db, owner(), older, { nodeId: services.runtime.identity.nodeId, now: now as Instant });
-    expect(olderActions[0]).toEqual({ id: "dismiss", placement: "primary" });
-    expect(olderActions).toContainEqual({ id: "ask-clark", placement: "menu" });
-    expect(olderActions.map((action) => action.id)).not.toContain("skip-version");
+  it("still lets a Pi SDK update notice from before be skipped, and offers no update for it", async () => {
+    const pi = recordNodeNotice(services, {
+      sourceKind: "pi",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật cho Pi SDK",
+      subject: { kind: "pi-update", packageName: "@earendil-works/pi-coding-agent", version: "1.2.0" },
+      dedupKey: "update:pi:@earendil-works/pi-coding-agent@1.2.0",
+      at: now as Instant,
+    });
+    const listed = (await inbox()).notices.find((item) => item.noticeId === pi.notificationId);
+    // It asks nothing of the person, so putting it away leads: Skip this version sits beside Dismiss.
+    expect(listed?.actions).toContainEqual({ id: "skip-version", placement: "secondary" });
+    expect(listed?.actions?.map((action) => action.id)).not.toContain("update");
 
-    const skipped = await request("POST", `/inbox/notices/${pi.noticeId}/skip-version`);
+    const skipped = await request("POST", `/inbox/notices/${pi.notificationId}/skip-version`);
     expect(skipped.body).toMatchObject({ skipped: true, subjectKind: "pi", version: "1.2.0" });
-    expect((await check("1.1.0")).piUpdate).toBe(false);
-    expect((await check("1.3.0")).piUpdate).toBe(true);
   });
 
   it("lists every skipped version for review, newest first, and takes one back from the list", async () => {

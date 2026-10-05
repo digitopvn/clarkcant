@@ -47,7 +47,7 @@ một tài liệu lớn trong giới hạn, tự mô tả cho Clark và áp dụ
   nhưng không lưu được thì được báo là lỗi, và Clark coi đó là kết quả không chắc chắn. "Hoàn tác định dạng"
   lấy lại thay đổi đó. Công cụ `place_widget` gắn hành động này, và cả nút `formatBinding` khi được yêu cầu, trong bản
   cài thật; xem
-  [phát triển widget §10.3](../../../docs/widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1).
+  [phát triển widget §10.3](https://github.com/digitopvn/clarkcant/blob/main/docs/widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1).
 
 Bàn phím: lưới là một điểm dừng Tab, và Tab, Shift+Tab rời lưới. Phím mũi tên để di chuyển, Shift+mũi tên mở rộng vùng
 chọn, Home/End và Ctrl+Home/End để nhảy, Page Up/Down để lật trang, Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa,
@@ -59,3 +59,28 @@ sau mở rộng vùng chọn. Các nút cao ít nhất 40 px.
 
 Chạy `clark widget test examples/reference-apps/spreadsheet` và `clark widget pack examples/reference-apps/spreadsheet`.
 Unit test nằm trong `test/`, và hành trình trình duyệt là `apps/web/e2e/spreadsheet.spec.ts`.
+
+## Gói npm: CSV Explorer
+
+Ứng dụng này được đóng gói cho npm với tên **`@clarkcant/csv-explorer`** 1.0.0. Giấy phép đang chờ người bảo trì
+quyết định: `package.json` và `clarkcant.json` khai báo Apache-2.0 trong khi tệp `LICENSE` chứa văn bản MIT, và gói sẽ
+không được phát hành cho đến khi hai bên thống nhất. **Gói chưa có trên npm.** Muốn phát hành cần một tài khoản sở hữu scope `@clarkcant` trên npm, và chưa có
+phiên bản nào được phát hành, nên cũng chưa Marketplace nào liệt kê gói. Mã nguồn ở
+[examples/reference-apps/spreadsheet](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/spreadsheet).
+Package id vẫn là `com.example.spreadsheet`, với publisher id `example`.
+
+- **Gói xin gì:** không gì cả. Không origin mạng, không đường dẫn hệ thống tệp, không micro hay camera, không capability
+  nào và không lifecycle script. Tệp chỉ đến với gói qua hộp chọn tệp và hộp xuất của host.
+- **Nền tảng:** `darwin-arm64`, `linux-x64`, `win32-x64` và `web`, đúng như `clarkcant.json` khai báo. Các đích khác
+  (macOS Intel, Linux arm64) không được khai báo.
+- **Archive chứa gì:** `clarkcant.json`, `widgets/`, bốn bộ props trong `fixtures/`, các README và giấy phép. Các test
+  ở lại trong repository.
+- **Tạo archive:** `node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/spreadsheet` ghi
+  `dist/clarkcant-csv-explorer-1.0.0.tgz`, và `widget publish` chuẩn bị `dist/directory-entry.json`, nêu đúng phiên bản
+  npm đó và content digest của archive. Không lệnh nào tải gì lên, và `dist/` không được commit.
+- **Cài ngay hôm nay:** đặt entry do `widget publish --source local` chuẩn bị vào một mảng JSON, trỏ
+  `CC_DIRECTORY_INDEX` của node tới tệp đó, rồi cài từ tìm kiếm directory của Clark.
+- **Cài khi đã phát hành:** node cài đúng phiên bản npm mà một directory entry nêu, và từ chối archive nếu integrity của
+  npm hoặc content digest của entry không khớp.
+- **Giới hạn đã biết:** chỉ CSV và TSV, không XLSX; các giới hạn ở trên (25.000 ô, 64 cột, 5.000 hàng, đọc tối đa
+  8 MiB); khi xuất chỉ ghi giá trị, không ghi công thức hay định dạng. Gói chưa có ảnh chụp xem trước.

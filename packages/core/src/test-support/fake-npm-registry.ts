@@ -111,6 +111,14 @@ export function startFakeNpmRegistry(input: {
   return new Promise((resolvePromise) => {
     const server = createServer((req, res) => {
       const url = req.url ?? "";
+      // A packument is asked for by name, which a client escapes: `@scope%2Fname` or `%40scope%2Fname` for a scoped
+      // package. The real registry answers both, so the name is compared unescaped; a malformed escape names nothing.
+      let packument = "";
+      try {
+        packument = decodeURIComponent(url);
+      } catch {
+        packument = "";
+      }
       const origin = `http://127.0.0.1:${String((server.address() as { port: number }).port)}`;
       const served = more.find((entry) => entry.path === url);
       if (served !== undefined) {
@@ -118,8 +126,8 @@ export function startFakeNpmRegistry(input: {
         res.end(served.tarball);
         return;
       }
-      const versions = more.filter((entry) => url === `/${entry.name}`);
-      if (versions.length > 0 && url !== `/${input.name}`) {
+      const versions = more.filter((entry) => packument === `/${entry.name}`);
+      if (versions.length > 0 && packument !== `/${input.name}`) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
@@ -131,7 +139,7 @@ export function startFakeNpmRegistry(input: {
         );
         return;
       }
-      if (url === `/${input.name}`) {
+      if (packument === `/${input.name}`) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({

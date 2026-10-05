@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   digestOfDirectory,
   fetchGitArtifact,
   fetchNpmArtifact,
+  inspectNpmTarball,
   killProcessGroup,
   redactCredentials,
   redactCredentialsInText,
@@ -1062,5 +1063,41 @@ describe("digestOfDirectory", () => {
 
     const digest = digestOfDirectory(tree);
     expect(digest).toEqual({ ok: true, digest: `sha256:${expected.digest("hex")}` });
+  });
+});
+
+describe("inspectNpmTarball", () => {
+  it("measures the content digest a fetch of the same bytes computes, and the integrity npm records", async () => {
+    const tarball = buildNpmTarballFromFiles({
+      "clarkcant.json": JSON.stringify({ id: "com.example.npm-widget" }),
+      "widgets/main/index.html": "<main></main>",
+    });
+    const inspected = inspectNpmTarball(tarball, join(dir, "scratch"));
+    expect(inspected.ok).toBe(true);
+    if (!inspected.ok) return;
+    expect(inspected.facts.files.map((file) => file.path)).toEqual(["clarkcant.json", "widgets/main/index.html"]);
+    expect(inspected.facts.integrity).toBe(`sha512-${createHash("sha512").update(tarball).digest("base64")}`);
+    // Nothing is left behind: the scratch extraction is removed before the answer is returned.
+    expect(readdirSync(join(dir, "scratch"))).toEqual([]);
+
+    const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+    try {
+      const fetched = await fetchNpmArtifact({
+        name: "com.example.npm-widget",
+        version: "1.0.0",
+        cacheRoot: join(dir, "cache"),
+        registryUrl: url,
+        expectedDigest: inspected.facts.contentDigest,
+      });
+      expect(fetched.ok && fetched.artifact.digest).toBe(inspected.facts.contentDigest);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("refuses the same unsafe entries a fetch refuses", () => {
+    const tarball = buildNpmTarballFromFiles({ link: { content: "", type: "symlink", linkTarget: "/etc/passwd" } });
+    const inspected = inspectNpmTarball(tarball, join(dir, "scratch"));
+    expect(inspected).toMatchObject({ ok: false, code: "NPM_TARBALL_UNSAFE_ENTRY" });
   });
 });

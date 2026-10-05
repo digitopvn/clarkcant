@@ -8,7 +8,8 @@ import { afterAll, describe, expect, it } from "vitest";
  * The pinned SDK's actual API, asserted rather than assumed.
  *
  * This file exists because the plan was written against documentation for a newer SDK than the one
- * installed. The plan describes appending to `systemPromptOptions.sections`. The installed package
+ * installed at the time (0.85.1). Pi 1.0 kept the seam: the hook still receives the composed prompt and a returned
+ * `systemPrompt` still replaces it for the run (as `forceSystemPrompt`); only the code reading it moved. The plan describes appending to `systemPromptOptions.sections`. The installed package
  * (0.85.1) has no such field: its options are `{cwd, skills, contextFiles, customPrompt,
  * appendSystemPrompt, selectedTools, toolSnippets, promptGuidelines}`, and the only way an extension can
  * reach the system prompt is to return `{systemPrompt}` from a `before_agent_start` handler.
@@ -51,11 +52,13 @@ describe("the extension seam this feature depends on", () => {
     const runner = sdk.ExtensionRunner as { toString(): string };
     const source = runner.toString();
 
-    expect(source).toContain('handlers.get("before_agent_start")');
+    expect(source).toContain('snapshotEventHandlers(this.extensions, "before_agent_start")');
     // The handler's return value is what carries a modified prompt; without this branch the handler
     // would run and change nothing.
     expect(source).toContain("result.systemPrompt !== undefined");
     expect(source).toContain("emitBeforeAgentStart");
+    // Pi 1.0 carries a returned prompt as the run's forced prompt; providers receive it as the leading system prompt.
+    expect(source).toContain("forceSystemPrompt = result.systemPrompt");
   });
 
   it("passes the prompt the SDK composed into the hook, so an append can build on it", async () => {
@@ -64,7 +67,8 @@ describe("the extension seam this feature depends on", () => {
     // security instruction, which is the failure this whole design exists to prevent.
     const sdk = await loadSdk();
     const source = (sdk.ExtensionRunner as { toString(): string }).toString();
-    expect(source).toContain("systemPrompt: currentSystemPrompt");
+    // A getter since 1.0: it renders the prompt as the options stand when the handler reads it.
+    expect(source).toContain("renderCurrentSystemPrompt");
     expect(source).toContain("systemPromptOptions");
   });
 
@@ -78,11 +82,11 @@ describe("the extension seam this feature depends on", () => {
      */
     const sdk = await loadSdk();
     const source = (sdk.AgentSession as { toString(): string }).toString();
-    const at = source.indexOf("_baseSystemPromptOptions = {");
+    const at = source.indexOf("_baseSystemPromptOptions = normalizeBuildSystemPromptOptions({");
     expect(at, "the SDK no longer assembles system prompt options where this test looks").toBeGreaterThan(0);
 
     const options = source.slice(at, at + 600);
-    for (const field of ["cwd", "customPrompt", "appendSystemPrompt", "selectedTools", "promptGuidelines"]) {
+    for (const field of ["cwd", "customPrompt", "appendSystemPrompt", "selectedTools", "toolGuidelines"]) {
       expect(options, `systemPromptOptions no longer carries ${field}`).toContain(field);
     }
     // The plan's assumption, which the installed package does not satisfy.

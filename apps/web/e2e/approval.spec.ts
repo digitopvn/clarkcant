@@ -71,6 +71,12 @@ test("a proposed command runs only after the user approves it", async ({ page })
   await expect(page.locator('[data-role="assistant"]').last()).toContainText("tiếp tục công việc", {
     timeout: 20_000,
   });
+
+  // That turn needs a message to answer, and nobody typed it: the transcript says the host carried on, quietly and in
+  // the middle, rather than showing a bubble of words the person never wrote.
+  await expect(page.locator('[data-host-written="host-continuation"]')).toHaveText("Đã duyệt — Clark tiếp tục");
+  await expect(page.locator('[data-role="user"]', { hasText: "Lệnh đã được duyệt" })).toHaveCount(0);
+  await expect(page.getByText("Lệnh đã được duyệt và đã chạy xong.")).toHaveCount(0);
 });
 
 test("refusing runs nothing and says so", async ({ page }) => {

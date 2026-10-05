@@ -1,4 +1,4 @@
-import type { MessageRecord } from "@clarkcant/contracts";
+import { type MessageRecord, isHostWrittenMessage } from "@clarkcant/contracts";
 import { conversationMetadata, latestMessages, type Database } from "@clarkcant/storage";
 
 import { contextBundlesFor, contextSourceOf, reportContextBundle } from "../context-bundle.ts";
@@ -97,8 +97,12 @@ export function contextWiring(deps: ContextWiringDeps): ContextWiring {
     //
     // The newest forty, not the first forty, whether or not the planner is on: the recap is about where the
     // conversation is, and reading from the start recapped the opening of any thread longer than forty messages.
+    //
+    // A sentence the host wrote so a turn could run is left out: the recap labels its lines as the person's or the
+    // agent's, and that one is neither. The reply that followed it carries what happened.
     history: async (conversationId) =>
       latestMessages(deps.db(), conversationId, RECAP_READ)
+        .filter((record) => !isHostWrittenMessage(record))
         .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
         .map((record) => ({ role: record.role, text: textOfMessage(record), messageId: record.messageId })),
 

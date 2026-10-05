@@ -824,3 +824,27 @@ describe("the real adapter narrows and widens a session's tools from the set it 
     expect(toolNames(sdk)).toEqual(["a", "late"]);
   });
 });
+
+describe("a model id the provider retired", () => {
+  it("runs the catalogue's replacement instead of refusing every turn", async () => {
+    const sdk = stubSdk();
+    // DeepSeek's catalogue after Pi 1.0: the V4 Flash alias is gone and `deepseek-flash` replaced it.
+    sdk.module.ModelRuntime = {
+      create: async () => ({
+        getProviders: () => [{ id: "deepseek" }],
+        getModels: (provider: string) => (provider === "deepseek" ? [{ id: "deepseek-flash" }, { id: "deepseek-v4-pro" }] : []),
+      }),
+    } as unknown as typeof sdk.module.ModelRuntime;
+    const adapter = adapterWith(sdk);
+
+    const handle = await adapter.createWorkerSession({
+      goal: "answer the user",
+      projectRoots: [],
+      allowedCapabilityRefs: [],
+      model: { provider: "deepseek", id: "deepseek-v4-flash" },
+    });
+
+    expect((sdk.sessions.at(-1) as { model?: { id: string } }).model?.id).toBe("deepseek-flash");
+    await adapter.dispose(handle.sessionId);
+  });
+});
