@@ -90,6 +90,7 @@ import {
   createJevBudget,
   jevConfigFromEnv,
 } from "./jev-selector.ts";
+import type { StoredCredential } from "./decision-provider.ts";
 
 /**
  * Composition root.
@@ -386,8 +387,8 @@ export function newId(prefix: string): string {
  * node asked a provider to decide, and it holds no request body, so nothing here needs retention
  * or redaction at rest. It is also the counter the tests read.
  */
-function buildJevRuntime(options: RuntimeOptions, storedJevKey?: () => string | undefined): JevRuntime {
-  const config: JevConfig = { ...jevConfigFromEnv(process.env, storedJevKey), ...(options.jev?.config ?? {}) };
+function buildJevRuntime(options: RuntimeOptions, storedCredential?: StoredCredential): JevRuntime {
+  const config: JevConfig = { ...jevConfigFromEnv(process.env, storedCredential), ...(options.jev?.config ?? {}) };
   const telemetry: JevTelemetry[] = [];
   let providerCalls = 0;
 
@@ -432,9 +433,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const nodeId = runtime.identity.nodeId;
   // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault here
   // rather than passed in as a value, because the point of storing one is that the node is already running.
-  const jevRuntime = buildJevRuntime(options, () =>
-    readCredential(runtime.db, runtime.identity.ownerPrincipalId, "typesafe"),
-  );
+  const jevRuntime = buildJevRuntime(options, (name) => readCredential(runtime.db, runtime.identity.ownerPrincipalId, name));
   const catalog = registerCatalog(
     new CatalogRegistry(),
     CATALOG_WIDGETS.map((definition) => ({ definition, family: FAMILY_BY_DEFINITION[definition.id] ?? "unknown" })),

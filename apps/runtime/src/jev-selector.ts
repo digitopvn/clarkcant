@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import {
   type CompositionSlot,
   type MiniAppSelection,
@@ -16,12 +14,24 @@ import {
   sanitizeIntent,
   stateLooksRedacted,
 } from "./mini-app-candidates.ts";
+import { type DecisionConfig, JEV_POLICY_VERSION, decisionCallRefusal, decisionConfigFromEnv } from "./decision-config.ts";
+import { decisionProviderFor } from "./decision-provider.ts";
+import {
+  type DecisionTransport,
+  type DecisionTransportRequest,
+  type DecisionTransportResponse,
+  EndpointRefusedError,
+  createFetchTransport,
+  validateProviderEndpoint,
+} from "./decision-transport.ts";
+import { type SystemOneAnswer, type SystemOneResponse, systemOneAnswerSchema, systemOneResponseSchema } from "./system-one-wire.ts";
+import { JEV_DEFAULT_ENDPOINT, JEV_EXACT_MODEL } from "./typesafe-decision-provider.ts";
 
 /**
- * The TypeSafe (Jev) adapter.
+ * The selector: Clark's side of every typed decision.
  *
- * Jev makes one kind of decision: choose among options the host has already authorized, or say
- * that none of them fits. Everything in this file exists to keep that sentence true — the model
+ * A decision provider makes one kind of decision: choose among options the host has already
+ * authorized, or say that none of them fits. Everything in this file exists to keep that sentence true — the model
  * is handed opaque ids and field names, its answer is checked against the candidates that were
  * offered, and a low-confidence or malformed answer is reported as such rather than rounded into
  * a choice.
@@ -37,292 +47,20 @@ import {
  *    against one model is eventually evaluated against another.
  */
 
-/* ------------------------------------------------------------------ *
- * Configuration
- * ------------------------------------------------------------------ */
-
-export interface JevConfig {
-  /** False when the provider is switched off or has no key. No call is attempted. */
-  enabled: boolean;
-  /** True when the operator forbids third-party processing of any intent. */
-  localOnly: boolean;
-  apiKey: string | undefined;
-  /** Validated at configuration time; `endpointRefusal` explains why it is unusable. */
-  endpoint: string;
-  /** Set when the configured endpoint is not one this node will call. */
-  endpointRefusal: string | undefined;
-  /** Pinned exact id. `jev-1.13.0` was verified live on 2026-09-17. */
-  model: string;
-  /** Total budget for every call made while composing one turn, including waits. */
-  timeoutMs: number;
-  /** v1 makes at most two batches; the second exists only when the first changes the candidates. */
-  maxCallsPerTurn: number;
-  policyVersion: string;
-  confidenceFloor: number;
-  marginFloor: number;
-  noulOnFloor: number;
-  noulOffFloor: number;
-}
-
-export const JEV_POLICY_VERSION = "2026-09-17";
-export const JEV_EXACT_MODEL = "jev-1.13.0";
-export const JEV_DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
-
-function flag(raw: string | undefined): boolean {
-  if (raw === undefined) return false;
-  const value = raw.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-/**
- * Whether an endpoint is one this node is willing to call.
- *
- * The endpoint is operator configuration, not user input, so this is not the primary control
- * against a hostile URL — it is the control against an environment variable that points somewhere
- * it should not. `https` only, no embedded credentials, and no loopback or private-range host,
- * which is what keeps a misconfigured `CLARKCANT_JEV_ENDPOINT` from turning the node into a proxy
- * for whatever else is listening on its own network.
+/*
+ * The names this module has always exported. Configuration, transport and wire parsing now live in provider-neutral
+ * modules, and every existing importer keeps working through these.
  */
-export function validateProviderEndpoint(raw: string): { ok: true; url: string } | { ok: false; reason: string } {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return { ok: false, reason: "the configured endpoint is not a valid URL" };
-  }
-  if (parsed.protocol !== "https:") {
-    return { ok: false, reason: "the configured endpoint must use https" };
-  }
-  if (parsed.username !== "" || parsed.password !== "") {
-    return { ok: false, reason: "the configured endpoint must not embed credentials in its URL" };
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host.endsWith(".internal") ||
-    isPrivateHost(host)
-  ) {
-    return { ok: false, reason: "the configured endpoint must not point at a loopback or private address" };
-  }
-  return { ok: true, url: parsed.toString() };
-}
-
-function isPrivateHost(host: string): boolean {
-  if (host === "[::1]" || host === "::1") return true;
-  const parts = host.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [a, b] = parts as [number, number, number, number];
-  return (
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    a === 0
-  );
-}
-
-/**
- * Read the provider configuration from the environment.
- *
- * `enabled` is derived rather than configured separately in the common case: a key with no
- * local-only flag means the provider may be used, and no key means it may not. Making those two
- * independent settings would allow the state "enabled with no key", which can only fail at call
- * time.
- */
-export function jevConfigFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  /**
-   * The key a person typed into the interface, when there is one.
-   *
-   * Read through a function rather than handed over as a value, because it is read when the selector is built and the
-   * point of storing one is that it works without restarting the node. The environment wins when both exist: an
-   * operator who set it deliberately should not be overridden by a value typed later into a card.
-   */
-  stored?: () => string | undefined,
-): JevConfig {
-  const apiKey = env.TYPESAFE_API_KEY?.trim() || stored?.()?.trim() || undefined;
-  const localOnly = flag(env.CLARKCANT_JEV_LOCAL_ONLY);
-  const explicit = env.CLARKCANT_JEV_ENABLED === undefined ? undefined : flag(env.CLARKCANT_JEV_ENABLED);
-  const model = env.CLARKCANT_JEV_MODEL?.trim() || JEV_EXACT_MODEL;
-  const timeoutMs = Number.parseInt(env.CLARKCANT_JEV_TIMEOUT_MS ?? "4000", 10);
-  const endpointCheck = validateProviderEndpoint(env.CLARKCANT_JEV_ENDPOINT?.trim() || JEV_DEFAULT_ENDPOINT);
-
-  return {
-    enabled: explicit ?? (apiKey !== undefined && !localOnly),
-    localOnly,
-    apiKey,
-    endpoint: endpointCheck.ok ? endpointCheck.url : JEV_DEFAULT_ENDPOINT,
-    endpointRefusal: endpointCheck.ok ? undefined : endpointCheck.reason,
-    model,
-    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 4000,
-    maxCallsPerTurn: 2,
-    policyVersion: env.CLARKCANT_JEV_POLICY_VERSION?.trim() || JEV_POLICY_VERSION,
-    confidenceFloor: 0.85,
-    marginFloor: 0.2,
-    noulOnFloor: 0.85,
-    noulOffFloor: 0.15,
-  };
-}
-
-/**
- * Whether a call may be attempted at all.
- *
- * Local-only is checked before the key, because an operator who has forbidden third-party
- * processing must not have that decision reversed by a key appearing in the environment.
- */
-export function jevCallRefusal(config: JevConfig): string | undefined {
-  if (config.localOnly) return "this node is configured local-only, so no intent is sent to a provider";
-  if (config.endpointRefusal !== undefined) return config.endpointRefusal;
-  if (!config.enabled) return "the selector is disabled on this node";
-  if (config.apiKey === undefined) return "no provider credential is configured on this node";
-  return undefined;
-}
-
-/* ------------------------------------------------------------------ *
- * Transport
- * ------------------------------------------------------------------ */
-
-export interface JevTransportRequest {
-  url: string;
-  apiKey: string;
-  body: unknown;
-  signal: AbortSignal;
-}
-
-export interface JevTransportResponse {
-  status: number;
-  body: unknown;
-}
-
-export type JevTransport = (request: JevTransportRequest) => Promise<JevTransportResponse>;
-
-/**
- * Thrown when a URL is refused at the sink.
- *
- * A distinct type rather than a message match, so the caller can report the refusal itself instead of the generic
- * "the call failed" that a network error produces.
- */
-class EndpointRefusedError extends Error {}
-
-/**
- * The one URL this transport will call, or a refusal.
- *
- * A function rather than a variable so the refusal cannot be skipped: the value handed to `fetch` is only ever one
- * that passed the policy, which is an allowlist and not a sanitizer - https only, no credentials in the URL, and no
- * loopback or private address. The configuration path refuses the same things, and this is the second half of that
- * check rather than a replacement for it.
- */
-function allowlistedEndpoint(url: string): string {
-  const allowed = validateProviderEndpoint(url);
-  if (!allowed.ok) throw new EndpointRefusedError(allowed.reason);
-  return allowed.url;
-}
-
-/** The only protocols this transport will call. Written as data so the policy is reviewable, not inferred. */
-const CALLABLE_PROTOCOLS = Object.freeze(["https:"]);
-
-/**
- * The endpoint as a URL this transport will call, or a refusal.
- *
- * A malformed URL is refused rather than thrown at the caller as a parse error: it is the same class of problem as
- * a wrong scheme, and both mean this node will not open a socket.
- */
-function callableTarget(url: string): URL {
-  let target: URL;
-  try {
-    target = new URL(allowlistedEndpoint(url));
-  } catch {
-    throw new EndpointRefusedError("the configured endpoint is not a URL this transport can call");
-  }
-  if (!CALLABLE_PROTOCOLS.includes(target.protocol)) {
-    throw new EndpointRefusedError(`scheme ${target.protocol} is not allowed; only ${CALLABLE_PROTOCOLS.join(", ")} is called`);
-  }
-  return target;
-}
-
-/**
- * The real transport.
- *
- * The error path is where this differs from a naive fetch: a non-JSON error body is returned as
- * `{status, body: undefined}` rather than being parsed and logged, because the interesting thing
- * about a 529 is the status and the interesting thing about an error body is that it sometimes
- * echoes the request.
- */
-export function createFetchTransport(): JevTransport {
-  return async (request) => {
-    // A plain local name, assigned only from the allowlist above, so the call below cannot reach anything else.
-    const allowlistedUrl = callableTarget(request.url).href;
-    const response = await fetch(allowlistedUrl, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${request.apiKey}`,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify(request.body),
-      signal: request.signal,
-    });
-
-    if (!response.ok) {
-      // The body is read and discarded on purpose: it is never returned, logged or stored.
-      await response.text().catch(() => "");
-      return { status: response.status, body: undefined };
-    }
-
-    const text = await response.text();
-    try {
-      return { status: response.status, body: JSON.parse(text) as unknown };
-    } catch {
-      return { status: response.status, body: undefined };
-    }
-  };
-}
-
-/* ------------------------------------------------------------------ *
- * Wire schemas
- * ------------------------------------------------------------------ */
-
-const noulAnswerSchema = z.object({
-  type: z.literal("noul"),
-  noul: z.number(),
-});
-
-const choiceAnswerSchema = z.object({
-  type: z.literal("choice"),
-  choice: z.string(),
-  probabilities: z.record(z.string(), z.number()),
-  confidence: z.number().optional(),
-});
-
-const scoreAnswerSchema = z.object({
-  type: z.literal("score"),
-  score: z.number(),
-  legend: z.record(z.string(), z.string()),
-  probabilities: z.record(z.string(), z.number()),
-  confidence: z.number().optional(),
-});
-
-export const jevAnswerSchema = z.discriminatedUnion("type", [
-  noulAnswerSchema,
-  choiceAnswerSchema,
-  scoreAnswerSchema,
-]);
-
-export const jevResponseSchema = z.object({
-  model: z.string().min(1),
-  answers: z.record(z.string(), jevAnswerSchema),
-  usage: z
-    .object({
-      input_tokens: z.number().nonnegative(),
-      output_tokens: z.number().nonnegative(),
-    })
-    .optional(),
-});
-
-export type JevAnswer = z.infer<typeof jevAnswerSchema>;
+export type JevConfig = DecisionConfig;
+export type JevTransportRequest = DecisionTransportRequest;
+export type JevTransportResponse = DecisionTransportResponse;
+export type JevTransport = DecisionTransport;
+export type JevAnswer = SystemOneAnswer;
+export const jevConfigFromEnv = decisionConfigFromEnv;
+export const jevCallRefusal = decisionCallRefusal;
+export const jevAnswerSchema = systemOneAnswerSchema;
+export const jevResponseSchema = systemOneResponseSchema;
+export { JEV_DEFAULT_ENDPOINT, JEV_EXACT_MODEL, JEV_POLICY_VERSION, createFetchTransport, validateProviderEndpoint };
 
 /* ------------------------------------------------------------------ *
  * Budget and telemetry
@@ -463,7 +201,7 @@ function refusalReason(deps: JevDeps, budget: JevBudget): string | undefined {
 async function callProvider(
   deps: JevDeps,
   input: CallInput,
-): Promise<{ ok: true; response: z.infer<typeof jevResponseSchema> } | { ok: false; status: "abstained" | "unavailable"; reason: string }> {
+): Promise<{ ok: true; response: SystemOneResponse } | { ok: false; status: "abstained" | "unavailable"; reason: string }> {
   const now = deps.now ?? Date.now;
   const refused = refusalReason(deps, input.budget);
   const requestId = (deps.newRequestId ?? defaultRequestId)();
@@ -525,8 +263,9 @@ async function callProvider(
       return { ok: false, status: "unavailable", reason };
     }
 
-    const parsed = jevResponseSchema.safeParse(response.body);
-    if (!parsed.success) {
+    // The adapter unwraps its provider's envelope; what comes back is System One or nothing.
+    const answered = decisionProviderFor("typesafe").readResponse(response.body);
+    if (answered === undefined) {
       const reason = "the provider response did not match the documented answer shape";
       emit(deps, {
         event: "error",
@@ -541,18 +280,18 @@ async function callProvider(
       return { ok: false, status: "unavailable", reason };
     }
 
-    const usage = parsed.data.usage;
-    const drift = parsed.data.model !== deps.config.model;
+    const usage = answered.usage;
+    const drift = answered.model !== deps.config.model;
     emit(deps, {
       event: drift ? "model_drift" : "call",
       requestId,
-      model: parsed.data.model,
+      model: answered.model,
       policyVersion: deps.config.policyVersion,
       durationMs,
       status: "answered",
       questionCount,
       ...(usage === undefined ? {} : { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }),
-      ...(drift ? { reason: `the provider answered with ${parsed.data.model}, not the pinned ${deps.config.model}` } : {}),
+      ...(drift ? { reason: `the provider answered with ${answered.model}, not the pinned ${deps.config.model}` } : {}),
     });
 
     if (drift) {
@@ -561,11 +300,11 @@ async function callProvider(
       return {
         ok: false,
         status: "unavailable",
-        reason: `the provider answered with ${parsed.data.model} but this node pinned ${deps.config.model}`,
+        reason: `the provider answered with ${answered.model} but this node pinned ${deps.config.model}`,
       };
     }
 
-    return { ok: true, response: parsed.data };
+    return { ok: true, response: answered };
   } catch (cause) {
     const durationMs = now() - startedAt;
     const aborted = controller.signal.aborted;
