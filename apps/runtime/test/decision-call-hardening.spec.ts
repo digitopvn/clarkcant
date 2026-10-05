@@ -78,7 +78,7 @@ describe("a TypeSafe configuration naming a Cloudflare model", () => {
 
 describe("the secret-shape check on the request body", () => {
   // Secret-shaped to the detector, and plainly not a credential to anyone reading or scanning the repository.
-  const SECRET = "token_example-not-a-credential";
+  const SECRET = ["Bearer ", "example", "-not-a-credential"].join("");
 
   it.each([
     ["typesafe", typesafeConfig],
@@ -96,13 +96,28 @@ describe("the secret-shape check on the request body", () => {
     expect(bodies).toHaveLength(0);
     expect(outcome.status).toBe("unavailable");
     if (outcome.status === "unavailable") {
-      expect(outcome.reason).toContain("prefixed-token");
+      expect(outcome.reason).toContain("bearer");
       expect(outcome.reason).toContain("was not sent");
     }
     // Only the shape's label is recorded, never any part of the value it matched.
     const recorded = JSON.stringify({ outcome, telemetry });
-    expect(recorded).not.toContain(SECRET.slice(0, 8));
+    expect(recorded).not.toContain("example-not");
     expect(telemetry.map((event) => event.event)).toEqual(["refusal"]);
+  });
+
+  it("sends a request whose ids and model names only resemble a secret", async () => {
+    const config = typesafeConfig();
+    const { transport, bodies } = recording({ model: config.model, answers: { noul: { type: "noul", noul: 0.9 } } });
+    const outcome = await askNoul(
+      { config, transport },
+      {
+        state: { intent: "thêm lịch", widget: "key-metrics-overview@1", family: "family:token_management" },
+        instructions: "Should sonnet (anthropic/claude-sonnet-4-5-20250929) answer this?",
+        budget: createJevBudget(config),
+      },
+    );
+    expect(bodies).toHaveLength(1);
+    expect(outcome.status).toBe("answered");
   });
 
   it("lets an ordinary request through unchanged", async () => {

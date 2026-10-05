@@ -115,14 +115,6 @@ function callableTarget(url: string): URL {
 }
 
 /**
- * The real transport.
- *
- * The error path is where this differs from a naive fetch: a non-JSON error body is returned as
- * `{status, body: undefined}` rather than being parsed and logged, because the interesting thing
- * about a 529 is the status and the interesting thing about an error body is that it sometimes
- * echoes the request.
- */
-/**
  * The largest decision response this node reads. A real answer is a few kilobytes; anything near this is not one, and
  * reading it in full would let a provider hold memory the decision never needed.
  */
@@ -164,6 +156,14 @@ async function readCappedText(response: Response, limit: number): Promise<string
   return new TextDecoder().decode(whole);
 }
 
+/**
+ * The real transport.
+ *
+ * The error path is where this differs from a naive fetch: a non-JSON error body is returned as
+ * `{status, body: undefined}` rather than being parsed and logged, because the interesting thing
+ * about a 529 is the status and the interesting thing about an error body is that it sometimes
+ * echoes the request.
+ */
 export function createFetchTransport(): DecisionTransport {
   return async (request) => {
     // A plain local name, assigned only from the allowlist above, so the call below cannot reach anything else.

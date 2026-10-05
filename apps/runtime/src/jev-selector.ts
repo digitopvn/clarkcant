@@ -208,6 +208,18 @@ function refusalReason(deps: JevDeps, budget: JevBudget): string | undefined {
   return undefined;
 }
 
+/** The shapes no id, model name or description takes by accident, which the last look before a send refuses outright. */
+const CREDENTIAL_ONLY_SHAPES: ReadonlySet<string> = new Set([
+  "jwt",
+  "private-key",
+  "aws-access-key",
+  "github-token",
+  "google-api-key",
+  "url-credentials",
+  "bearer",
+  "named-secret",
+]);
+
 /**
  * Make one bounded call.
  *
@@ -242,12 +254,18 @@ async function callProvider(
   /*
    * One last look at exactly what would leave the node, whichever provider receives it.
    *
-   * Each caller redacts its own fields first; this is the backstop for a field that did not, such as an option's
-   * description. A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the
-   * caller falls back as it would for any provider failure. Only the shape labels are recorded: the detector's match
-   * text is the beginning of the very value being withheld.
+   * Each caller redacts its own free text first; this is the backstop for a field that did not, such as an option's
+   * description. It looks only for shapes that are a credential and nothing else. The broad shapes are left to the
+   * callers: a request is mostly ids and descriptions, and a dated model id reads as a phone number and a widget
+   * called `key-metrics-overview` as a prefixed token, so matching those here would refuse ordinary decisions.
+   *
+   * A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the caller falls
+   * back as it would for any provider failure. Only the shape labels are recorded: the detector's match text is the
+   * beginning of the very value being withheld.
    */
-  const secretShapes = findSecretShapes(JSON.stringify(body)).map((match) => match.split(":")[0] ?? "secret");
+  const secretShapes = findSecretShapes(JSON.stringify(body))
+    .map((match) => match.split(":")[0] ?? "secret")
+    .filter((label) => CREDENTIAL_ONLY_SHAPES.has(label));
   if (secretShapes.length > 0) {
     const reason = `the decision request still carried a secret-shaped value (${[...new Set(secretShapes)].join(", ")}), so it was not sent`;
     emit(deps, {
@@ -555,7 +573,7 @@ export async function selectTemplate(
   if (!redaction.ok) {
     return {
       status: "abstained",
-      reason: `the sanitised state still matched a secret-shaped value (${redaction.matches.join(", ")}); refusing to send it`,
+      reason: `the sanitised state still matched a secret-shaped value (${redaction.matches.map((match) => match.split(":")[0]).join(", ")}); refusing to send it`,
     };
   }
 
