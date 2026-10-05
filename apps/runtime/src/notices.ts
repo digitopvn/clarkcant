@@ -48,7 +48,7 @@ export function recordNodeNotice(services: NoticeServices, notice: NodeNotice): 
 
 /**
  * Record an update notice and retire the ones it supersedes: every earlier undismissed update notice for the same
- * package or SDK, whichever version it offered. An inbox that says "0.85.1 → 0.87.1" beside "0.85.1 → 1.0.2" tells the
+ * package, whichever version it offered. An inbox that says "0.85.1 → 0.87.1" beside "0.85.1 → 1.0.2" tells the
  * person two things where only the newer is still worth doing.
  *
  * Retired, not deleted: the same dismissal a person makes (`dismissNotificationsByKeyPrefix`), so the rows stay for the
@@ -175,9 +175,26 @@ export function packageUpdateKeyPrefixes(packageId: string): string[] {
   return (["npm", "git", "local"] as const).map((sourceKind) => packageUpdateKeyPrefix(sourceKind, packageId));
 }
 
-/** Every Pi SDK update notice for `packageName`, whatever version it offers, starts with this. */
-export function piUpdateKeyPrefix(packageName: string): string {
-  return `update:pi:${packageName}@`;
+/** Every Pi SDK update notice this node ever wrote starts with this. */
+const PI_UPDATE_KEY_PREFIX = "update:pi:";
+
+/**
+ * Retire the Pi SDK update notices a node wrote before the SDK stopped being checked: it ships pinned with ClarkCant,
+ * so nothing in the inbox could act on one. The ordinary dismissal, as for any notice that stopped being true, so the
+ * rows age out with the retention window; a storage failure is reported on stderr and never fails the check.
+ */
+export function tryRetirePiUpdateNotices(services: NoticeServices, at: Instant): void {
+  try {
+    dismissNotificationsByKeyPrefix(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      dedupKeyPrefix: PI_UPDATE_KEY_PREFIX,
+      at,
+    });
+  } catch (cause) {
+    process.stderr.write(
+      `inbox: could not retire Pi update notices (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
 }
 
 /**
@@ -207,30 +224,6 @@ export function packageUpdateNotice(input: {
     body: `${input.currentVersion} → ${input.newVersion} · nguồn ${input.sourceKind} · ${LANE_LABEL[input.lane]}`,
     subject: { kind: "package", packageId: input.packageId, version: input.newVersion, source: input.sourceKind },
     dedupKey: `${packageUpdateKeyPrefix(input.sourceKind, input.packageId)}${input.newVersion}`,
-    at: input.at,
-  };
-}
-
-/**
- * The notice that a newer Pi SDK is published than the one `packages/pi-adapter` runs.
- *
- * The Pi SDK is host-owned, in-process code — the same `trusted-native` lane a native Pi extension runs in — so the
- * body says that explicitly rather than leaving the reader to guess how trusted an SDK bump is.
- */
-export function piUpdateNotice(input: {
-  packageName: string;
-  currentVersion: string;
-  newVersion: string;
-  at: Instant;
-}): NodeNotice {
-  return {
-    sourceKind: "pi",
-    category: "update",
-    severity: "info",
-    title: "Có bản cập nhật cho Pi SDK",
-    body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]}`,
-    subject: { kind: "pi-update", packageName: input.packageName, version: input.newVersion },
-    dedupKey: `${piUpdateKeyPrefix(input.packageName)}${input.newVersion}`,
     at: input.at,
   };
 }

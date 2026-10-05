@@ -23,8 +23,7 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
  * The update-check producer (#169).
  *
  * `checkForUpdates` is the testable core the phase asks for: every IO it needs — installed packages, directory
- * entries, the Pi SDK's own pinned version, `fetch`, the clock — arrives as an argument, so these tests drive it
- * without a real registry, a real directory file or a real Pi install. `runUpdateCheckOnce`/`startUpdateCheckTimer`
+ * entries, the clock — arrives as an argument, so these tests drive it without a real directory file. `runUpdateCheckOnce`/`startUpdateCheckTimer`
  * get lighter tests of their own wiring and timer behaviour.
  */
 
@@ -74,18 +73,6 @@ function directoryCandidate(overrides: Partial<UpdateCandidate>): UpdateCandidat
   };
 }
 
-/** A `fetch` that always answers "the latest published version is `version`". */
-function fetchReturning(version: string): typeof fetch {
-  return vi.fn(async () => new Response(JSON.stringify({ version }), { status: 200 })) as unknown as typeof fetch;
-}
-
-/** A `fetch` that fails the way a machine with no network does: the call itself rejects. */
-function fetchOffline(): typeof fetch {
-  return vi.fn(async () => {
-    throw new Error("getaddrinfo ENOTFOUND registry.npmjs.org");
-  }) as unknown as typeof fetch;
-}
-
 describe("isNewerVersion", () => {
   it("compares ordinary semver numerically, not lexically", () => {
     expect(isNewerVersion("1.10.0", "1.9.0")).toBe(true);
@@ -118,13 +105,11 @@ describe("isNewerVersion", () => {
 });
 
 describe("checkForUpdates — packages and widgets", () => {
-  it("records one notice per package with a newer directory version, naming source and risk lane", async () => {
-    const report = await checkForUpdates({
+  it("records one notice per package with a newer directory version, naming source and risk lane", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0", lane: "isolated-ui" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.2.0", sourceKind: "npm", lane: "isolated-ui" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -141,21 +126,17 @@ describe("checkForUpdates — packages and widgets", () => {
   });
 
   it("labels a trusted-native package differently from an isolated widget", async () => {
-    await checkForUpdates({
+    checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.native", version: "1.0.0", lane: "trusted-native" })],
       directory: [directoryCandidate({ packageId: "com.example.native", version: "2.0.0", sourceKind: "git", lane: "trusted-native" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
-    await checkForUpdates({
+    checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.isolated", version: "1.0.0", lane: "isolated-ui" })],
       directory: [directoryCandidate({ packageId: "com.example.isolated", version: "2.0.0", sourceKind: "npm", lane: "isolated-ui" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -169,13 +150,11 @@ describe("checkForUpdates — packages and widgets", () => {
     expect(nativeNotice?.body).not.toEqual(isolatedNotice?.body);
   });
 
-  it("writes nothing when the directory version is not newer than what is installed", async () => {
-    const report = await checkForUpdates({
+  it("writes nothing when the directory version is not newer than what is installed", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.2.0" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.2.0" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -183,13 +162,11 @@ describe("checkForUpdates — packages and widgets", () => {
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
   });
 
-  it("writes nothing when the directory only lists an older version than what is installed", async () => {
-    const report = await checkForUpdates({
+  it("writes nothing when the directory only lists an older version than what is installed", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "2.0.0" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.9.0" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -197,8 +174,8 @@ describe("checkForUpdates — packages and widgets", () => {
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
   });
 
-  it("picks the highest version when the directory lists several for the same package", async () => {
-    const report = await checkForUpdates({
+  it("picks the highest version when the directory lists several for the same package", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
       directory: [
@@ -206,8 +183,6 @@ describe("checkForUpdates — packages and widgets", () => {
         directoryCandidate({ packageId: "com.example.widget", version: "1.3.0" }),
         directoryCandidate({ packageId: "com.example.widget", version: "1.2.0" }),
       ],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -217,15 +192,13 @@ describe("checkForUpdates — packages and widgets", () => {
     expect(notice?.body).toContain("1.3.0");
   });
 
-  it("skips a directory entry that does not fit this host's platform", async () => {
-    const report = await checkForUpdates({
+  it("skips a directory entry that does not fit this host's platform", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
       directory: [
         directoryCandidate({ packageId: "com.example.widget", version: "2.0.0", platforms: ["win32-x64"] }),
       ],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -233,13 +206,11 @@ describe("checkForUpdates — packages and widgets", () => {
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
   });
 
-  it("skips a directory entry that publishes no digest — the installer would refuse it too", async () => {
-    const report = await checkForUpdates({
+  it("skips a directory entry that publishes no digest — the installer would refuse it too", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "2.0.0", digest: "" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -252,13 +223,11 @@ describe("checkForUpdates — packages and widgets", () => {
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.3.0" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     };
-    await checkForUpdates(input);
-    await checkForUpdates(input);
+    checkForUpdates(input);
+    checkForUpdates(input);
 
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
     expect(notices.filter((notice) => notice.sourceKind === "package")).toHaveLength(1);
@@ -270,27 +239,25 @@ describe("checkForUpdates — packages and widgets", () => {
         services,
         installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
         directory: [directoryCandidate({ packageId: "com.example.widget", version, sourceKind })],
-        piInstalledVersion: "1.0.0",
-        fetchImpl: fetchReturning("1.0.0"),
         now: () => AT,
         platform: HOST,
       });
-    await check("1.1.0");
+    check("1.1.0");
     const [older] = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
     expect(older?.body).toContain("1.1.0");
 
-    await check("1.2.0");
+    check("1.2.0");
     let notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
     expect(notices.filter((notice) => notice.sourceKind === "package")).toHaveLength(1);
     expect(notices[0]?.body).toContain("1.0.0 → 1.2.0");
     // Retired the way a person's dismissal is: the row stays, dismissed, so 1.1.0 checked again does not come back.
     expect(getNotification(services.runtime.db, services.runtime.identity.ownerPrincipalId, older?.noticeId ?? "")?.dismissed).toBe(true);
-    await check("1.1.0");
+    check("1.1.0");
     notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
     expect(notices.map((notice) => notice.body)).toEqual([expect.stringContaining("1.0.0 → 1.2.0")]);
 
     // The same package announced from another source is still the same update to offer.
-    await check("1.3.0", "git");
+    check("1.3.0", "git");
     notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
     expect(notices.map((notice) => notice.body)).toEqual([expect.stringContaining("1.0.0 → 1.3.0 · nguồn git")]);
   });
@@ -319,12 +286,10 @@ describe("checkForUpdates — packages and widgets", () => {
       at: AT,
     });
 
-    await checkForUpdates({
+    checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.1.0" })],
-      piInstalledVersion: "1.0.0",
-      fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
       platform: HOST,
     });
@@ -337,151 +302,56 @@ describe("checkForUpdates — packages and widgets", () => {
 });
 
 describe("checkForUpdates — Pi SDK", () => {
-  it("records a notice, sourced as pi and lane-labelled trusted-native, when a newer SDK is published", async () => {
-    const report = await checkForUpdates({
-      services,
-      installedPackages: [],
-      directory: [],
-      piInstalledVersion: "0.85.1",
-      fetchImpl: fetchReturning("0.86.0"),
-      now: () => AT,
-      platform: HOST,
-    });
-
-    expect(report.piUpdate).toBe(true);
-    expect(report.piOffline).toBe(false);
-    const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
-    expect(notices).toHaveLength(1);
-    expect(notices[0]?.sourceKind).toBe("pi");
-    expect(notices[0]?.category).toBe("update");
-    expect(notices[0]?.body).toContain("0.85.1");
-    expect(notices[0]?.body).toContain("0.86.0");
-    expect(notices[0]?.body).toContain("extension Pi gốc");
+  it("does not check the Pi SDK: no registry call and no notice, since it ships pinned with ClarkCant", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const report = checkForUpdates({ services, installedPackages: [], directory: [], now: () => AT, platform: HOST });
+      expect(report).toEqual({ packageUpdates: 0 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
-  it("retires the older Pi SDK update notices, legacy ones without a subject included, when a newer SDK is announced", async () => {
+  it("retires the Pi SDK update notices left from before, legacy ones without a subject included, and keeps their rows", () => {
     const principalId = services.runtime.identity.ownerPrincipalId;
-    const legacy = recordNotification(services.runtime.db, {
-      notificationId: "ntf_legacy_pi",
-      principalId,
-      sourceKind: "pi",
-      category: "update",
-      severity: "info",
-      title: "Có bản cập nhật cho Pi SDK",
-      body: "0.85.1 → 0.86.0",
-      dedupKey: "update:pi:@earendil-works/pi-coding-agent@0.86.0",
-      at: AT,
-    });
-    const check = (latest: string) =>
-      checkForUpdates({
-        services,
-        installedPackages: [],
-        directory: [],
-        piInstalledVersion: "0.85.1",
-        fetchImpl: fetchReturning(latest),
-        now: () => AT,
-        platform: HOST,
+    const pi = (notificationId: string, version: string, withSubject: boolean) =>
+      recordNotification(services.runtime.db, {
+        notificationId,
+        principalId,
+        sourceKind: "pi",
+        category: "update",
+        severity: "info",
+        title: "Có bản cập nhật cho Pi SDK",
+        body: `0.85.1 → ${version}`,
+        ...(withSubject
+          ? { subject: { kind: "pi-update" as const, packageName: "@earendil-works/pi-coding-agent", version } }
+          : {}),
+        dedupKey: `update:pi:@earendil-works/pi-coding-agent@${version}`,
+        at: AT,
       });
+    const legacy = pi("ntf_legacy_pi", "0.87.1", false);
+    const current = pi("ntf_current_pi", "1.0.2", true);
 
-    await check("0.87.1");
-    await check("1.0.2");
-
-    const notices = listNotifications(services.runtime.db, principalId);
-    expect(notices.map((notice) => notice.body)).toEqual([expect.stringContaining("0.85.1 → 1.0.2")]);
-    expect(getNotification(services.runtime.db, principalId, legacy.notificationId)?.dismissed).toBe(true);
-  });
-
-  it("writes nothing when the registry's latest is not newer than what is pinned", async () => {
-    const report = await checkForUpdates({
-      services,
-      installedPackages: [],
-      directory: [],
-      piInstalledVersion: "0.85.1",
-      fetchImpl: fetchReturning("0.85.1"),
-      now: () => AT,
-      platform: HOST,
-    });
-    expect(report.piUpdate).toBe(false);
-    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
-  });
-
-  it("stays quiet — no notice, no throw — when the registry cannot be reached", async () => {
-    const report = await checkForUpdates({
-      services,
-      installedPackages: [],
-      directory: [],
-      piInstalledVersion: "0.85.1",
-      fetchImpl: fetchOffline(),
-      now: () => AT,
-      platform: HOST,
-    });
-    expect(report.piOffline).toBe(true);
-    expect(report.piUpdate).toBe(false);
-    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
-  });
-
-  it("stays quiet when the registry answers with a non-2xx status", async () => {
-    const fetchImpl = vi.fn(async () => new Response("not found", { status: 404 })) as unknown as typeof fetch;
-    const report = await checkForUpdates({
-      services,
-      installedPackages: [],
-      directory: [],
-      piInstalledVersion: "0.85.1",
-      fetchImpl,
-      now: () => AT,
-      platform: HOST,
-    });
-    expect(report.piOffline).toBe(true);
-    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
-  });
-
-  it("stays quiet when the registry answers with a version that is not valid semver", async () => {
-    const report = await checkForUpdates({
-      services,
-      installedPackages: [],
-      directory: [],
-      piInstalledVersion: "0.85.1",
-      fetchImpl: fetchReturning("not-a-version"),
-      now: () => AT,
-      platform: HOST,
-    });
-    expect(report.piOffline).toBe(true);
-    expect(report.piUpdate).toBe(false);
-    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
-  });
-
-  it("never offers a prerelease Pi SDK build to a stable install", async () => {
-    const report = await checkForUpdates({
-      services,
-      installedPackages: [],
-      directory: [],
-      piInstalledVersion: "0.85.1",
-      fetchImpl: fetchReturning("0.86.0-beta.1"),
-      now: () => AT,
-      platform: HOST,
-    });
-    expect(report.piUpdate).toBe(false);
-    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
-  });
-
-  it("offline for the Pi SDK does not block a package update in the same pass", async () => {
-    const report = await checkForUpdates({
+    checkForUpdates({
       services,
       installedPackages: [installedPackage({ packageId: "com.example.widget", version: "1.0.0" })],
       directory: [directoryCandidate({ packageId: "com.example.widget", version: "1.1.0" })],
-      piInstalledVersion: "0.85.1",
-      fetchImpl: fetchOffline(),
       now: () => AT,
       platform: HOST,
     });
-    expect(report.packageUpdates).toBe(1);
-    expect(report.piOffline).toBe(true);
+
+    // Only the package update is left to see; the Pi rows are dismissed, not deleted.
+    expect(listNotifications(services.runtime.db, principalId).map((notice) => notice.sourceKind)).toEqual(["package"]);
+    expect(getNotification(services.runtime.db, principalId, legacy.notificationId)?.dismissed).toBe(true);
+    expect(getNotification(services.runtime.db, principalId, current.notificationId)?.dismissed).toBe(true);
   });
 });
 
 describe("runUpdateCheckOnce", () => {
-  it("wires listInstalledPackages, the directory index and the injected SDK reader together", async () => {
-    const report = await runUpdateCheckOnce({
+  it("wires listInstalledPackages and the directory index together, and writes nothing with no directory configured", () => {
+    const report = runUpdateCheckOnce({
       services,
       installDeps: {
         db: services.runtime.db,
@@ -490,13 +360,11 @@ describe("runUpdateCheckOnce", () => {
         newId: services.conductor.newId,
       },
       env: {},
-      fetchImpl: fetchReturning("9.9.9"),
-      piInstalledVersion: async () => "1.0.0",
       now: () => AT,
       platform: HOST,
     });
-    expect(report.piUpdate).toBe(true);
     expect(report.packageUpdates).toBe(0);
+    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
   });
 
   /**
@@ -568,15 +436,13 @@ describe("runUpdateCheckOnce", () => {
         newId: services.conductor.newId,
       },
       env: { CC_DIRECTORY_INDEX: indexPath },
-      fetchImpl: fetchReturning("1.0.0"),
-      piInstalledVersion: async () => "1.0.0",
       now: () => AT,
       platform: HOST,
     });
 
   it("finds a package update through a real directory index file, mapping the entry's riskTier to the notice's lane", async () => {
     const packageId = "com.example.native-tool";
-    const report = await checkOnce(listedUpdate(packageId));
+    const report = checkOnce(listedUpdate(packageId));
 
     expect(report.packageUpdates).toBe(1);
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
@@ -592,7 +458,7 @@ describe("runUpdateCheckOnce", () => {
   it("finds an update in a listing with a field this node does not read, and the notice names it", async () => {
     const packageId = "com.example.native-tool";
     const indexPath = listedUpdate(packageId, { futureBinding: { gpu: "required" } });
-    const report = await checkOnce(indexPath);
+    const report = checkOnce(indexPath);
     expect(report.packageUpdates).toBe(1);
 
     const previous = process.env["CC_DIRECTORY_INDEX"];
@@ -609,33 +475,35 @@ describe("runUpdateCheckOnce", () => {
   });
 });
 describe("startUpdateCheckTimer", () => {
-  it("runs once shortly after start, then never overlaps a second pass while the first is still pending", async () => {
+  /** A pass reads the clock exactly once to retire the old Pi notices, so counting the clock counts passes. */
+  const startCounted = () => {
+    const now = vi.fn(() => AT);
+    const handle = startUpdateCheckTimer({
+      services,
+      installDeps: {
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        now: () => AT,
+        newId: services.conductor.newId,
+      },
+      env: {},
+      now,
+      intervalMs: 60_000,
+      platform: HOST,
+    });
+    return { now, handle };
+  };
+
+  it("runs once shortly after start, then once every interval", async () => {
     vi.useFakeTimers();
     try {
-      // Never resolves, so the first pass is still "in flight" for the entire test — proving the interval's later
-      // firings see `inFlight` still true and skip, rather than merely not having fired again yet.
-      const piInstalledVersion = vi.fn(() => new Promise<string>(() => {}));
-      const handle = startUpdateCheckTimer({
-        services,
-        installDeps: {
-          db: services.runtime.db,
-          nodeId: services.runtime.identity.nodeId,
-          now: () => AT,
-          newId: services.conductor.newId,
-        },
-        env: {},
-        fetchImpl: fetchReturning("1.0.0"),
-        piInstalledVersion,
-        intervalMs: 60_000,
-      });
-
+      const { now, handle } = startCounted();
       await vi.advanceTimersByTimeAsync(0);
-      expect(piInstalledVersion).toHaveBeenCalledTimes(1);
+      expect(now).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(60_000);
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(piInstalledVersion).toHaveBeenCalledTimes(1);
-
+      expect(now).toHaveBeenCalledTimes(3);
       handle.stop();
     } finally {
       vi.useRealTimers();
@@ -645,67 +513,14 @@ describe("startUpdateCheckTimer", () => {
   it("stop() clears the start and interval timers so no further pass starts", async () => {
     vi.useFakeTimers();
     try {
-      const piInstalledVersion = vi.fn(async () => "1.0.0");
-      const handle = startUpdateCheckTimer({
-        services,
-        installDeps: {
-          db: services.runtime.db,
-          nodeId: services.runtime.identity.nodeId,
-          now: () => AT,
-          newId: services.conductor.newId,
-        },
-        env: {},
-        fetchImpl: fetchReturning("1.0.0"),
-        piInstalledVersion,
-        intervalMs: 60_000,
-      });
-
+      const { now, handle } = startCounted();
       await vi.advanceTimersByTimeAsync(0);
-      expect(piInstalledVersion).toHaveBeenCalledTimes(1);
+      expect(now).toHaveBeenCalledTimes(1);
 
       handle.stop();
       await vi.advanceTimersByTimeAsync(120_000);
       // Stopped before the interval fired again: no second pass.
-      expect(piInstalledVersion).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("stop() aborts a pass's registry fetch, so a pass stopped mid-flight writes no notice", async () => {
-    vi.useFakeTimers();
-    try {
-      // A `fetch` that never settles on its own, the way real `fetch` behaves once its `signal` fires: it settles
-      // only when told to abort.
-      const fetchImpl = vi.fn(
-        (_url: string, init?: RequestInit) =>
-          new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
-          }),
-      ) as unknown as typeof fetch;
-      const handle = startUpdateCheckTimer({
-        services,
-        installDeps: {
-          db: services.runtime.db,
-          nodeId: services.runtime.identity.nodeId,
-          now: () => AT,
-          newId: services.conductor.newId,
-        },
-        env: {},
-        fetchImpl,
-        piInstalledVersion: async () => "0.85.1",
-        intervalMs: 60_000,
-      });
-
-      // Starts the pass: the pi-installed-version resolves immediately, the pass reaches the registry fetch and is
-      // now waiting on it.
-      await vi.advanceTimersByTimeAsync(0);
-      handle.stop();
-      // Let the abort's rejection propagate through `fetchLatestNpmVersion`'s catch and the pass settle.
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
+      expect(now).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
