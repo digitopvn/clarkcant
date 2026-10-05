@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ConversationId, Principal } from "@clarkcant/contracts";
+import type { ConversationId, DataClass, Principal } from "@clarkcant/contracts";
 import type { ModelTurnEvent } from "@clarkcant/core";
-import { FakePiAdapter, ModelSwitchUnsureError, type ModelSwitch, type WorkerBrief, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, ModelSwitchUnsureError, type ModelSwitch, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
 
 import { turnInstructions } from "../src/conditional-instructions.ts";
 import { SESSION_POLICY_LIMITS } from "../src/session-policy.ts";
@@ -47,10 +47,35 @@ class CountingAdapter extends FakePiAdapter {
   /** Text the session's loader would put into its prompt from the machine, offered to the brief's guard as the SDK does. */
   contextFile: string | undefined;
 
+  /** Set to hold the next move inside Pi, as a slow check of the new model's account would, until the promise settles. */
+  holdSwitch: Promise<void> | undefined;
+  /** How many moves were asked for, whether or not they have finished. */
+  switchesAsked = 0;
+  /** Set to have the provider refuse the next prompt with these words, and write nothing. */
+  refuseNextPrompt: string | undefined;
+  readonly #listeners = new Map<string, ((event: WorkerEvent) => void)[]>();
+
   override async switchModel(sessionId: string, selection: ModelSwitch): Promise<void> {
+    this.switchesAsked += 1;
     if (this.failsPartWay) throw new ModelSwitchUnsureError("the session file could not be written");
     if (!this.inPlace) throw new Error("No API key for the model this session was asked to move to");
+    const held = this.holdSwitch;
+    this.holdSwitch = undefined;
+    if (held !== undefined) await held;
     await super.switchModel(sessionId, selection);
+  }
+
+  override subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {
+    this.#listeners.set(sessionId, [...(this.#listeners.get(sessionId) ?? []), listener]);
+    return super.subscribe(sessionId, listener);
+  }
+
+  override async prompt(sessionId: string, text: string): Promise<void> {
+    const refusal = this.refuseNextPrompt;
+    if (refusal === undefined) return await super.prompt(sessionId, text);
+    this.refuseNextPrompt = undefined;
+    // Settled with nothing written, as Pi does after a refusal; the refusal arrives as an event.
+    for (const listener of this.#listeners.get(sessionId) ?? []) listener({ type: "error", sessionId, message: refusal });
   }
 
   override async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {
@@ -932,6 +957,84 @@ describe("a changed model the session can keep", () => {
     expect(guard(file)).toBe(true);
   });
 
+  it("starts a successor when the session's own model was allowed more since the session was made", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    let firstMay: readonly DataClass[] = ["public", "internal"];
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal"] : firstMay),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    // The person lets the first model receive more, and the same session is then sent an address.
+    firstMay = ["public", "internal", "confidential"];
+    await say(turn, "gửi cho duy@example.com giúp tôi", "msg_2");
+    expect(adapter.promptsFor("fake-session-1").join("\n")).toContain("duy@example.com");
+
+    preferred = OTHER;
+    await say(turn, "xong chưa", "msg_3");
+    // The two ceilings matched when the session was made, but not by the time it was sent the address.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2").join("\n")).not.toContain("duy@example.com");
+  });
+
+  it("lets a move that a Stop left behind finish before the next message touches the session", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    await say(turn, "một", "msg_1");
+
+    preferred = OTHER;
+    const slow = gate();
+    adapter.holdSwitch = slow.promise;
+    const stopped = say(turn, "hai", "msg_2");
+    await vi.waitFor(() => expect(adapter.switchesAsked).toBe(1));
+    expect(turn.interrupt(CONVERSATION)).toBe(true);
+    expect((await stopped).stopped).toBe(true);
+
+    // Back to the first choice while Pi is still moving the session to the other.
+    preferred = FIRST;
+    const reply = say(turn, "ba", "msg_3");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Nothing is sent to a session whose model is not settled.
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(1);
+
+    slow.open();
+    const answered = await reply;
+    // The first move landed, so the session is moved back before it answers, and the reply names the model that did.
+    expect(adapter.modelSwitches.map((move) => move.selection.model)).toEqual([OTHER, FIRST]);
+    expect(`${answered.provider}/${answered.model}`).toBe("fake/fake-model");
+    expect(adapter.handoffs).toHaveLength(0);
+  });
+
+  it("starts a successor after the provider refused a run of the session", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    // The model the node started on, so a refusal has nowhere to fall back to and the session is kept.
+    let preferred = { provider: ENV.CC_MODEL_PROVIDER, id: ENV.CC_MODEL_ID };
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    adapter.refuseNextPrompt = "the model's provider refused the turn";
+    await expect(say(turn, "hai", "msg_2")).rejects.toThrow(/could not answer this message/);
+
+    preferred = OTHER;
+    await say(turn, "ba", "msg_3");
+    // The kept session ends on a prompt the provider refused: the message goes to a session of its own.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
   it("does not answer again on a session whose move failed part-way", async () => {
     const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
     let preferred = FIRST;
@@ -951,6 +1054,8 @@ describe("a changed model the session can keep", () => {
     // Back on the first choice, the kept session is not trusted to still run it: a successor is made.
     preferred = FIRST;
     adapter.failsPartWay = false;
+    // Even though Pi would now accept a move.
+    adapter.inPlace = true;
     await say(turn, "ba", "msg_3");
     expect(adapter.handoffs).toHaveLength(2);
     expect(adapter.modelSwitches).toEqual([]);

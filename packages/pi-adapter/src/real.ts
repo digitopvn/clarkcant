@@ -844,11 +844,16 @@ export class RealPiAdapter implements PiAdapter {
     const { session } = this.#require(sessionId);
     // Pi applies a model change to the agent's state at once; mid-run that would send the rest of one answer to a
     // different model, and a queued steer would be answered by a model the person did not address it to.
-    if (session.isStreaming || session.agent.hasQueuedMessages()) {
-      throw new Error("a session's model can only change between runs; this one is still running or holds a queued message");
-    }
+    const between = (): void => {
+      if (session.isStreaming || session.agent.hasQueuedMessages()) {
+        throw new Error("a session's model can only change between runs; this one is still running or holds a queued message");
+      }
+    };
+    between();
     const resolved =
       selection.model === undefined ? undefined : (await this.#resolveModel(await this.#load(), selection.model)).model;
+    // Again after the wait: a run may have started while the model was being looked up.
+    between();
     const before = session.model;
     try {
       // Session-only: Pi's `persist` would rewrite the default model of the person's own pi installation.

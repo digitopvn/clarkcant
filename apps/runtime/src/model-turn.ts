@@ -281,9 +281,6 @@ export interface ModelTurn {
   dispose: () => Promise<void>;
 }
 
-/** Records what a session was just sent, by class; the text itself is not kept. */
-
-
 interface Turn {
   sessionId: string;
   /** Text deltas since the last block, not yet turned into a segment. */
@@ -405,10 +402,12 @@ interface Turn {
   nonceStated: boolean;
   /** What the model answering may receive, set when a turn starts; read by a tool call's instructions. */
   allowed: readonly DataClass[];
-  /** The provider refused this session's last run. What follows is a failover, which starts a session of its own. */
+  /** A provider has refused a run of this session. A change of model after that starts a session of its own. */
   refused: boolean;
   /** A change of model in place failed part-way, so which model the session runs is not known: it is only replaced. */
   unsure: boolean;
+  /** A move of this session to another model that has not finished; nothing else looks at the session until it has. */
+  switching: Promise<void> | undefined;
   /** When the session behind this turn was created, and how many turns it has answered: its age, for the session policy. */
   sessionCreatedAtMs: number;
   answered: number;
@@ -443,12 +442,15 @@ interface SessionWithheld {
   /** The model whose ceiling the session's loader is held to: the one it runs now. */
   runs: { provider: string; id: string };
   /**
-   * Every class a model this session has run could receive. The session may hold any of it — in its transcript, its
+   * Every class this session was allowed on any send, under any model it has run. The session may hold any of it — in its transcript, its
    * prompt, a picture a tool returned — and a session cannot be narrowed, so another model takes it over in place only
    * if it may receive all of these.
    */
   ceiling: Set<DataClass>;
-  /** Every class of something left out for this session, so a model that may receive it is given a session that has it. */
+  /**
+   * Every class of a file or instruction the session's loader left out, so a model that may receive it is given a
+   * session made with it. A message left out of a recap or a withheld tool result is not counted here.
+   */
   left: Set<DataClass>;
 }
 
@@ -1305,7 +1307,7 @@ export async function createModelTurn(options: {
    * conversation is running and what the person has asked for.
    */
   const generationModels = new Map<string, string>();
-  /** The thinking level each conversation's session was created with, compared like the model on every turn. */
+  /** The thinking level each conversation's session runs at, compared like the model on every turn. */
   const generationThinking = new Map<string, string>();
 
   /**
@@ -1580,6 +1582,11 @@ export async function createModelTurn(options: {
    * setup's time limit ends the wait: a session created after that is let go rather than adopted.
    */
   async function turnFor(conversationId: string, principal: Principal, setup: AbortSignal): Promise<Turn> {
+    // A move to another model that an ended setup left behind finishes first: until it has, which model the session
+    // runs, and so what it may be sent, is not settled.
+    for (let moving = turns.get(conversationId)?.switching; moving !== undefined; moving = turns.get(conversationId)?.switching) {
+      await moving;
+    }
     const existing = turns.get(conversationId);
     const preferred = chosenModel();
     const preferredModel = preferred === undefined ? undefined : `${preferred.provider}/${preferred.id}`;
@@ -1651,6 +1658,7 @@ export async function createModelTurn(options: {
       allowed: DEFAULT_ALLOWED_DATA_CLASSES,
       refused: false,
       unsure: false,
+      switching: undefined,
       sessionCreatedAtMs: Date.now(),
       answered: 0,
       recentTexts: [],
@@ -1676,8 +1684,8 @@ export async function createModelTurn(options: {
      * What a call's result is sent back to the model as, for every tool the session holds: the result itself when the
      * model may receive every class it carries, else a note that it was withheld. The model is the one the conversation
      * runs when the call returns, and the ceiling is `turn.allowed` as the current turn's preparation read it for that
-     * model — correct for the whole turn, because a session's model cannot change mid-turn: a change is a new generation,
-     * made at the next turn boundary, whose preparation reads the ceiling again.
+     * model — correct for the whole turn, because a session's model cannot change mid-turn: a change is made at
+     * the next turn boundary, in place or as a new generation, and that turn's preparation reads the ceiling again.
      */
     const toolResultGuard = toolResultGuardFor({ model: () => runningModel(conversationId), allowed: () => turn.allowed });
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
@@ -1709,12 +1717,17 @@ export async function createModelTurn(options: {
       const withheld = newSessionWithheld(runs, ceilingOf(runs).allowed);
       // Read when a file is checked, not when the session is created: a session moved to another model in place is
       // held to that model's ceiling from then on, for a skill read again as much as for a reload.
-      const contextGuard: ContextGuard = (item) =>
-        contextGuardFor({
+      const contextGuard: ContextGuard = (item) => {
+        // A model's ceiling can be widened between two reads, so what this read lets in counts towards what the
+        // session may hold.
+        const allowed = ceilingOf(withheld.runs).allowed;
+        for (const dataClass of allowed) withheld.ceiling.add(dataClass);
+        return contextGuardFor({
           model: withheld.runs,
-          allowed: ceilingOf(withheld.runs).allowed,
+          allowed,
           onWithheld: (left) => recordWithheld(withheld, left),
         })(item);
+      };
       return {
         withheld,
         brief: {
@@ -1860,27 +1873,38 @@ export async function createModelTurn(options: {
         [...record.ceiling].every((dataClass) => wanted.allowed.includes(dataClass)) &&
         ![...record.left].some((dataClass) => wanted.allowed.includes(dataClass));
       if (keeps) {
-        let moved = false;
-        try {
-          await adapter.switchModel(existing.sessionId, {
-            ...(sameModel ? {} : { model: preferred }),
-            ...(thinking === undefined ? {} : { thinkingLevel: thinking }),
-          });
-          moved = true;
-        } catch (cause) {
-          // The successor below is tried instead, and says what failed if it fails too. A session Pi had already
-          // moved when it failed is not answered on again, whatever comes of the successor.
-          if (cause instanceof ModelSwitchUnsureError) existing.unsure = true;
-        }
-        // Idle eviction may have let this turn go while Pi checked the new model's account.
-        if (turns.get(conversationId) !== existing) return await turnFor(conversationId, principal, setup);
-        if (moved) {
+        /*
+         * One piece, and marked on the turn while it runs: a Stop ends the wait for it, not the move, and a message
+         * sent next must not move or prompt a session Pi is still moving. What the session runs and may hold is
+         * recorded before anything waiting on it goes on, whether or not this setup is still wanted.
+         */
+        const move = (async (): Promise<boolean> => {
+          try {
+            await adapter.switchModel(existing.sessionId, {
+              ...(sameModel ? {} : { model: preferred }),
+              ...(thinking === undefined ? {} : { thinkingLevel: thinking }),
+            });
+          } catch (cause) {
+            // The successor below is tried instead, and says what failed if it fails too. A session Pi had already
+            // moved when it failed is not answered on again, whatever comes of the successor.
+            if (cause instanceof ModelSwitchUnsureError) existing.unsure = true;
+            return false;
+          } finally {
+            existing.switching = undefined;
+          }
           record.runs = preferred;
           for (const dataClass of wanted.allowed) record.ceiling.add(dataClass);
-          generationModels.set(conversationId, modelKey(preferred));
-          generationThinking.set(conversationId, thinking ?? "");
-          return existing;
-        }
+          if (turns.get(conversationId) === existing) {
+            generationModels.set(conversationId, modelKey(preferred));
+            generationThinking.set(conversationId, thinking ?? "");
+          }
+          return true;
+        })();
+        existing.switching = move.then(() => undefined);
+        const moved = await move;
+        // Idle eviction may have let this turn go while Pi checked the new model's account.
+        if (turns.get(conversationId) !== existing) return await turnFor(conversationId, principal, setup);
+        if (moved) return existing;
       }
       let successor: WorkerSessionHandle;
       const next = briefFor(preferred);
@@ -2218,6 +2242,8 @@ export async function createModelTurn(options: {
       const ceiling = ceilingOf(runsOn());
       const allowed = ceiling.allowed;
       turn.allowed = allowed;
+      // Read again each turn, so a ceiling widened since the session was made counts towards what the session holds.
+      for (const dataClass of allowed) turn.withheld.ceiling.add(dataClass);
 
       let recap: { text: string; earlier: string };
       let memoryPart: string;
