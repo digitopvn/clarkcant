@@ -413,6 +413,14 @@ export interface WorkerUsage {
   contextWindow?: number;
 }
 
+/**
+ * A change of a session's model failed after the session had already left the model it was on: which model it runs is
+ * not what the caller last knew. The caller replaces the session rather than answer on it.
+ */
+export class ModelSwitchUnsureError extends Error {
+  override readonly name = "ModelSwitchUnsureError";
+}
+
 export class NotImplementedError extends Error {
   constructor(what: string, phase: string) {
     super(`${what} is not implemented yet; it belongs to milestone ${phase}`);

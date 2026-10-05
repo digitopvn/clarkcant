@@ -16,6 +16,7 @@ import {
   type ToolDefinition,
   type WorkerBrief,
   type WorkerEvent,
+  ModelSwitchUnsureError,
 } from "../src/index.ts";
 import { toSdkTool } from "../src/real.ts";
 import { guardToolResult } from "../src/tool-result-guard.ts";
@@ -932,6 +933,19 @@ describe("changing a session's model between runs", () => {
     // Pi resets the level to the new model's default when the model changes, so the person's level has to follow it.
     expect(sdk.session.modelChanges).toEqual(["model:two/large", "thinking:high"]);
     expect(sdk.sessions).toHaveLength(1);
+  });
+
+  it("says so when Pi fails after the session had already left its model", async () => {
+    const sdk = stubSdk({ models });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ ...brief, model: small });
+    const session = sdk.session as unknown as { model?: unknown; setModel: (model: unknown) => Promise<void> };
+    session.setModel = async (model) => {
+      session.model = model;
+      throw new Error("the session file could not be written");
+    };
+
+    await expect(adapter.switchModel(handle.sessionId, { model: large })).rejects.toBeInstanceOf(ModelSwitchUnsureError);
   });
 
   it("changes only the thinking level when no model is named", async () => {

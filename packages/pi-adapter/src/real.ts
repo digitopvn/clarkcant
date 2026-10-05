@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type ModelCatalogue, type ModelSwitch,
+import { ModelSwitchUnsureError, NotImplementedError, type ModelCatalogue, type ModelSwitch,
   type PiExtension,
   type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ProviderAuthEntry, type ProviderSignInInteraction,
   type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
@@ -847,13 +847,21 @@ export class RealPiAdapter implements PiAdapter {
     if (session.isStreaming || session.agent.hasQueuedMessages()) {
       throw new Error("a session's model can only change between runs; this one is still running or holds a queued message");
     }
-    if (selection.model !== undefined) {
-      const { model } = await this.#resolveModel(await this.#load(), selection.model);
+    const resolved =
+      selection.model === undefined ? undefined : (await this.#resolveModel(await this.#load(), selection.model)).model;
+    const before = session.model;
+    try {
       // Session-only: Pi's `persist` would rewrite the default model of the person's own pi installation.
-      if (model !== undefined) await session.setModel(model);
+      if (resolved !== undefined) await session.setModel(resolved);
+      // After the model, which resets the level to that model's own default; Pi clamps to what the model supports.
+      if (selection.thinkingLevel !== undefined) session.setThinkingLevel(selection.thinkingLevel);
+    } catch (cause) {
+      // Pi sets the model before it records the change, so a failure there leaves the session already moved.
+      if (session.model !== before) {
+        throw new ModelSwitchUnsureError(cause instanceof Error ? cause.message : String(cause), { cause });
+      }
+      throw cause;
     }
-    // After the model, which resets the level to that model's own default; Pi clamps to what the model supports.
-    if (selection.thinkingLevel !== undefined) session.setThinkingLevel(selection.thinkingLevel);
   }
 
   subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {
