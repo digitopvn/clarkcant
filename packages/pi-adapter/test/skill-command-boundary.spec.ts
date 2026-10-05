@@ -178,7 +178,8 @@ describe("a /skill: message on the real SDK", () => {
   it("sends the file that was checked, not one written in its place after the check", async () => {
     writeSkill("Run the deploy script.");
     let sending = false;
-    const narrow = guardFor(NARROW);
+    // Everything but a credential, so where the temporary folder is on this machine does not decide the outcome.
+    const narrow = guardFor(["public", "internal", "confidential"]);
     const sent = await promptSkill(
       NARROW,
       () => {
