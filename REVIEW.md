@@ -161,29 +161,52 @@ Do not withhold approval for optional polish.
 
 Before merge:
 
-1. confirm the reviewed commit is still the PR head;
-2. confirm required checks apply to that commit;
-3. inspect unresolved review threads;
-4. confirm blockers/dependencies are reflected in durable tracking;
-5. confirm documentation closure;
-6. merge using repository policy.
+1. attest the review of the final head (below); a push makes it stale;
+2. inspect unresolved review threads;
+3. confirm blockers/dependencies are reflected in durable tracking;
+4. confirm documentation closure;
+5. merge using repository policy.
 
-Repository policy lives in the `main: required CI` ruleset on `main`, not in this
-file:
+To attest, run `node tools/attest-review.mjs <pr> --result ready|changes-required
+--reviewer agent:<name>|human:<login> [--commit HEAD]` as an account with write
+access. It reads the PR's head SHA itself (`--commit` refuses if your reviewed
+checkout is not that head) and posts a comment with only SHA, result and reviewer.
 
-- every `verify` job in `.github/workflows/ci.yml` (Linux, macOS, Windows),
-  `secret scan`, `e2e (browser suite)` and `desktop smoke (xvfb)` must pass;
-- force-push and deletion of `main` are blocked;
-- repository admins may bypass, for direct docs/plans commits; do not use the
-  bypass to merge a PR whose required checks are red or still running.
+The merge gate is `.github/required-checks.json`, enforced by the
+`main: required CI` ruleset. In short:
 
-Prefer squash auto-merge (`gh pr merge --auto --squash`): GitHub merges only once
-the required checks pass. Merged branches are deleted automatically, which
-retargets a stacked PR onto `main`; rebase it with
+- every job in `.github/workflows/ci.yml` must pass, including both
+  `service container (rootless …)` jobs and `widget tooling smoke`, unless the
+  file lists it as non-gating with a reason (none today);
+- `review attestation` must pass: a status set by
+  `.github/workflows/review-attestation.yml` when the newest attestation by a
+  writer is `ready` for the exact head; docs/plans-only PRs (the prose allowlist
+  in `tools/ci-test-scope.mjs`) pass without one;
+- strict: the PR must be up to date with `main`, so checks ran on the combined
+  tree. Use `gh pr update-branch <pr>` (or the button), then re-attest the new
+  head;
+- a check counts only on the head SHA it ran on; cancelled is never passing;
+- force-push and deletion of `main` are blocked; admins may bypass only for
+  direct docs/plans commits, never to merge a PR with red or pending checks.
+
+No human approval is required; an agent's attestation counts the same.
+
+Prefer squash auto-merge (`gh pr merge --auto --squash`). Merged branches are
+deleted automatically, which retargets a stacked PR onto `main`; rebase it with
 `git rebase --onto main <old-base>` before it merges.
 
-When a job is added to or renamed in the CI matrix, update the ruleset's required
-checks in the same change, or it stops gating merges.
+When a CI job is added or renamed, change `.github/required-checks.json` in the
+same PR; `pnpm invariants` fails until you do. After it merges, an admin applies
+the ruleset with `node tools/check-ruleset-drift.mjs --print-ruleset-payload` and
+the `gh api --method PUT` it prints. `.github/workflows/merge-gate-drift.yml`
+fails on every push to `main` and daily while ruleset and file disagree.
+
+To show a required job really blocks merge (do not merge the probe): on a
+throwaway branch make `service container (rootless podman)` fail (add a first
+step `run: exit 1`), open a draft PR, and attest it `ready`. Once CI finishes,
+`gh pr view <pr> --json mergeStateStatus` reports `BLOCKED` and
+`gh pr checks <pr> --required` lists the failing job. Close the PR and delete
+the branch.
 
 After merge, do not leave promised follow-up work untracked.
 
