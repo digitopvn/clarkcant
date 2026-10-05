@@ -269,6 +269,23 @@ mà service liệt kê cho tool đó quyết định input có được chấp n
 khi policy cần hỏi thì một approval card do host sở hữu xuất hiện trong cuộc trò chuyện. Các lời từ chối là các mã
 `CapabilityInvokeRefusal` trong file đó.
 
+**Kết quả có cấu trúc.** Một tool có thể liệt kê `outputSchema` và trả `structuredContent` bên cạnh phần chữ, như MCP
+2025-06-18 mô tả. Node giữ schema đó trên descriptor của capability khi nó là một JSON schema object có
+`type: "object"`, dài tối đa 16.384 ký tự, không chứa pattern bị từ chối ở trên; schema khác bị bỏ, log ghi lý do, và
+tool vẫn được nạp. `title`, `_meta` và các gợi ý annotation ngoài những gợi ý Clark đọc được chấp nhận rồi bỏ qua. Không
+điều gì service liệt kê, kể cả schema, mô tả, title hay annotation, hạ được điều execution policy quyết định: effect
+category của capability là loại mà manifest khai báo, và những gì service liệt kê chỉ có thể nâng nó lên
+(`serviceEffectCategory` trong `apps/runtime/src/service-host.ts`).
+
+`structuredContent` của một kết quả chỉ được giữ, dưới dạng bản sao, khi nó là object JSON thuần sâu tối đa 32 tầng,
+có tối đa 16.384 giá trị, không có khoá `__proto__`, `constructor` hay `prototype`, JSON của nó dài tối đa 64 KiB, và
+nó khớp `outputSchema` mà tool khai báo. Nếu không, nó bị bỏ, phần chữ của service được giữ, và phần chữ ghi lý do.
+Model vẫn đọc phần chữ của service. Giá trị được giữ đi tới binding `invoke` của widget dưới tên `structuredContent`
+([giao diện mở](open-interfaces.vi.md)), và tới chương trình mà model chạy qua `invoke_capability`, có kết quả là một
+`CallToolResult` của MCP với giá trị đó trong `structuredContent`. Nó được phân loại cùng phần chữ trước khi model đọc
+được, và bị giữ lại cùng phần chữ. Nó là dữ liệu: không bao giờ thành chỉ dẫn, approval card hay widget. Tệp vẫn được
+trả về dưới dạng resource và lưu thành `ArtifactRef` (§10.1), không đặt trong `structuredContent`.
+
 Service chạy với tài nguyên gì, và gọi tới nhà cung cấp mà không giữ key ra sao, nằm ở §14.1 và §14.2. Chưa xây: cô
 lập bằng VM, và gọi service trên node khác. Model gọi được service của
 package ngay trong cuộc trò chuyện bằng cách đặt nút hành động chung với action `invoke` (§8.1). Journey trình duyệt

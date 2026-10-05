@@ -264,6 +264,23 @@ input schema the service listed for the tool decides whether the input is accept
 policy that asks puts a host-owned approval card in the conversation. The refusals are the `CapabilityInvokeRefusal`
 codes in that file.
 
+**Structured results.** A tool may list an `outputSchema` and return `structuredContent` beside its text, as MCP
+2025-06-18 describes. The node keeps the schema on the capability's descriptor when it is a JSON object schema of
+`type: "object"`, at most 16,384 characters, with no pattern refused above; any other schema is dropped, the log says
+why, and the tool still loads. A tool's `title`, `_meta` and annotation hints other than the ones Clark reads are
+accepted and ignored. Nothing a service lists, its schemas, description, title or annotations included, lowers what the
+execution policy decides: a capability's effect category is the one its manifest declares, and what the service lists
+can only raise it (`serviceEffectCategory` in `apps/runtime/src/service-host.ts`).
+
+A result's `structuredContent` is kept as a copy only when it is a plain JSON object at most 32 levels deep with at
+most 16,384 values and no `__proto__`, `constructor` or `prototype` key, its JSON is at most 64 KiB, and it matches the
+`outputSchema` the tool declared. Otherwise it is dropped, the service's text is kept, and the text says why. The
+service's text is still what the model reads. A kept value goes to a widget's `invoke` binding as `structuredContent`
+([open interfaces](open-interfaces.md)), and to a program the model runs through `invoke_capability`, whose result is
+an MCP `CallToolResult` with the value in its `structuredContent`. It is classified with the text before the model can
+read it, and is withheld with the text. It is data: it never becomes an instruction, an approval card or a widget. A
+file is still returned as a resource and stored as an `ArtifactRef` (§10.1), not put in `structuredContent`.
+
 What a service runs with, and how it reaches a provider without holding the key, is §14.1 and §14.2. Not built: VM
 isolation, and calling a service on another node. A model reaches a
 package service from the conversation by placing the generic action button with an `invoke` action (§8.1). The browser

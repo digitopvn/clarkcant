@@ -710,6 +710,16 @@ lần ghi cũ hơn) cùng state và revision node đang giữ. `sequence` không
 nhận `400 INVALID_SCHEMA`; mọi binding khác nhận `400 UNSUPPORTED_ACTION`, và mọi giá trị `variant` khác nhận
 `400 INVALID_SCHEMA`. Xem [phát triển widget §8.11](widget-development.vi.md#811-widget-media-và-trạng-thái-semantic).
 
+Một lời gọi thường gọi tới capability của service trả `200 { outcome: "done", output, structuredContent? }` cùng các
+trường ở trên. `output` là phần chữ service trả về, như trước. `structuredContent` là trường bổ sung, tuỳ chọn: object
+JSON mà service trả về trong `structuredContent` của MCP, khi node giữ lại nó. Node bỏ nó, và ghi lý do vào `output`,
+khi nó không phải JSON thuần có giới hạn (sâu tối đa 32 tầng và 16.384 giá trị, không có khoá `__proto__`,
+`constructor` hay `prototype`), khi JSON của nó dài hơn 64 KiB, hoặc khi nó không khớp `outputSchema` mà service khai
+báo cho tool. Đây là dữ liệu của service, không bao giờ là chỉ dẫn và không bao giờ thành thẻ, và một `invocationId`
+lặp lại được trả lại đúng giá trị đó. Tool `invoke_capability` của agent và lệnh nói đi tới cùng lời gọi capability
+và nhận cùng giá trị. Tệp vẫn là `ArtifactRef` ([phát triển widget §6](widget-development.vi.md)). Client bỏ qua
+trường này thấy đúng phản hồi như trước.
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 
