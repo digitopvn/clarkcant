@@ -273,12 +273,12 @@ execution policy decides: a capability's effect category is the one its manifest
 can only raise it (`serviceEffectCategory` in `apps/runtime/src/service-host.ts`).
 
 A result's `structuredContent` is kept as a copy only when it is a plain JSON object at most 32 levels deep with at
-most 16,384 values and no `__proto__`, `constructor` or `prototype` key, its JSON is at most 64 KiB, and it matches the
+most 16,384 values and no `__proto__`, `constructor` or `prototype` key, its JSON is at most 65,536 characters, and it matches the
 `outputSchema` the tool declared. Otherwise it is dropped, the service's text is kept, and the text says why. The
 service's text is still what the model reads. A kept value goes to a widget's `invoke` binding as `structuredContent`
-([open interfaces](open-interfaces.md)), and to a program the model runs through `invoke_capability`, whose result is
-an MCP `CallToolResult` with the value in its `structuredContent`. It is classified with the text before the model can
-read it, and is withheld with the text. It is data: it never becomes an instruction, an approval card or a widget. A
+([open interfaces](open-interfaces.md)). The agent's `invoke_capability` tool also carries it, in a result shaped as an
+MCP `CallToolResult`, for a program that calls the tool; ClarkCant does not run such programs yet, so today no model
+or script reads it there. It is classified with the text, as JSON and string by string, and is withheld with the text. It is data: it never becomes an instruction, an approval card or a widget. A
 file is still returned as a resource and stored as an `ArtifactRef` (§10.1), not put in `structuredContent`.
 
 What a service runs with, and how it reaches a provider without holding the key, is §14.1 and §14.2. Not built: VM

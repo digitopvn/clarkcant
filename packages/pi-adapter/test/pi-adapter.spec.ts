@@ -174,6 +174,17 @@ describe("a tool result that carries a structured value", () => {
     expect(result).not.toHaveProperty("structuredContent");
   });
 
+  it("hands the guard every key and string of the structured value as written, beside its JSON", async () => {
+    const seen: (readonly string[] | undefined)[] = [];
+    const guard: NonNullable<WorkerBrief["toolResultGuard"]> = (input) => {
+      seen.push(input.parts);
+      return { withheld: false };
+    };
+    const captured = capture(guardToolResult(forecast({ note: 'said "hi"', place: "C:\\Users\\an" }), guard));
+    await captured.execute?.("call-1", {});
+    expect(seen).toEqual([["note", 'said "hi"', "place", "C:\\Users\\an"]]);
+  });
+
   it("keeps the structured value when the guard lets the result through", async () => {
     const captured = capture(guardToolResult(forecast({ celsius: 31 }), withhold));
     const result = await captured.execute?.("call-1", {});

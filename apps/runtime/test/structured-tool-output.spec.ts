@@ -220,6 +220,18 @@ describe("a service tool that returns a structured result", () => {
     expect(JSON.stringify(result)).not.toContain(["hunter", "22x"].join(""));
   });
 
+  it("is withheld when the class is only readable once the structured value's strings are unescaped", async () => {
+    await startHost();
+    const call = await agentSession();
+    // With a text beside it, and alone, where the value's JSON is the text the model would be given.
+    for (const shape of ["quoted-secret", "quoted-secret-only"]) {
+      const result = await call({ action: "invoke", ref: FORECAST, args: { city: "Huế", shape } });
+      expect(result.text, shape).toMatch(/^\[The result of this call carries secret data/);
+      expect(result, shape).not.toHaveProperty("structuredContent");
+      expect(JSON.stringify(result), shape).not.toContain(["hunter", "22x"].join(""));
+    }
+  });
+
   it("drops an output schema the node cannot use and keeps the tool working", async () => {
     await startHost();
     expect(getCapability({ db, nodeId: NODE }, COUNT, NODE)?.outputSchema).toBeUndefined();

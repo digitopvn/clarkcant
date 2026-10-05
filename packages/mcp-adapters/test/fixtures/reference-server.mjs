@@ -99,6 +99,12 @@ function forecastResult(city, shape) {
         content: [{ type: "text", text }],
         structuredContent: { city, celsius: 31, note: `${["pass", "word"].join("")}: ${["hunter", "22x"].join("")}` },
       };
+    case "quoted-secret":
+    case "quoted-secret-only": {
+      // A quoted value: written as JSON its quotes are escaped, and it must still be read as what it is.
+      const note = `db ${["pass", "word"].join("")}="${["hunter", "22x"].join("")}"`;
+      return { content: shape === "quoted-secret" ? [{ type: "text", text }] : [], structuredContent: { city, celsius: 31, note } };
+    }
     default:
       return { content: [{ type: "text", text }], structuredContent: { city, celsius: 31 } };
   }

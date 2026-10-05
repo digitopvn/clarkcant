@@ -23,18 +23,47 @@ export function guardToolResult(tool: ToolDefinition, guard: ToolResultGuard | u
         throw decision.withheld ? new Error(decision.text) : cause;
       }
       let structured: string | undefined;
+      let parts: string[] | undefined;
       if (result.structuredContent !== undefined) {
         try {
           structured = JSON.stringify(result.structuredContent);
+          parts = stringsOf(result.structuredContent);
         } catch {
           // A value that cannot be written as JSON cannot be classified either, so it is not passed on.
           const { structuredContent: _unclassifiable, ...rest } = result;
           result = rest;
+          structured = undefined;
+          parts = undefined;
         }
       }
-      // The structured value is classified with the text, as one string, so it can never pass where the text alone would.
-      const decision = guard({ tool: tool.name, text: structured === undefined ? result.text : `${result.text}\n${structured}` });
+      // The structured value is classified with the text: as JSON, where a name and its value sit together, and string
+      // by string as written, because a shape inside a string can be lost to JSON's escaping.
+      const decision = guard({
+        tool: tool.name,
+        text: structured === undefined ? result.text : `${result.text}\n${structured}`,
+        ...(parts === undefined ? {} : { parts }),
+      });
       return decision.withheld ? { text: decision.text } : result;
     },
   };
+}
+
+/** Every key and every string in a JSON value, unescaped. Throws on a value that refers to itself, as `JSON.stringify` does. */
+function stringsOf(value: unknown, seen: Set<object> = new Set(), out: string[] = []): string[] {
+  if (typeof value === "string") {
+    out.push(value);
+  } else if (typeof value === "object" && value !== null) {
+    if (seen.has(value)) throw new TypeError("a structured result that refers to itself cannot be classified");
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) stringsOf(item, seen, out);
+    } else {
+      for (const [key, item] of Object.entries(value)) {
+        out.push(key);
+        stringsOf(item, seen, out);
+      }
+    }
+    seen.delete(value);
+  }
+  return out;
 }

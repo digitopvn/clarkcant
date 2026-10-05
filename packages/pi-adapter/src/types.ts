@@ -99,10 +99,15 @@ export interface WorkerBrief {
  * else the call returned, an image or a structured value included, is sent.
  *
  * `text` is everything of the result a model can come to read: its text, followed by its structured value as JSON
- * when it has one, because a script the model runs reads that value and can hand it back. One string, so a guard that
- * classifies the text classifies the structured value too without having to know it exists.
+ * when it has one. `parts` is that structured value again, as each key and each string in it on its own and as
+ * written: JSON escapes a quote, a backslash and a line break, and a shape a guard looks for can stop being one once
+ * escaped. A guard classifies `text` and every part.
  */
-export type ToolResultGuard = (input: { tool: string; text: string }) => { withheld: false } | { withheld: true; text: string };
+export type ToolResultGuard = (input: {
+  tool: string;
+  text: string;
+  parts?: readonly string[];
+}) => { withheld: false } | { withheld: true; text: string };
 
 /** A JSON value, as a tool's structured result is made of. */
 export type ToolJsonValue = string | number | boolean | null | ToolJsonValue[] | { [key: string]: ToolJsonValue };
@@ -149,6 +154,7 @@ export interface ToolDefinition {
    *
    * Pi hands a structured value to a program that calls the tool (a codemode script) only when the tool declares one;
    * the model itself always reads `text`. A tool that declares it should return `structuredContent` with every result.
+   * No session this adapter creates turns codemode on, so today the value is carried and guarded but not read.
    */
   outputSchema?: Record<string, unknown>;
   execute: (params: Record<string, unknown>) => Promise<{

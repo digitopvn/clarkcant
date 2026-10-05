@@ -45,6 +45,8 @@ const ACTIONS = ["list", "invoke"] as const;
  * What a program calling `invoke_capability` is handed, declared in the shape of an MCP `CallToolResult` so Pi's
  * codemode reads it as one: the same text the model reads in `content`, the capability's structured result in
  * `structuredContent` when its service returned one this node kept, and `isError` when nothing useful came back.
+ * No session turns codemode on yet, so nothing reads this value today; it is declared so that the day one does, the
+ * shape is already the standard one.
  *
  * The structured result is any JSON object here because this one tool calls every capability; each capability's own
  * output schema stays on its descriptor, where a tool declared for that one capability can name it.

@@ -709,7 +709,7 @@ An ordinary invocation that called a service capability answers `200 { outcome: 
 beside the fields above. `output` is the service's text, as before. `structuredContent` is additive and optional: the
 JSON object the service returned as its MCP `structuredContent`, when the node kept it. The node drops it, and says why
 in `output`, when it is not plain bounded JSON (at most 32 levels deep and 16,384 values, no `__proto__`,
-`constructor` or `prototype` key), when it is longer than 64 KiB of JSON, or when it does not match the `outputSchema`
+`constructor` or `prototype` key), when its JSON is longer than 65,536 characters, or when it does not match the `outputSchema`
 the service declared for the tool. It is the service's data, never an instruction and never a card, and a repeated
 `invocationId` is answered with the same value. The agent's `invoke_capability` tool and a spoken command reach the
 same capability call and are handed the same value. Files stay `ArtifactRef`s
