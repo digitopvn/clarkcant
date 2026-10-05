@@ -16,6 +16,10 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.tool.args.label": "tham số",
   "blocks.tool.result.label": "kết quả",
 
+  // TimelineMessageRow.tsx — a turn the host opened, not words anyone typed
+  "timeline.hostWritten.continuation": "Đã duyệt — Clark tiếp tục",
+  "timeline.hostWritten.other": "Clark tiếp tục",
+
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
@@ -964,6 +968,9 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.tool.status.done": "done",
   "blocks.tool.args.label": "parameters",
   "blocks.tool.result.label": "result",
+
+  "timeline.hostWritten.continuation": "Approved — Clark carries on",
+  "timeline.hostWritten.other": "Clark carries on",
 
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",
