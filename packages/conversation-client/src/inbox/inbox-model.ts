@@ -31,8 +31,11 @@ export const NOTICE_LIST_LIMIT = 50;
  * and how old a thing is in words a person reads at a glance.
  */
 
-/** Whether the header mark is drawn. Absent at zero, like the background mark: a permanent "0" is noise. */
-export function inboxMarkVisible(summary: InboxSummary | undefined): boolean {
+/**
+ * Whether the header mark carries a count. The mark itself stays once the node has answered, so notices already read
+ * can be opened again by pointer; only its words go at zero, because a permanent "0" is noise.
+ */
+export function inboxMarkHasNews(summary: InboxSummary | undefined): boolean {
   return summary !== undefined && summary.waiting + summary.unread > 0;
 }
 
@@ -50,8 +53,8 @@ export function inboxMarkText(summary: InboxSummary, t: (key: MessageKey) => str
 }
 
 /** The mark's state, for the stylesheet and the browser suite: whether something is waiting on the person. */
-export function inboxMarkState(summary: InboxSummary): "waiting" | "unread" {
-  return summary.waiting > 0 ? "waiting" : "unread";
+export function inboxMarkState(summary: InboxSummary): "waiting" | "unread" | "empty" {
+  return summary.waiting > 0 ? "waiting" : summary.unread > 0 ? "unread" : "empty";
 }
 
 /**

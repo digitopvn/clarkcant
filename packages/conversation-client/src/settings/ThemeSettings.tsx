@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { Component, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 
 import {
   BUILTIN_CLARK_THEME_REF,
@@ -189,6 +189,21 @@ export interface ThemeSettingsProps {
   galleryRequest?: number | undefined;
 }
 
+/**
+ * Keeps a preview that fails to draw inside the gallery.
+ *
+ * The preview renders real components against a theme that is not applied yet, and nothing above it catches a render
+ * error: one throw unmounted the whole window, leaving a blank page with no way back. Caught here, the gallery stays
+ * open with its list and close button, and choosing another theme draws again (the boundary is keyed on the choice).
+ */
+export class PreviewBoundary extends Component<{ children: ReactNode; fallback: string }, { failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } { return { failed: true }; }
+  override render(): ReactNode {
+    return this.state.failed ? <p className="cc-theme-notice" role="status" data-theme-preview-failed>{this.props.fallback}</p> : this.props.children;
+  }
+}
+
 export function ThemeSettings({ client, prefs, appearance, galleryRequest }: ThemeSettingsProps): ReactElement {
   const t = useT();
   const locale = useLocale();
@@ -341,8 +356,10 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
           </div>
           {previewPending ? <p role="status">{t("themeLab.loading")}</p> : null}
           {previewProblem ? <p role="status">{t("themeLab.unreachable")}</p> : null}
-          {preview === undefined ? null : <ThemeLabPreview theme={preview.theme} themeRef={preview.appliedRef}
-            customization={preview.customization} problem={preview.fallback?.message ?? preview.customizationFallback?.message} />}
+          {preview === undefined ? null : <PreviewBoundary key={`${previewRef}|${String(appearance.generation)}`} fallback={t("themeLab.previewFailed")}>
+            <ThemeLabPreview theme={preview.theme} themeRef={preview.appliedRef}
+              customization={preview.customization} problem={preview.fallback?.message ?? preview.customizationFallback?.message} />
+          </PreviewBoundary>}
           <button type="button" className="cc-action" data-theme-apply
             disabled={previewPending || previewProblem || preview === undefined || preview.selectedRef !== previewRef || preview.fallback !== null || prefs.pending !== undefined}
             onClick={() => choose(previewRef)}>{t("themeLab.apply")}</button>

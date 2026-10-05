@@ -130,16 +130,14 @@ export const TIMELINE_CSS = `
 .cc-assistant { display: flex; gap: var(--cc-space-sm); align-items: flex-start; }
 /* The agent's mark: the same orb as the header and the dock, at the size a reply can carry. */
 .cc-avatar {
-  width: 28px; height: 28px; border-radius: var(--cc-radius-pill);
+  width: 28px; height: 28px; min-width: 28px; aspect-ratio: 1;
   display: block; flex: none; margin-top: 2px;
-  /* The canvas is transparent so its glow composites over the page; only the fallback paints a
-     background, and painting one under a working orb would show a disc behind its own glow. */
 }
-.cc-avatar[data-orb="fallback"] {
-  background:
-    radial-gradient(ellipse 78% 11% at 50% 50%, #ffffff 0%, #ffd86b 22%, #82f4ff 40%, #ff7bd5 62%, #8e6cff 82%, transparent 100%),
-    radial-gradient(circle at 50% 46%, #2a2350 0%, #161231 45%, #0b0a1c 100%);
-}
+/* A still frame of the person's own orb: a transparent PNG whose glow composites over the page, so it is
+   neither clipped to a circle nor stretched to fill. */
+.cc-avatar[data-orb="snapshot"] { object-fit: contain; user-select: none; }
+/* No WebGL: the profile's colours, set inline as a round gradient, clipped to the orb's circle. */
+.cc-avatar[data-orb="fallback"] { border-radius: var(--cc-radius-pill); }
 .cc-assistant-body { display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; flex: 1; }
 
 /*

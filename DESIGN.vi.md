@@ -385,7 +385,7 @@ Không hiển thị tool count, node ID hoặc Pi internals thường trực.
 
 Background task count chỉ xuất hiện khi >0. Khi có việc đang chờ vì đã chạm giới hạn chạy cùng lúc, mark nói thêm số đang chờ ("2 đang chờ") thay vì giả vờ mọi việc đều đang chạy.
 
-Dấu hộp thư cũng vậy: chỉ xuất hiện khi có việc đang chờ user hoặc thông báo chưa đọc, và nói bằng chữ ("2 việc chờ
+Dấu hộp thư khác ở một điểm: nó luôn ở trên header dưới dạng chiếc chuông trơn kể cả khi bằng 0, vì đó là đường bằng con trỏ để quay lại các thông báo đã đọc. Nó chỉ mang số đếm khi có việc đang chờ user hoặc thông báo chưa đọc, và nói bằng chữ ("2 việc chờ
 bạn · 1 thông báo mới"), không bằng một chấm màu. Xem §6.7.
 
 ### 6.2 Hero
@@ -472,10 +472,11 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 
 Đã ship:
 
-- **Dấu trên header** (§6.1), vắng mặt khi rỗng. Đang có việc chờ thì dấu mang cạnh cảnh báo; chỉ có thông báo mới thì
+- **Dấu trên header** (§6.1), luôn có mặt khi node đã trả lời: một chiếc chuông trơn không số đếm khi rỗng, để mở lại
+  được thông báo đã đọc bằng con trỏ và bàn phím. Đang có việc chờ thì dấu mang cạnh cảnh báo; chỉ có thông báo mới thì
   không. Poll như dấu việc nền, và đọc lại ngay sau một quyết định hoặc khi transcript đổi.
 - **Mở bằng click, bàn phím, lệnh gõ hoặc giọng nói** ("mở hộp thư", "xem thông báo", "open my inbox") qua cùng intent
-  `inbox.open`. Khi dấu vắng (không còn gì mới), lệnh vẫn mở được hộp thư để xem lại thông báo đã đọc.
+  `inbox.open`. Khi không còn gì mới, cả chiếc chuông lẫn lệnh vẫn mở được hộp thư để xem lại thông báo đã đọc.
 - **Modal host-owned** (§12: là bề mặt quyết định, không lồng modal; mở Settings thì đóng hộp thư). Escape đóng và trả
   focus. Ghi rõ thời điểm node đọc hộp thư; không bao giờ ngụ ý là live.
 - **"Đang chờ bạn" trước, "Thông báo" sau.** Việc chờ gồm lệnh cần duyệt (hiện đúng dòng lệnh sẽ chạy, thời gian còn
