@@ -79,3 +79,25 @@ test("a keyboard is told the chord that changes the model", async ({ page }) => 
   await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toContainText("Ctrl+]");
 });
+test("the statusline names the model the next turn runs and its thinking level, and follows a switch", async ({ page }) => {
+  // The fixture node runs no model, so the node's answer is given one; everything else in it is the node's own.
+  let model: { provider: string; id: string; thinkingLevel?: string } = { provider: "deepseek", id: "deepseek-v4-flash" };
+  await page.route("**/node", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, model: { ...model, maxWallClockMs: 300_000, maxTokens: 32_000 } } });
+  });
+  await openApp(page);
+
+  const statusline = page.locator("[data-statusline='true']");
+  await expect(statusline).toContainText("deepseek-v4-flash");
+  await expect(statusline).toContainText("thinking: mặc định");
+
+  // A switch made from this page is read back at once, without a reload.
+  model = { provider: "anthropic", id: "claude-opus-5-5", thinkingLevel: "high" };
+  await page.locator("body").press("Control+]");
+  await expect(statusline).toContainText("claude-opus-5-5");
+  await expect(statusline).toContainText("thinking: high");
+  await expect(statusline).not.toContainText("deepseek-v4-flash");
+  await page.unroute("**/node");
+});

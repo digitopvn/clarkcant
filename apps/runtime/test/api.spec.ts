@@ -885,6 +885,22 @@ describe("the model catalogue route", () => {
       catalogue: [{ id: "fake", models: [{ provider: "fake", id: "fake-model", current: true }] }],
     });
   });
+
+  it("names the model a Settings pick chose since boot, not the one the node started with", async () => {
+    const booted = services.model;
+    const current = services.currentModel;
+    try {
+      services.model = { provider: "deepseek", id: "deepseek-v4-flash", maxWallClockMs: 300_000, maxTokens: 32_000, thinkingLevel: "high" };
+      services.currentModel = () => ({ provider: "anthropic", id: "claude-opus-5-5" });
+      const expected = { provider: "anthropic", id: "claude-opus-5-5", maxWallClockMs: 300_000, maxTokens: 32_000, thinkingLevel: "high" };
+      expect(((await request("GET", "/node")).body as { model: unknown }).model).toEqual(expected);
+      expect(((await request("GET", "/model")).body as { current: unknown }).current).toEqual(expected);
+    } finally {
+      services.model = booted;
+      if (current === undefined) delete services.currentModel;
+      else services.currentModel = current;
+    }
+  });
 });
 
 describe("taking a credential back", () => {

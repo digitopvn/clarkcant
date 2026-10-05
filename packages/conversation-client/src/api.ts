@@ -811,6 +811,7 @@ export class GatewayClient {
   readonly #token: string;
   readonly #fetch: typeof fetch;
   readonly #packageListeners = new Set<() => void>();
+  readonly #modelListeners = new Set<() => void>();
 
   constructor(options: GatewayClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -967,9 +968,29 @@ export class GatewayClient {
     nodeId: string;
     label: string;
     createdAt: string;
-    model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number } | null;
+    model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number; thinkingLevel?: string } | null;
   }> {
     return this.#call("GET", "/node");
+  }
+
+  /**
+   * Called after this page changes which model the next turn runs, by a Settings pick or the pool hotkey.
+   *
+   * A surface that names the model, such as the composer's statusline, reads it again then instead of polling the node
+   * or naming the model it read at startup. Answers the function that stops listening.
+   */
+  onModelChange(listener: () => void): () => void {
+    this.#modelListeners.add(listener);
+    return () => {
+      this.#modelListeners.delete(listener);
+    };
+  }
+
+  #changingModel<T>(call: Promise<T>): Promise<T> {
+    return call.then((result) => {
+      for (const listener of this.#modelListeners) listener();
+      return result;
+    });
   }
 
   createConversation(title?: string): Promise<{ conversationId: string }> {
@@ -1323,7 +1344,7 @@ export class GatewayClient {
     modelId: string;
     applies: string;
   }> {
-    return this.#call("POST", "/model-pool/cycle", {});
+    return this.#changingModel(this.#call("POST", "/model-pool/cycle", {}));
   }
 
   /**
@@ -1341,7 +1362,7 @@ export class GatewayClient {
     modelId: string;
     applies: string;
   }> {
-    return this.#call("POST", "/model-pool/select", { alias });
+    return this.#changingModel(this.#call("POST", "/model-pool/select", { alias }));
   }
 
   async chooseModel(input: {
@@ -1359,7 +1380,7 @@ export class GatewayClient {
      */
     applies: "next-session" | "next-start";
   }> {
-    return this.#call("POST", "/model", input);
+    return this.#changingModel(this.#call("POST", "/model", input));
   }
 
   /**

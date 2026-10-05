@@ -31,7 +31,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
 export interface NodeRouteDeps {
   services: Pick<
     NodeServices,
-    "runtime" | "model" | "modelCatalogue" | "extensions" | "piSettings" | "turnControl"
+    "runtime" | "model" | "currentModel" | "modelCatalogue" | "extensions" | "piSettings" | "turnControl"
   >;
   request: GatewayRequest;
   segments: string[];
@@ -57,7 +57,7 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
       // Reported here rather than inferred by the client, so the settings surface can say what
       // this node is configured for before it has answered anything. `null` means no model, which
       // is a state worth showing plainly: the node answers from scripts and capabilities only.
-      model: deps.services.model,
+      model: liveModel(deps.services),
     });
   }
 
@@ -66,7 +66,7 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
     // and the current selection is reported beside it rather than inferred from it: a node configured for a model its
     // installation no longer offers is a state worth showing plainly instead of hiding.
     const catalogue = await (deps.services.modelCatalogue?.() ?? Promise.resolve([]));
-    return json(200, { current: deps.services.model, catalogue });
+    return json(200, { current: liveModel(deps.services), catalogue });
   }
 
   /*
@@ -302,4 +302,16 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
   }
 
   return undefined;
+}
+
+/**
+ * The model as it stands now: the boot configuration with the provider and model a Settings pick has since chosen.
+ *
+ * The boot snapshot alone would keep reporting the model the node started with after a pick, so Settings and the
+ * composer's statusline would name a model the next turn no longer runs.
+ */
+function liveModel(services: Pick<NodeServices, "model" | "currentModel">): NodeServices["model"] {
+  if (services.model === null) return null;
+  const current = services.currentModel?.();
+  return current === undefined ? services.model : { ...services.model, provider: current.provider, id: current.id };
 }

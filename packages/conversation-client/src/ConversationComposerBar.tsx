@@ -8,6 +8,7 @@ import { ComposerMirror, useComposerMirror } from "./composer-mirror.tsx";
 import { COMPOSER_LISTBOX_ID, ComposerSuggestions, composerOptionId } from "./composer-suggestions.tsx";
 import { useT } from "./i18n/locale-context.tsx";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
+import type { ActiveModel } from "./use-active-model.ts";
 import type { ComposerReferencesState } from "./use-composer-references.ts";
 import { modelSwitchShortcut } from "./use-model-alias.ts";
 
@@ -32,6 +33,8 @@ export interface ConversationComposerBarProps {
   onOpenVoice: () => void;
   modelAlias: string | undefined;
   modelNote: string;
+  /** The model the next turn runs and its thinking level, drawn first on the statusline. */
+  activeModel?: ActiveModel | null | undefined;
   error: string | undefined;
   messages: Timeline["messages"];
 }
@@ -62,6 +65,7 @@ export function ConversationComposerBar({
   onOpenVoice,
   modelAlias,
   modelNote,
+  activeModel,
   error,
   messages,
 }: ConversationComposerBarProps): ReactElement {
@@ -284,7 +288,7 @@ export function ConversationComposerBar({
       */}
       <div className="cc-hint" data-statusline={error === undefined ? "true" : "false"}>
         {error === undefined ? (
-          statuslineParts({ metrics: latestTurnMetrics(messages) }, t).map((part) => (
+          statuslineParts({ ...(activeModel === undefined || activeModel === null ? {} : { model: activeModel }), metrics: latestTurnMetrics(messages) }, t).map((part) => (
             <span key={part} className="cc-statusline-part">
               {part}
             </span>

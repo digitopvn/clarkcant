@@ -36,6 +36,7 @@ import { AgentAvatarProvider } from "./AgentAvatar.tsx";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
 import { useConnectionStatus } from "./use-connection-status.ts";
 import { ConnectionNotice } from "./connection-notice.tsx";
+import { useActiveModel } from "./use-active-model.ts";
 import { useModelAlias } from "./use-model-alias.ts";
 import { useDynamicSuggestions } from "./use-dynamic-suggestions.ts";
 import { useInputModalityState } from "./use-input-modality-state.ts";
@@ -149,6 +150,7 @@ export function Conversation({
   const appearance = useAppearance(client);
   const localeState = useLocale();
   const { modelAlias, modelNote, cycleModel, selectModel } = useModelAlias(client, localeState.t);
+  const activeModel = useActiveModel(client);
   const dynamicSuggestions = useDynamicSuggestions(client);
 
   const {
@@ -605,6 +607,7 @@ export function Conversation({
           onOpenVoice={() => void openVoice()}
           modelAlias={modelAlias}
           modelNote={modelNote}
+          activeModel={activeModel}
           error={error}
           messages={timeline?.messages ?? []}
         />

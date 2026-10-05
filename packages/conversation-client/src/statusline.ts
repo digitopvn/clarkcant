@@ -45,13 +45,16 @@ export function formatTokenCount(count: number): string {
 /**
  * The session as one line of parts.
  *
- * Each part is a name and a number, in the order a reader asks about them: how full the context is, how much
+ * Each part is a name and a number, in the order a reader asks about them: which model the next turn runs and at what
+ * thinking level, how full the context is, how much
  * of the input came back from the cache, how fast the model wrote, what it has cost, and what is running
  * behind the conversation. A part whose number was never reported is left out rather than shown as zero,
  * because "cache 0%" and "the provider said nothing about a cache" are different facts.
  */
 export function statuslineParts(
 	input: {
+		/** The model the next turn runs, as the node reports it; absent while unread or on a node with no model. */
+		model?: { id: string; thinkingLevel?: string };
 		metrics?: TurnMetrics;
 		/** Background sessions by state, when the node counts any. */
 		background?: { running: number; done: number; failed: number };
@@ -62,6 +65,16 @@ export function statuslineParts(
 ): string[] {
 	const parts: string[] = [];
 	const metrics = input.metrics;
+
+	if (input.model !== undefined) {
+		parts.push(input.model.id);
+		// "Default" is what the node reports by naming no level: sessions then think at pi's own default.
+		parts.push(
+			input.model.thinkingLevel === undefined
+				? t("widgets.statusline.thinkingDefault")
+				: t("widgets.statusline.thinking").replace("{level}", input.model.thinkingLevel),
+		);
+	}
 
 	if (metrics?.contextTokens !== undefined && metrics.contextWindow !== undefined && metrics.contextWindow > 0) {
 		const share = Math.round((metrics.contextTokens / metrics.contextWindow) * 100);

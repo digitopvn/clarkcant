@@ -21,6 +21,17 @@ describe("the statusline under the composer", () => {
     expect(latestTurnMetrics([{ blocks: [] }, { blocks: [null, 7, { type: "system-card" }] }])).toBeUndefined();
   });
 
+  it("names the model the next turn runs and its thinking level before the numbers", () => {
+    expect(
+      statuslineParts(
+        { model: { id: "claude-opus-5-5", thinkingLevel: "high" }, metrics: { contextTokens: 12_300, contextWindow: 1_000_000 } },
+        t,
+      ),
+    ).toEqual(["claude-opus-5-5", "thinking: high", "12k/1.00M (1%)"]);
+    // A node that names no level runs pi's default, and says so rather than inventing one.
+    expect(statuslineParts({ model: { id: "deepseek-v4-flash" } }, t)).toEqual(["deepseek-v4-flash", "thinking: mặc định"]);
+  });
+
   it("says how full the context is, first, because it is the number with a ceiling", () => {
     expect(statuslineParts({ metrics: { contextTokens: 12_300, contextWindow: 1_000_000 } }, t)).toEqual([
       "12k/1.00M (1%)",

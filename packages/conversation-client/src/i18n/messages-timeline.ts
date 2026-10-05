@@ -926,6 +926,8 @@ export const MESSAGES_TIMELINE_VI = {
   // statusline.ts
   "widgets.statusline.cache": "cache {percent}%",
   "widgets.statusline.tokPerSec": "{value} tok/s",
+  "widgets.statusline.thinking": "thinking: {level}",
+  "widgets.statusline.thinkingDefault": "thinking: mặc định",
   "widgets.statusline.backgroundRunning": "{count} đang chạy",
   "widgets.statusline.backgroundDone": "{count} xong",
   "widgets.statusline.backgroundFailed": "{count} lỗi",
@@ -1892,6 +1894,8 @@ export const MESSAGES_TIMELINE_EN = {
 
   "widgets.statusline.cache": "cache {percent}%",
   "widgets.statusline.tokPerSec": "{value} tok/s",
+  "widgets.statusline.thinking": "thinking: {level}",
+  "widgets.statusline.thinkingDefault": "thinking: default",
   "widgets.statusline.backgroundRunning": "{count} running",
   "widgets.statusline.backgroundDone": "{count} done",
   "widgets.statusline.backgroundFailed": "{count} failed",
