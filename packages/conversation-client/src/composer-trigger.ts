@@ -68,6 +68,16 @@ export function replaceToken(draft: string, active: ActiveTrigger, text: string)
   return { draft: next, caret: Math.min(caret, next.length) };
 }
 
+/**
+ * Whether the token under the caret already spells this command in full, so there is nothing left for a row to write.
+ *
+ * Enter on such a row sends the message instead of completing it: a person who typed `/thinking` and pressed Enter
+ * meant the command, whether or not the list had been drawn by then.
+ */
+export function commandFullyTyped(draft: string, active: ActiveTrigger, command: string): boolean {
+  return active.trigger === "/" && draft.slice(active.start, active.end).toLowerCase() === `/${command}`.toLowerCase();
+}
+
 /** Whether a reference's token still stands in the text as a whole token, not as the start of a longer one. */
 export function tokenPresent(text: string, token: string): boolean {
   let from = 0;
