@@ -194,8 +194,8 @@ export function checkSelectionStateSize(
  *
  * A defence in depth check rather than the primary control: the sanitizer runs first, and this
  * catches the case where a future field is added without going through it. It classifies the
- * serialised state as the send boundary classifies a model's input, so a template or widget id
- * that only resembles a token (`key-metrics-overview`) does not stop a selection.
+ * state as the send boundary classifies a model's input, so a template or widget id that only
+ * resembles a token (`key-metrics-overview`) does not stop a selection.
  */
 export function stateLooksRedacted(state: JevSelectionState): { ok: boolean } {
   return { ok: !carriesCredential(state) };
