@@ -8,6 +8,7 @@ import {
   type FinishedStatus,
   createBackgroundSessions,
 } from "./background-sessions.ts";
+import { hostText } from "./host-text.ts";
 
 /**
  * The one owner of "what is running on this node, and how does it end".
@@ -114,6 +115,7 @@ export type SubmitOutcome =
   | {
       accepted: false;
       reason: "queue-full" | "closing";
+      /** The refusal in the host's default words; a caller that knows who reads it words it from `reason` instead. */
       message: string;
       running: readonly WorkView[];
       /** How many requests were waiting when this one was refused, so a caller can word the refusal itself. */
@@ -225,7 +227,7 @@ export function createWorkSupervisor(
     const { signal } = open.controller;
     const timer = setTimeout(() => {
       open.controller.abort(
-        new WorkAbort("deadline", `việc nền chạy quá ${describeDuration(deadlineMs)} nên đã bị dừng`, deadlineMs),
+        new WorkAbort("deadline", hostText().background.deadline(hostText().duration(deadlineMs)), deadlineMs),
       );
     }, deadlineMs);
     timer.unref?.();
@@ -318,7 +320,7 @@ export function createWorkSupervisor(
         return {
           accepted: false,
           reason: "closing",
-          message: "Node đang tắt nên việc này chưa được bắt đầu. Nhắn lại sau khi node chạy lại.",
+          message: hostText().background.closing,
           running: [],
           queued: queue.length,
         };
@@ -331,7 +333,7 @@ export function createWorkSupervisor(
         return {
           accepted: false,
           reason: "queue-full",
-          message: `Node đang bận: ${String(running.size)} việc nền đang chạy và ${String(queue.length)} việc đang chờ, là mức tối đa. Việc này chưa được bắt đầu; hãy dừng bớt một việc hoặc thử lại sau.`,
+          message: hostText().background.queueFull(running.size, queue.length),
           running: busy,
           queued: queue.length,
         };
@@ -414,12 +416,6 @@ export function createWorkSupervisor(
       if (timer !== undefined) clearTimeout(timer);
     },
   };
-}
-
-/** A duration as the conversation says it: seconds under a minute, so a short deadline never reads "0 phút". */
-export function describeDuration(ms: number): string {
-  if (ms < 60_000) return `${String(Math.max(1, Math.round(ms / 1_000)))} giây`;
-  return `${String(Math.round(ms / 60_000))} phút`;
 }
 
 function statusFor(reason: unknown): FinishedStatus {

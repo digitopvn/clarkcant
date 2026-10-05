@@ -655,6 +655,7 @@ export function interactionDepsFor(
     append: ({ at, blocks }) => {
       appendHostReply(services, { conversationId, blocks, at });
     },
+    language: () => preferredAppIntentLocale({ db: services.runtime.db, now: nowInstant }, services.runtime.identity.ownerPrincipalId),
   };
 }
 

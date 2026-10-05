@@ -1,7 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { createTask } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { hostText } from "../src/host-text.ts";
@@ -115,6 +117,44 @@ describe("a sample turn's host-written words follow the interface language", () 
   });
 });
 
+/** Make a task in a fresh conversation, stop it over the wire, and return what the node wrote back there. */
+async function stopReceipt(): Promise<{ taskId: string; said: string }> {
+  const created = await request("POST", "/conversations", { title: "Stop" });
+  const conversationId = (created.body as { conversationId: string }).conversationId;
+  const { runtime } = services;
+  const owner = { principalId: runtime.identity.ownerPrincipalId, kind: "user" as const, nodeId: runtime.identity.nodeId as never };
+  const task = createTask(
+    { db: runtime.db, nodeId: runtime.identity.nodeId, now: () => AT as never, newId: services.conductor.newId },
+    { conversationId: conversationId as never, goal: "write the weekly report", principal: owner },
+  );
+  const stopped = await request("POST", `/tasks/${task.taskId}/cancel`);
+  expect(stopped.status).toBe(200);
+  expect((stopped.body as { confirmed: boolean }).confirmed).toBe(true);
+  const timeline = await request("GET", `/conversations/${conversationId}/timeline`);
+  const messages = (timeline.body as { messages: { role: string; blocks: { type: string; content?: string }[] }[] }).messages;
+  const said = messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => message.blocks)
+    .map((block) => (block.type === "text" ? String(block.content) : ""))
+    .join("\n");
+  return { taskId: task.taskId, said };
+}
+
+describe("what the node writes outside any turn follows its owner's interface language", () => {
+  it("says a stopped task in English when the interface is English", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+
+    const { taskId, said } = await stopReceipt();
+    expect(said).toContain(hostText("en").tasks.stopped(taskId));
+    expect(said).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("says it in the same Vietnamese as before when no language was ever chosen", async () => {
+    const { taskId, said } = await stopReceipt();
+    expect(said).toContain(`Đã dừng task ${taskId}. Không có việc nào đang chạy nên không còn gì đang chờ.`);
+  });
+});
+
 describe("the host's catalog", () => {
   it("has English words with no Vietnamese in them for every report the node writes outside a turn", () => {
     const en = hostText("en");
@@ -148,6 +188,16 @@ describe("the host's catalog", () => {
       en.automation.deadSignal("issues.opened", "boom"),
       en.miniApp.templateSummary(en.miniApp.templateTitle.overview, 3, 1),
       en.miniApp.layoutTitle,
+      en.questions.expired,
+      en.questions.answered("Which branch?"),
+      en.delegation.waitingApproval("task_1", "node_b", "“push”"),
+      en.delegation.waitingCapability("task_1", "node_b", "project.work"),
+      en.delegation.approvedThere("task_1", "node_b"),
+      en.delegation.notAllowed("node_b", "“triage”"),
+      en.delegation.handedOverRunning("node_b", "“triage”", "task_1"),
+      en.delegation.resultLost("node_b"),
+      en.files.summary([en.files.received("notes.md"), en.files.notTaken("big.bin", undefined)].join("; ")),
+      en.files.receivedLater("notes.md", "node_b", "task_1"),
     ];
     for (const sample of samples) expect(sample).not.toMatch(VIETNAMESE_LETTER);
   });
@@ -157,5 +207,33 @@ describe("the host's catalog", () => {
     expect(vi.tasks.stopped("task_1")).toBe("Đã dừng task task_1. Không có việc nào đang chạy nên không còn gì đang chờ.");
     expect(vi.automation.signal("issues.opened", "", "acme/widgets")).toBe("issues.opened ở acme/widgets");
     expect(vi.duration(90_000)).toBe("2 phút");
+    expect(vi.questions.expired).toBe("Câu hỏi đã hết hạn");
+    expect(vi.files.summary(vi.files.received("notes.md"))).toBe("Tệp: đã nhận notes.md.");
+    expect(vi.toolLabel("run_command", "Chạy một lệnh")).toBe("Chạy một lệnh");
+  });
+
+  it("counts one task in the singular in English", () => {
+    const en = hostText("en");
+    expect(en.miniApp.describeTrend(1)).toBe("Daily trend, 1 task completed in the period.");
+    expect(en.miniApp.templateSummary("Overview", 1, 0)).toBe("Overview: 1 task completed, 0 open in the period.");
+    expect(en.miniApp.templateSummary("Overview", 2, 0)).toBe("Overview: 2 tasks completed, 0 open in the period.");
+  });
+
+  it("names every tool the node defines in English, and keeps a name it does not know as defined", () => {
+    // Every tool definition in the runtime's sources: a `name` followed by its literal `label` on the next line.
+    const sources = join(import.meta.dirname, "..", "src");
+    const defined = new Set<string>();
+    for (const file of readdirSync(sources, { recursive: true, encoding: "utf8" })) {
+      // The scripted fixtures name their own form fields this way and are not tools.
+      if (!file.endsWith(".ts") || file.startsWith("test-support")) continue;
+      const text = readFileSync(join(sources, file), "utf8");
+      for (const match of text.matchAll(/name: (?:"([a-z_]+)"|(SHOW_VIEW_TOOL|READ_CONTEXT_TOOL)),\n\s*label: "/g)) {
+        defined.add(match[1] ?? (match[2] === "SHOW_VIEW_TOOL" ? "show_view" : "read_context"));
+      }
+    }
+    expect(defined.size).toBeGreaterThan(20);
+    const en = hostText("en");
+    for (const name of defined) expect(en.toolLabel(name, "?"), name).not.toBe("?");
+    expect(en.toolLabel("a_package_tool", "Its own label")).toBe("Its own label");
   });
 });

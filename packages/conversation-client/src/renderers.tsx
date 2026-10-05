@@ -512,7 +512,8 @@ function LineChart({ props, dataset, state }: RendererProps): ReactElement {
   const choice = chosenSeries(state, dataset.rows);
   const seriesKey = choice.series ?? (typeof props.series === "object" && Array.isArray(props.series) && props.series.length > 0
     ? String((props.series as unknown[])[0])
-    : typeof props.unit === "string" && props.unit.includes("lần")
+    // The sample chart counts runs, and its unit is written in the reader's language: either word means that series.
+    : typeof props.unit === "string" && (props.unit.includes("lần") || props.unit.includes("runs"))
       ? "runs"
       : Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value");
 

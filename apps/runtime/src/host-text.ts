@@ -33,10 +33,9 @@ export interface HostText {
     layoutTitle: string;
     bindings: { periodChange: string; dateSelect: string; viewSave: string; stateEvent: string };
   };
-  /** Background requests: what the conversation and the inbox are told as one runs, ends or is refused. */
+  /** Background work: what the conversation and the inbox are told as one runs, ends or is refused. */
   background: {
     noModel: string;
-    untitled: string;
     dequeued: (title: string) => string;
     doneNotice: (title: string) => string;
     stoppedNotice: (title: string) => string;
@@ -97,7 +96,93 @@ export interface HostText {
     deadSignalTitle: string;
     deadSignal: (topic: string, error: string) => string;
   };
+  /**
+   * The label a tool call's row shows, by the tool's name. `label` is the label the tool was defined with, which is
+   * Vietnamese and is what a tool this catalog does not name keeps.
+   */
+  toolLabel: (name: string, label: string) => string;
+  /** The rows that record what became of a question: answered, skipped, asked again, or expired. */
+  questions: {
+    answered: (prompt: string) => string;
+    skipped: (prompt: string) => string;
+    askedAgain: (prompt: string) => string;
+    expired: string;
+  };
+  /** Work handed to a peer or by one, as this node's owner is told about it. A peer's own words arrive already quoted. */
+  delegation: {
+    waitingApproval: (taskId: string, peer: string, why: string) => string;
+    waitingApprovalTitle: string;
+    waitingCapability: (taskId: string, peer: string, capability: string) => string;
+    waitingCapabilityTitle: string;
+    approvedThere: (taskId: string, peer: string) => string;
+    capabilityReadyThere: (taskId: string, peer: string, capability: string) => string;
+    ranThere: (peer: string, message: string) => string;
+    notRunThere: (peer: string, message: string) => string;
+    refusedByPeer: (peer: string) => string;
+    neverSent: (peer: string) => string;
+    undeliveredHandOver: (peer: string) => string;
+    undeliveredStop: (peer: string) => string;
+    resultLost: (peer: string) => string;
+    handOverNoticeTitle: string;
+    notAllowed: (peer: string, summary: string) => string;
+    outsideAllowance: (peer: string, summary: string, path: string) => string;
+    handedOverWaiting: (peer: string, summary: string, taskId: string, capabilityRef: string) => string;
+    handedOverRunning: (peer: string, summary: string, taskId: string) => string;
+  };
+  /** The files a peer brings back for a task handed to it. */
+  files: {
+    /** `parts` is what became of each file, already joined. */
+    summary: (parts: string) => string;
+    notOffered: (name: string) => string;
+    received: (name: string) => string;
+    downloading: (name: string) => string;
+    notTaken: (name: string, reason: string | undefined) => string;
+    receivedLater: (name: string, peer: string, taskId: string) => string;
+    failedLater: (name: string, peer: string, taskId: string, message: string) => string;
+  };
 }
+
+/**
+ * The English labels of the node's own tools, by tool name.
+ *
+ * Kept by name rather than beside each definition because the definition's `label` is also what the Pi SDK and the
+ * Tools tab read, and those stay as they are; this is only the row a call leaves in the conversation.
+ */
+export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
+  act_on_notice: "Act on a notice",
+  allow_peer_tasks: "Let another node run work here",
+  ask_user: "Ask the user a question",
+  ask_user_question: "Ask the user a question",
+  control_app: "Control the app",
+  create_automation: "Create an automation",
+  find_project: "Find the project folder",
+  find_runtime: "Find what is running",
+  inspect_ui: "Look at the interface",
+  invoke_capability: "Call a package capability",
+  list_automations: "View automations",
+  list_peers: "View paired nodes",
+  list_work: "View running work",
+  manage_package: "Manage widget packages",
+  perform_widget_action: "Do something a widget allows",
+  place_widget: "Place a package widget in the conversation",
+  read_attachment: "Read an attachment",
+  read_context: "Read the context found",
+  read_inbox: "Read the inbox",
+  remember: "Remember something",
+  request_secret: "Ask the host for a secret",
+  run_command: "Run a command",
+  search_directory: "Search the package directory",
+  search_files: "Search files on this machine",
+  search_history: "Search this machine's history",
+  set_map_tiles: "Map tiles",
+  show_view: "Show a view",
+  start_browser_task: "Work in the browser",
+  stop_work: "Stop running work",
+  terminal_open: "Open a terminal",
+  terminal_read: "Read the terminal",
+  terminal_run: "Run a command in the terminal",
+  update_automation: "Change an automation",
+};
 
 const VI: HostText = {
   miniApp: {
@@ -136,7 +221,6 @@ const VI: HostText = {
   },
   background: {
     noModel: "node này không có model để chạy việc nền",
-    untitled: "Việc nền",
     dequeued: (title) => `Đã bỏ việc nền “${title}” khỏi hàng chờ trước khi nó bắt đầu; không có gì được chạy.`,
     doneNotice: (title) => `Việc nền đã xong: ${title}`,
     stoppedNotice: (title) => `Việc nền đã dừng: ${title}`,
@@ -222,6 +306,50 @@ const VI: HostText = {
     deadSignalTitle: "Một tín hiệu không xử lý được",
     deadSignal: (topic, error) => `${topic}: ${error}. Đã thử lại nhiều lần; tín hiệu được giữ lại nhưng không chạy gì.`,
   },
+  toolLabel: (_name, label) => label,
+  questions: {
+    answered: (prompt) => `Trả lời: ${prompt}`,
+    skipped: (prompt) => `Bỏ qua: ${prompt}`,
+    askedAgain: (prompt) => `Hỏi lại: ${prompt}`,
+    expired: "Câu hỏi đã hết hạn",
+  },
+  delegation: {
+    waitingApproval: (taskId, peer, why) =>
+      `Task ${taskId} trên ${peer} đang chờ chủ của ${peer} duyệt${why === "" ? "" : `: ${why}`}. ` +
+      `Chỉ họ quyết định được; nếu họ duyệt, việc tiếp tục ở đó. Bạn vẫn có thể dừng nó từ đây.`,
+    waitingApprovalTitle: "Việc đang chờ chủ máy kia duyệt",
+    waitingCapability: (taskId, peer, capability) =>
+      `Task ${taskId} đã tới ${peer} nhưng chưa chạy: ${peer} chưa chạy được ${capability} lúc này. ` +
+      `Việc được giữ ở đó và tự chạy khi ${capability} dùng được trên ${peer}; bạn vẫn có thể dừng nó từ đây.`,
+    waitingCapabilityTitle: "Việc đang chờ máy kia sẵn sàng",
+    approvedThere: (taskId, peer) => `Chủ của ${peer} đã duyệt; task ${taskId} tiếp tục chạy trên ${peer}.`,
+    capabilityReadyThere: (taskId, peer, capability) => `${capability} đã dùng được trên ${peer}; task ${taskId} bắt đầu chạy ở đó.`,
+    ranThere: (peer, message) => `trên ${peer}: ${message}`,
+    notRunThere: (peer, message) => `${peer} không chạy việc này: ${message}`,
+    refusedByPeer: (peer) => `${peer} từ chối nhận việc này nên nó không chạy ở đó`,
+    neverSent: (peer) => `không gửi được việc này tới ${peer} vì không liên lạc được; việc chưa từng rời máy này nên nó không chạy ở đó`,
+    undeliveredHandOver: (peer) => `không gửi được việc này tới ${peer} sau nhiều lần thử; không rõ nó đã chạy ở đó hay chưa`,
+    undeliveredStop: (peer) => `không gửi được yêu cầu dừng tới ${peer} sau nhiều lần thử; không rõ việc ở đó đã dừng hay chưa`,
+    resultLost: (peer) => `kết quả của việc này từ ${peer} bị mất trên đường gửi về sau nhiều lần thử; không rõ việc ở đó đã xong hay chưa`,
+    handOverNoticeTitle: "Việc một node khác giao",
+    notAllowed: (peer, summary) =>
+      `${peer} muốn chạy việc ${summary} trên máy này, nhưng bạn chưa cho phép node đó chạy việc ở đây nên việc không chạy. ` +
+      "Nếu muốn, hãy nói với Clark những thư mục và quyền node đó được dùng.",
+    outsideAllowance: (peer, summary, path) => `${peer} muốn chạy việc ${summary} ở ${path}, ngoài những gì bạn cho node đó, nên việc không chạy.`,
+    handedOverWaiting: (peer, summary, taskId, capabilityRef) =>
+      `${peer} giao việc ${summary} (task ${taskId}), nhưng máy này chưa chạy được ${capabilityRef} lúc này. ` +
+      "Việc được giữ và tự chạy trong phạm vi bạn đã cho phép khi nó dùng được.",
+    handedOverRunning: (peer, summary, taskId) => `${peer} giao việc ${summary} (task ${taskId}); nó đang chạy trên máy này trong phạm vi bạn đã cho phép.`,
+  },
+  files: {
+    summary: (parts) => `Tệp: ${parts}.`,
+    notOffered: (name) => `chưa nhận được đề nghị gửi ${name}`,
+    received: (name) => `đã nhận ${name}`,
+    downloading: (name) => `đang tải ${name} về`,
+    notTaken: (name, reason) => `không nhận ${name}: ${reason ?? "không rõ lý do"}`,
+    receivedLater: (name, peer, taskId) => `Đã nhận tệp ${name} từ ${peer} cho task ${taskId}.`,
+    failedLater: (name, peer, taskId, message) => `Không nhận được tệp ${name} từ ${peer} cho task ${taskId}: ${message}.`,
+  },
 };
 
 const EN: HostText = {
@@ -245,11 +373,12 @@ const EN: HostText = {
     },
     slotTitle: { trend: "Daily trend", table: "Figures", other: "Data" },
     describeMetrics: (summary) => `Metrics: ${summary}.`,
-    describeTrend: (total) => `Daily trend, ${total} tasks completed in the period.`,
+    describeTrend: (total) => `Daily trend, ${total} ${total === 1 ? "task" : "tasks"} completed in the period.`,
     describeCalendar: (events) => `The calendar has ${events} ${events === 1 ? "event" : "events"} in the period.`,
     describeImage: (alt) => `Imported picture: ${alt}`,
     templateTitle: { overview: "Overview", focused: "Trend", agenda: "Calendar" },
-    templateSummary: (title, completed, pending) => `${title}: ${completed} tasks completed, ${pending} open in the period.`,
+    templateSummary: (title, completed, pending) =>
+      `${title}: ${completed} ${completed === 1 ? "task" : "tasks"} completed, ${pending} open in the period.`,
     agendaSummary: (events) => `This month's calendar has ${events} imported ${events === 1 ? "event" : "events"}.`,
     layoutTitle: "Dashboard",
     bindings: {
@@ -261,29 +390,28 @@ const EN: HostText = {
   },
   background: {
     noModel: "this node has no model to run background work",
-    untitled: "Background work",
-    dequeued: (title) => `Took the background request “${title}” off the queue before it started; nothing ran.`,
+    dequeued: (title) => `Took the background work “${title}” off the queue before it started; nothing ran.`,
     doneNotice: (title) => `Background work done: ${title}`,
     stoppedNotice: (title) => `Background work stopped: ${title}`,
     failedNotice: (title) => `Background work did not finish: ${title}`,
-    stoppedReply: (title) => `Stopped the background request “${title}” as asked. The partial result was not kept.`,
-    failedReply: (reason) => `The background request did not finish: ${reason}. You can ask again, or split it into smaller pieces.`,
-    failed: (reason) => `The background request did not finish: ${reason}`,
+    stoppedReply: (title) => `Stopped the background work “${title}” as asked. The partial result was not kept.`,
+    failedReply: (reason) => `The background work did not finish: ${reason}. You can ask again, or split it into smaller pieces.`,
+    failed: (reason) => `The background work did not finish: ${reason}`,
     deadline: (limit) => `it ran for more than ${limit}, so it was stopped`,
     closing: "The node is shutting down, so this was not started. Send it again once the node is back.",
     queueFull: (running, queued) =>
-      `The node is busy: ${String(running)} background ${running === 1 ? "request is" : "requests are"} running and ${String(queued)} waiting, which is the limit. This one was not started; stop one of them or try again later.`,
+      `The node is busy: its background work is at the limit, with ${String(running)} running and ${String(queued)} waiting. This was not started; stop one of them or try again later.`,
     alsoRunning: (refusal, running) => `${refusal} Running: ${running}.`,
-    retrying: (title) => `Running the background request “${title}” again; the result will be reported here.`,
+    retrying: (title) => `Running the background work “${title}” again; the result will be reported here.`,
     retryMissing: "This node no longer has a record of that work, so it cannot run it again.",
     retryNotRetryable:
       "Only background work that was stopped or did not finish can run again; this one finished, is still running, or is not background work.",
     retryAlreadyDone: "This has already been run again.",
     retryConversationGone: "The conversation this work belonged to was deleted, so it cannot run again.",
     rebootRerun: (title, queued) =>
-      `The node restarted while the background request “${title}” was ${queued ? "waiting its turn" : "running"}. It only reads and changes nothing outside, so I'm running it once more; the result will be reported here.`,
+      `The node restarted while the background work “${title}” was ${queued ? "waiting its turn" : "running"}. It only reads and changes nothing outside, so I'm running it once more; the result will be reported here.`,
     rebootLost: (title, queued) =>
-      `The node restarted while the background request “${title}” was ${queued ? "waiting its turn" : "running"}, so it did not finish and has no result. Send it again if you still need it and I'll run it.`,
+      `The node restarted while the background work “${title}” was ${queued ? "waiting its turn" : "running"}, so it did not finish and has no result. Send it again if you still need it and I'll run it.`,
   },
   duration: (ms) => {
     if (ms < 60_000) {
@@ -320,7 +448,7 @@ const EN: HostText = {
     worktreeKeptNoticeBody: (taskId) =>
       `Task ${taskId} ended but left uncommitted changes. Clark kept them and deleted nothing; where they are is in the conversation.`,
     capabilityReady: (capabilityRef, taskId, executionNodeId) =>
-      `${capabilityRef} is available now, so task ${taskId}, which was waiting for it, carries on on ${executionNodeId}.`,
+      `${capabilityRef} is available now, so task ${taskId}, which was waiting for it, now runs on ${executionNodeId}.`,
     effectRecorded: (taskId, quoted, landed, remaining, runGoing) => {
       const next =
         remaining > 0
@@ -354,6 +482,50 @@ const EN: HostText = {
       `The automation "${summary}" started because of ${because}: task ${taskId} is running on ${executionNodeId}.`,
     deadSignalTitle: "A signal could not be handled",
     deadSignal: (topic, error) => `${topic}: ${error}. Tried several times; the signal is kept, but nothing ran.`,
+  },
+  toolLabel: (name, label) => TOOL_LABELS_EN[name] ?? label,
+  questions: {
+    answered: (prompt) => `Answer: ${prompt}`,
+    skipped: (prompt) => `Skipped: ${prompt}`,
+    askedAgain: (prompt) => `Asked again: ${prompt}`,
+    expired: "The question expired",
+  },
+  delegation: {
+    waitingApproval: (taskId, peer, why) =>
+      `Task ${taskId} on ${peer} is waiting for the owner of ${peer} to approve it${why === "" ? "" : `: ${why}`}. ` +
+      "Only they can decide; if they approve, the work carries on there. You can still stop it from here.",
+    waitingApprovalTitle: "Work is waiting for the other machine's owner to approve it",
+    waitingCapability: (taskId, peer, capability) =>
+      `Task ${taskId} reached ${peer} but has not run: ${peer} cannot run ${capability} right now. ` +
+      `It is kept there and runs by itself once ${capability} is available on ${peer}; you can still stop it from here.`,
+    waitingCapabilityTitle: "Work is waiting for the other machine to be ready",
+    approvedThere: (taskId, peer) => `The owner of ${peer} approved it; task ${taskId} is running on ${peer} again.`,
+    capabilityReadyThere: (taskId, peer, capability) => `${capability} is available on ${peer} now; task ${taskId} has started running there.`,
+    ranThere: (peer, message) => `on ${peer}: ${message}`,
+    notRunThere: (peer, message) => `${peer} did not run this: ${message}`,
+    refusedByPeer: (peer) => `${peer} refused to take this, so it did not run there`,
+    neverSent: (peer) => `this could not be sent to ${peer} because it could not be reached; it never left this machine, so it did not run there`,
+    undeliveredHandOver: (peer) => `this could not be sent to ${peer} after several tries; whether it ran there is unknown`,
+    undeliveredStop: (peer) => `the request to stop could not be sent to ${peer} after several tries; whether the work there stopped is unknown`,
+    resultLost: (peer) => `the result of this from ${peer} was lost on its way back after several tries; whether the work there finished is unknown`,
+    handOverNoticeTitle: "Work another node handed over",
+    notAllowed: (peer, summary) =>
+      `${peer} wants to run ${summary} on this machine, but you have not allowed that node to run work here, so it did not run. ` +
+      "If you want it to, tell Clark which folders and permissions that node may use.",
+    outsideAllowance: (peer, summary, path) => `${peer} wants to run ${summary} in ${path}, outside what you allowed that node, so it did not run.`,
+    handedOverWaiting: (peer, summary, taskId, capabilityRef) =>
+      `${peer} handed over ${summary} (task ${taskId}), but this machine cannot run ${capabilityRef} right now. ` +
+      "It is kept and runs by itself, within what you allowed, once it is available.",
+    handedOverRunning: (peer, summary, taskId) => `${peer} handed over ${summary} (task ${taskId}); it is running on this machine within what you allowed.`,
+  },
+  files: {
+    summary: (parts) => `Files: ${parts}.`,
+    notOffered: (name) => `no offer to send ${name} has arrived yet`,
+    received: (name) => `received ${name}`,
+    downloading: (name) => `downloading ${name}`,
+    notTaken: (name, reason) => `did not take ${name}: ${reason ?? "no reason given"}`,
+    receivedLater: (name, peer, taskId) => `Received the file ${name} from ${peer} for task ${taskId}.`,
+    failedLater: (name, peer, taskId, message) => `Did not receive the file ${name} from ${peer} for task ${taskId}: ${message}.`,
   },
 };
 

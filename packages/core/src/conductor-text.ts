@@ -104,7 +104,7 @@ const EN: ConductorText = {
       `Ran recipe "${recipeId}" on sample data. This is not your real data, and no model was called.`,
     sourceLabel: "Data source",
   },
-  modelFailed: { title: "Could not reach the model", kindLabel: "Error type" },
+  modelFailed: { title: "The model could not be called", kindLabel: "Error type" },
   reply: {
     stoppedTitle: "Stopped on request",
     fallbackTitle: "Answered by a fallback model",

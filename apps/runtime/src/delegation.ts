@@ -50,6 +50,7 @@ import {
 } from "@clarkcant/storage";
 
 import { repositoryBindingRefusal, triggerBrief } from "./automation-service.ts";
+import type { HostText } from "./host-text.ts";
 import type { NodeIdentity } from "./node.ts";
 import { describeResultArtifacts, prepareDelegatedArtifacts, queueArtifactOffers, returnableFileBytes } from "./delegated-artifacts.ts";
 import { type TaskDispatcher, type TaskOutputFile, stopTask } from "./task-dispatch.ts";
@@ -297,6 +298,8 @@ export interface ResultReceiveDeps {
   nodeId: string;
   now: () => Instant;
   conductor: ConductorDeps;
+  /** The words this node's owner is told in, in their interface language. */
+  say: HostText;
   /** How a settled task is told, the same as one this node ran; `blocks` show what came back with it. */
   onSettled: (input: {
     taskId: string;
@@ -328,8 +331,8 @@ export function receiveResult(
 
   const peer = envelope.senderNodeId;
   // The files the peer named, as this node decided about each when it was offered: every offer was queued ahead of this.
-  const files = describeResultArtifacts(deps.db, task.taskId, result.artifacts ?? []);
-  const words = result.ran ? `trên ${peer}: ${result.message}` : `${peer} không chạy việc này: ${result.message}`;
+  const files = describeResultArtifacts(deps.db, task.taskId, result.artifacts ?? [], deps.say.files);
+  const words = result.ran ? deps.say.delegation.ranThere(peer, result.message) : deps.say.delegation.notRunThere(peer, result.message);
   const said = files.text === "" ? words : `${words} ${files.text}`;
   const shown = files.blocks.length === 0 ? {} : { blocks: files.blocks };
   const coordination = { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.conductor.newId };
@@ -394,19 +397,14 @@ export function settleUndelivered(
   let settled: { outcome: "succeeded" | "failed" | "uncertain" | "cancelled"; message: string } | undefined;
 
   if (letter.kind === "delegate" && (letter.refusedByPeer || letter.neverSent === true)) {
-    const message = letter.refusedByPeer
-      ? `${peer} từ chối nhận việc này nên nó không chạy ở đó`
-      : `không gửi được việc này tới ${peer} vì không liên lạc được; việc chưa từng rời máy này nên nó không chạy ở đó`;
+    const message = letter.refusedByPeer ? deps.say.delegation.refusedByPeer(peer) : deps.say.delegation.neverSent(peer);
     if (task.state === "cancel_requested") {
       if (applyTaskEvent(coordination, task.taskId, "cancel.confirmed").ok) settled = { outcome: "cancelled", message };
     } else {
       settled = settleDispatchedTask(deps.conductor, task.taskId, { kind: "api-receipt", summary: message, verified: false });
     }
   } else {
-    const message =
-      letter.kind === "delegate"
-        ? `không gửi được việc này tới ${peer} sau nhiều lần thử; không rõ nó đã chạy ở đó hay chưa`
-        : `không gửi được yêu cầu dừng tới ${peer} sau nhiều lần thử; không rõ việc ở đó đã dừng hay chưa`;
+    const message = letter.kind === "delegate" ? deps.say.delegation.undeliveredHandOver(peer) : deps.say.delegation.undeliveredStop(peer);
     if (applyTaskEvent(coordination, task.taskId, "effect.unknown").ok) settled = { outcome: "uncertain", message };
   }
   if (settled === undefined) return false;
@@ -430,7 +428,7 @@ export function settleLostResult(deps: ResultReceiveDeps, lost: { peerNodeId: st
     taskId: task.taskId,
     conversationId: task.conversationId,
     outcome: "uncertain",
-    message: `kết quả của việc này từ ${lost.peerNodeId} bị mất trên đường gửi về sau nhiều lần thử; không rõ việc ở đó đã xong hay chưa`,
+    message: deps.say.delegation.resultLost(lost.peerNodeId),
   });
   return true;
 }
@@ -558,6 +556,8 @@ export function reportDelegatedStatus(
 export interface StatusReceiveDeps {
   db: Database;
   nodeId: string;
+  /** The words this node's owner is told in, in their interface language. */
+  say: HostText;
   /**
    * Tell this node's owner, in the task's conversation and — while it waits — the inbox, under `title`. `about` makes the
    * same news one notice.
@@ -592,12 +592,10 @@ export function receiveStatus(
     deps.tell({
       taskId: task.taskId,
       conversationId: task.conversationId,
-      text:
-        `Task ${task.taskId} trên ${peer} đang chờ chủ của ${peer} duyệt${why === "" ? "" : `: ${why}`}. ` +
-        `Chỉ họ quyết định được; nếu họ duyệt, việc tiếp tục ở đó. Bạn vẫn có thể dừng nó từ đây.`,
+      text: deps.say.delegation.waitingApproval(task.taskId, peer, why),
       about,
       waiting: true,
-      title: "Việc đang chờ chủ máy kia duyệt",
+      title: deps.say.delegation.waitingApprovalTitle,
     });
     return { accepted: true, told: true };
   }
@@ -605,12 +603,10 @@ export function receiveStatus(
     deps.tell({
       taskId: task.taskId,
       conversationId: task.conversationId,
-      text:
-        `Task ${task.taskId} đã tới ${peer} nhưng chưa chạy: ${peer} chưa chạy được ${capability} lúc này. ` +
-        `Việc được giữ ở đó và tự chạy khi ${capability} dùng được trên ${peer}; bạn vẫn có thể dừng nó từ đây.`,
+      text: deps.say.delegation.waitingCapability(task.taskId, peer, capability),
       about,
       waiting: true,
-      title: "Việc đang chờ máy kia sẵn sàng",
+      title: deps.say.delegation.waitingCapabilityTitle,
     });
     return { accepted: true, told: true };
   }
@@ -620,8 +616,8 @@ export function receiveStatus(
       conversationId: task.conversationId,
       text:
         capability === undefined
-          ? `Chủ của ${peer} đã duyệt; task ${task.taskId} tiếp tục chạy trên ${peer}.`
-          : `${capability} đã dùng được trên ${peer}; task ${task.taskId} bắt đầu chạy ở đó.`,
+          ? deps.say.delegation.approvedThere(task.taskId, peer)
+          : deps.say.delegation.capabilityReadyThere(task.taskId, peer, capability),
       about,
       waiting: false,
       title: "",
@@ -657,6 +653,8 @@ export interface DelegateReceiveDeps extends DelegationDeps {
    * names the hand-over, so the same one told twice is one notice.
    */
   tell: (text: string, about: string, conversationId?: string) => void;
+  /** The words this node's owner is told in, in their interface language. */
+  say: HostText;
 }
 
 export type DelegateOutcome = { accepted: true; taskId: string; duplicate: boolean } | { accepted: false; reason: string };
@@ -710,11 +708,7 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
   }
   const allowance = livePeerAllowance(deps.db, peer, at);
   if (allowance === undefined) {
-    deps.tell(
-      `${peer} muốn chạy việc ${summary} trên máy này, nhưng bạn chưa cho phép node đó chạy việc ở đây nên việc không chạy. ` +
-        "Nếu muốn, hãy nói với Clark những thư mục và quyền node đó được dùng.",
-      about,
-    );
+    deps.tell(deps.say.delegation.notAllowed(peer, summary), about);
     return refuse(deps, peer, taskId, "this node's owner has not allowed that peer to run tasks here");
   }
 
@@ -736,7 +730,7 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
       delegationDepth: 0,
     });
     if (!check.allowed) {
-      deps.tell(`${peer} muốn chạy việc ${summary} ở ${resource.path}, ngoài những gì bạn cho node đó, nên việc không chạy.`, about, allowance.conversationId);
+      deps.tell(deps.say.delegation.outsideAllowance(peer, summary, resource.path), about, allowance.conversationId);
       return refuse(deps, peer, taskId, `${resource.path}: ${check.message}`);
     }
   }
@@ -786,16 +780,11 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
 
   if (started.parked) {
     // Kept here, not refused: it goes on by itself once this node can run it, and the peer hears at once that it waits.
-    deps.tell(
-      `${peer} giao việc ${summary} (task ${taskId}), nhưng máy này chưa chạy được ${capabilityRef} lúc này. ` +
-        "Việc được giữ và tự chạy trong phạm vi bạn đã cho phép khi nó dùng được.",
-      about,
-      allowance.conversationId,
-    );
+    deps.tell(deps.say.delegation.handedOverWaiting(peer, summary, taskId, capabilityRef), about, allowance.conversationId);
     reportWaitingForCapability(deps, taskId, capabilityRef);
     return { accepted: true, taskId, duplicate: false };
   }
-  deps.tell(`${peer} giao việc ${summary} (task ${taskId}); nó đang chạy trên máy này trong phạm vi bạn đã cho phép.`, about, allowance.conversationId);
+  deps.tell(deps.say.delegation.handedOverRunning(peer, summary, taskId), about, allowance.conversationId);
   // After this answer is recorded, so a node that stops first finds the task and the boot calls it uncertain.
   setImmediate(() => deps.startTask(taskId, capabilityRef));
   return { accepted: true, taskId, duplicate: false };
