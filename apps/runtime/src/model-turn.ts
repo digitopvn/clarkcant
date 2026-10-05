@@ -22,7 +22,9 @@ import {
   type AttachmentRef,
   type DataClass,
   DEFAULT_ALLOWED_DATA_CLASSES,
+  checkSendBoundary,
   dataClassOfText,
+  outboundDataClasses,
   maxDataClass,
   type Instant,
   type MessageBlock,
@@ -47,6 +49,8 @@ import {
   type PiSkillBody,
   type PiAdapter,
   type ToolDefinition,
+  type ContextGuard,
+  type ToolResultGuard,
   type WorkerBrief,
   type WorkerEvent,
   type WorkerSessionHandle,
@@ -279,6 +283,11 @@ export interface ModelTurn {
   dispose: () => Promise<void>;
 }
 
+/** Records what a session was just sent, by class; the text itself is not kept. */
+function hold(turn: { held: Set<DataClass> }, texts: readonly (string | undefined)[]): void {
+  for (const dataClass of outboundDataClasses({ texts })) turn.held.add(dataClass);
+}
+
 interface Turn {
   sessionId: string;
   /** Text deltas since the last block, not yet turned into a segment. */
@@ -400,6 +409,14 @@ interface Turn {
   nonceStated: boolean;
   /** What the model answering may receive, set when a turn starts; read by a tool call's instructions. */
   allowed: readonly DataClass[];
+  /**
+   * Every data class this session has been sent: its prompts, steered sentences and the tool results it read. A session
+   * keeps all of it, so another model may take the session over in place only if it may receive each of these;
+   * otherwise the change is a new session, briefed with a recap narrowed to that model.
+   */
+  held: Set<DataClass>;
+  /** The provider refused this session's last run. What follows is a failover, which starts a session of its own. */
+  refused: boolean;
   /** When the session behind this turn was created, and how many turns it has answered: its age, for the session policy. */
   sessionCreatedAtMs: number;
   answered: number;
@@ -431,10 +448,12 @@ interface Turn {
 interface SessionWithheld {
   pending: Map<string, WithheldItem>;
   said: Set<string>;
+  /** The classes of what the session's loader did let through, which the session holds for as long as it lives. */
+  loaded: Set<DataClass>;
 }
 
 function newSessionWithheld(): SessionWithheld {
-  return { pending: new Map(), said: new Set() };
+  return { pending: new Map(), said: new Set(), loaded: new Set() };
 }
 
 function recordWithheld(record: SessionWithheld, item: WithheldItem): void {
@@ -1438,6 +1457,12 @@ export async function createModelTurn(options: {
     }
   };
 
+  /** Whether a model may take over, as it stands, a session that holds these classes. */
+  const mayReceiveHeld = (model: { provider: string; id: string }, held: Iterable<DataClass>): boolean => {
+    const { allowed, read } = ceilingOf(model);
+    return read && checkSendBoundary({ allowed, classes: new Set(held) }).ok;
+  };
+
   /*
    * The person's own instructions for one send, read once and narrowed like the rest of the guidance a send carries: a
    * model that may not receive what they contain is given none of them for this send, said on stderr by class and model
@@ -1628,6 +1653,8 @@ export async function createModelTurn(options: {
       instructionNonce: randomBytes(8).toString("hex"),
       nonceStated: false,
       allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+      held: new Set(),
+      refused: false,
       sessionCreatedAtMs: Date.now(),
       answered: 0,
       recentTexts: [],
@@ -1655,7 +1682,13 @@ export async function createModelTurn(options: {
      * model — correct for the whole turn, because a session's model cannot change mid-turn: a change is a new generation,
      * made at the next turn boundary, whose preparation reads the ceiling again.
      */
-    const toolResultGuard = toolResultGuardFor({ model: () => runningModel(conversationId), allowed: () => turn.allowed });
+    const guardResult = toolResultGuardFor({ model: () => runningModel(conversationId), allowed: () => turn.allowed });
+    const toolResultGuard: ToolResultGuard = (result) => {
+      const decision = guardResult(result);
+      // A result the model read is part of what its session holds from here on.
+      if (!decision.withheld) hold(turn, [result.text]);
+      return decision;
+    };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
     const customTools = [
@@ -1683,11 +1716,16 @@ export async function createModelTurn(options: {
        */
       const runs = model ?? options.model?.() ?? runningModel(conversationId);
       const withheld = newSessionWithheld();
-      const contextGuard = contextGuardFor({
+      const guardContext = contextGuardFor({
         model: runs,
         allowed: ceilingOf(runs).allowed,
         onWithheld: (item) => recordWithheld(withheld, item),
       });
+      const contextGuard: ContextGuard = (item) => {
+        const loads = guardContext(item);
+        if (loads) for (const dataClass of outboundDataClasses({ texts: [item.text] })) withheld.loaded.add(dataClass);
+        return loads;
+      };
       return {
         withheld,
         brief: {
@@ -1783,6 +1821,9 @@ export async function createModelTurn(options: {
       turn.answered = 0;
       turn.recentTexts = [];
       turn.lastBrief = "";
+      // A new session has been sent nothing yet, and no provider has refused it.
+      turn.held = new Set();
+      turn.refused = false;
       void disposeSession(previous).catch(() => undefined);
     };
 
@@ -1805,6 +1846,36 @@ export async function createModelTurn(options: {
     };
 
     if (existing !== undefined) {
+      /*
+       * The change in place, when the same session can simply go on: Pi moves a session to another model between runs,
+       * and it keeps its transcript, its tools and what it was already told, so nothing is briefed again. Only when
+       * the new model may receive everything the session holds — a session cannot be narrowed, so a model with a lower
+       * ceiling gets a successor with a recap narrowed to it, below. A failover after a refusal is a successor too:
+       * its session ends on a prompt the provider refused, and the message is sent again whole.
+       */
+      const thinking = chosenThinking();
+      const sameModel =
+        generationModels.get(conversationId) === modelKey(preferred);
+      const keeps =
+        preferred !== undefined &&
+        !existing.refused &&
+        // Back to a model's own default level is not something a session can be told; a successor starts on it.
+        (thinking !== undefined || !sameModel || (generationThinking.get(conversationId) ?? "") === "") &&
+        // What it was sent, and what its loader put into its prompt from the machine.
+        mayReceiveHeld(preferred, [...existing.held, ...existing.withheld.loaded]);
+      if (keeps) {
+        try {
+          await adapter.switchModel(existing.sessionId, {
+            ...(sameModel ? {} : { model: preferred }),
+            ...(thinking === undefined ? {} : { thinkingLevel: thinking }),
+          });
+          generationModels.set(conversationId, modelKey(preferred));
+          generationThinking.set(conversationId, thinking ?? "");
+          return existing;
+        } catch {
+          // The session is as it was. The successor below is tried instead, and says what failed if it fails too.
+        }
+      }
       let successor: WorkerSessionHandle;
       const next = briefFor(preferred);
       try {
@@ -1890,6 +1961,7 @@ export async function createModelTurn(options: {
     // runs, and it still holds: a session's model cannot change mid-turn, only at the next turn boundary.
     const model = runningModel(turn.conversationId);
     if (!enforceSendBoundary({ path: "steer", model, allowed: turn.allowed, texts: [text] }).ok) return false;
+    hold(turn, [text]);
     // Recorded in the same tick as the check above, so the turn's last look for queued steers cannot miss it.
     const sending = adapter.steer(turn.sessionId, text);
     turn.steersPending.add(sending);
@@ -2279,6 +2351,8 @@ export async function createModelTurn(options: {
         });
       }
 
+      hold(turn, [input.text, note, brief, data, ui, personal]);
+
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
       // that never settles would hold the request until the client gives up, and the user would
@@ -2443,6 +2517,7 @@ export async function createModelTurn(options: {
         // appending an empty message that reads as the assistant having nothing to say.
         // The provider's own refusal when there is one — the reason a person can act on — else that nothing came back.
         if (turn.providerError !== undefined) {
+          turn.refused = true;
           const reason = redactSecrets(redactLocalPaths(turn.providerError));
           const model = describe(input.conversationId);
           throw new ProviderRefusal(turnFailed(model, reason), model, reason);
