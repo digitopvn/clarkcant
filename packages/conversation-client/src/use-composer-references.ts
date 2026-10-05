@@ -4,7 +4,7 @@ import type { KeyboardEvent, RefObject } from "react";
 import { COMPOSER_REFERENCES_MAX, type ComposerReference, type ComposerSuggestion, referenceToken } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
-import { type ActiveTrigger, activeTrigger, liveReferences, replaceToken, withoutToken } from "./composer-trigger.ts";
+import { type ActiveTrigger, activeTrigger, commandFullyTyped, liveReferences, replaceToken, withoutToken } from "./composer-trigger.ts";
 
 /** A reference the person chose, keyed by the row it came from so choosing the same thing twice keeps one. */
 export interface ChosenReference {
@@ -204,13 +204,18 @@ export function useComposerReferences({
         return true;
       }
       if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+        const row = suggestions[activeIndex];
+        // Nothing left to complete: Enter is the composer's, and sends the command as typed.
+        if (event.key === "Enter" && trigger !== undefined && row?.kind === "command" && commandFullyTyped(draft, trigger, row.command)) {
+          return false;
+        }
         event.preventDefault();
         choose(activeIndex, event.key === "Tab" ? "open" : "pick");
         return true;
       }
       return false;
     },
-    [activeIndex, choose, composing, open, suggestions.length, triggerKey],
+    [activeIndex, choose, composing, draft, open, suggestions, trigger, triggerKey],
   );
 
   const remove = useCallback(

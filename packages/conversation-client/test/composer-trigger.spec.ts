@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ComposerReference } from "@clarkcant/contracts";
 
-import { activeTrigger, liveReferences, replaceToken, tokenPresent, withoutToken } from "../src/composer-trigger.ts";
+import { activeTrigger, commandFullyTyped, liveReferences, replaceToken, tokenPresent, withoutToken } from "../src/composer-trigger.ts";
 
 const skill: ComposerReference = { kind: "skill", skillId: "review", source: "personal", revision: "a".repeat(64), label: "review" };
 const project: ComposerReference = { kind: "project", projectId: "proj_1", label: "clarkcant" };
@@ -89,5 +89,18 @@ describe("what a message carries", () => {
     expect(withoutToken("/review xem @clarkcant nhé", "@clarkcant")).toBe("/review xem nhé");
     expect(withoutToken("@clarkcant/src và @clarkcant", "@clarkcant")).toBe("@clarkcant/src và ");
     expect(withoutToken("không có", "@x")).toBe("không có");
+  });
+
+  it("knows a command typed in full from one still being typed, whatever its case", () => {
+    const typed = (draft: string) => {
+      const active = activeTrigger(draft, draft.length);
+      if (active === undefined) throw new Error("no trigger");
+      return commandFullyTyped(draft, active, "thinking");
+    };
+    expect(typed("/thinking")).toBe(true);
+    expect(typed("/Thinking")).toBe(true);
+    expect(typed("/think")).toBe(false);
+    // A longer word that only starts like the command is not it.
+    expect(typed("/thinkingx")).toBe(false);
   });
 });
