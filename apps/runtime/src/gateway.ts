@@ -19,6 +19,7 @@ import { handleBrowserTokenFixtureRoutes, handleBrowserTokenRoutes } from "./rou
 import { handleUpdateCheckFixtureRoutes } from "./routes/update-check-fixture.ts";
 import { handleControlRoutes } from "./routes/control.ts";
 import { handleTerminalRoutes } from "./routes/terminals.ts";
+import { handleProviderRoutes } from "./routes/providers.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
 import { handleRecordReadRoutes } from "./routes/record-read.ts";
 import { handleMiniAppDataRoutes } from "./routes/mini-app-data.ts";
@@ -271,6 +272,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const terminalResponse = await handleTerminalRoutes({ services, request, segments });
   if (terminalResponse !== undefined) return terminalResponse;
+
+  const providerResponse = await handleProviderRoutes({ services, request, segments });
+  if (providerResponse !== undefined) return providerResponse;
 
   const preferenceResponse = handlePreferenceRoutes({ services, request, segments, at });
   if (preferenceResponse !== undefined) return preferenceResponse;

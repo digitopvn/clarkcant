@@ -15,6 +15,8 @@ import type {
   LayoutNode,
   MapTilePolicyView,
   ModelPool,
+  ProviderAuthEntryView,
+  ProviderSignInView,
   SseEvent,
   TableFilterValue,
   TableSort,
@@ -973,7 +975,7 @@ export class GatewayClient {
     nodeId: string;
     label: string;
     createdAt: string;
-    model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number; thinkingLevel?: string } | null;
+    model: { provider: string; id: string; maxWallClockMs?: number; maxTokens: number; thinkingLevel?: string } | null;
   }> {
     return this.#call("GET", "/node");
   }
@@ -989,6 +991,11 @@ export class GatewayClient {
     return () => {
       this.#modelListeners.delete(listener);
     };
+  }
+
+  /** Tells the statusline to read the model again, after a change this page learned of some other way (`/thinking`). */
+  notifyModelChange(): void {
+    for (const listener of this.#modelListeners) listener();
   }
 
   #changingModel<T>(call: Promise<T>): Promise<T> {
@@ -1297,7 +1304,9 @@ export class GatewayClient {
    * echoing what was sent.
    */
   writePreference(key: string, value: unknown): Promise<{ preference: RegisteredPreference }> {
-    return this.#call("PUT", `/preferences/${encodeURIComponent(key)}`, { value });
+    const written = this.#call<{ preference: RegisteredPreference }>("PUT", `/preferences/${encodeURIComponent(key)}`, { value });
+    // The thinking level is part of what the statusline names for the next turn.
+    return key === "ai.thinkingLevel" ? this.#changingModel(written) : written;
   }
 
   /**
@@ -1411,6 +1420,33 @@ export class GatewayClient {
    */
   async deleteCredential(name: string): Promise<{ ok: boolean; names: string[] }> {
     return this.#call("DELETE", `/credentials/${encodeURIComponent(name)}`);
+  }
+
+  /** The providers pi can sign in to, and which are signed in. Never a credential. */
+  async providerAuth(): Promise<{ providers: ProviderAuthEntryView[] }> {
+    return this.#call("GET", "/providers/auth");
+  }
+
+  /** Starts a provider's own sign-in; the answer is the sign-in to follow with `providerSignIn`. */
+  async startProviderSignIn(providerId: string, method: "oauth" | "api_key"): Promise<ProviderSignInView> {
+    return this.#call("POST", `/providers/${encodeURIComponent(providerId)}/sign-in`, { method });
+  }
+
+  async providerSignIn(signInId: string): Promise<ProviderSignInView> {
+    return this.#call("GET", `/providers/sign-ins/${encodeURIComponent(signInId)}`);
+  }
+
+  /** The person's answer to what the sign-in asked, handed to the provider. The node does not keep it. */
+  async answerProviderSignIn(signInId: string, value: string): Promise<ProviderSignInView> {
+    return this.#call("POST", `/providers/sign-ins/${encodeURIComponent(signInId)}/answer`, { value });
+  }
+
+  async cancelProviderSignIn(signInId: string): Promise<ProviderSignInView> {
+    return this.#call("POST", `/providers/sign-ins/${encodeURIComponent(signInId)}/cancel`, {});
+  }
+
+  async signOutProvider(providerId: string): Promise<{ providerId: string; signedOut: boolean }> {
+    return this.#call("POST", `/providers/${encodeURIComponent(providerId)}/sign-out`, {});
   }
 
   /**

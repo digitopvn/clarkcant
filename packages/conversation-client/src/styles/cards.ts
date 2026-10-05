@@ -483,6 +483,16 @@ label.cc-list-main { cursor: pointer; }
 .cc-list-subtitle { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-list-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); font-variant-numeric: tabular-nums; }
 .cc-list-item .cc-action { margin-inline-start: auto; }
+/* A command card's row: its buttons sit together at the end, and what a press did or a sign-in needs reads below it. */
+.cc-command-actions { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); margin-inline-start: auto; }
+.cc-command-actions .cc-action { margin-inline-start: 0; }
+.cc-command-actions .cc-action[data-tone="danger"]:not(:disabled) { color: var(--cc-danger); }
+.cc-command-current { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-command-status, .cc-command-row .cc-sign-in { flex-basis: 100%; margin: 0; }
+.cc-command-status { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-command-status[data-result="failed"] { color: var(--cc-danger); }
+.cc-sign-in-code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-body-md); user-select: all; }
+@media (pointer: coarse) { .cc-sign-in .cc-field-input { min-height: 44px; } }
 
 .cc-tree-root, .cc-tree-group { list-style: none; margin: 0; padding: 0; min-width: 0; }
 .cc-tree-group { margin-inline-start: 12px; padding-inline-start: 12px; border-inline-start: 1px solid var(--cc-border); }

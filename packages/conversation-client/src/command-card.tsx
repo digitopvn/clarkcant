@@ -1,0 +1,227 @@
+import { useState, type FormEvent, type ReactElement } from "react";
+
+import type { CommandCard, ProviderSignInView } from "@clarkcant/contracts";
+
+import type { BlockActions, CommandActionState } from "./blocks.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
+
+/**
+ * The widget a slash command answers with: a host-owned card in the conversation.
+ *
+ * Pure. What a press did, and a sign-in the card started, live in the page's block actions and are drawn beside the
+ * row they belong to; the card itself is what was true when the command ran. Without handlers — a transcript, a search
+ * result — it draws the record and no buttons, because a button that cannot act is a fake control.
+ */
+
+type CardRow = CommandCard["rows"][number];
+
+const BADGE_TONE: Record<NonNullable<CardRow["badge"]>["tone"], string | undefined> = {
+  neutral: undefined,
+  active: "info",
+  success: "ok",
+  warning: "warn",
+  danger: "danger",
+};
+
+export function CommandCardBlock({
+  block,
+  t,
+  actions,
+}: {
+  block: CommandCard;
+  t: (key: MessageKey) => string;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const live = actions?.onCommandAction !== undefined;
+  return (
+    <section className="cc-card" data-owner="host" data-command={block.command} aria-label={block.title}>
+      <header className="cc-card-head">
+        <h3 className="cc-card-title">{block.title}</h3>
+      </header>
+      <div className="cc-card-body">
+        {block.detail === undefined ? null : <p className="cc-list-subtitle">{block.detail}</p>}
+        {block.rows.length === 0 ? (
+          <p className="cc-list-subtitle">{block.empty ?? t("commandCard.empty")}</p>
+        ) : (
+          <ul className="cc-list">
+            {block.rows.map((row) => (
+              <CommandRow key={row.rowId} cardId={block.cardId} row={row} live={live} t={t} actions={actions} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CommandRow({
+  cardId,
+  row,
+  live,
+  t,
+  actions,
+}: {
+  cardId: string;
+  row: CardRow;
+  live: boolean;
+  t: (key: MessageKey) => string;
+  actions: BlockActions | undefined;
+}): ReactElement {
+  const rowKey = `${cardId}/${row.rowId}`;
+  const signIn = actions?.signIns?.[rowKey];
+  const states = row.actions.map((entry) => actions?.commandAction?.[`${rowKey}/${entry.actionId}`]);
+  const pending = states.some((state) => state?.status === "pending");
+  const settled = states.find((state): state is Exclude<CommandActionState, { status: "pending" }> => state !== undefined && state.status !== "pending");
+  const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
+  return (
+    <li className="cc-list-item cc-command-row" data-row-id={row.rowId} data-current={row.current === true ? "true" : undefined}>
+      <div className="cc-list-main">
+        <div className="cc-list-text">
+          <span className="cc-list-title">
+            {row.label}
+            {row.current === true ? <span className="cc-command-current"> · {t("commandCard.current")}</span> : null}
+          </span>
+          {row.note === undefined ? null : <span className="cc-list-subtitle">{row.note}</span>}
+        </div>
+        {row.badge === undefined ? null : (
+          <span className="cc-badge" data-tone={BADGE_TONE[row.badge.tone]}>
+            {row.badge.text}
+          </span>
+        )}
+      </div>
+      {live && row.actions.length > 0 ? (
+        <div className="cc-command-actions">
+          {row.actions.map((entry) => (
+            <button
+              key={entry.actionId}
+              type="button"
+              className="cc-action"
+              data-emphasis={entry.tone === "primary" ? "primary" : undefined}
+              data-tone={entry.tone === "danger" ? "danger" : undefined}
+              disabled={pending || signingIn}
+              onClick={() => actions?.onCommandAction?.({ cardId, rowId: row.rowId, actionId: entry.actionId, action: entry.action })}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {pending ? (
+        <p className="cc-command-status" role="status">
+          {t("commandCard.working")}
+        </p>
+      ) : settled === undefined ? null : (
+        <p className="cc-command-status" role="status" data-result={settled.status}>
+          {settled.message}
+        </p>
+      )}
+      {signIn === undefined ? null : <SignInPanel signIn={signIn} rowKey={rowKey} t={t} actions={actions} />}
+    </li>
+  );
+}
+
+function SignInPanel({
+  signIn,
+  rowKey,
+  t,
+  actions,
+}: {
+  signIn: ProviderSignInView;
+  rowKey: string;
+  t: (key: MessageKey) => string;
+  actions: BlockActions | undefined;
+}): ReactElement {
+  const [value, setValue] = useState("");
+  const open = signIn.state === "running" || signIn.state === "waiting";
+  const prompt = signIn.prompt;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (value.trim() === "") return;
+    actions?.onSignInAnswer?.({ key: rowKey, signInId: signIn.signInId, value });
+    setValue("");
+  };
+  return (
+    <div className="cc-card-stack cc-sign-in" data-state={signIn.state}>
+      {signIn.events.map((event, index) => {
+        if (event.type === "auth_url") {
+          return (
+            <p key={index} className="cc-list-subtitle">
+              {event.instructions ?? t("commandCard.signIn.openPage")}{" "}
+              <a href={event.url} target="_blank" rel="noopener noreferrer">
+                {t("commandCard.signIn.openLink")}
+              </a>
+            </p>
+          );
+        }
+        if (event.type === "device_code") {
+          return (
+            <p key={index} className="cc-list-subtitle">
+              {t("commandCard.signIn.deviceCode")} <code className="cc-sign-in-code">{event.userCode}</code>{" "}
+              <a href={event.verificationUri} target="_blank" rel="noopener noreferrer">
+                {t("commandCard.signIn.openLink")}
+              </a>
+            </p>
+          );
+        }
+        return (
+          <p key={index} className="cc-list-subtitle">
+            {event.message}
+          </p>
+        );
+      })}
+      {open && prompt !== undefined ? <p className="cc-list-title">{prompt.message}</p> : null}
+      {open && prompt !== undefined ? (
+        <form className="cc-search-row" onSubmit={submit}>
+          {prompt.type === "select" ? (
+            <select
+              className="cc-field-input"
+              aria-label={prompt.message}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+            >
+              <option value="">{prompt.message}</option>
+              {prompt.options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="cc-field-input"
+              type={prompt.type === "secret" ? "password" : "text"}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={prompt.message}
+              {...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder })}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+            />
+          )}
+          <button type="submit" className="cc-action" data-emphasis="primary" disabled={value.trim() === ""}>
+            {t("commandCard.signIn.submit")}
+          </button>
+        </form>
+      ) : null}
+      {open ? (
+        <div className="cc-form-foot">
+          <p className="cc-list-subtitle" role="status">
+            {prompt === undefined ? t("commandCard.signIn.waiting") : t("commandCard.signIn.answer")}
+          </p>
+          <button type="button" className="cc-action" onClick={() => actions?.onSignInCancel?.({ key: rowKey, signInId: signIn.signInId })}>
+            {t("commandCard.signIn.cancel")}
+          </button>
+        </div>
+      ) : (
+        <p className="cc-command-status" role="status" data-result={signIn.state === "done" ? "done" : "failed"}>
+          {signIn.state === "done"
+            ? t("commandCard.signIn.done")
+            : signIn.state === "cancelled"
+              ? t("commandCard.signIn.cancelled")
+              : `${t("commandCard.signIn.failed")}${signIn.error === undefined ? "" : ` ${signIn.error}`}`}
+        </p>
+      )}
+    </div>
+  );
+}

@@ -67,7 +67,7 @@ interface NodeFacts {
   nodeId: string;
   label: string;
   createdAt: string;
-  model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number } | null;
+  model: { provider: string; id: string; maxWallClockMs?: number; maxTokens: number } | null;
 }
 
 interface ToolFacts {

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { slashCommandSchema } from "./slash-commands.ts";
+
 /**
  * What a person points at from the composer: a skill with `/`, and a project, a file, a service, a conversation, a
  * piece of background work or a notice with `@`.
@@ -89,7 +91,7 @@ export type ComposerTrigger = z.infer<typeof composerTriggerSchema>;
  * The row carries the reference it would insert rather than a callback: choosing it changes the draft and nothing
  * else. `disabledReason` is a sentence, because a row that cannot be chosen has to say why.
  */
-export const composerSuggestionSchema = z.strictObject({
+export const composerReferenceSuggestionSchema = z.strictObject({
   key: z.string().min(1).max(300),
   trigger: composerTriggerSchema,
   kind: z.enum(["skill", "project", "file", "folder", "mcp-server", "conversation", "background-work", "notice"]),
@@ -98,7 +100,25 @@ export const composerSuggestionSchema = z.strictObject({
   disabledReason: z.string().max(200).optional(),
   ref: composerReferenceSchema,
 });
+
+/**
+ * A slash command the node answers itself (`slash-commands.ts`).
+ *
+ * Choosing it writes `/<command> ` into the draft and nothing else: it is not a reference the message carries, it is
+ * what the message says, and the node reads it from the text when it is sent.
+ */
+export const composerCommandSuggestionSchema = z.strictObject({
+  key: z.string().min(1).max(300),
+  trigger: z.literal("/"),
+  kind: z.literal("command"),
+  label: labelSchema,
+  note: z.string().max(200).optional(),
+  command: slashCommandSchema,
+});
+
+export const composerSuggestionSchema = z.union([composerReferenceSuggestionSchema, composerCommandSuggestionSchema]);
 export type ComposerSuggestion = z.infer<typeof composerSuggestionSchema>;
+export type ComposerReferenceSuggestion = z.infer<typeof composerReferenceSuggestionSchema>;
 
 /** `GET /composer/suggestions`. */
 export const composerSuggestionsResponseSchema = z.strictObject({

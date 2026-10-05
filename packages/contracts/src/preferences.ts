@@ -418,6 +418,20 @@ export type VoiceWakePreference = z.infer<typeof voiceWakePreferenceSchema>;
 export const backgroundLimitSchema = z.union([z.literal(1), z.literal(3), z.literal(5)]);
 export type BackgroundLimit = z.infer<typeof backgroundLimitSchema>;
 
+/**
+ * The wall clock on one conversation turn, in minutes, or `null` for none.
+ *
+ * None is the default: two and five minutes were both reached on ordinary use, and the token ceiling and Stop already
+ * bound a model that loops. A few choices rather than a number field, for the same reason as the background limit.
+ */
+export const turnTimeLimitSchema = z.union([z.null(), z.literal(5), z.literal(15), z.literal(30), z.literal(60)]);
+export type TurnTimeLimit = z.infer<typeof turnTimeLimitSchema>;
+
+/** How hard the model thinks before answering, or `null` for the model's own default. Pi's levels, in order. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const thinkingLevelPreferenceSchema = z.union([z.null(), z.enum(THINKING_LEVELS)]);
+export type ThinkingLevelPreference = z.infer<typeof thinkingLevelPreferenceSchema>;
+
 /** The window presentations this application has. */
 export const windowModeSchema = z.enum(["normal", "expanded", "compact", "orb"]);
 export type WindowMode = z.infer<typeof windowModeSchema>;
@@ -727,6 +741,21 @@ export const PREFERENCE_REGISTRY = {
     applies: "next-session",
     default: "auto",
     schema: backgroundRoutingSchema,
+  },
+  // Read when a session is created; a change reaches the next turn through a handoff, as a model change does.
+  "ai.thinkingLevel": {
+    key: "ai.thinkingLevel",
+    scope: "global",
+    applies: "next-turn",
+    default: null,
+    schema: thinkingLevelPreferenceSchema,
+  },
+  "ai.turnTimeLimit": {
+    key: "ai.turnTimeLimit",
+    scope: "global",
+    applies: "next-turn",
+    default: null,
+    schema: turnTimeLimitSchema,
   },
   "ai.personalInstructions": {
     key: "ai.personalInstructions",

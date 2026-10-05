@@ -7,7 +7,7 @@ import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followScrollBehavior, followsBottom } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
-import type { AppIntentDecision, ComposerReference } from "@clarkcant/contracts";
+import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
 
 /** The node's own sentence for a refused send; the code in front of it belongs in a log, not the status line. */
@@ -265,6 +265,8 @@ export function useTurnSend({
               if (result.appIntent !== undefined && result.appIntent.kind !== "none") {
                 setPendingIntent(result.appIntent);
               }
+              // `/thinking high` changed what the next turn runs with; the statusline names it, so it reads it again.
+              if (parseSlashCommand(trimmed)?.command === "thinking") client.notifyModelChange();
             },
           },
           { ...(options.demo === undefined ? {} : { demo: options.demo }), attachmentIds, references: [...references] },

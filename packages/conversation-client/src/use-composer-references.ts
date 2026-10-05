@@ -164,7 +164,13 @@ export function useComposerReferences({
   const choose = useCallback(
     (index: number, how: "pick" | "open") => {
       const row = suggestions[index];
-      if (trigger === undefined || row === undefined || row.disabledReason !== undefined) return;
+      if (trigger === undefined || row === undefined) return;
+      // A command is what the message says, not a reference it carries: it is written into the draft and nothing else.
+      if (row.kind === "command") {
+        write(replaceToken(draft, trigger, `/${row.command}`));
+        return;
+      }
+      if (row.disabledReason !== undefined) return;
       const opens = how === "open" && (row.kind === "project" || row.kind === "folder");
       if (opens) {
         write(replaceToken(draft, trigger, `@${row.label}/`));

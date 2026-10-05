@@ -135,7 +135,8 @@ export interface RuntimeOptions {
 export interface NodeModelInfo {
   provider: string;
   id: string;
-  maxWallClockMs: number;
+  /** Absent means a turn has no wall clock: its tokens and Stop bound it. */
+  maxWallClockMs?: number;
   maxTokens: number;
   /** The thinking level every session is created with, when the node names one; absent means pi's own default. */
   thinkingLevel?: string;

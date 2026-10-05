@@ -566,6 +566,50 @@ describe("a changed model", () => {
   });
 });
 
+describe("a changed thinking level", () => {
+  it("reaches the next turn as a new generation, and a turn with no limit set carries no wall clock", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    let level: "low" | "high" | undefined = "low";
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => FIRST,
+      thinkingLevel: () => level,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    expect(adapter.briefs[0]?.thinkingLevel).toBe("low");
+    // Unlimited is the default: tokens and Stop bound a turn until the person picks a limit in Settings.
+    expect(adapter.briefs[0]?.maxWallClockMs).toBeUndefined();
+    expect(turn.turnLimitMs()).toBeUndefined();
+
+    level = "high";
+    await say(turn, "hai", "msg_2");
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.handoffs[0]?.brief.thinkingLevel).toBe("high");
+
+    await say(turn, "ba", "msg_3");
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
+  it("gives the session the limit the person chose", async () => {
+    const adapter = new CountingAdapter({ script: ["ok"] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => FIRST,
+      turnLimitMs: () => 15 * 60_000,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    expect(adapter.briefs[0]?.maxWallClockMs).toBe(15 * 60_000);
+  });
+});
+
 describe("the edges of a running turn", () => {
   it("keeps the finished reply when running the session on a late message fails, and answers the next on a fresh one", async () => {
     const adapter = new CountingAdapter({ script: ["một", "hai"] });

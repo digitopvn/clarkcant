@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ComposerReference, ComposerSuggestionsResponse, MessageRecord } from "@clarkcant/contracts";
+import { type ComposerReference, type ComposerReferenceSuggestion, type ComposerSuggestion, type ComposerSuggestionsResponse, type MessageRecord, SLASH_COMMANDS } from "@clarkcant/contracts";
 import { setPreference } from "@clarkcant/core";
 import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcant/pi-adapter";
 import { dismissNotification, getNotification, messagesSince, recordNotification, upsertProject } from "@clarkcant/storage";
@@ -317,13 +317,28 @@ describe("things named with an at sign", () => {
   });
 });
 
+/** The rows that point at something, leaving out the node's own commands. */
+function referenceRows(rows: readonly ComposerSuggestion[]): ComposerReferenceSuggestion[] {
+  return rows.flatMap((row) => (row.kind === "command" ? [] : [row]));
+}
+
+function refsOf(rows: readonly ComposerSuggestion[]): ComposerReference[] {
+  return referenceRows(rows).map((row) => row.ref);
+}
+
 describe("the picker", () => {
-  it("offers skills after a slash, best match first", async () => {
+  it("offers the node's commands and then skills after a slash, best match first", async () => {
     const all = await suggest("/", "");
     expect(all.status).toBe(200);
     const body = all.body as ComposerSuggestionsResponse;
-    expect(body.suggestions.map((row) => row.label)).toEqual(["release-notes", "review"]);
-    expect(body.suggestions[1]?.ref).toEqual(reviewRef);
+    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"]);
+    expect(refsOf(body.suggestions)[1]).toEqual(reviewRef);
+    // A command row writes the command, not a reference.
+    expect(body.suggestions[0]).toMatchObject({ kind: "command", command: "new", trigger: "/" });
+    expect(body.suggestions[0]).not.toHaveProperty("ref");
+
+    const command = (await suggest("/", "sess")).body as ComposerSuggestionsResponse;
+    expect(command.suggestions.map((row) => row.label)).toEqual(["sessions"]);
 
     const narrowed = (await suggest("/", "rev")).body as ComposerSuggestionsResponse;
     expect(narrowed.suggestions.map((row) => row.label)).toEqual(["review"]);
@@ -339,7 +354,7 @@ describe("the picker", () => {
 
     // Diacritics are optional when typing.
     const folded = (await suggest("@", "du an")).body as ComposerSuggestionsResponse;
-    expect(folded.suggestions.map((row) => row.ref)).toContainEqual({ kind: "conversation", conversationId: other, label: "Dự án mới" });
+    expect(refsOf(folded.suggestions)).toContainEqual({ kind: "conversation", conversationId: other, label: "Dự án mới" });
   });
 
   it("names a conversation the clients left untitled by what was said first, and keeps projects in view", async () => {
@@ -373,7 +388,7 @@ describe("the picker", () => {
     ]);
 
     const inner = (await suggest("@", "clarkcant/src/a")).body as ComposerSuggestionsResponse;
-    expect(inner.suggestions.map((row) => row.ref)).toEqual([appRefFor()]);
+    expect(refsOf(inner.suggestions)).toEqual([appRefFor()]);
 
     for (const q of ["clarkcant/../", "clarkcant/link/", "nothing/"]) {
       expect(((await suggest("@", q)).body as ComposerSuggestionsResponse).suggestions).toEqual([]);
@@ -383,7 +398,7 @@ describe("the picker", () => {
   it("says why a project that left the approved roots cannot be chosen", async () => {
     approveRoots([join(dir, "elsewhere")]);
     const body = (await suggest("@", "clark")).body as ComposerSuggestionsResponse;
-    expect(body.suggestions.find((row) => row.label === "clarkcant")?.disabledReason).toBe(
+    expect(referenceRows(body.suggestions).find((row) => row.label === "clarkcant")?.disabledReason).toBe(
       "Không còn nằm trong thư mục được phép.",
     );
   });
@@ -425,7 +440,7 @@ describe("the picker", () => {
       unavailable: () => "Máy này đang ngoại tuyến.",
     };
     const all = await composerSuggestions(services, { trigger: "@", query: "clark" }, [...MENTION_SOURCES, elsewhere]);
-    expect(all.suggestions.map((row) => [row.label, row.disabledReason])).toEqual([
+    expect(referenceRows(all.suggestions).map((row) => [row.label, row.disabledReason])).toEqual([
       ["clarkcant", undefined],
       ["clark ở văn phòng", "Máy này đang ngoại tuyến."],
     ]);

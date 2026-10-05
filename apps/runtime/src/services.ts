@@ -25,6 +25,7 @@ import {
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
+import type { ProviderAuthPort } from "./application/provider-sign-in.ts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
@@ -145,10 +146,15 @@ export interface NodeServices {
    */
   modelCatalogue?: () => Promise<ModelCatalogue>;
   /**
+   * Signing in to and out of AI providers, through the same pi runtime the turns use (`/login`, `/logout`). Assigned
+   * after boot beside the catalogue; absent where there is no pi to sign in through, which the commands say in words.
+   */
+  providerAuth?: ProviderAuthPort;
+  /**
    * The provider and model the next session runs: a pick made in Settings while the node is running, else the one it
    * booted with. Assigned after boot beside the catalogue; `model` alone is the boot snapshot and goes stale on a pick.
    */
-  currentModel?: () => { provider: string; id: string };
+  currentModel?: () => { provider: string; id: string; thinkingLevel?: string; maxWallClockMs?: number };
 
   /**
    * What the configured voice provider can do, as it reports it.

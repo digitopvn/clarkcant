@@ -1,6 +1,14 @@
 import { useEffect, useState, type ReactElement } from "react";
 
-import { attachmentRefSchema, referenceBlockSchema, referenceToken, type AttachmentRef } from "@clarkcant/contracts";
+import {
+  attachmentRefSchema,
+  commandCardSchema,
+  referenceBlockSchema,
+  referenceToken,
+  type AttachmentRef,
+  type CommandCardAction,
+  type ProviderSignInView,
+} from "@clarkcant/contracts";
 
 import { CodeBlock, Markdown, linkedText } from "./markdown.tsx";
 import { formatFileSize } from "./attachments.ts";
@@ -11,6 +19,7 @@ import { type ObjectUrls, useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
+import { CommandCardBlock } from "./command-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
@@ -634,7 +643,26 @@ export interface BlockActions {
    * side channel. Absent in a snapshot, which is also what keeps a snapshot from attaching to a live shell.
    */
   onTerminalShare?: (input: { text: string }) => void;
+  /**
+   * A button on a slash command's card (`command-card`): open a conversation, choose a thinking level, sign in to or
+   * out of a provider. Carried out through the capability the rest of the app uses for the same thing; absent in a
+   * snapshot, where the card shows what it listed and offers nothing to press.
+   */
+  onCommandAction?: (input: { cardId: string; rowId: string; actionId: string; action: CommandCardAction }) => void;
+  /** What each press came to, keyed `cardId/rowId/actionId`, so the card says it beside the button. */
+  commandAction?: Readonly<Record<string, CommandActionState>>;
+  /** Sign-ins a `/login` card started, keyed `cardId/rowId`: the page to open, the code, the question, the outcome. */
+  signIns?: Readonly<Record<string, ProviderSignInView>>;
+  /** The person's answer to what a sign-in asks. Sent to the node and dropped from the card at once. */
+  onSignInAnswer?: (input: { key: string; signInId: string; value: string }) => void;
+  onSignInCancel?: (input: { key: string; signInId: string }) => void;
 }
+
+/** What one press on a command card came to. */
+export type CommandActionState =
+  | { status: "pending" }
+  | { status: "done"; message: string }
+  | { status: "failed"; message: string };
 
 /**
  * What the node said about a browser session after a verb was applied to it.
@@ -1944,6 +1972,13 @@ export function renderBlock(
           {...(actions === undefined ? {} : { actions })}
         />
       );
+    case "command-card": {
+      // Read through the contract: a card that does not match it draws nothing rather than half a card.
+      const card = commandCardSchema.safeParse(block);
+      return card.success ? (
+        <CommandCardBlock key={index} block={card.data} t={t} {...(actions === undefined ? {} : { actions })} />
+      ) : null;
+    }
     case "terminal-session-card":
       return (
         <TerminalCardBlock key={index} block={block} client={client} t={t} {...(actions === undefined ? {} : { actions })} />

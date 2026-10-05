@@ -2,9 +2,12 @@ import { readdirSync } from "node:fs";
 
 import {
   type ComposerReference,
+  type ComposerReferenceSuggestion,
   type ComposerSuggestion,
   type ComposerSuggestionsResponse,
   type ComposerTrigger,
+  SLASH_COMMANDS,
+  nowInstant,
   projectRelativePathSchema,
 } from "@clarkcant/contracts";
 import { type ProjectRecord, getConversation, listConversations, listProjects, messagesSince } from "@clarkcant/storage";
@@ -13,6 +16,8 @@ import { type ReferenceServices, insideProject, referenceIdentity } from "./comp
 import { SYSTEM_IGNORES, verifyProject } from "./project-finder.ts";
 import { textOfMessage } from "./session-search.ts";
 import { nodeWork } from "./work-supervisor.ts";
+import { preferredAppIntentLocale } from "./app-intents.ts";
+import { slashCommandNote } from "./application/slash-commands.ts";
 
 /**
  * What the composer offers after `/` or `@`.
@@ -99,7 +104,7 @@ export function rankCandidates<T extends { match: string; recency?: number; grou
 }
 
 /** What a conversation is called in the picker: its title, or the start of what the person first said in it. */
-function conversationLabel(db: ReferenceServices["runtime"]["db"], conversationId: string, title: string | undefined): string {
+export function conversationLabel(db: ReferenceServices["runtime"]["db"], conversationId: string, title: string | undefined): string {
   const named = clip(title ?? "", LABEL_MAX);
   if (named !== "" && !PLACEHOLDER_TITLES.has(named.toLowerCase())) return named;
   const opening = messagesSince(db, conversationId, 0, 10).find((message) => message.role === "user");
@@ -111,7 +116,7 @@ function clip(text: string, max: number): string {
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
-function row(ref: ComposerReference, extra: { note?: string | undefined; disabledReason?: string | undefined } = {}): ComposerSuggestion {
+function row(ref: ComposerReference, extra: { note?: string | undefined; disabledReason?: string | undefined } = {}): ComposerReferenceSuggestion {
   return {
     key: `${referenceIdentity(ref)}`.slice(0, 300),
     trigger: ref.kind === "skill" ? "/" : "@",
@@ -150,6 +155,24 @@ export async function composerSuggestions(
 
 async function skillSuggestions(services: ReferenceServices, query: string): Promise<ComposerSuggestion[]> {
   const skills = services.skills === undefined ? [] : await services.skills.list();
+  const locale = preferredAppIntentLocale(
+    { db: services.runtime.db, now: () => nowInstant() },
+    services.runtime.identity.ownerPrincipalId,
+  );
+  // The node's own commands first, then pi's skills: a command is answered here, a skill is something the turn uses.
+  const commands: Candidate[] = SLASH_COMMANDS.map((command, index) => ({
+    match: command,
+    // One kind of row with the skills, ranked ahead of them, so opening the picker shows every command.
+    recency: index,
+    suggestion: {
+      key: `command:${command}`,
+      trigger: "/",
+      kind: "command",
+      label: command,
+      note: slashCommandNote(command, locale),
+      command,
+    },
+  }));
   const candidates: Candidate[] = skills
     .filter((skill) => skill.name.length <= LABEL_MAX)
     .map((skill) => ({
@@ -159,7 +182,7 @@ async function skillSuggestions(services: ReferenceServices, query: string): Pro
         { note: `${SKILL_SOURCE[skill.source] ?? skill.source} · ${skill.description}` },
       ),
     }));
-  return rankCandidates(candidates, query).map((candidate) => candidate.suggestion);
+  return rankCandidates([...commands, ...candidates], query).map((candidate) => candidate.suggestion);
 }
 
 /**
@@ -177,7 +200,7 @@ export interface MentionSource {
    * Asked only of the rows that will be shown: checking every project on disk on each keystroke would make typing
    * slower the more a person works, and a row that is shown and cannot be chosen says why.
    */
-  unavailable?(services: ReferenceServices, suggestion: ComposerSuggestion): string | undefined;
+  unavailable?(services: ReferenceServices, suggestion: ComposerReferenceSuggestion): string | undefined;
 }
 
 export interface MentionContext {
@@ -185,7 +208,7 @@ export interface MentionContext {
   currentConversationId?: string | undefined;
 }
 
-export type MentionCandidate = Omit<Candidate, "group">;
+export type MentionCandidate = Omit<Candidate, "group" | "suggestion"> & { suggestion: ComposerReferenceSuggestion };
 
 const projectSource: MentionSource = {
   candidates(services) {
@@ -281,7 +304,7 @@ function mentionSuggestions(
   context: MentionContext,
   sources: readonly MentionSource[],
 ): ComposerSuggestion[] {
-  const candidates: Candidate[] = sources.flatMap((source, group) =>
+  const candidates: (MentionCandidate & { group: number })[] = sources.flatMap((source, group) =>
     source.candidates(services, context).map((candidate) => ({ ...candidate, group })),
   );
   return rankCandidates(candidates, query).map((candidate) => {

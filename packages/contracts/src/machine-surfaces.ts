@@ -41,6 +41,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
   // PUT and DELETE /map-tiles/key: the tile provider's key, and the origin it is bound to. Reading whether one is saved,
   // and for which origin, stays reachable.
   if (first === "map-tiles" && second === "key" && segments.length === 2) return verb !== "GET";
+  // Signing in to and out of AI providers, and following a sign-in: whose account the node's models run on is the
+  // person's to decide, and a sign-in's page and codes are theirs to see. Listing which providers are signed in stays
+  // reachable, as the model picker's own catalogue is.
+  if (first === "providers") return !(verb === "GET" && second === "auth" && segments.length === 2);
   if (verb !== "POST") return false;
   switch (segments.length) {
     case 1:

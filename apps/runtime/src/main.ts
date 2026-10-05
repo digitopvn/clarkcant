@@ -214,7 +214,7 @@ async function main(): Promise<void> {
           model: {
             provider: modelTurn.selection.provider,
             id: modelTurn.selection.id,
-            maxWallClockMs: modelTurn.budget.maxWallClockMs,
+            ...(modelTurn.budget.maxWallClockMs === undefined ? {} : { maxWallClockMs: modelTurn.budget.maxWallClockMs }),
             maxTokens: modelTurn.budget.maxTokens,
             ...(modelTurn.selection.thinkingLevel === undefined ? {} : { thinkingLevel: modelTurn.selection.thinkingLevel }),
           },

@@ -213,6 +213,22 @@ const FIXTURES = {
       },
     ],
   },
+  "command-card": {
+    type: "command-card",
+    owner: "host",
+    cardId: "card_cmd",
+    command: "sessions",
+    title: "Phiên làm việc",
+    rows: [
+      {
+        rowId: "conversation:conv_2",
+        label: "sửa lỗi đăng nhập",
+        note: "2026-10-05 09:00",
+        actions: [{ actionId: "open", label: "Mở", action: { kind: "open-conversation", conversationId: "conv_2" } }],
+      },
+    ],
+    updatedAt: AT,
+  },
 };
 
 describe("the text of every host card", () => {

@@ -3,7 +3,7 @@
 > English (default) · [Tiếng Việt](DESIGN.vi.md)
 
 > Status: canonical design direction for UI/UX.
-> Updated: 2026-09-19.
+> Updated: 2026-10-05.
 > Scope: web, desktop, conversation client, voice, host-owned cards, built-in widgets, custom widgets and marketplace.
 
 ## 0. North Star
@@ -30,8 +30,10 @@ If a task can be expressed in chat or voice, the user should not have to find th
 ### 1.1 Conversation is the app
 
 - Do not add a fixed sidebar just to hold navigation.
-- Do not add a session picker to the main UI.
+- Do not add a session picker to the main UI. Past and background sessions are summoned instead (`/sessions` or asking), and arrive as an agent message with a list widget.
 - Do not turn widgets into a parallel dashboard.
+- Hidden is not the goal; summonable is. Everything the user may need — sessions, provider sign-in/out, model and thinking, settings, diagnostics — can be called up in chat, by voice or with a slash command, and appears as an agent message with widget UIs (a mini app). Slash commands, words and voice converge on the same typed action.
+- Answers that benefit from structure are composed as a mini app: asked to compare two models' benchmarks, Clark researches and replies with tables, charts and diagrams wired into one coherent surface, not a wall of text.
 - Settings is a secondary surface, opened over the conversation and closed back to where it was.
 - The marketplace may have a browser surface, but it must open from chat/settings and must not become a second home screen.
 - Every important action must have an equivalent chat and voice path.

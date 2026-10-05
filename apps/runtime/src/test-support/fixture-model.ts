@@ -33,6 +33,8 @@ import {
 } from "@clarkcant/core";
 import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
+
+import { providerAuthPort } from "../application/provider-sign-in.ts";
 import {
   getNotification,
   listArtifactsForConversation,
@@ -3436,6 +3438,9 @@ export function arrangeModelNode(deps: { services: NodeServices; dataDir: string
    * Only when nothing else answered, so a fixture node that does build a model turn keeps its own catalogue.
    */
   services.modelCatalogue ??= () => new FakePiAdapter().catalogue();
+  // And the fake's providers for `/login` and `/logout`: one signed in from the environment, one to sign in to.
+  const fakeProviderAuth = providerAuthPort(new FakePiAdapter());
+  if (fakeProviderAuth !== undefined) services.providerAuth ??= fakeProviderAuth;
 
   // The fake adapter's skills, for the composer's slash: the same list a node with the fake model would offer.
   const skillSource = new FakePiAdapter();
