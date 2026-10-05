@@ -41,6 +41,7 @@ import {
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "./artifact-transfer.ts";
 import { writeBlob } from "./blobs.ts";
+import type { HostText } from "./host-text.ts";
 import type { NodeIdentity } from "./node.ts";
 import { outboundPeerToken } from "./peers.ts";
 import type { TaskOutputFile } from "./task-dispatch.ts";
@@ -366,6 +367,8 @@ export interface ArtifactIntakeDeps {
   newId: (prefix: string) => string;
   /** Say something in a task's conversation: a file that arrived, or did not, after the task's result was said. */
   say: (conversationId: string, text: string, blocks?: readonly MessageBlock[]) => void;
+  /** What is said about a file, in the interface language of this node's owner, read when it is said. */
+  words: () => HostText["files"];
 }
 
 /** Fetches under way, so the same file delivered twice while its bytes are on the way is fetched once. */
@@ -414,7 +417,7 @@ export async function collectTaskArtifact(deps: ArtifactIntakeDeps, taskId: stri
     const at = deps.now();
     if (!fetched.ok) {
       if (!settleReceivedTaskArtifact(deps.db, { taskId, peerArtifactId, at, state: "failed", reason: fetched.message.slice(0, 500) })) return;
-      tellIfSettled(deps, taskId, `Không nhận được tệp ${file.name} từ ${file.peerNodeId} cho task ${taskId}: ${fetched.message}.`);
+      tellIfSettled(deps, taskId, deps.words().failedLater(file.name, file.peerNodeId, taskId, fetched.message));
       return;
     }
     const artifactId = deps.newId("art");
@@ -445,7 +448,7 @@ export async function collectTaskArtifact(deps: ArtifactIntakeDeps, taskId: stri
     );
     const received = getTaskArtifact(deps.db, taskId, "received", peerArtifactId);
     const block = received === undefined ? undefined : artifactBlockFor(received);
-    tellIfSettled(deps, taskId, `Đã nhận tệp ${file.name} từ ${file.peerNodeId} cho task ${taskId}.`, block === undefined ? [] : [block]);
+    tellIfSettled(deps, taskId, deps.words().receivedLater(file.name, file.peerNodeId, taskId), block === undefined ? [] : [block]);
   } catch (cause) {
     process.stderr.write(
       `artifact: ${file.name} for task ${taskId} not taken in — ${cause instanceof Error ? cause.message : String(cause)}\n`,
@@ -480,6 +483,7 @@ export function describeResultArtifacts(
   db: Database,
   taskId: string,
   named: readonly DelegatedArtifact[],
+  say: HostText["files"],
 ): { text: string; blocks: MessageBlock[] } {
   if (named.length === 0) return { text: "", blocks: [] };
   const parts: string[] = [];
@@ -488,16 +492,16 @@ export function describeResultArtifacts(
     const file = getTaskArtifact(db, taskId, "received", one.artifactId);
     const name = file?.name ?? readArtifactName(one.name) ?? one.artifactId;
     if (file === undefined) {
-      parts.push(`chưa nhận được đề nghị gửi ${name}`);
+      parts.push(say.notOffered(name));
     } else if (file.state === "received") {
-      parts.push(`đã nhận ${name}`);
+      parts.push(say.received(name));
       const block = artifactBlockFor(file);
       if (block !== undefined) blocks.push(block);
     } else if (file.state === "accepted") {
-      parts.push(`đang tải ${name} về`);
+      parts.push(say.downloading(name));
     } else {
-      parts.push(`không nhận ${name}: ${file.reason ?? "không rõ lý do"}`);
+      parts.push(say.notTaken(name, file.reason ?? undefined));
     }
   }
-  return { text: `Tệp: ${parts.join("; ")}.`, blocks };
+  return { text: say.summary(parts.join("; ")), blocks };
 }

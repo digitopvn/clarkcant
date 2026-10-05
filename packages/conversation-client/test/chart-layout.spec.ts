@@ -5,6 +5,7 @@ import {
   CHART_PAD,
   chartGeometry,
   chartPoints,
+  defaultLineSeries,
   formatTick,
   formatTicks,
   labelStride,
@@ -363,5 +364,22 @@ describe("axes over values a round step cannot divide", () => {
         expectDrawable(niceSpan(-next, -base), [-next, -base]);
       }
     }
+  });
+});
+describe("the series a line chart draws when nothing chose one", () => {
+  const sampleRows = [{ week: "W36", runs: 128, failures: 6 }];
+
+  it("draws the sample's runs whichever language its unit is written in", () => {
+    expect(defaultLineSeries({ unit: "lần" }, sampleRows)).toBe("runs");
+    expect(defaultLineSeries({ unit: "runs" }, sampleRows)).toBe("runs");
+  });
+
+  it("draws the first numeric column when the unit mentions runs but the rows have no such column", () => {
+    expect(defaultLineSeries({ unit: "test runs" }, [{ day: "Mon", count: 4 }])).toBe("count");
+    expect(defaultLineSeries({ unit: "lần chạy" }, [{ day: "T2", count: 4 }])).toBe("count");
+  });
+
+  it("prefers the series the props name", () => {
+    expect(defaultLineSeries({ series: ["failures"], unit: "runs" }, sampleRows)).toBe("failures");
   });
 });

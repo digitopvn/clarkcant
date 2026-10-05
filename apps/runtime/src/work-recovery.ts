@@ -11,6 +11,7 @@ import {
   upsertEffect,
 } from "@clarkcant/storage";
 
+import { type HostText, hostText } from "./host-text.ts";
 import { isSameProcess, signalTree } from "./process-tree.ts";
 
 /**
@@ -53,6 +54,8 @@ export interface WorkRecoveryDeps {
   policyMode: () => "autonomous" | "guarded" | "ask";
   /** Write one host message into a conversation. */
   report: (conversationId: string, text: string) => void;
+  /** The words those messages are written in, in the owner's interface language; Vietnamese when not given. */
+  text?: HostText;
   /** Submit a background request again under its own work id. Answers whether it was accepted. */
   rerun: (run: WorkRunRecord & { conversationId: string; requestText: string }) => boolean;
   /** A task moved to `uncertain`, for whoever else waits on it: the peer that handed it over, when one did. */
@@ -102,10 +105,7 @@ export function recoverUnfinishedWork(deps: WorkRecoveryDeps): WorkRecoveryRepor
       }
       // Said before the row is closed: a boot that fails between the two says it again rather than never.
       if (run.kind === "command" && run.conversationId !== undefined) {
-        deps.report(
-          run.conversationId,
-          `Lệnh “${run.title}” đang chạy thì node khởi động lại${reaped ? "; tiến trình còn sót của nó đã được dừng" : ""}. Kết quả của lệnh chưa được kiểm chứng — hãy kiểm tra trạng thái trước khi chạy lại, vì lệnh có thể đã làm một phần việc.`,
-        );
+        deps.report(run.conversationId, (deps.text ?? hostText()).tasks.commandInterrupted(run.title, reaped));
       }
       // A task's report comes from the task pass below, which is where its state actually changes.
       setWorkRunState(deps.db, run.workId, "interrupted", at);
@@ -131,7 +131,8 @@ function recoverBackground(
   mode: ReturnType<WorkRecoveryDeps["policyMode"]>,
   at: Instant,
 ): boolean {
-  const where = run.state === "queued" ? "đang chờ đến lượt" : "đang chạy";
+  const say = (deps.text ?? hostText()).background;
+  const queued = run.state === "queued";
   const eligible =
     mode === "autonomous" &&
     !run.effectful &&
@@ -139,16 +140,10 @@ function recoverBackground(
     run.requestText !== undefined &&
     Date.parse(at) - Date.parse(run.startedAt) < RERUN_WINDOW_MS;
   if (eligible && deps.rerun({ ...run, conversationId, requestText: run.requestText as string })) {
-    deps.report(
-      conversationId,
-      `Node vừa khởi động lại khi việc nền “${run.title}” ${where}. Việc này chỉ đọc, không thay đổi gì bên ngoài, nên tui đang chạy lại nó một lần; kết quả sẽ báo ở đây.`,
-    );
+    deps.report(conversationId, say.rebootRerun(run.title, queued));
     return true;
   }
-  deps.report(
-    conversationId,
-    `Node đã khởi động lại khi việc nền “${run.title}” ${where}, nên việc đó chưa xong và chưa có kết quả. Nhắn lại nếu bạn vẫn cần, tui sẽ chạy lại.`,
-  );
+  deps.report(conversationId, say.rebootLost(run.title, queued));
   return false;
 }
 
@@ -202,10 +197,7 @@ function interruptTasks(deps: WorkRecoveryDeps, at: Instant): number {
     } catch {
       // The task's state here says it; a peer that is not told still sees no answer rather than a wrong one.
     }
-    reportSafely(deps,
-      row.conversation_id,
-      `Task “${row.goal.slice(0, 120)}” đang chạy thì node khởi động lại, nên kết quả của nó chưa rõ. Tui đã ghi task là “chưa rõ kết quả” và sẽ không tự chạy lại; hãy kiểm tra hoặc yêu cầu đối chiếu trước khi chạy tiếp.`,
-    );
+    reportSafely(deps, row.conversation_id, (deps.text ?? hostText()).tasks.taskInterrupted(row.goal.slice(0, 120)));
   }
   return moved;
 }

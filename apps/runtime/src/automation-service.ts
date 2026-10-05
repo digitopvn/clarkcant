@@ -13,6 +13,7 @@ import { GITHUB_PROVIDER, githubRepositoryFromRemote, remoteMatchesRepository } 
 import { getPersistentIntent, getSignalDelivery, getTask, setIntentRunState } from "@clarkcant/storage";
 
 import { grantCovering, queueDelegate } from "./delegation.ts";
+import { type HostText, hostText, ownerHostText } from "./host-text.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -63,13 +64,12 @@ function automationSubject(
 }
 
 /** A signal in words a person reads: what happened and to what. */
-export function describeSignal(signal: Signal | undefined): string {
-  if (signal === undefined) return "một tín hiệu";
-  if (signal.source.kind === "timer") return "đến giờ đã hẹn";
+export function describeSignal(signal: Signal | undefined, text: HostText["automation"] = hostText().automation): string {
+  if (signal === undefined) return text.anySignal;
+  if (signal.source.kind === "timer") return text.timer;
   const subject = signal.subject;
   const what = subject?.id === undefined ? "" : ` (${subject.type === undefined ? "" : `${subject.type} `}${subject.id})`;
-  const where = subject?.refs?.repository === undefined ? "" : ` ở ${subject.refs.repository}`;
-  return `${signal.topic}${what}${where}`;
+  return text.signal(signal.topic, what, subject?.refs?.repository);
 }
 
 /**
@@ -169,7 +169,9 @@ export function startAutomationService(
 
   const start = (run: IntentRun): void => {
     const signal = getSignalDelivery(deps.db, run.signalId)?.signal;
-    const because = describeSignal(signal);
+    // Read per run: the owner may have changed their interface language since the service started.
+    const words = ownerHostText(services.runtime).automation;
+    const because = describeSignal(signal, words);
 
     // Checked once, before the task exists: a run whose task was already created passed this before the node stopped.
     const intent = getPersistentIntent(deps.db, run.intentId);
@@ -187,13 +189,13 @@ export function startAutomationService(
             : undefined;
       if (refusal !== undefined) {
         settleIntentRun(deps, run.runId, "failed", refusal);
-        const text = `Việc tự động "${intent.summary}" không chạy cho ${because}: ${refusal}.`;
+        const text = words.refused(intent.summary, because, refusal);
         say(intent.conversationId, text);
         tryRecordNodeNotice(services, {
           sourceKind: "automation",
           category: "alert",
           severity: "warning",
-          title: "Việc tự động bị từ chối",
+          title: words.refusedTitle,
           body: text,
           conversationId: intent.conversationId,
           subject: automationSubject(intent),
@@ -229,11 +231,8 @@ export function startAutomationService(
         sourceKind: "automation",
         category: "alert",
         severity: "error",
-        title: "Việc tự động không bắt đầu được",
-        body:
-          intent === undefined
-            ? `Lần chạy cho ${because} không bắt đầu được: ${reason}. Lần này sẽ không chạy lại.`
-            : `"${intent.summary}" không bắt đầu được cho ${because}: ${reason}. Lần này sẽ không chạy lại; bản thân việc tự động vẫn được giữ nguyên.`,
+        title: words.notStartedTitle,
+        body: words.notStarted(intent?.summary, because, reason),
         ...(intent === undefined
           ? {}
           : {
@@ -253,7 +252,7 @@ export function startAutomationService(
         return;
       case "remind": {
         // Said before it is marked, so a node that stops in between says it again rather than never.
-        say(prepared.intent.conversationId, `Nhắc bạn — ${prepared.intent.summary}: ${prepared.message}`);
+        say(prepared.intent.conversationId, words.remind(prepared.intent.summary, prepared.message));
         tryRecordNodeNotice(services, {
           sourceKind: "automation",
           category: "message",
@@ -272,13 +271,13 @@ export function startAutomationService(
       case "parked": {
         // Left pending, so every tick looks again and the task goes on once something can run it. Said once.
         if (!prepared.newlyParked) return;
-        const text = `Việc tự động "${prepared.intent.summary}" đã khớp ${because}, nhưng đang chờ: ${prepared.reason}. Task ${prepared.taskId} sẽ tiếp tục khi có thứ chạy được nó.`;
+        const text = words.parked(prepared.intent.summary, because, prepared.reason, prepared.taskId);
         say(prepared.intent.conversationId, text);
         tryRecordNodeNotice(services, {
           sourceKind: "automation",
           category: "alert",
           severity: "warning",
-          title: "Việc tự động đang chờ",
+          title: words.parkedTitle,
           body: text,
           conversationId: prepared.intent.conversationId,
           subject: automationSubject(prepared.intent, prepared.taskId),
@@ -293,7 +292,7 @@ export function startAutomationService(
       case "dispatch": {
         // Already marked started, together with the dispatch: from here the task is the dispatcher's to report. Left in
         // the inbox as well, because nobody asked for it just now: work that starts on its own is something to find.
-        const text = `Việc tự động "${prepared.intent.summary}" bắt đầu vì ${because}: task ${prepared.taskId} đang chạy trên ${prepared.executionNodeId}.`;
+        const text = words.started(prepared.intent.summary, because, prepared.taskId, prepared.executionNodeId);
         say(prepared.intent.conversationId, text);
         tryRecordNodeNotice(services, {
           sourceKind: "automation",
@@ -348,12 +347,13 @@ export function startAutomationService(
       fireDueTimers(deps);
       const matched = matchDueSignals(deps);
       for (const dead of matched.dead) {
+        const words = ownerHostText(services.runtime).automation;
         tryRecordNodeNotice(services, {
           sourceKind: "automation",
           category: "alert",
           severity: "warning",
-          title: "Một tín hiệu không xử lý được",
-          body: `${dead.topic}: ${dead.error}. Đã thử lại nhiều lần; tín hiệu được giữ lại nhưng không chạy gì.`,
+          title: words.deadSignalTitle,
+          body: words.deadSignal(dead.topic, dead.error),
           dedupKey: `signal-dead:${dead.signalId}`,
           at: now(),
         });

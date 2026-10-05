@@ -214,6 +214,19 @@ describe("what is still waiting", () => {
     if (!late.ok) expect(late.code).toBe("QUESTION_CLOSED");
   });
 
+  it("labels the expiry record in the reader's language, and in the same Vietnamese when none is named", () => {
+    const labelOf = (language: (() => "vi" | "en") | undefined): unknown => {
+      const { deps, advance, blocks } = fixture();
+      createQuestion(deps, SINGLE);
+      advance(QUESTION_TTL_MS + 1);
+      expireQuestions(language === undefined ? deps : { ...deps, language });
+      const record = blocks.find((block) => block.type === "tool-activity" && block.args.decision === "expired");
+      return record?.type === "tool-activity" ? record.label : undefined;
+    };
+    expect(labelOf(() => "en")).toBe("The question expired");
+    expect(labelOf(undefined)).toBe("Câu hỏi đã hết hạn");
+  });
+
   it("drops a question that was cancelled, and keeps the fact that it was asked", () => {
     const { deps, blocks } = fixture();
     createQuestion(deps, SINGLE);
