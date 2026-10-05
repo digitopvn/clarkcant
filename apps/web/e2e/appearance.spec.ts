@@ -178,6 +178,24 @@ test("on a phone the settings tab strip fades only the edges that have more beyo
   await strip.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
   await expect.poll(fades).toEqual([expect.not.stringMatching(/^0px$/), "0px"]);
 });
+test("on a phone Settings takes the whole screen instead of cutting through the header behind it", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  const dialog = page.locator("[role='dialog']:has(.cc-tabs)");
+  await expect(dialog).toBeVisible();
+  await page.waitForFunction(() =>
+    (document.querySelector("[role='dialog']")?.getAnimations() ?? []).every((animation) => animation.playState === "finished"),
+  );
+  const box = await dialog.boundingBox();
+  expect(Math.round(box!.x)).toBe(0);
+  expect(Math.round(box!.y)).toBe(0);
+  expect(Math.round(box!.width)).toBe(375);
+  expect(Math.round(box!.height)).toBe(812);
+  // Done stays on screen at the bottom, so leaving never needs a scroll.
+  const done = await dialog.locator(".cc-modal-done").boundingBox();
+  expect(done!.y + done!.height).toBeLessThanOrEqual(812);
+});
 test("the start screen is one composition: everything above the composer, and the composer right under it", async ({ page }) => {
   for (const [width, height] of [[1280, 720], [1280, 820], [768, 1024], [375, 812]] as const) {
     await page.setViewportSize({ width, height });

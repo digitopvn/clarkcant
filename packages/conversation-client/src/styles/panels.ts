@@ -1059,6 +1059,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 
 /*
+ * On a phone, Settings is the whole screen. As a centred card 32 px short of the viewport, its top edge cut through
+ * the app's header behind the scrim, so the title, the inbox count and the gear showed as half-hidden shapes above
+ * it, and the card gave up 32 px of width it had nothing to show in. It rises into place rather than settling from
+ * the centre, and keeps clear of a notch or home indicator.
+ */
+@media (max-width: 480px) {
+  .cc-modal:has(> .cc-modal-body > .cc-tabs) {
+    top: 0; left: 0; transform: none;
+    width: 100vw; height: 100dvh; max-height: none;
+    border: none; border-radius: 0;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation-name: cc-sheet-in;
+  }
+  @keyframes cc-sheet-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+}
+/*
  * The tab strip scrolls once the dialog is narrower than its 640 px, which happens below a viewport of 640 px
  * plus the dialog's 16 px gutters, not only at the stacking breakpoint above. Its scrollbar is hidden, so the
  * right edge fades to say there is more. The end padding and scroll padding are as wide as the fade, so the
