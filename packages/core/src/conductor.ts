@@ -769,17 +769,18 @@ export async function handleUserMessage(
       deps,
       input.conversationId,
       [
-        { type: "text", format: "plain", content: "Để làm việc này tui cần thêm một capability chưa có trên máy này.", streaming: false },
+        // Said in the person's terms: what is missing is a model to answer with, not an abstract "capability".
+        { type: "text", format: "plain", content: "Tui chưa trả lời được: máy này chưa có model nào để tui dùng.", streaming: false },
         {
           type: "system-card",
           owner: "host",
           cardId: deps.newId("card"),
           subject: "capability",
-          title: "Cần một capability chưa cài",
+          title: "Chưa có model để trả lời",
           status: "blocked",
           detail:
             // Reached only with no model to fall back on, so the next step is the one that unblocks a conversation.
-            "Chưa có capability nào đang dùng được trên node này, và cũng chưa có model nào để tui trả lời bằng lời, nên task đang chờ. Thêm một model trong Cài đặt → AI & Định tuyến rồi gửi lại; tui sẽ không tự chạy bằng một công cụ tui không có.",
+            "Tin nhắn của bạn vẫn còn đây và việc này đang chờ. Thêm một model trong Cài đặt → AI & Định tuyến rồi gửi lại; tui sẽ không tự làm bằng một công cụ tui không có.",
           fields: [
             { label: "Task", value: task.taskId },
             { label: "Node", value: deps.nodeId },

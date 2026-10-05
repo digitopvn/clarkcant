@@ -294,7 +294,7 @@ test("the agent and a spoken command call the same capability, through the same 
   await expect.poll(() => connector.stats().reads, { timeout: 10_000 }).toBe(readsBefore + 2);
   // The very first sentence was the widget's action: the node knew which widget was open before it heard anything, so
   // no sentence fell through to the agent, which has no such capability of its own to offer.
-  await expect(page.getByText("Cần một capability chưa cài")).toHaveCount(0);
+  await expect(page.locator('[data-host-card="system"][data-subject="capability"][data-status="blocked"]')).toHaveCount(0);
 
   // One trail: every request any of them made went through the node's egress broker with the connection.
   const db = new DatabaseSync(join(DATA_DIR, "node.sqlite"), { readOnly: true });
