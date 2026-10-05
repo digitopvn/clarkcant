@@ -55,6 +55,7 @@ import {
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { hostText } from "./host-text.ts";
 import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
 import {
   type InstructionTouch,
@@ -695,6 +696,9 @@ function flushReasoning(turn: Turn): void {
  * `afterCall` adds to what the model reads back, never to the transcript's record: the conditional instructions a call
  * newly made apply, labelled with where they came from.
  *
+ * `rowLanguage` is the language of the label the call's row shows, read when the call starts. The tool itself keeps
+ * the label it was defined with, since that one is also what the SDK holds.
+ *
  * What of a call's answer the model is then sent is the session's tool-result guard's to decide, in the adapter, after
  * this: the send boundary may withhold a result above the answering model's ceiling. The transcript keeps the result
  * either way — it is the person's.
@@ -702,6 +706,7 @@ function flushReasoning(turn: Turn): void {
 function withActivity(
   turn: Turn,
   tool: ToolDefinition,
+  rowLanguage: () => "vi" | "en",
   afterCall?: (name: string, params: Record<string, unknown>) => string,
 ): ToolDefinition {
   return {
@@ -717,13 +722,14 @@ function withActivity(
       // says next: flushing here is what keeps the transcript in the order the turn actually ran.
       flushText(turn);
       flushReasoning(turn);
-      turn.onEvent?.({ type: "tool-start", toolCallId, name: tool.name, label: tool.label, args: params });
+      const label = hostText(rowLanguage()).toolLabel(tool.name, tool.label);
+      turn.onEvent?.({ type: "tool-start", toolCallId, name: tool.name, label, args: params });
 
       const record = (status: "done" | "failed", result: string): MessageBlock => ({
         type: "tool-activity",
         toolCallId,
         name: tool.name,
-        label: tool.label,
+        label,
         status,
         args: params,
         result: result.slice(0, 20_000),
@@ -1045,6 +1051,9 @@ export async function createModelTurn(options: {
   /**
    * The language the person reads, for the few errors this module words itself (a failed model switch, a preparation
    * that ran out of time). Read when the error is raised; absent is English.
+   *
+   * Also the language of the label a tool call's row shows, read when the call starts; absent is Vietnamese there, as
+   * for all host-written text.
    */
   language?: () => "vi" | "en";
   /**
@@ -1311,6 +1320,14 @@ export async function createModelTurn(options: {
       return options.language?.() ?? "en";
     } catch {
       return "en";
+    }
+  };
+  // The rows tool calls leave are host text, and host text is Vietnamese when no language is named.
+  const rowLanguage = (): "vi" | "en" => {
+    try {
+      return options.language?.() ?? "vi";
+    } catch {
+      return "vi";
     }
   };
   /*
@@ -1661,7 +1678,7 @@ export async function createModelTurn(options: {
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
-    ].map((tool) => withActivity(turn, tool, afterCall));
+    ].map((tool) => withActivity(turn, tool, rowLanguage, afterCall));
     // Recorded on the turn once a session holds these tools: a handoff that fails leaves the previous generation's.
     const registeredTools = customTools.map((tool) => tool.name);
 

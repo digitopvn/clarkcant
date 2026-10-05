@@ -24,7 +24,7 @@ import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
 import { UnreadListingFieldsNote, readUnreadFields } from "./unread-listing-fields.tsx";
-import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
+import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
 /**
  * The Vietnamese catalog lookup, used as the default for cards that accept `t` as a prop rather than
@@ -404,19 +404,25 @@ export function SystemCardBlock({
       const field = fields.find((entry) => entry.label === label);
       return typeof field?.value === "string" ? field.value : undefined;
     };
-    const elapsed = valueOf("Thời gian");
+    // The node writes these fields in the person's interface language, so the card's own labels say which one it is in;
+    // the elapsed time is read in that same language, because this block is drawn without hooks.
+    const english = valueOf("Time") !== undefined;
+    const elapsed = english ? valueOf("Time") : valueOf("Thời gian");
     const summary = [
       valueOf("Provider"),
       valueOf("Model"),
-      // In the card's own language: the node writes these fields in Vietnamese, and this block is drawn without hooks.
-      elapsed === undefined ? undefined : readableElapsed(elapsed, "vi", MESSAGES_VI["settings.ai.turnCap.seconds"]),
+      elapsed === undefined
+        ? undefined
+        : english
+          ? readableElapsed(elapsed, "en", MESSAGES_EN["settings.ai.turnCap.seconds"])
+          : readableElapsed(elapsed, "vi", MESSAGES_VI["settings.ai.turnCap.seconds"]),
     ].filter(
       (value): value is string => value !== undefined,
     );
-    const rest = fields.filter((field) => !["Provider", "Model", "Thời gian"].includes(String(field.label)));
+    const rest = fields.filter((field) => !["Provider", "Model", "Thời gian", "Time"].includes(String(field.label)));
     // Answered by a fallback rather than the model the person chose: the one line says so in a warning tone, because a
     // different model answering is a fact the person should notice without opening anything.
-    const fellBack = valueOf("Model đã chọn") !== undefined;
+    const fellBack = valueOf("Model đã chọn") !== undefined || valueOf("Chosen model") !== undefined;
     return (
       <details
         className="cc-model-note"

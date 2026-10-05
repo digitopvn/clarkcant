@@ -1,4 +1,5 @@
 import {
+  type AppIntentLocale,
   type CapabilityRef,
   type Instant,
   type MessageBlock,
@@ -347,6 +348,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     note?: string;
     data?: string;
     origin?: TurnOrigin;
+    /** The turn's interface language; the host-written parts of a scripted reply follow it. Vietnamese when absent. */
+    locale?: AppIntentLocale;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
     /*
      * A press of an `agent` action button, answered.
@@ -482,7 +485,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         onEvent: (event) => input.emit?.(event),
       });
       const at = instantSchema.parse(new Date().toISOString());
-      return { text: reply.text, block: modelReplyCard(deps.services().conductor, reply, at) };
+      return { text: reply.text, block: modelReplyCard(deps.services().conductor, reply, at, input.locale) };
     }
 
     /*
@@ -3155,6 +3158,31 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       };
       // Which pictures the two leaves show is the node's; the model names only the widgets and what they report.
       const pickPicture = [{ event: "media.select", steps: [{ op: "select-field", key: "picture", field: "selectedIndex" }] }];
+      // The every-kind layout's titles, tab names and labels follow the turn's interface language; Vietnamese by default.
+      const fullLayout =
+        input.locale === "en"
+          ? {
+              title: "Every layout kind",
+              metrics: "Metrics",
+              tabs: "Trend and table",
+              trend: "Trend",
+              chartTab: "Chart",
+              table: "Figures",
+              tableTab: "Table",
+              more: "More: bar chart",
+              bars: "Bars by day",
+            }
+          : {
+              title: "Mọi kiểu bố cục",
+              metrics: "Chỉ số",
+              tabs: "Xu hướng và bảng",
+              trend: "Xu hướng",
+              chartTab: "Biểu đồ",
+              table: "Bảng số liệu",
+              tableTab: "Bảng",
+              more: "Thêm biểu đồ cột",
+              bars: "Cột theo ngày",
+            };
       let nested: Record<string, unknown> = leaf("canvas.metrics@1");
       for (let level = 0; level < 6; level += 1) nested = { kind: "stack", children: [nested] };
       const layout: Record<string, unknown> =
@@ -3179,18 +3207,18 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
             ? {
                 kind: "stack",
                 children: [
-                  { kind: "row", children: [leaf("canvas.metrics@1", { title: "Chỉ số" }), leaf("canvas.filter@1")] },
+                  { kind: "row", children: [leaf("canvas.metrics@1", { title: fullLayout.metrics }), leaf("canvas.filter@1")] },
                   { kind: "divider" },
                   {
                     kind: "tabs",
-                    label: "Xu hướng và bảng",
+                    label: fullLayout.tabs,
                     children: [
-                      leaf("canvas.line@1", { title: "Xu hướng" }, "Biểu đồ"),
-                      leaf("canvas.table@1", { title: "Bảng số liệu" }, "Bảng"),
+                      leaf("canvas.line@1", { title: fullLayout.trend }, fullLayout.chartTab),
+                      leaf("canvas.table@1", { title: fullLayout.table }, fullLayout.tableTab),
                     ],
                   },
                   { kind: "split", children: [leaf("canvas.calendar@1"), leaf("canvas.cta@1")] },
-                  { kind: "collapsible", label: "Thêm biểu đồ cột", children: [leaf("canvas.bar@1", { title: "Cột theo ngày" })] },
+                  { kind: "collapsible", label: fullLayout.more, children: [leaf("canvas.bar@1", { title: fullLayout.bars })] },
                 ],
               }
             : which === "có liên kết"
@@ -3252,7 +3280,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
             layout,
             title:
               which === "đầy đủ"
-                ? "Mọi kiểu bố cục"
+                ? fullLayout.title
                 : which === "có liên kết"
                   ? "Bảng có liên kết"
                   : which === "thẻ trạng thái"

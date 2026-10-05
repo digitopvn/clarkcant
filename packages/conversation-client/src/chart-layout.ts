@@ -129,6 +129,20 @@ function withExponent(value: number, digits: number): string {
   return `${String(Number(mantissa))}e${String(Number(power))}`;
 }
 
+/**
+ * The series a line chart draws when nothing chose one: the props' first named series, then the sample chart's `runs`
+ * when its unit says it counts runs (in either language) and the rows have that column, then the first numeric column.
+ *
+ * The column has to exist: a unit that merely mentions runs ("test runs") over rows keyed otherwise would draw nothing.
+ */
+export function defaultLineSeries(props: Record<string, unknown>, rows: readonly Record<string, unknown>[]): string {
+  if (Array.isArray(props.series) && props.series.length > 0) return String(props.series[0]);
+  const first = rows[0] ?? {};
+  const countsRuns = typeof props.unit === "string" && (props.unit.includes("lần") || props.unit.includes("runs"));
+  if (countsRuns && typeof first.runs === "number") return "runs";
+  return Object.keys(first).find((key) => typeof first[key] === "number") ?? "value";
+}
+
 /** One plotted value and the category it belongs to, kept together so a missing value cannot shift the labels. */
 export interface ChartPoint {
   label: string;

@@ -1,4 +1,5 @@
 import {
+  type AppIntentLocale,
   type AskUserQuestionInput,
   type Instant,
   type MessageBlock,
@@ -13,6 +14,7 @@ import {
 } from "@clarkcant/contracts";
 
 import { fitHead } from "./card-text.ts";
+import { type HostText, hostText } from "./host-text.ts";
 
 /**
  * The one thing the node can be waiting for a person to answer.
@@ -65,6 +67,13 @@ export interface InteractionDeps {
   blocks: () => readonly MessageBlock[];
   /** Append blocks to this conversation. One call per event, so the timeline stays a sequence. */
   append: (input: { at: Instant; blocks: MessageBlock[] }) => void;
+  /** The interface language of the person who reads the records written here, read when one is written. Vietnamese when absent. */
+  language?: () => AppIntentLocale;
+}
+
+/** The labels of the records this module writes, in the reader's language. */
+function questionWords(deps: InteractionDeps): HostText["questions"] {
+  return hostText(deps.language?.()).questions;
 }
 
 export type CreateQuestionResult =
@@ -285,7 +294,7 @@ export function answerQuestion(
       type: "tool-activity",
       toolCallId: deps.newId("call"),
       name: "ask_user_question",
-      label: fitHead(`Trả lời: ${interaction.prompt}`, RECORD_LABEL_MAX),
+      label: fitHead(questionWords(deps).answered(interaction.prompt), RECORD_LABEL_MAX),
       status: "done",
       args: {
         questionId,
@@ -315,7 +324,7 @@ export function answerQuestion(
  * with `decision: "cancelled"` so that `pendingForConversation` stops returning it while the transcript keeps
  * the fact that it was asked and dropped.
  */
-export function cancelQuestion(deps: InteractionDeps, questionId: string, reason = "Người dùng đã bỏ qua câu hỏi này."): boolean {
+export function cancelQuestion(deps: InteractionDeps, questionId: string, reason?: string): boolean {
   const interaction = interactionFor(deps, questionId);
   if (interaction === undefined) return false;
   if (answeredIds(deps.blocks()).has(questionId)) return false;
@@ -327,10 +336,10 @@ export function cancelQuestion(deps: InteractionDeps, questionId: string, reason
         type: "tool-activity",
         toolCallId: deps.newId("call"),
         name: "ask_user_question",
-        label: fitHead(`Bỏ qua: ${interaction.prompt}`, RECORD_LABEL_MAX),
+        label: fitHead(questionWords(deps).skipped(interaction.prompt), RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "cancelled" },
-        result: reason,
+        result: reason ?? questionWords(deps).skippedResult,
         startedAt: interaction.createdAt,
         endedAt: at,
       },
@@ -430,10 +439,10 @@ export function askQuestionAgain(deps: InteractionDeps, questionId: string): Ask
         type: "tool-activity",
         toolCallId: deps.newId("call"),
         name: "ask_user_question",
-        label: fitHead(`Hỏi lại: ${previous.prompt}`, RECORD_LABEL_MAX),
+        label: fitHead(questionWords(deps).askedAgain(previous.prompt), RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "asked-again", askedAs: created.interaction.questionId },
-        result: "Câu hỏi đã hết hạn được hỏi lại.",
+        result: questionWords(deps).askedAgainResult,
         startedAt: at,
         endedAt: at,
       },
@@ -461,6 +470,8 @@ export function expireQuestions(deps: InteractionDeps): string[] {
     if (answered.has(interaction.questionId)) continue;
     if (interaction.expiresAt !== undefined && interaction.expiresAt <= at) expired.push(interaction.questionId);
   }
+  if (expired.length === 0) return expired;
+  const words = questionWords(deps);
   for (const questionId of expired) {
     deps.append({
       at,
@@ -469,10 +480,10 @@ export function expireQuestions(deps: InteractionDeps): string[] {
           type: "tool-activity",
           toolCallId: deps.newId("call"),
           name: "ask_user_question",
-          label: "Câu hỏi đã hết hạn",
+          label: words.expired,
           status: "failed",
           args: { questionId, decision: "expired" },
-          result: "Câu hỏi hết hạn mà không có câu trả lời.",
+          result: words.expiredResult,
           startedAt: at,
           endedAt: at,
         },

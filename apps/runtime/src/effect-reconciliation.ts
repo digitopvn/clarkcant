@@ -1,8 +1,10 @@
-import type { EffectReconcileResponse, Instant } from "@clarkcant/contracts";
+import { type EffectReconcileResponse, type Instant, nowInstant } from "@clarkcant/contracts";
 import { type ReconcileOutcome, type ReconcileSource, quotedEffectIntent, reconcileEffect } from "@clarkcant/core";
 import { dismissNotificationByKey, dismissNotificationsByKeyPrefix, getEffect } from "@clarkcant/storage";
 
+import { preferredAppIntentLocale } from "./app-intents.ts";
 import { unknownEffectFollowUpKey, unknownEffectsNotice } from "./effect-notices.ts";
+import { hostText } from "./host-text.ts";
 import { tryRecordNodeNotice, workerNoticeKey } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -62,7 +64,7 @@ export function reconcileEffectForNode(
       if (settlement !== undefined) {
         taskDispatchReports(services).onSettled({ taskId, conversationId, outcome: settlement.outcome, message: settlement.message });
       } else {
-        appendHostReply(services, { conversationId, text: recordedLine(quotedEffectIntent(effect), input.outcome, taskId, remainingUnknown.length, runGoing), at: input.at });
+        appendHostReply(services, { conversationId, text: recordedLine(services, effect, input.outcome, taskId, remainingUnknown.length, runGoing), at: input.at });
       }
     } catch (cause) {
       // The answer is recorded and the task settled; a conversation that could not be told is a missed line, not a lost answer.
@@ -104,13 +106,14 @@ function resolveNotices(services: EffectReconcileServices, taskId: string, nextU
 }
 
 /** What the conversation hears when the answer is recorded but the task has not settled on it yet. */
-function recordedLine(quoted: string, outcome: ReconcileOutcome, taskId: string, remaining: number, runGoing: boolean): string {
-  const what = outcome === "confirmed" ? "đã có hiệu lực" : "chưa có hiệu lực";
-  const next =
-    remaining > 0
-      ? `Còn ${String(remaining)} thao tác khác của việc này chưa rõ kết quả.`
-      : runGoing
-        ? "Việc vẫn đang chạy; sẽ báo kết quả khi nó xong."
-        : "Việc vẫn giữ ở trạng thái hiện tại.";
-  return `Đã ghi nhận (task ${taskId}): ${quoted} ${what}. ${next}`;
+function recordedLine(
+  services: EffectReconcileServices,
+  effect: Parameters<typeof quotedEffectIntent>[0],
+  outcome: ReconcileOutcome,
+  taskId: string,
+  remaining: number,
+  runGoing: boolean,
+): string {
+  const locale = preferredAppIntentLocale({ db: services.runtime.db, now: nowInstant }, services.runtime.identity.ownerPrincipalId);
+  return hostText(locale).tasks.effectRecorded(taskId, quotedEffectIntent(effect, locale), outcome === "confirmed", remaining, runGoing);
 }

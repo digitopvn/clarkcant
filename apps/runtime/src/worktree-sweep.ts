@@ -2,6 +2,7 @@ import { isTerminal, type Instant } from "@clarkcant/contracts";
 import { findManagedWorktrees, removeEmptyTaskFolder, removeManagedWorktree, type FoundWorktree } from "@clarkcant/project-work";
 import { getTask } from "@clarkcant/storage";
 
+import { ownerHostText } from "./host-text.ts";
 import { recordNodeNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -45,6 +46,7 @@ export async function sweepTaskWorktrees(
     entry.worktrees.push(worktree);
     keptByTask.set(task.taskId, entry);
   }
+  const say = ownerHostText(services.runtime).tasks;
   for (const { task, worktrees } of keptByTask.values()) {
     // Once per task, however many boots find it: the inbox notice is the record that it was said, so a restart that
     // finds the same worktrees again says nothing new. The paths go in the conversation; the inbox does not keep paths.
@@ -54,8 +56,8 @@ export async function sweepTaskWorktrees(
         sourceKind: "worker",
         category: "alert",
         severity: "warning",
-        title: "Worktree còn thay đổi chưa commit",
-        body: `Task ${task.taskId} đã kết thúc nhưng để lại thay đổi chưa commit. Clark giữ nguyên, không xoá gì; vị trí có trong cuộc trò chuyện.`,
+        title: say.worktreeKeptNoticeTitle,
+        body: say.worktreeKeptNoticeBody(task.taskId),
         conversationId: task.conversationId,
         subject: { kind: "task", taskId: task.taskId, conversationId: task.conversationId },
         dedupKey: `worktree-kept:${task.taskId}`,
@@ -68,9 +70,7 @@ export async function sweepTaskWorktrees(
     try {
       appendHostReply(services, {
         conversationId: task.conversationId,
-        text: `Task ${task.taskId} để lại thay đổi chưa commit, nên chúng được giữ nguyên ở ${worktrees
-          .map((worktree) => `${worktree.path} (nhánh ${worktree.branch})`)
-          .join(", ")}.`,
+        text: say.worktreeKept(task.taskId, worktrees),
         at: now(),
       });
     } catch (cause) {

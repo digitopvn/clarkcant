@@ -2,6 +2,7 @@ import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { reportDelegatedOutcome, reportDelegatedStatus } from "./delegation.ts";
 import { unknownEffectsNotice } from "./effect-notices.ts";
+import { ownerHostText } from "./host-text.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -26,21 +27,13 @@ export function taskDispatchReports(
     onWorktreeKept: ({ taskId, conversationId, path, branch }) => {
       appendHostReply(services, {
         conversationId,
-        text: `Task ${taskId} để lại thay đổi chưa commit, nên chúng được giữ nguyên ở ${path} (nhánh ${branch}).`,
+        text: ownerHostText(services.runtime).tasks.worktreeKept(taskId, [{ path, branch }]),
         at: new Date().toISOString() as Instant,
       });
     },
     onSettled: ({ taskId, conversationId, outcome, message, ran, outputs, blocks }: TaskSettledReport) => {
-      const label =
-        outcome === "succeeded"
-          ? "Xong"
-          : outcome === "failed"
-            ? "Không xong"
-            : outcome === "cancelled"
-              ? "Đã hủy"
-              : "Chưa rõ kết quả";
       const at = new Date().toISOString() as Instant;
-      const text = `${label} (task ${taskId}): ${message}`;
+      const text = ownerHostText(services.runtime).tasks.settled(outcome, taskId, message);
       // What came back with it — the files a peer sent — shown right after the words that say it.
       appendHostReply(services, {
         conversationId,
@@ -76,7 +69,7 @@ export function taskDispatchReports(
       const at = new Date().toISOString() as Instant;
       appendHostReply(services, {
         conversationId,
-        text: `Đang chờ bạn duyệt (task ${taskId}): ${message}`,
+        text: ownerHostText(services.runtime).tasks.waitingApproval(taskId, message),
         at,
       });
       // A task a peer handed over: its owner hears it waits here, and that only this node's owner decides.

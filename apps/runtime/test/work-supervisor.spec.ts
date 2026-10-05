@@ -6,12 +6,12 @@ import {
   WorkAbort,
   backgroundDeadlineFromEnv,
   createWorkSupervisor,
-  describeDuration,
   normalizeBackgroundLimit,
   type WorkJournal,
   type WorkSource,
   type WorkView,
 } from "../src/work-supervisor.ts";
+import { hostText } from "../src/host-text.ts";
 
 const AT = "2026-09-24T07:00:00.000Z" as Instant;
 
@@ -266,6 +266,7 @@ describe("the supervisor's settings", () => {
   });
 
   it("says a sub-minute deadline in seconds rather than as zero minutes", () => {
+    const describeDuration = hostText().duration;
     expect(describeDuration(10)).toBe("1 giây");
     expect(describeDuration(30_000)).toBe("30 giây");
     expect(describeDuration(20 * 60_000)).toBe("20 phút");

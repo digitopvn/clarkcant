@@ -85,3 +85,22 @@ test("switching to English translates an approval card and a tool call's chrome"
   // Decided, the card stops asking.
   await expect(card.locator(".cc-card-title").first()).toHaveText("Confirmation request");
 });
+
+/** Any letter only Vietnamese writes. */
+const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;
+
+test("in English, the first suggestion's sample reply is written in English by the node", async ({ page }) => {
+  // The start screen's own chips, not the node's suggestions from earlier specs, so the first chip is the sample chart.
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
+  await openApp(page);
+  await switchToEnglish(page);
+  await page.locator("[data-suggestion]").first().click();
+
+  const reply = page.locator('[data-role="assistant"]').last();
+  // The card that labels the reply as sample data, and the chart's title, are the node's words, not the client's.
+  await expect(reply).toContainText("Sample data / interactive demo", { timeout: 20_000 });
+  await expect(reply).toContainText("Runs per week — sample data");
+  await expect.poll(async () => (await reply.innerText()).match(VIETNAMESE_LETTER)?.[0] ?? "").toBe("");
+});

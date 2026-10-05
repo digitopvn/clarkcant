@@ -2,6 +2,7 @@ import type { WidgetDefinition } from "@clarkcant/contracts";
 
 import { NOTE, TABLE, WIDGETS } from "./index.ts";
 import type { SampleRecipe } from "@clarkcant/core";
+import { type SampleText, sampleText } from "./sample-text.ts";
 
 /**
  * Scripted sample content for journey J1.
@@ -58,7 +59,8 @@ function chartRecipe(input: {
   id: string;
   definitionId: string;
   matches: RegExp;
-  text: string;
+  /** Which of the samples' sentences answers this recipe, in the person's language. */
+  text: keyof Pick<SampleText, "lineChart" | "barChart" | "defaultChart">;
   /** Forwarded to the recipe. Dropping it here silently disabled the catch-all marker. */
   catchAll?: boolean;
 }): SampleRecipe {
@@ -66,24 +68,27 @@ function chartRecipe(input: {
     id: input.id,
     matches: (text) => input.matches.test(text),
     ...(input.catchAll === undefined ? {} : { catchAll: input.catchAll }),
-    build: () => ({
-      definition: chartDefinition(input.definitionId),
-      packageDigest: "sha256:data-canvas-sample-v1",
-      props: { title: "Số lần chạy theo tuần — dữ liệu mẫu", datasetRef: SAMPLE_DATASET.datasetId, unit: "lần" },
-      text: input.text,
-      actions: Object.entries(chartActions).map(([label, proposal]) => ({ label, proposal })),
-    }),
+    build: ({ locale }) => {
+      const say = sampleText(locale);
+      return {
+        definition: chartDefinition(input.definitionId),
+        packageDigest: "sha256:data-canvas-sample-v1",
+        props: { title: say.chartTitle, datasetRef: SAMPLE_DATASET.datasetId, unit: say.chartUnit },
+        text: say[input.text],
+        actions: Object.entries(chartActions).map(([label, proposal]) => ({ label, proposal })),
+      };
+    },
   };
 }
 
 const noteRecipe: SampleRecipe = {
   id: "quick-play.note",
   matches: (text) => /(note|ghi chú|checklist|note nhanh)/i.test(text),
-  build: () => ({
+  build: ({ locale }) => ({
     definition: NOTE_DEFINITION,
     packageDigest: "sha256:data-canvas-sample-v1",
-    props: { title: "Ghi chú của tui", body: "" },
-    text: "Đây là một ghi chú chạy hoàn toàn trên máy bạn. Không có mạng, không có model. Bạn có thể ghim nó lại bằng cách nói \"ghim cái này\".",
+    props: { title: sampleText(locale).noteTitle, body: "" },
+    text: sampleText(locale).note,
     actions: [
       { label: "draft.changed", proposal: { kind: "view", operation: "update-draft", args: {} } },
       { label: "save.requested", proposal: { kind: "view", operation: "save-note", args: {} } },
@@ -94,11 +99,11 @@ const noteRecipe: SampleRecipe = {
 const tableRecipe: SampleRecipe = {
   id: "quick-play.table",
   matches: (text) => /(bảng|table|dữ liệu|dataset|thống kê)/i.test(text),
-  build: () => ({
+  build: ({ locale }) => ({
     definition: TABLE,
     packageDigest: "sha256:data-canvas-sample-v1",
-    props: { title: "Bảng dữ liệu mẫu", datasetRef: SAMPLE_DATASET.datasetId, pageSize: 5 },
-    text: "Bảng dưới đây là **dữ liệu mẫu**, không phải số liệu thật của bạn. Bấm vào một dòng để chọn, hoặc nói cho tui biết bạn muốn xem gì.",
+    props: { title: sampleText(locale).tableTitle, datasetRef: SAMPLE_DATASET.datasetId, pageSize: 5 },
+    text: sampleText(locale).table,
     actions: Object.entries(tableActions).map(([label, proposal]) => ({ label, proposal })),
   }),
 };
@@ -116,13 +121,13 @@ export const QUICK_PLAY_RECIPES: readonly SampleRecipe[] = [
     id: "quick-play.chart.line",
     definitionId: "canvas.line@1",
     matches: /(chart|biểu đồ|đồ thị|xu hướng|trend)/i,
-    text: "Biểu đồ đường trên **dữ liệu mẫu**. Nói \"ghim lại\" nếu bạn muốn giữ nó trong khung chat.",
+    text: "lineChart",
   }),
   chartRecipe({
     id: "quick-play.chart.bar",
     definitionId: "canvas.bar@1",
     matches: /(cột|bar|so sánh)/i,
-    text: "Biểu đồ cột trên **dữ liệu mẫu**.",
+    text: "barChart",
   }),
   chartRecipe({
     id: "quick-play.chart.default",
@@ -132,7 +137,7 @@ export const QUICK_PLAY_RECIPES: readonly SampleRecipe[] = [
     // could possibly send, because it ran before the model was ever consulted.
     catchAll: true,
     matches: /.*/s,
-    text: "Đây là thứ tui có thể làm ngay mà không cần bạn kết nối gì cả: một biểu đồ trên **dữ liệu mẫu**. Muốn làm việc thật thì mình cần cài thêm capability — cứ nói việc bạn muốn làm.",
+    text: "defaultChart",
   }),
 ];
 
