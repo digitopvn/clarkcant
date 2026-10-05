@@ -2,12 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_ALLOWED_DATA_CLASSES,
+  MODEL_DATA_CLASS_UNAVAILABLE,
   allowedDataClassesFor,
+  checkSendBoundary,
+  contractError,
   dataClassOfText,
+  dataClassesOfText,
   estimateTokens,
   intersectDataClasses,
   maxDataClass,
+  outboundDataClasses,
   redactSecrets,
+  retryabilityOf,
   userModelProfileSchema,
 } from "../src/index.ts";
 
@@ -145,5 +151,54 @@ describe("helpers", () => {
   it("estimates four characters a token", () => {
     expect(estimateTokens("")).toBe(0);
     expect(estimateTokens("abcde")).toBe(2);
+  });
+});
+
+describe("the send boundary", () => {
+  it("takes the class of every part separately, skipping empty ones, with known classes added", () => {
+    expect(outboundDataClasses({ texts: ["xin chào", undefined, "  ", "gửi cho duy@example.com"] })).toEqual([
+      "internal",
+      "confidential",
+    ]);
+    expect(outboundDataClasses({ texts: [], classes: ["public"] })).toEqual(["public"]);
+    expect(outboundDataClasses({})).toEqual([]);
+  });
+
+  it("finds every class one text carries, not only its most sensitive", () => {
+    const both = "password: hunter22x, gửi cho duy@example.com";
+    expect(dataClassesOfText(both)).toEqual(["internal", "confidential", "secret"]);
+    expect(dataClassOfText(both)).toBe("secret");
+    expect(dataClassesOfText("xin chào")).toEqual(["internal"]);
+    expect(outboundDataClasses({ texts: [both] })).toEqual(["internal", "confidential", "secret"]);
+  });
+
+  it("lets a request go when every class it carries is allowed, and names the class that stops it when not", () => {
+    expect(checkSendBoundary({ allowed: DEFAULT_ALLOWED_DATA_CLASSES, texts: ["gửi cho duy@example.com"] })).toEqual({
+      ok: true,
+      dataClass: "confidential",
+    });
+    expect(checkSendBoundary({ allowed: DEFAULT_ALLOWED_DATA_CLASSES, texts: ["xin chào", "password: hunter22x"] })).toEqual({
+      ok: false,
+      code: MODEL_DATA_CLASS_UNAVAILABLE,
+      dataClass: "secret",
+      allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+    });
+    // Nothing to send is nothing to stop.
+    expect(checkSendBoundary({ allowed: ["public"], texts: ["", undefined] }).ok).toBe(true);
+  });
+
+  it("checks each class present against an explicit list, not only the most sensitive", () => {
+    // A list that names secret but not confidential does not admit a request carrying confidential data.
+    const check = checkSendBoundary({ allowed: ["public", "internal", "secret"], texts: ["duy@example.com", "password: hunter22x"] });
+    expect(check).toMatchObject({ ok: false, dataClass: "confidential" });
+    expect(checkSendBoundary({ allowed: ["public"], classes: ["internal"] })).toMatchObject({ ok: false, dataClass: "internal" });
+  });
+
+  it("is a policy refusal a person can act on", () => {
+    expect(retryabilityOf(MODEL_DATA_CLASS_UNAVAILABLE)).toBe("after-user-action");
+    expect(contractError(MODEL_DATA_CLASS_UNAVAILABLE, "policy", "not sent")).toMatchObject({
+      code: MODEL_DATA_CLASS_UNAVAILABLE,
+      retryability: "after-user-action",
+    });
   });
 });

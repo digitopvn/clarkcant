@@ -137,10 +137,20 @@ const PERSONAL_SHAPES = new Set(["email", "phone", "home-path", "windows-path"])
  * `public`.
  */
 export function dataClassOfText(text: string): DataClass {
-  let found: DataClass = "internal";
+  return maxDataClass(dataClassesOfText(text));
+}
+
+/**
+ * Every class a text carries, least to most sensitive: `internal` always, plus `confidential` for a personal shape and
+ * `secret` for a credential one. The send boundary checks each against a model's list, which may name a more sensitive
+ * class without a less sensitive one; the most sensitive alone would admit the other.
+ */
+export function dataClassesOfText(text: string): readonly DataClass[] {
+  const found = new Set<DataClass>(["internal"]);
   for (const shape of SECRET_SHAPES) {
     const credential = CREDENTIAL_SHAPES.has(shape.label);
-    if (!credential && (!PERSONAL_SHAPES.has(shape.label) || found === "confidential")) continue;
+    const dataClass: DataClass | undefined = credential ? "secret" : PERSONAL_SHAPES.has(shape.label) ? "confidential" : undefined;
+    if (dataClass === undefined || found.has(dataClass)) continue;
     const matches = text.match(new RegExp(shape.pattern.source, shape.pattern.flags)) ?? [];
     const hit =
       shape.label === "prefixed-token"
@@ -148,11 +158,61 @@ export function dataClassOfText(text: string): DataClass {
         : shape.label === "named-secret"
           ? matches.some(looksAssigned)
           : matches.length > 0;
-    if (!hit) continue;
-    if (credential) return "secret";
-    found = "confidential";
+    if (hit) found.add(dataClass);
   }
-  return found;
+  return DATA_CLASSES.filter((value) => found.has(value));
+}
+
+/**
+ * The classes one provider request carries: each text part classified on its own, plus classes already known for parts
+ * whose text is not at hand here (a retrieved bundle labelled when it was built). Empty parts carry nothing. Least to
+ * most sensitive, each once.
+ *
+ * Parts are classified separately rather than joined, so a shape can never be made up of the end of one part and the
+ * start of the next.
+ */
+export function outboundDataClasses(input: {
+  texts?: Iterable<string | undefined>;
+  classes?: Iterable<DataClass>;
+}): readonly DataClass[] {
+  const present = new Set<DataClass>(input.classes ?? []);
+  for (const text of input.texts ?? []) {
+    if (text === undefined || text.trim() === "") continue;
+    for (const value of dataClassesOfText(text)) present.add(value);
+  }
+  return DATA_CLASSES.filter((value) => present.has(value));
+}
+
+/** What the send-boundary check answers when nothing may be sent: the code every surface reports it under. */
+export const MODEL_DATA_CLASS_UNAVAILABLE = "MODEL_DATA_CLASS_UNAVAILABLE";
+
+/**
+ * Whether a request may be sent to a model, and if not, which class stops it.
+ *
+ * `dataClass` is the most sensitive class the request carries when it may go, and the most sensitive class the model
+ * may not receive when it may not: the one a person has to change something about. Never the text.
+ */
+export type SendBoundaryCheck =
+  | { ok: true; dataClass: DataClass }
+  | { ok: false; code: typeof MODEL_DATA_CLASS_UNAVAILABLE; dataClass: DataClass; allowed: readonly DataClass[] };
+
+/**
+ * The send boundary: every class a request carries must be one the receiving model may be sent.
+ *
+ * The one check every path to a provider uses — routing, a fallback, a rebuilt or handed-over session, a background run,
+ * a dispatched worker and the tool results fed back into a run. Permission is an explicit list (see above), so each class
+ * present is checked, not only the most sensitive: a list naming `secret` but not `confidential` does not admit a
+ * request carrying both. Deterministic and cheap, so it runs again immediately before a send whatever ran before it.
+ */
+export function checkSendBoundary(input: {
+  allowed: readonly DataClass[];
+  texts?: Iterable<string | undefined>;
+  classes?: Iterable<DataClass>;
+}): SendBoundaryCheck {
+  const present = outboundDataClasses(input);
+  const refused = present.filter((value) => !input.allowed.includes(value));
+  if (refused.length === 0) return { ok: true, dataClass: maxDataClass(present) };
+  return { ok: false, code: MODEL_DATA_CLASS_UNAVAILABLE, dataClass: maxDataClass(refused), allowed: input.allowed };
 }
 
 /** A rough token count: four characters a token, the same assumption the cache-economics harness prints. */

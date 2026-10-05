@@ -55,7 +55,7 @@ import {
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
-import { type ContextSource, readContextTool } from "./context-bundle.ts";
+import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
 import {
   type InstructionTouch,
   type TurnInstructions,
@@ -64,6 +64,14 @@ import {
   touchOfToolCall,
 } from "./conditional-instructions.ts";
 import { legacyRecap, planRecap } from "./context-planner.ts";
+import {
+  dataClassUnavailable,
+  dataClassUnavailableText,
+  enforceSendBoundary,
+  isDataClassUnavailable,
+  modelName,
+  withheldToolResult,
+} from "./send-boundary.ts";
 import {
   SESSION_POLICY_LIMITS,
   type SessionDecision,
@@ -145,7 +153,9 @@ export interface BackgroundRunInput {
 
 /**
  * Why background work runs on the configured model for a reason worth recording, rather than because the node simply
- * routes nothing: no model in the pool may receive the work's data class, or the route itself failed.
+ * routes nothing: no model in the pool may receive the work's data class, or the route itself failed. Either way the
+ * configured model runs it only because it may itself receive the work; when it may not, nothing runs
+ * (`MODEL_DATA_CLASS_UNAVAILABLE`).
  */
 export type BackgroundFallback = { reason: "data-class"; dataClass: DataClass } | { reason: "route-failed" };
 
@@ -194,6 +204,9 @@ export interface ModelTurn {
    * ask for something else while the assistant is busy, and it is deliberately not part of the turn machinery -
    * nothing here touches `turns` or the in-flight marker, so a background request cannot make the conversation look
    * busy or steal the turn that is running.
+   *
+   * Rejects with `MODEL_DATA_CLASS_UNAVAILABLE` (`DataClassUnavailable`), before any session exists, when neither the
+   * routed nor the configured model may receive what the run would send.
    */
   runInBackground: (input: BackgroundRunInput) => Promise<string>;
 
@@ -203,6 +216,9 @@ export interface ModelTurn {
    * The same choice `runInBackground` makes, because a dispatched worker is background work too and nobody is watching
    * it: the policy layer's route among the node's pool when it gives one, else the model this node runs now (the
    * person's pick, else the environment's). Never a separate setting, so there is one place that decides.
+   *
+   * Either one only if it may receive `work.dataClass`: when neither may, this throws `MODEL_DATA_CLASS_UNAVAILABLE`
+   * (`DataClassUnavailable`) and the task's worker is never started.
    */
   workerModel: (
     work?: { dataClass?: DataClass },
@@ -643,8 +659,16 @@ function flushReasoning(turn: Turn): void {
 /**
  * `afterCall` adds to what the model reads back, never to the transcript's record: the conditional instructions a call
  * newly made apply, labelled with where they came from.
+ *
+ * `toModel` decides what of a call's answer the model is sent back, after everything else: the send boundary, which may
+ * withhold a result above the answering model's ceiling. The transcript keeps the result either way — it is the person's.
  */
-function withActivity(turn: Turn, tool: ToolDefinition, afterCall?: (name: string, params: Record<string, unknown>) => string): ToolDefinition {
+function withActivity(
+  turn: Turn,
+  tool: ToolDefinition,
+  afterCall?: (name: string, params: Record<string, unknown>) => string,
+  toModel: (text: string) => string = (text) => text,
+): ToolDefinition {
   return {
     ...tool,
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
@@ -686,7 +710,12 @@ function withActivity(turn: Turn, tool: ToolDefinition, afterCall?: (name: strin
         }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
         const extra = afterCall?.(tool.name, params) ?? "";
-        return extra === "" ? answer : { ...answer, text: `${answer.text}\n\n${extra}` };
+        const full = extra === "" ? answer.text : `${answer.text}\n\n${extra}`;
+        const sent = toModel(full);
+        if (sent === full) return { ...answer, text: sent };
+        // Withheld: nothing else of this call's answer goes to the model either, a picture included.
+        const { image: _withheld, ...rest } = answer;
+        return { ...rest, text: sent };
       } catch (cause) {
         // Returned rather than re-thrown, which is what `show_view` already does by hand: the model
         // gets the reason in the same turn and can correct itself, instead of the turn failing with
@@ -694,7 +723,7 @@ function withActivity(turn: Turn, tool: ToolDefinition, afterCall?: (name: strin
         const message = cause instanceof Error ? cause.message : String(cause);
         turn.onEvent?.({ type: "tool-end", toolCallId, status: "failed", result: message });
         turn.segments.push({ kind: "block", block: record("failed", message) });
-        return { text: `${tool.name} lỗi: ${message}` };
+        return { text: toModel(`${tool.name} lỗi: ${message}`) };
       }
     },
   };
@@ -1267,6 +1296,11 @@ export async function createModelTurn(options: {
       : `No model could answer this message — ${list}. ` +
           "Your message is saved and the conversation is unchanged. Retry later, or choose another model in Settings.";
   };
+  /** The models that refused a message before the one it could not be sent to: each one and why. */
+  const refusedBefore = (tried: readonly { model: string; reason: string }[]): string => {
+    const list = tried.map((entry) => `${entry.model}: ${entry.reason}`).join("; ");
+    return language() === "vi" ? `Model đã chọn không trả lời — ${list}.` : `The chosen model did not answer — ${list}.`;
+  };
   const startFailed = (model: string, reason: string): string =>
     language() === "vi"
       ? `Không bắt đầu được cuộc trò chuyện này trên ${model}: ${reason}. ` +
@@ -1345,15 +1379,17 @@ export async function createModelTurn(options: {
 
   /*
    * What a model may be sent (#433). A pool that cannot be read is answered with `public` alone, which nothing the
-   * conversation holds is: the turn runs without retrieved context rather than with a guess at what was allowed.
+   * conversation holds is: rather than a guess at what was allowed, nothing is sent, and the person is told the ceiling
+   * could not be read (`read: false`) rather than that it refused.
    */
-  const allowedFor = (model: { provider: string; id: string }): readonly DataClass[] => {
+  const ceilingOf = (model: { provider: string; id: string }): { allowed: readonly DataClass[]; read: boolean } => {
     try {
-      return options.allowedDataClasses?.(model) ?? DEFAULT_ALLOWED_DATA_CLASSES;
+      return { allowed: options.allowedDataClasses?.(model) ?? DEFAULT_ALLOWED_DATA_CLASSES, read: true };
     } catch {
-      return ["public"];
+      return { allowed: ["public"], read: false };
     }
   };
+  const allowedFor = (model: { provider: string; id: string }): readonly DataClass[] => ceilingOf(model).allowed;
 
   /*
    * The one routing step for background work, shared by a background run and a dispatched worker so both treat a failed
@@ -1374,6 +1410,25 @@ export async function createModelTurn(options: {
     if ("fallback" in route) return { fallback: route.fallback };
     return { routed: { provider: route.provider, id: route.id } };
   };
+
+  /** The models background work may run on, in the order they are tried: the routed one, then the configured one. */
+  const backgroundCandidates = (
+    routed: { provider: string; id: string } | undefined,
+    configured: ModelSelection,
+  ): ModelSelection[] =>
+    routed === undefined ? [configured] : modelKey(routed) === modelKey(configured) ? [routed] : [routed, configured];
+
+  /** A background run's tool, whose results reach the model only when it may receive them. */
+  const guardedTool = (tool: ToolDefinition, model: ModelSelection, allowed: readonly DataClass[]): ToolDefinition => ({
+    ...tool,
+    execute: async (params: Record<string, unknown>) => {
+      const answer = await tool.execute(params);
+      const check = enforceSendBoundary({ path: "tool-result", model, allowed, texts: [answer.text] });
+      if (check.ok) return answer;
+      const { image: _withheld, ...rest } = answer;
+      return { ...rest, text: withheldToolResult({ dataClass: check.dataClass, model: modelName(model) }) };
+    },
+  });
 
   /**
    * The one tool.
@@ -1536,12 +1591,22 @@ export async function createModelTurn(options: {
       rememberTouch(turn.touched, touch);
       return stateInstructions(turn, conversationId, true);
     };
+    /*
+     * What a call's result is sent back to the model as: the result itself when the model answering may receive every
+     * class it carries, else a note that it was withheld. Checked against the model the conversation runs when the call
+     * returns, so a handoff since the session was created is the model checked.
+     */
+    const toModel = (text: string): string => {
+      const model = runningModel(conversationId);
+      const check = enforceSendBoundary({ path: "tool-result", model, allowed: turn.allowed, texts: [text] });
+      return check.ok ? text : withheldToolResult({ dataClass: check.dataClass, model: modelName(model) });
+    };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
-    ].map((tool) => withActivity(turn, tool, afterCall));
+    ].map((tool) => withActivity(turn, tool, afterCall, toModel));
     // Recorded on the turn once a session holds these tools: a handoff that fails leaves the previous generation's.
     const registeredTools = customTools.map((tool) => tool.name);
 
@@ -1738,6 +1803,10 @@ export async function createModelTurn(options: {
     // A spoken turn is answered as speech: typed words never join it, they wait for a turn of their own. Read after the
     // preparation, which is when the turn's channel is set.
     if (turn.channel === "voice") return false;
+    // A sentence the running model may not receive does not join its run: it becomes a turn of its own, which refuses it
+    // with the reason rather than sending it.
+    const model = runningModel(turn.conversationId);
+    if (!enforceSendBoundary({ path: "steer", model, allowed: turn.allowed, texts: [text] }).ok) return false;
     // Recorded in the same tick as the check above, so the turn's last look for queued steers cannot miss it.
     const sending = adapter.steer(turn.sessionId, text);
     turn.steersPending.add(sending);
@@ -1984,8 +2053,10 @@ export async function createModelTurn(options: {
       // prompt that carries it is sent, so a preparation that fails leaves the recap for the next turn.
       const fresh = turn.fresh;
       // What the model this conversation runs may be sent (#433), read now: the recap and the memory brief withhold
-      // anything of another class before a selector or the provider sees it.
-      const allowed = allowedFor(chosenModel() ?? selection);
+      // anything of another class before a selector or the provider sees it. The model the claim left the conversation
+      // on — after any handoff, rebuild or fallback — which is the one the prompt goes to.
+      const ceiling = ceilingOf(runsOn());
+      const allowed = ceiling.allowed;
       turn.allowed = allowed;
 
       let recap: { text: string; earlier: string };
@@ -2064,6 +2135,10 @@ export async function createModelTurn(options: {
         [recap.text, statesNonce ? instructionsNonceNote(turn.instructionNonce) : ""].filter((part) => part !== "").join("\n\n"),
         input.note,
       );
+      // What the session had been told before this prompt was put together, so a prompt that is not sent leaves the
+      // session's record as it was: nothing in it reached the model.
+      const statedBefore = [...turn.stated];
+      const seenBefore = [...turn.uiSeen];
       // Project guidance whose condition holds goes with the brief, after the person's words and labelled with its
       // source: a pinned one every turn, an unpinned one the first time this session hears it.
       const instructionPart = stateInstructions(turn, input.conversationId, false);
@@ -2084,6 +2159,35 @@ export async function createModelTurn(options: {
       // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.
       const data = [input.data ?? "", recap.earlier].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
       const ui = uiNoteFor(turn, input.conversationId);
+
+      /*
+       * The send boundary, on everything this prompt carries: the person's words, the host's guidance with the recap,
+       * the attachments, memory, references and project instructions, the data and the screen. Narrowing withheld what it
+       * could above; what is left is checked against the model the prompt goes to, and a prompt it may not receive is not
+       * sent. The person's choice of model is not changed and no other model is tried for it here: a fallback is for a
+       * model that refused, and one that would answer only after a send is not a reason to send.
+       */
+      const boundary = enforceSendBoundary({
+        path: "turn",
+        model: runsOn(),
+        allowed,
+        texts: [input.text, note, brief, data, ui],
+      });
+      if (!boundary.ok) {
+        turn.stated.clear();
+        for (const id of statedBefore) turn.stated.add(id);
+        turn.uiSeen = new Map(seenBefore);
+        throw dataClassUnavailable({
+          dataClass: boundary.dataClass,
+          model: modelName(runsOn()),
+          message: dataClassUnavailableText(language(), {
+            dataClass: boundary.dataClass,
+            model: modelName(runsOn()),
+            subject: "message",
+            ...(ceiling.read ? {} : { unread: true }),
+          }),
+        });
+      }
 
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
@@ -2356,9 +2460,32 @@ export async function createModelTurn(options: {
       work?: { dataClass?: DataClass },
     ): Promise<ModelSelection & { via: "routed" | "configured"; fallback?: BackgroundFallback }> => {
       const { routed, fallback } = await routeBackground(work ?? {});
-      if (routed !== undefined) return { provider: routed.provider, id: routed.id, via: "routed" };
       const current = options.model?.() ?? selection;
-      return { ...current, via: "configured", ...(fallback === undefined ? {} : { fallback }) };
+      const classes = work?.dataClass === undefined ? [] : [work.dataClass];
+      /*
+       * The routed model, else the configured one — each only if it may receive what the task carries. A route that
+       * failed, or found nothing, is an availability fallback; it never widens what a model may be sent, so the
+       * configured model passes the same check or the task does not start on it.
+       */
+      let blocked: DataClass | undefined;
+      for (const candidate of backgroundCandidates(routed, current)) {
+        const check = enforceSendBoundary({ path: "worker-route", model: candidate, allowed: allowedFor(candidate), classes });
+        if (!check.ok) {
+          blocked = check.dataClass;
+          continue;
+        }
+        if (routed !== undefined && candidate === routed) return { provider: routed.provider, id: routed.id, via: "routed" };
+        // A routed model refused by the check is the reason routing would have given had it known.
+        const reason: BackgroundFallback | undefined =
+          fallback ?? (blocked === undefined ? undefined : { reason: "data-class", dataClass: blocked });
+        return { ...current, via: "configured", ...(reason === undefined ? {} : { fallback: reason }) };
+      }
+      const dataClass = blocked ?? "secret";
+      throw dataClassUnavailable({
+        dataClass,
+        model: modelName(current),
+        message: `no model this node could start the worker on may receive ${dataClass} data (${modelName(current)} may not), so nothing was sent`,
+      });
     },
 
     configuredModel: (): ModelSelection => {
@@ -2388,12 +2515,45 @@ export async function createModelTurn(options: {
         dataClassOfText(`${input.text}\n${input.data ?? ""}`),
         ...(context === undefined ? [] : [context.dataClass]),
       ]);
-      // A route that fails is a run on the configured model, the same as one that found nothing eligible.
+      // A route that fails is a run on the configured model, the same as one that found nothing eligible — if that model
+      // may receive what the run sends.
       const { routed } = await routeBackground({ dataClass });
-      const runsOn = routed ?? options.model?.() ?? selection;
-      const allowed = allowedFor(runsOn);
-      const narrowed = context?.readerFor(allowed);
-      const reader = narrowed === undefined || narrowed.items === 0 ? undefined : narrowed;
+      const configured = options.model?.() ?? selection;
+      /*
+       * The routed model, else the configured one, each with the retrieved context narrowed to what it may receive and
+       * then checked on everything the run sends it: the request, the caller's data and the list of what was retrieved.
+       * Narrowing keeps most runs under the ceiling; the check is what holds when the request itself is above it. No
+       * eligible model is a run that does not start, never one on a model that may not receive it.
+       */
+      let prepared:
+        | { runsOn: ModelSelection; allowed: readonly DataClass[]; reader: ContextReader | undefined; retrieved: string }
+        | undefined;
+      let blocked: { dataClass: DataClass; model: ModelSelection } | undefined;
+      for (const candidate of backgroundCandidates(routed, configured)) {
+        const allowed = allowedFor(candidate);
+        const narrowed = context?.readerFor(allowed);
+        const reader = narrowed === undefined || narrowed.items === 0 ? undefined : narrowed;
+        // The list of what was retrieved goes with the data, after the caller's own: material, not a goal. An item is read
+        // in full only when the run asks for it.
+        const listed = reader?.answer({});
+        const retrieved = listed?.kind === "done" ? listed.text : "";
+        const check = enforceSendBoundary({ path: "background", model: candidate, allowed, texts: [input.text, input.data, retrieved] });
+        if (check.ok) {
+          prepared = { runsOn: candidate, allowed, reader, retrieved };
+          break;
+        }
+        blocked ??= { dataClass: check.dataClass, model: candidate };
+      }
+      if (prepared === undefined) {
+        const blockedClass = blocked?.dataClass ?? "secret";
+        const model = modelName(blocked?.model ?? configured);
+        throw dataClassUnavailable({
+          dataClass: blockedClass,
+          model,
+          message: dataClassUnavailableText(language(), { dataClass: blockedClass, model, subject: "background" }),
+        });
+      }
+      const { runsOn, allowed, reader, retrieved } = prepared;
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
@@ -2401,7 +2561,7 @@ export async function createModelTurn(options: {
         // retrieved from this conversation for this request, and nothing else.
         projectRoots: [],
         allowedCapabilityRefs: [],
-        ...(reader === undefined ? {} : { customTools: [readContextTool(reader)] }),
+        ...(reader === undefined ? {} : { customTools: [guardedTool(readContextTool(reader), runsOn, allowed)] }),
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
         // which is exactly why the model for it is a decision rather than a setting. Named even when nothing was routed,
         // so the model that runs is the one whose data classes narrowed what it reads, not the adapter's boot default.
@@ -2423,10 +2583,6 @@ export async function createModelTurn(options: {
       try {
         // Created before the signal could be observed, so an abort that landed during creation is honoured here.
         signal?.throwIfAborted();
-        // The list of what was retrieved goes with the data, after the caller's own: material, not a goal. An item is read
-        // in full only when the run asks for it.
-        const listed = reader?.answer({});
-        const retrieved = listed?.kind === "done" ? listed.text : "";
         const data = [input.data ?? "", retrieved].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
         await adapter.prompt(handle.sessionId, promptForTurn({ text: input.text, ...(data === "" ? {} : { data }) }));
         // A prompt that settles quietly after an abort is still a stopped run, not a result to report.
@@ -2468,6 +2624,18 @@ export async function createModelTurn(options: {
           try {
             reply = await answerHeld(input);
           } catch (cause) {
+            /*
+             * The fallback this refusal moved to may not receive what the message carries: the send boundary holds on a
+             * fallback as on the chosen model, so nothing went to it. The person hears both — why the chosen model did
+             * not answer, and why the fallback was not sent the message — under the same not-sent outcome.
+             */
+            if (isDataClassUnavailable(cause) && tried.length > 0) {
+              throw dataClassUnavailable({
+                dataClass: cause.dataClass,
+                model: cause.model,
+                message: `${refusedBefore(tried)} ${cause.contract.message}`,
+              });
+            }
             if (!(cause instanceof ProviderRefusal)) throw cause;
             tried.push({ model: cause.model, reason: cause.reason });
             refusals.set(cause.model, { reason: cause.reason, untilMs: Date.now() + REFUSAL_COOLDOWN_MS });

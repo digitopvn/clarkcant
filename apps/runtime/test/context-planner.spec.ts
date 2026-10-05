@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ConversationId, DataClass, Principal } from "@clarkcant/contracts";
+import { type ConversationId, type DataClass, type Principal, ContractViolation } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
@@ -537,11 +537,18 @@ describe("the model turn hands the turn's text to the planner", () => {
 
   it("passes the ceiling of the model that answers, and the narrowest when it cannot be read", async () => {
     const asked: unknown[] = [];
-    const run = async (allowedDataClasses: () => readonly DataClass[]): Promise<void> => {
+    const sent: string[] = [];
+    const run = async (allowedDataClasses: () => readonly DataClass[]): Promise<string | undefined> => {
+      const adapter = new FakePiAdapter({ script: ["một"] });
+      const prompt = adapter.prompt.bind(adapter);
+      vi.spyOn(adapter, "prompt").mockImplementation(async (sessionId, text) => {
+        sent.push(text);
+        await prompt(sessionId, text);
+      });
       const turn = await createModelTurn({
         env: ENV,
         cwd: process.cwd(),
-        adapter: new FakePiAdapter({ script: ["một"] }),
+        adapter,
         history: async () => [{ role: "user", text: "trước đó" }],
         allowedDataClasses,
         recapPlanner: async ({ allowed }) => {
@@ -553,12 +560,22 @@ describe("the model turn hands the turn's text to the planner", () => {
           return "";
         },
       });
-      await turn!.answer({ conversationId: "c1" as ConversationId, principal: PRINCIPAL_, text: "x", messageId: "m1" });
+      return await turn!
+        .answer({ conversationId: "c1" as ConversationId, principal: PRINCIPAL_, text: "x", messageId: "m1" })
+        .then(
+          () => undefined,
+          (cause: unknown) => (cause instanceof ContractViolation ? cause.contract.code : String(cause)),
+        );
     };
-    await run(() => ["public", "internal"]);
-    await run(() => {
-      throw new Error("pool unreadable");
-    });
+    expect(await run(() => ["public", "internal"])).toBeUndefined();
+    // A ceiling that cannot be read is the narrowest for what is gathered, and the person's own words (`internal`) are
+    // above it: the turn is not sent rather than sent on a guess.
+    expect(
+      await run(() => {
+        throw new Error("pool unreadable");
+      }),
+    ).toBe("MODEL_DATA_CLASS_UNAVAILABLE");
+    expect(sent).toHaveLength(1);
     // Read side by side, so in either order within a turn.
     expect(asked.slice(0, 2)).toEqual(expect.arrayContaining([{ recap: ["public", "internal"] }, { memory: ["public", "internal"] }]));
     expect(asked.slice(2)).toEqual(expect.arrayContaining([{ recap: ["public"] }, { memory: ["public"] }]));

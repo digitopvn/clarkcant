@@ -5,6 +5,7 @@ import {
   type UserModelProfile,
   DEFAULT_ALLOWED_DATA_CLASSES,
   allowedDataClassesFor,
+  checkSendBoundary,
   intersectDataClasses,
 } from "@clarkcant/contracts";
 
@@ -19,6 +20,10 @@ import {
  * and a fallback that always exists.** Every filter below is a fact the node can check, so the policy layer is only
  * ever asked to choose among models that can actually run — and when it cannot be reached, a worker still starts.
  * Routing that could fail a task is worse than routing that is occasionally unambitious.
+ *
+ * The one exception is the data class: availability may fall back, trust may not. A profile that may not be sent the
+ * work is not a candidate, and the model a fallback lands on is held to the same check before anything is sent to it
+ * (`send-boundary.ts`), so work no eligible model may receive does not start rather than starting anywhere.
  */
 
 export interface ModelCandidate {
@@ -62,6 +67,14 @@ export interface FilterOutcome {
   eligible: ModelCandidate[];
   /** Every profile that was left out, with the reason — so a panel can say why the pool is not being used. */
   rejected: { alias: string; reason: string }[];
+}
+
+/**
+ * Whether a profile may be sent work of this class: the send boundary's own check, so routing and sending can never
+ * disagree about a profile. No class is work nothing has labelled, which any profile may take.
+ */
+export function profileMayReceive(profile: UserModelProfile, dataClass: DataClass | undefined): boolean {
+  return dataClass === undefined || checkSendBoundary({ allowed: allowedDataClassesFor(profile), classes: [dataClass] }).ok;
 }
 
 function candidateFor(profile: UserModelProfile): ModelCandidate {
@@ -108,7 +121,7 @@ function filterByCapability(
       rejected.push({ alias: profile.alias, reason: `không nhận vai trò ${role}` });
       continue;
     }
-    if (input.dataClass !== undefined && !allowedDataClassesFor(profile).includes(input.dataClass)) {
+    if (!profileMayReceive(profile, input.dataClass)) {
       rejected.push({ alias: profile.alias, reason: `không được nhận dữ liệu mức ${input.dataClass}` });
       continue;
     }

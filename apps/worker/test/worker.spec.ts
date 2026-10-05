@@ -162,6 +162,68 @@ describe("project instructions in the brief", () => {
   });
 });
 
+describe("what the worker's model may be sent", () => {
+  /** Assembled from parts, so a secret scanner reading this file sees no credential. */
+  const SECRET_VALUE = ["hunter", "22x"].join("");
+  const SECRET = `${["pass", "word"].join("")}: ${SECRET_VALUE}`;
+  const CEILING = ["public", "internal", "confidential"] as const;
+
+  it("withholds a tool result above the model's ceiling from the model, and keeps its digest but not its text", async () => {
+    const adapter = new FakePiAdapter();
+    let seen = "";
+    const result = await runWorker(
+      brief({ allowedDataClasses: [...CEILING] }),
+      deps(adapter, [stubTool({ execute: async () => ({ text: `config: ${SECRET}` }) })], {
+        drive: async (sessionId) => {
+          seen = await adapter.callTool(sessionId, "read_report", {});
+        },
+      }),
+    );
+    expect(seen).not.toContain(SECRET_VALUE);
+    expect(seen).toContain("carries secret data");
+    const evidence = result.record.evidence[0];
+    expect(evidence?.summary).toBe("read_report reported secret data, withheld from the model");
+    expect(evidence?.digest).toBeDefined();
+    expect(JSON.stringify(result.record)).not.toContain(SECRET_VALUE);
+  });
+
+  it("passes a result the model may receive, and checks nothing for a host that sent no ceiling", async () => {
+    const adapter = new FakePiAdapter();
+    const seen: string[] = [];
+    const drive = async (sessionId: string): Promise<void> => {
+      seen.push(await adapter.callTool(sessionId, "read_report", {}));
+    };
+    await runWorker(brief({ allowedDataClasses: [...CEILING] }), deps(adapter, [stubTool()], { drive }));
+    await runWorker(brief({ runId: "run_2" }), deps(adapter, [stubTool({ execute: async () => ({ text: SECRET }) })], { drive }));
+    expect(seen).toEqual(["body-1", SECRET]);
+  });
+
+  it("starts no session for a brief whose goal or guidance its model may not be sent", async () => {
+    for (const overrides of [{ goal: `Đăng nhập bằng ${SECRET}` }, { instructions: `[Hướng dẫn của dự án]\n${SECRET}` }]) {
+      const adapter = new FakePiAdapter();
+      const prompts: string[] = [];
+      let created = 0;
+      const original = adapter.createWorkerSession.bind(adapter);
+      adapter.createWorkerSession = async (workerBrief) => {
+        created += 1;
+        return await original(workerBrief);
+      };
+      const run = runWorker(
+        brief({ ...overrides, allowedDataClasses: [...CEILING] }),
+        deps(adapter, [stubTool()], {
+          drive: async (_sessionId, text) => {
+            prompts.push(text);
+          },
+        }),
+      );
+      await expect(run).rejects.toThrow(/^MODEL_DATA_CLASS_UNAVAILABLE: the brief carries secret data/);
+      await expect(run).rejects.not.toThrow(SECRET_VALUE);
+      expect(created).toBe(0);
+      expect(prompts).toEqual([]);
+    }
+  });
+});
+
 describe("evidence describes what a tool returned, not that a tool ran", () => {
   it("digests the tool's actual output", async () => {
     const adapter = new FakePiAdapter();

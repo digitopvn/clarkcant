@@ -80,6 +80,9 @@ export const errorCodeSchema = z.enum([
   "MEDIA_FOCUS_CONFLICT",
   "VOICE_TRANSPORT_UNAVAILABLE",
 
+  // Models
+  "MODEL_DATA_CLASS_UNAVAILABLE",
+
   // Generic
   "NOT_IMPLEMENTED",
   "INTERNAL_ERROR",
@@ -159,6 +162,10 @@ const RETRYABILITY: Record<ErrorCode, Retryability> = {
 
   MEDIA_FOCUS_CONFLICT: "after-user-action",
   VOICE_TRANSPORT_UNAVAILABLE: "after-user-action",
+
+  // Nothing was sent: no model the request may go to holds a ceiling that admits its data. Sending the same request
+  // again refuses again until the person changes the model, its profile, or the request.
+  MODEL_DATA_CLASS_UNAVAILABLE: "after-user-action",
 
   NOT_IMPLEMENTED: "never",
   INTERNAL_ERROR: "after-backoff",

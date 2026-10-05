@@ -15,6 +15,7 @@ import {
   type TurnOrigin,
   type WidgetDefinition,
   type WidgetPerformRequest,
+  ContractViolation,
   assertBlockProvenance,
   attachmentRefSchema,
   isTerminal,
@@ -936,6 +937,9 @@ async function runModelTurn(
     // A throw is turned into a message. The user has already been told their message was
     // accepted, so failing silently here would leave the conversation claiming something is
     // coming when nothing is.
+    // A typed refusal keeps its code on the card and its own sentence as the detail (a message that was never sent to a
+    // model because of its data class says so); anything else is a failed model turn.
+    const typed = cause instanceof ContractViolation ? cause.contract : undefined;
     const message = appendAssistant(
       deps,
       input.conversationId,
@@ -947,8 +951,8 @@ async function runModelTurn(
           subject: "connection",
           title: "Không gọi được model",
           status: "blocked",
-          detail: cause instanceof Error ? cause.message : String(cause),
-          fields: [{ label: "Loại lỗi", value: "model-turn-failed" }],
+          detail: typed?.message ?? (cause instanceof Error ? cause.message : String(cause)),
+          fields: [{ label: "Loại lỗi", value: typed?.code ?? "model-turn-failed" }],
           cancellable: false,
           updatedAt: input.at,
         },
