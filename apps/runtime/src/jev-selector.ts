@@ -2,7 +2,6 @@ import {
   type CompositionSlot,
   type MiniAppSelection,
   checkSelectionAgainstCandidates,
-  dataClassesOfText,
   noulVerdict,
   selectionIsDecisive,
 } from "@clarkcant/contracts";
@@ -11,6 +10,7 @@ import {
   type JevSelectionState,
   type MiniAppCandidateSet,
   buildSelectionState,
+  carriesCredential,
   checkSelectionStateSize,
   sanitizeIntent,
   stateLooksRedacted,
@@ -244,14 +244,14 @@ async function callProvider(
    *
    * Each caller redacts its own free text first; this is the backstop for a field that did not, such as an option's
    * description. It asks the question the send boundary asks of a model's input - does this text carry a credential -
-   * with the same classifier, so the two cannot disagree about what one is. The redactor's broader shapes are left
+   * with the same classifier, of every string in the request and of its serialised form. The redactor's broader shapes are left
    * to the callers: a request is mostly ids and descriptions, and a dated model id reads as a phone number and a
    * widget called `key-metrics-overview` as a prefixed token, so matching those here would refuse ordinary decisions.
    *
    * A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the caller falls
    * back as it would for any provider failure. Nothing of the value is recorded.
    */
-  if (dataClassesOfText(JSON.stringify(body)).includes("secret")) {
+  if (carriesCredential(body)) {
     const reason = "the decision request still carried a credential, so it was not sent";
     emit(deps, {
       event: "refusal",

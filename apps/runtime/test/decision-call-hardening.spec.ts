@@ -104,10 +104,13 @@ describe("the secret-shape check on the request body", () => {
     expect(telemetry.map((event) => event.event)).toEqual(["refusal"]);
   });
 
-  // Each is a credential to the classifier the send boundary uses, and none is one the narrower shapes above name.
+  // Each is a credential to the classifier the send boundary uses. The last three are ones serialising the request hides.
   it.each([
     ["an issued prefixed token", ["sk", "-live-", "4f9a8b7c6d5e4f3a2b1c"].join("")],
     ["HTTP Basic credentials", ["Authorization: ", "Basic ", Buffer.from(["admin", "hunter22x"].join(":")).toString("base64")].join("")],
+    ["a token at the start of a line", ["notes:\n", "sk", "-live-", "4f9a8b7c6d5e4f3a2b1c"].join("")],
+    ["a token after a tab", ["notes:\t", "sk", "-live-", "4f9a8b7c6d5e4f3a2b1c"].join("")],
+    ["a double-quoted named value", ["pass", "word=", '"', "hunter22x9", '"'].join("")],
   ])("refuses to send %s left in the instructions", async (_name, value) => {
     const config = typesafeConfig();
     const { transport, bodies } = recording({ model: config.model, answers: { noul: { type: "noul", noul: 0.9 } } });

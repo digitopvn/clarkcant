@@ -198,5 +198,28 @@ export function checkSelectionStateSize(
  * that only resembles a token (`key-metrics-overview`) does not stop a selection.
  */
 export function stateLooksRedacted(state: JevSelectionState): { ok: boolean } {
-  return { ok: !dataClassesOfText(JSON.stringify(state)).includes("secret") };
+  return { ok: !carriesCredential(state) };
+}
+
+/**
+ * Whether anything in a value about to leave the node is a credential, by the classifier the send boundary uses.
+ *
+ * Every string in it is classified as written, because serialising hides one: a newline becomes the letters `\n`
+ * pressed against the token after it, and a quoted value gains backslashes. The serialised form is classified too,
+ * since only there does a name sit beside its value when the two are a key and what it holds.
+ */
+export function carriesCredential(value: unknown): boolean {
+  const texts: string[] = [JSON.stringify(value) ?? ""];
+  const walk = (node: unknown): void => {
+    if (typeof node === "string") texts.push(node);
+    else if (Array.isArray(node)) node.forEach(walk);
+    else if (node !== null && typeof node === "object") {
+      for (const [key, held] of Object.entries(node)) {
+        texts.push(key);
+        walk(held);
+      }
+    }
+  };
+  walk(value);
+  return texts.some((text) => dataClassesOfText(text).includes("secret"));
 }
