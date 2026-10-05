@@ -1238,54 +1238,11 @@ export async function fetchNpmArtifact(input: {
     return { ok: false, code: "NPM_INTEGRITY_MISMATCH", message: integrityCheck.message };
   }
 
-  let decompressed: Buffer;
-  try {
-    decompressed = gunzipSync(bytes, { maxOutputLength: MAX_DECOMPRESSED_BYTES });
-  } catch (cause) {
-    return {
-      ok: false,
-      code: "NPM_TARBALL_TOO_LARGE",
-      message: `tarball for ${input.name}@${input.version} did not decompress within the ${String(MAX_DECOMPRESSED_BYTES)} byte cap: ${String(cause)}`,
-    };
-  }
-
-  const extraction = extractUstarTarball(decompressed, { maxEntries: MAX_TAR_ENTRIES, stripComponents: 1 });
-  if (!extraction.ok) {
-    return { ok: false, code: "NPM_TARBALL_UNSAFE_ENTRY", message: extraction.message };
-  }
-
   const tempDest = join(input.cacheRoot, "npm", `.tmp-${fingerprint(`${input.name}@${input.version}#${String(Date.now())}#${String(Math.random())}`)}`);
   mkdirSync(tempDest, { recursive: true });
   try {
-    for (const entry of extraction.entries) {
-      const target = resolve(tempDest, entry.name);
-      // Defense in depth on top of `extractUstarTarball`'s own traversal check: the resolved path must still land
-      // inside `tempDest`.
-      if (target !== resolve(tempDest) && !target.startsWith(resolve(tempDest) + sep)) {
-        return { ok: false, code: "NPM_TARBALL_UNSAFE_ENTRY", message: `tar entry "${entry.name}" resolves outside the extraction root` };
-      }
-      // R4: `extractUstarTarball`'s own `seenNames` check only catches an *exact* name collision (two entries
-      // both named "a"). It does not catch a file entry "a" followed by a file entry "a/b": those are two
-      // different names in that set, but writing "a/b" requires `mkdirSync(dirname("a/b"), ...)` to create "a" as
-      // a directory when "a" already exists on disk as a *file* — which throws ENOTDIR, uncaught, out of this
-      // loop. Any filesystem error while writing an entry (ENOTDIR, EISDIR, or anything else a hostile or merely
-      // malformed tarball can provoke) is caught here and turned into the same named refusal every other unsafe
-      // entry in this reader produces, rather than propagating as an unhandled exception/500.
-      try {
-        if (entry.type === "directory") {
-          mkdirSync(target, { recursive: true });
-        } else {
-          mkdirSync(join(target, ".."), { recursive: true });
-          writeFileSync(target, entry.content);
-        }
-      } catch (cause) {
-        return {
-          ok: false,
-          code: "NPM_TARBALL_UNSAFE_ENTRY",
-          message: `tar entry "${entry.name}" could not be extracted (${String(cause)}), which usually means it conflicts with another entry's path (e.g. a file and a directory sharing a name)`,
-        };
-      }
-    }
+    const unpacked = unpackNpmTarball(bytes, tempDest, `${input.name}@${input.version}`);
+    if (!unpacked.ok) return unpacked;
 
     // Digested and checked on `tempDest`, before the rename below — the same N2 ordering `fetchGitArtifact`
     // uses, and for the same reason: renaming first and checking after (the previous order here) left an artifact
@@ -1310,6 +1267,119 @@ export async function fetchNpmArtifact(input: {
     return { ok: true, artifact: { path: dest, digest: digest.digest } };
   } finally {
     rmSync(tempDest, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Gunzip, read and write one npm tarball into `dest`, with the leading `package/` component stripped.
+ *
+ * The one extraction both `fetchNpmArtifact` and `inspectNpmTarball` run, so the content digest an author computes
+ * before publishing is, by construction, the digest a node computes after fetching the same bytes.
+ */
+function unpackNpmTarball(
+  bytes: Buffer,
+  dest: string,
+  label: string,
+): { ok: true } | { ok: false; code: "NPM_TARBALL_TOO_LARGE" | "NPM_TARBALL_UNSAFE_ENTRY"; message: string } {
+  let decompressed: Buffer;
+  try {
+    decompressed = gunzipSync(bytes, { maxOutputLength: MAX_DECOMPRESSED_BYTES });
+  } catch (cause) {
+    return {
+      ok: false,
+      code: "NPM_TARBALL_TOO_LARGE",
+      message: `tarball for ${label} did not decompress within the ${String(MAX_DECOMPRESSED_BYTES)} byte cap: ${String(cause)}`,
+    };
+  }
+
+  const extraction = extractUstarTarball(decompressed, { maxEntries: MAX_TAR_ENTRIES, stripComponents: 1 });
+  if (!extraction.ok) {
+    return { ok: false, code: "NPM_TARBALL_UNSAFE_ENTRY", message: extraction.message };
+  }
+
+  for (const entry of extraction.entries) {
+    const target = resolve(dest, entry.name);
+    // Defense in depth on top of `extractUstarTarball`'s own traversal check: the resolved path must still land
+    // inside `dest`.
+    if (target !== resolve(dest) && !target.startsWith(resolve(dest) + sep)) {
+      return { ok: false, code: "NPM_TARBALL_UNSAFE_ENTRY", message: `tar entry "${entry.name}" resolves outside the extraction root` };
+    }
+    // R4: `extractUstarTarball`'s own `seenNames` check only catches an *exact* name collision (two entries
+    // both named "a"). It does not catch a file entry "a" followed by a file entry "a/b": those are two
+    // different names in that set, but writing "a/b" requires `mkdirSync(dirname("a/b"), ...)` to create "a" as
+    // a directory when "a" already exists on disk as a *file* — which throws ENOTDIR, uncaught, out of this
+    // loop. Any filesystem error while writing an entry (ENOTDIR, EISDIR, or anything else a hostile or merely
+    // malformed tarball can provoke) is caught here and turned into the same named refusal every other unsafe
+    // entry in this reader produces, rather than propagating as an unhandled exception/500.
+    try {
+      if (entry.type === "directory") {
+        mkdirSync(target, { recursive: true });
+      } else {
+        mkdirSync(join(target, ".."), { recursive: true });
+        writeFileSync(target, entry.content);
+      }
+    } catch (cause) {
+      return {
+        ok: false,
+        code: "NPM_TARBALL_UNSAFE_ENTRY",
+        message: `tar entry "${entry.name}" could not be extracted (${String(cause)}), which usually means it conflicts with another entry's path (e.g. a file and a directory sharing a name)`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/** What an npm tarball holds, measured the way a node measures it after fetching. */
+export interface NpmTarballFacts {
+  /** The SRI value npm records as `dist.integrity` for exactly these bytes. */
+  integrity: string;
+  /** `digestOfDirectory` over the extracted contents: what a directory entry for this npm version publishes. */
+  contentDigest: string;
+  /** Every regular file in the archive, `/`-separated and sorted, relative to the stripped `package/` root. */
+  files: { path: string; bytes: number }[];
+}
+
+/**
+ * Measure an npm tarball before it is published: its integrity, its runtime content digest and its file list.
+ *
+ * Extracts into a fresh directory under `scratchRoot` with the same reader, caps and refusals a fetch uses, and
+ * removes it before returning. `inspect`, when given, reads the extracted tree first (a caller that wants to run
+ * its own checks on the archived contents rather than on the source directory).
+ */
+export function inspectNpmTarball(
+  bytes: Buffer,
+  scratchRoot: string,
+  inspect?: (extractedRoot: string) => void,
+): { ok: true; facts: NpmTarballFacts } | { ok: false; code: FetchRefusal; message: string } {
+  if (bytes.byteLength > MAX_TARBALL_BYTES) {
+    return { ok: false, code: "NPM_TARBALL_TOO_LARGE", message: `the tarball is ${String(bytes.byteLength)} bytes, over the ${String(MAX_TARBALL_BYTES)} byte cap` };
+  }
+  mkdirSync(scratchRoot, { recursive: true });
+  const dest = join(scratchRoot, `.inspect-${fingerprint(`${String(Date.now())}#${String(Math.random())}`)}`);
+  mkdirSync(dest, { recursive: true });
+  try {
+    const unpacked = unpackNpmTarball(bytes, dest, "the archive");
+    if (!unpacked.ok) return unpacked;
+    const digest = digestOfDirectory(dest);
+    if (!digest.ok) return { ok: false, code: digest.code, message: digest.message };
+    const files: { path: string; bytes: number }[] = [];
+    const walk = (current: string): void => {
+      for (const name of readdirSync(current)) {
+        const full = join(current, name);
+        const stat = lstatSync(full);
+        if (stat.isDirectory()) walk(full);
+        else files.push({ path: relative(dest, full).split(sep).join("/"), bytes: stat.size });
+      }
+    };
+    walk(dest);
+    files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    inspect?.(dest);
+    return {
+      ok: true,
+      facts: { integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`, contentDigest: digest.digest, files },
+    };
+  } finally {
+    rmSync(dest, { recursive: true, force: true });
   }
 }
 

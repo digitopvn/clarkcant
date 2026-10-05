@@ -2679,6 +2679,86 @@ with their state, as Restore would, and there is then nothing left to restore.
     clark widget pack
     clark widget publish
 
+### Quickstart outside this repository
+
+`@clarkcant/widget-cli` (the `clark` command) and `@clarkcant/widget-sdk` are built from this repository as npm
+packages that need no ClarkCant checkout. **Status: no version is on npm yet.** The release workflow below exists, but
+until it has run, installing from the registry fails; install the archives built from a checkout instead (see
+[Before a release](#before-a-release)).
+
+On a clean machine with Node 22.19 or later and pnpm (`corepack enable pnpm`), on macOS, Windows or Linux:
+
+    mkdir my-widgets && cd my-widgets
+    pnpm init
+    pnpm add -D @clarkcant/widget-cli
+    pnpm exec clark widget init quick-notes --template pure-ui
+    pnpm exec clark widget test quick-notes
+    pnpm exec clark widget dev quick-notes      # prints the dev host's URL; Ctrl-C stops it
+    pnpm exec clark widget pack quick-notes
+    npm publish quick-notes/dist/quick-notes-0.1.0.tgz
+
+- **Template.** `blank`, `form` and `dashboard` are a minimal isolated widget. `pure-ui` (a text editor), `media-tool`,
+  `ai-generator`, `ui-with-service` and `connected-app` copy a reference app that this repository's own tests keep
+  working ([init](#init)). The directory name becomes the last segment of the package id (`com.example.quick-notes`)
+  and the npm name (`quick-notes`); rename it, or use a scope you own, before publishing.
+- **SDK.** `pnpm add -D @clarkcant/widget-sdk` gives browser-safe ES modules with type declarations: `.` holds the
+  contracts and the bridge runtime (`createWidgetRuntime`, `MessageEndpoint`, …) and `./dom` binds the host's
+  appearance to an element (`bindAppearance`):
+
+      import { createWidgetRuntime } from "@clarkcant/widget-sdk";
+      import { bindAppearance } from "@clarkcant/widget-sdk/dom";
+
+  The dev host and a node already give a package frame the runtime as `window.clarkcantWidget`, so the templates need
+  no import. A widget package may not declare npm `dependencies` ([pack](#pack)): a frame that imports the SDK bundles
+  it into the files it ships, and keeps the SDK a development dependency of the project that builds it.
+- **Test, dev, pack.** `test` runs the conformance suite; `dev` serves the package in the local isolated host on
+  `127.0.0.1`; `pack` writes `dist/<name>-<version>.tgz` with `pnpm pack` and refuses an archive that would not pass
+  the suite on its own.
+- **npm publication is not Marketplace indexing.** `npm publish` puts the archive on the npm registry and nothing more.
+  A Marketplace indexes npm packages carrying the `clarkcant` keyword, or takes a submission; `clark widget publish`
+  only prepares that directory entry ([publish](#publish)). Neither is needed to develop or use a private widget: a
+  local path needs no account.
+
+#### Before a release
+
+From a checkout, `pnpm install` then `pnpm build:widget-tooling` writes
+`dist/widget-tooling/archives/clarkcant-widget-cli-<version>.tgz` and `clarkcant-widget-sdk-<version>.tgz`. Install
+them in the project instead of the registry versions:
+
+    pnpm add -D /path/to/clarkcant-widget-cli-<version>.tgz /path/to/clarkcant-widget-sdk-<version>.tgz
+
+`pnpm smoke:widget-tooling` does all of this on the current OS: it packs both packages, installs them into an empty
+project outside the repository, runs `init` (blank and `pure-ui`), `test`, `pack`, the widget, catalog and theme dev
+hosts over HTTP, and imports and type-checks the SDK.
+
+#### How the packages are built and released
+
+Inside this repository both packages stay `private` and resolve to their TypeScript source, like every workspace
+package. `tools/build-widget-tooling.mjs` generates a separate package directory for each under
+`dist/widget-tooling/`: the code bundled with esbuild, the workspace packages inlined and every third-party import
+declared at the exact version the repository pins; the SDK's declarations; the CLI's templates (`templates/`) and the
+dev hosts' browser modules as self-contained bundles (`runtime/`), which the installed dev hosts serve from disk as they
+are. The CLI's `THIRD_PARTY_NOTICES.md` lists the third-party code those bundles inline, with each licence. The
+generated `package.json` holds no `workspace:` specifier and no lifecycle script. `clark --version` prints the installed
+CLI's version.
+
+`.github/workflows/release-widget-tooling.yml` releases them. Every run packs the archives once and runs the smoke
+against those archives on Ubuntu, Windows and macOS with Node 22.19 and 24. Only a run from a `widget-tooling-v<version>`
+tag naming `@clarkcant/widget-cli`'s version publishes: the tag push itself, or a manual run from that tag with
+`publish` checked. Any other run, including a manual run from a branch with `publish` checked, stops at
+`npm publish --dry-run`.
+
+Before publishing anything, the workflow compares each package's version with npm. A version npm does not have is
+published with `npm publish --provenance --access public`. A version npm already has with the same archive integrity is
+skipped, so a rerun publishes only what is missing. A version npm already has with different contents fails the run
+before either package is published, so a changed package always needs a new version.
+
+The publish job runs in the `npm-release` GitHub environment. Its maintainers must restrict that environment's
+deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the intended
+credential: once each package's trusted publisher on npmjs.com names this repository and workflow, no npm secret is
+needed. A package's first version, published before a trusted publisher can be set on it, needs the environment's
+`NPM_TOKEN` secret, which reaches only the publish step.
+
 ### init
 
 Templates:
@@ -2703,6 +2783,10 @@ Templates:
 `clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator`, `ui-with-service`,
 `media-tool` and `connected-app` today. `editor`, `media` and the MCP
 App adapter are not implemented yet.
+
+A reference template leaves the app's own `package.json`, `LICENSE` and READMEs behind, since they name the reference's
+npm identity (such as `@clarkcant/quick-notes`, §24.1): the copy gets a `package.json` named after its own id, an MIT
+`LICENSE` and its own README.
 
 ### dev
 
@@ -2788,11 +2872,56 @@ Runs the conformance suite.
 
 ### pack
 
-Validates the manifest, builds an immutable artifact, generates digest + metadata.
+Runs the conformance suite, then builds the artifact and its digests. When the package has a `package.json`, pack also
+builds the npm archive with `pnpm pack` into `dist/<name>-<version>.tgz`, extracts it with the runtime's own reader,
+and refuses it unless the extracted archive passes the conformance suite on its own, holds the same `clarkcant.json`
+and contains nothing credential-shaped (`.npmrc`, `.env*`, `.dev.vars`, `.git-credentials`, `.pypirc`, private keys, `node_modules`, `.git`). A
+`files` list that leaves out a runtime asset is therefore caught by pack, not on someone else's machine. Without a
+`package.json` the package stays a local/git package and pack writes no archive.
+
+`dist/artifact.json` (`schemaVersion: 2`) records three digests, each answering a different question:
+
+| Field | Covers | Checked by |
+| --- | --- | --- |
+| `npm.integrity` | sha512 SRI of the `.tgz` bytes | the npm registry and the node's fetch |
+| `npm.contentDigest` | the runtime digest of the extracted archive's files | the node, after extracting the exact npm version; it is the npm directory entry's `digest` |
+| `authorDigest` | identity, version, definitions, theme documents and file hashes of the source | pack, so a packed version whose bytes changed is refused; it is a local entry's `digest` |
+
+`pnpm pack` is reproducible: packing unchanged files again writes byte-identical archives. Repacking a version whose
+author digest or archive content digest changed is refused; bump the version.
+
+`package.json` rules, checked before packing and named one by one when they fail:
+
+- `name` is a valid npm package name, and `version` equals `clarkcant.json`'s `version`;
+- `license`, when the manifest has a `publisher`, equals `publisher.license`;
+- `keywords` include `clarkcant` and one keyword per facet kind (`clarkcant-widget`, `clarkcant-service`,
+  `clarkcant-skill`, `clarkcant-prompt`, `clarkcant-theme`, `clarkcant-setup`, `clarkcant-driver`,
+  `clarkcant-voice`), which is how a Marketplace finds the package;
+- an explicit, non-empty `files` list;
+- no `dependencies`, `optionalDependencies` or `bundle(d)Dependencies`: a package ships what it runs;
+- no `preinstall`, `install` or `postinstall` script, and no `prepack`, `prepare` or `postpack` script: pack runs no
+  package code, and an archive a script generated could not be rebuilt from the source. Ship the generated files.
+
+`clark widget init` writes a `package.json` that meets these rules for every template, named after the last segment of
+the package id. That name may already be taken on npm: rename it, or use a scope you own (`@you/quick-notes`), before
+publishing. Pack needs `pnpm` (`corepack enable pnpm`). Adding a `package.json` to an already packed package changes
+its author digest, because the file becomes part of the package; bump the version when you add it.
 
 ### publish
 
-Publishes the package source/artifact and then submits directory metadata. The directory is not the only place a package can run: a local/git source is still a first-class development path.
+Prepares the directory entry; it never uploads anything. `dist/directory-entry.json` names the exact npm version
+(`source: { kind: "npm", name, version }`) and the archive's `contentDigest` when pack built an archive, or the
+package's own directory and its `authorDigest` otherwise. `--source npm|local` picks one explicitly. The output states
+three outcomes separately — prepared: yes; published to npm: no; Marketplace submission: no — and prints the
+command that publishes the exact archive that was checked:
+
+    npm publish dist/<name>-<version>.tgz
+
+Publish that file rather than running `npm publish` in the package directory, so the registry serves the bytes whose
+integrity and content digest the entry already names. npm makes a scoped package (`@scope/name`) restricted by
+default, so a scoped package meant to be public declares `"publishConfig": { "access": "public" }` in `package.json`,
+as the reference apps do (§24); `npm publish <tarball>` reads it from the archive. A Marketplace then indexes npm
+packages carrying the `clarkcant` keyword, or takes a submission. A local/git source is still a first-class development path.
 
 Before writing the entry, publish compares the definitions with the previous preparation (`dist/published-definitions.json`) and
 refuses a version that violates the rules in §20. This file is the comparison baseline, so it should be committed with the source; if
@@ -2918,11 +3047,13 @@ Developer:
       ↓
     clark widget pack
       ↓
-    artifact + digest
+    npm archive + integrity + content digest
       ↓
-    publish npm/git/release
+    clark widget publish        (prepares the entry; uploads nothing)
       ↓
-    clark widget publish
+    npm publish dist/<name>-<version>.tgz
+      ↓
+    Marketplace indexes the "clarkcant" keyword, or a submission
       ↓
     directory validation
       ↓
@@ -3013,8 +3144,10 @@ This section states which parts of the document already have code, so that nobod
   pin, state migration, text fallback, effect action. Checks that need a rendered frame (keyboard, touch size,
   narrow/compact/expanded, reduced motion, voice/click parity) are reported as `requires-dev-host` — they are **not**
   reported as passing just because a fixture exists.
-- `clark widget pack` — validates the manifest, computes the digest over identity + content, and refuses to re-pack a
-  version that was already packed with a different digest (a version whose bytes changed is a different package carrying the same number).
+- `clark widget pack` — validates the manifest, computes the author digest over identity + content, builds the npm
+  archive when the package has a `package.json` (§16), records its integrity and runtime content digest, and refuses to
+  re-pack a version that was already packed with a different digest (a version whose bytes changed is a different package
+  carrying the same number). A node fetching that exact npm version computes the same content digest.
 - `clark widget dev` — the dev host in §16: hot reload via SSE, fixtures, viewport switcher (320px is a real
   option), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, and accessibility audit. The frame uses the host's actual sandbox (`allow-scripts`, no
@@ -3030,6 +3163,8 @@ This section states which parts of the document already have code, so that nobod
   with every field §18 requires and the digest of the packed artifact (read from `dist/artifact.json`, not recomputed —
   computing the same thing twice is how a listing ends up referring to an artifact nobody can produce). It does **not** submit on the
   user's behalf: submitting needs a directory account, and a command that looks like it has already submitted is a control whose action does not exist.
+  With an npm archive, the entry names the exact npm version and the archive's content digest, and the output prints the
+  `npm publish` command for that archive; npm publication itself is the author's step.
   The local/git/npm path is still first-class, so no account is needed to run your own widget.
 - **Directory search** — implemented at the level of reading an index: `CC_DIRECTORY_INDEX` points to a JSON file of entries per
   §18, and `search_directory` returns a `marketplace-results` card showing **source, version, digest and risk lane**,
@@ -3312,6 +3447,14 @@ contracts in [§10](#10-widget-sdk-surface). It is one isolated UI facet with no
 opens a text file, edits it, saves it and asks Clark to rewrite a selection, and the frame never sees where the file
 lives. `clark widget init --template pure-ui` starts a new package from a copy of it ([§16](#16-developer-cli-target)).
 
+**npm package.** It is packaged as **Quick Notes**, `@clarkcant/quick-notes` 1.0.0, with its own `package.json`,
+Apache-2.0 `LICENSE` and README. `clark widget pack` builds `dist/clarkcant-quick-notes-1.0.0.tgz`, and `publish`
+prepares the npm directory entry ([§16](#16-developer-cli-target)). It is **not published to npm yet**: the publishing
+account has to own the `@clarkcant` scope first.
+[reference-packages-npm-install.spec.ts](../apps/runtime/test/reference-packages-npm-install.spec.ts) packs a copy
+with the CLI, installs that archive through `POST /packages/install` from a local registry answering like npm's, and
+refuses a tampered archive.
+
 **The package.** `clarkcant.json` is a schema-version-2 manifest for every platform and the web. `widget.json` takes
 two props: `title`, and `rewriteBinding`, the id of the `agent` binding the editor may press. Its `stateSchema` admits
 only `file`, `base` (two `ArtifactRef`s), `draft` and `draftTooLarge`, with `additionalProperties: false`. The rules
@@ -3430,6 +3573,13 @@ directions, that no place on disk or file handle crosses the bridge.
 `examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), part of [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with one
 isolated UI facet and no service. It shows a widget that works on a file, keeps a large document within bounds,
 describes itself to Clark and applies a change Clark chose.
+
+**npm package.** It is packaged as **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, with its own `package.json`
+and READMEs; its package id stays `com.example.spreadsheet`. `clark widget pack` builds
+`dist/clarkcant-csv-explorer-1.0.0.tgz`, and `publish` prepares the npm directory entry. It is **not published to npm
+yet**: the publishing account has to own the `@clarkcant` scope first, and its licence is pending the maintainer's
+decision (the manifests declare Apache-2.0 while the `LICENSE` file holds MIT text). The same
+[install test](../apps/runtime/test/reference-packages-npm-install.spec.ts) as §24.1 covers it.
 
 - **Files.** CSV and TSV come in through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1)) and are
   read in 256 KiB chunks; the widget never sees a path. An export is a new file written through `create`, `write`,
@@ -3590,6 +3740,13 @@ page, the bridge, the node's files and tables, and the service's container.
 [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
 service. It renders a WAV clip the person picks, with a gain change and a trim, as a job the widget follows and can
 stop. `clark widget init --template media-tool` starts a new package from it.
+
+**npm package.** It is packaged as **Media Converter**, `@clarkcant/media-converter` 1.0.0, with its own
+`package.json`, Apache-2.0 `LICENSE` and READMEs. `clark widget pack` builds
+`dist/clarkcant-media-converter-1.0.0.tgz`, and `publish` prepares the npm directory entry. It is **not published to
+npm yet**: the publishing account has to own the `@clarkcant` scope first. Installing it needs no container engine,
+and the same [install test](../apps/runtime/test/reference-packages-npm-install.spec.ts) as §24.1 installs it;
+rendering needs a container engine that runs Linux containers.
 
 - **Files by reference.** The widget picks the clip through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1))
   and keeps only its `ArtifactRef`. Its `render` binding sends the service the clip's artifact id, and the service

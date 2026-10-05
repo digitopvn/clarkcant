@@ -447,12 +447,12 @@ describe("clark widget pack", () => {
     expect(await runCli(["widget", "pack", root])).toBe(0);
 
     const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as {
-      digest: string;
+      authorDigest: string;
       files: { path: string }[];
       unverifiedChecks: string[];
       definitionDigest: string;
     };
-    expect(artifact.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(artifact.authorDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(artifact.definitionDigest).toMatch(/^sha256:/);
     expect(artifact.files.map((file) => file.path)).toContain("widgets/main/widget.json");
     // The artifact says what it did not verify, so a reader of the metadata is not left assuming the browser checks
@@ -507,13 +507,13 @@ describe("clark widget publish", () => {
     expect(await runCli(["widget", "publish", root])).toBe(0);
 
     const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;
-    const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as { digest: string };
+    const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as { npm: { contentDigest: string } };
 
     /*
      * The digest is the artifact's, read from what `pack` produced rather than recomputed. Two computations of the
      * same thing is how a listing comes to name an artifact nobody can produce.
      */
-    expect(entry["digest"]).toBe(artifact.digest);
+    expect(entry["digest"]).toBe(artifact.npm.contentDigest);
     const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { id: string };
     expect(entry["packageId"]).toBe(manifest.id);
     expect(entry["riskTier"]).toBe("isolated-ui");
@@ -537,6 +537,8 @@ describe("clark widget publish", () => {
       capabilities: [{ tool: "list", ref: `${manifest.id}.items.list@1`, summary: "List items", effectCategory: "read" }],
     });
     writeFileSync(join(root, "clarkcant.json"), JSON.stringify(manifest, null, 2));
+    // A local package: the entry's facet fields are the subject, and they do not depend on where the bytes come from.
+    rmSync(join(root, "package.json"));
 
     expect(await runCli(["widget", "publish", root])).toBe(0);
 
@@ -566,6 +568,8 @@ describe("clark widget publish", () => {
     });
     manifest["resources"] = { version: 1, profile: "interactive-heavy" };
     writeFileSync(join(root, "clarkcant.json"), JSON.stringify(manifest, null, 2));
+    // A local package, as above: the resource request travels the same way whatever the source.
+    rmSync(join(root, "package.json"));
 
     expect(await runCli(["widget", "publish", root])).toBe(0);
     const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;

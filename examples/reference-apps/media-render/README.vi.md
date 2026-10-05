@@ -38,7 +38,7 @@ Tiếng Anh: [README.md](README.md).
 
 Công cụ `place_widget` đặt widget trong một bản cài thật, với `renderBinding` được gắn vào `render@1` của package và
 `source`, `gainDb`, `trimStartMs`, `trimEndMs` là các `inputs` của nó; xem
-[phát triển widget §10.3](../../../docs/widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1).
+[phát triển widget §10.3](https://github.com/digitopvn/clarkcant/blob/main/docs/widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1).
 
 ## Các tệp
 
@@ -63,3 +63,30 @@ corepack pnpm exec vitest run examples/reference-apps/media-render apps/runtime/
 Các hành trình trình duyệt nằm trong `apps/web/e2e/media-render.spec.ts`. Chúng gồm dựng một tệp lớn hơn một đoạn,
 có tiến độ và bản xem trước; dừng giữa chừng; mở lại; hồ sơ không khả dụng; chỉ dùng bàn phím; giao diện sáng và tối;
 390 px; giảm chuyển động. Các hành trình này cần một container engine chạy được container Linux.
+
+## Gói npm: Media Converter
+
+Ứng dụng này được đóng gói cho npm với tên **`@clarkcant/media-converter`** 1.0.0, giấy phép Apache-2.0 (`package.json`,
+`LICENSE`). **Gói chưa có trên npm.** Muốn phát hành cần một tài khoản sở hữu scope `@clarkcant` trên npm, và chưa có
+phiên bản nào được phát hành, nên cũng chưa Marketplace nào liệt kê gói. Mã nguồn ở
+[examples/reference-apps/media-render](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/media-render).
+
+- **Gói xin gì:** không origin mạng, không đường dẫn hệ thống tệp, không micro hay camera, không capability nào và không
+  lifecycle script. Gói khai báo một facet service có một capability `read` chạy dưới dạng job, và hồ sơ tài nguyên
+  `background-compute`. Service chỉ đọc đúng đoạn âm thanh mà một lời gọi nêu, qua host.
+- **Container engine:** khi cài thì không cần. Khi dựng thì cần: node chạy service trong một container engine chạy được
+  container Linux. Không có engine, hoặc engine quá nhỏ cho `background-compute`, thì nút Render bị tắt và lý do của
+  host được hiện ra.
+- **Nền tảng:** `darwin-arm64`, `linux-x64`, `win32-x64` và `web`, đúng như `clarkcant.json` khai báo. Các đích khác
+  (macOS Intel, Linux arm64) không được khai báo.
+- **Archive chứa gì:** `clarkcant.json`, `widgets/`, `service/`, bốn bộ props trong `fixtures/`, các README và giấy
+  phép. Các test và fixture job cho `clark widget dev` ở lại trong repository.
+- **Tạo archive:** `node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/media-render` ghi
+  `dist/clarkcant-media-converter-1.0.0.tgz`, và `widget publish` chuẩn bị `dist/directory-entry.json`, nêu đúng phiên
+  bản npm đó và content digest của archive. Không lệnh nào tải gì lên, và `dist/` không được commit.
+- **Cài ngay hôm nay:** đặt entry do `widget publish --source local` chuẩn bị vào một mảng JSON, trỏ
+  `CC_DIRECTORY_INDEX` của node tới tệp đó, rồi cài từ tìm kiếm directory của Clark.
+- **Cài khi đã phát hành:** node cài đúng phiên bản npm mà một directory entry nêu, và từ chối archive nếu integrity của
+  npm hoặc content digest của entry không khớp.
+- **Giới hạn đã biết:** chỉ WAV PCM 16-bit, mono hoặc stereo; đoạn âm thanh trên 25 MiB hoặc dài hơn một giờ bị từ chối;
+  widget không có trình phát âm thanh. Gói chưa có ảnh chụp xem trước.

@@ -31,7 +31,7 @@ disabled with its reason shown. The editor also offers Clark a `replaceSelection
 `actions.perform@1`, so a request typed in the composer, such as "uppercase the selection", can replace the selected
 text: the editor refuses when it is busy, when nothing usable is selected or when the selection no longer holds
 `expected`, and Ctrl+Z undoes the change. See
-[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
+[widget development §10.3](https://github.com/digitopvn/clarkcant/blob/main/docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Files
 
@@ -53,3 +53,27 @@ corepack pnpm exec vitest run examples/reference-apps/text-editor
 The browser journeys (open, edit, save on the web and, against a simulated shell, on the desktop; typing on while a
 draft write is held; ask Clark; keyboard only; light and dark; 390 px; reduced motion) are in
 `apps/web/e2e/text-editor.spec.ts`.
+
+## npm package: Quick Notes
+
+This app is packaged for npm as **`@clarkcant/quick-notes`** 1.0.0 under Apache-2.0 (`package.json`, `LICENSE`).
+**It is not on npm yet.** Publishing needs an account that owns the `@clarkcant` npm scope, and no version has been
+published, so no Marketplace lists it either. The source is
+[examples/reference-apps/text-editor](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/text-editor).
+
+- **What it asks for:** nothing. No network origin, no filesystem path, no microphone or camera, no requested
+  capability and no lifecycle script. Files reach it only through the host's picker and export prompt.
+- **Platforms:** `darwin-arm64`, `linux-x64`, `win32-x64` and `web`, as `clarkcant.json` declares. Other targets
+  (Intel macOS, Linux on arm64) are not declared.
+- **What the archive ships:** `clarkcant.json`, `widgets/`, the four `fixtures/` prop sets, this README and the
+  licence. The tests stay in the repository.
+- **Build the archive:** `node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/text-editor` writes
+  `dist/clarkcant-quick-notes-1.0.0.tgz`, and `widget publish` prepares `dist/directory-entry.json`, which names that
+  exact npm version and the archive's content digest. Neither command uploads anything, and `dist/` is not committed.
+- **Install it today:** put the entry `widget publish --source local` prepares in a JSON array, point the node's
+  `CC_DIRECTORY_INDEX` at that file, and install it from Clark's directory search.
+- **Install it once published:** a node installs the exact npm version a directory entry names, and refuses the
+  archive unless npm's integrity and the entry's content digest both match.
+- **Known limits:** files up to 1 MiB of UTF-8 text; Ask Clark rewrites one line of at most 200 UTF-16 units; the
+  desktop *Replace original* path is tested against a simulated shell, not the real one. The package has no preview
+  screenshots yet.
