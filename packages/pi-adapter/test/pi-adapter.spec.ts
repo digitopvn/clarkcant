@@ -13,6 +13,7 @@ import {
   type RealPiAdapterOptions,
   type ToolDefinition,
   type WorkerBrief,
+  type WorkerEvent,
 } from "../src/index.ts";
 import { toSdkTool } from "../src/real.ts";
 
@@ -106,21 +107,7 @@ describe("fake adapter used by CI and E2E", () => {
     expect(() => adapter.listenerCount(session.sessionId)).toThrow();
   });
 
-  it("refuses to register the same tool name twice", async () => {
-    const adapter = new FakePiAdapter();
-    const session = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
-    const tool = {
-      name: "read_fixture",
-      label: "Read fixture",
-      description: "reads the fixture file",
-      parameters: { type: "object", properties: {} },
-      execute: async () => ({ text: "contents" }),
-    };
-    await adapter.registerTool(session.sessionId, tool);
-    await expect(adapter.registerTool(session.sessionId, tool)).rejects.toThrow(/already registered/);
-  });
-
-  it("only runs a tool that is both registered and active", async () => {
+  it("only runs a tool that the session was created with and that is active", async () => {
     const adapter = new FakePiAdapter();
     const tool = (name: string) => ({
       name,
@@ -142,22 +129,7 @@ describe("fake adapter used by CI and E2E", () => {
     await expect(adapter.callTool(session.sessionId, "missing", {})).rejects.toThrow();
   });
 
-  it("keeps a tool registered after creation active, as the real adapter does", async () => {
-    const adapter = new FakePiAdapter();
-    const session = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
-    await adapter.registerTool(session.sessionId, {
-      name: "read_fixture",
-      label: "Read fixture",
-      description: "reads the fixture file",
-      parameters: { type: "object", properties: {} },
-      execute: async () => ({ text: "contents" }),
-    });
-    expect(await adapter.callTool(session.sessionId, "read_fixture", {})).toBe("contents");
-    await adapter.setActiveTools(session.sessionId, []);
-    expect(adapter.activeToolNames(session.sessionId)).toEqual(["read_fixture"]);
-  });
-
-  it("activates only registered tools, and can widen again after narrowing", async () => {
+  it("activates only the tools a session was created with, and can widen again after narrowing", async () => {
     const adapter = new FakePiAdapter();
     const tool = (name: string) => ({
       name,
@@ -288,8 +260,10 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
       finishIdle();
     },
     dispose: finishIdle,
+    /** What the SDK declares to the model; the adapter reads it through `getActiveToolNames` and never writes it. */
+    activeTools: [] as string[],
+    getActiveToolNames: (): string[] => [...session.activeTools],
     agent: {
-      state: { tools: [] as { name: string }[] },
       waitForIdle: () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -694,15 +668,37 @@ describe("a brief confined to its approved project roots", () => {
     ).rejects.toThrow(new RegExp(missing.replace(/[/\\.]/g, "\\$&")));
   });
 
-  it("refuses to register another tool on a confined session", async () => {
+  it("reports a turn the provider refused, read from the session's own transcript", async () => {
     const sdk = stubSdk();
     const adapter = adapterWith(sdk);
-    const handle = await adapter.createWorkerSession(confinedBrief());
+    const handle = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+    const events: WorkerEvent[] = [];
+    adapter.subscribe(handle.sessionId, (event) => events.push(event));
+    // What the SDK leaves behind when a provider refuses: the run settles, and the last message carries the reason.
+    (sdk.session as unknown as { messages: unknown[] }).messages = [
+      { role: "user" },
+      { role: "assistant", stopReason: "error", errorMessage: "this model is not available to your account" },
+    ];
 
-    await expect(adapter.registerTool(handle.sessionId, scoped("something_else"))).rejects.toThrow(
-      /confined to its approved project roots/,
-    );
+    await adapter.prompt(handle.sessionId, "hello");
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        sessionId: handle.sessionId,
+        message: "the model's provider refused the turn: this model is not available to your account",
+      },
+    ]);
   });
+
+  it("has no way to add a tool to a session after it was created", () => {
+    // A tool added after creation never passed the SDK allowlist, which is how a confined worker would get a
+    // filesystem primitive back. The adapter contract no longer has the method at all.
+    const adapter = adapterWith(stubSdk()) as unknown as Record<string, unknown>;
+    expect(adapter["registerTool"]).toBeUndefined();
+    expect((new FakePiAdapter() as unknown as Record<string, unknown>)["registerTool"]).toBeUndefined();
+  });
+
   it("gives a session without roots no filesystem tool unless the adapter was built to allow one", async () => {
     const sdk = stubSdk();
     const adapter = adapterWith(sdk);
@@ -740,18 +736,15 @@ describe("the real adapter narrows and widens a session's tools from the set it 
     const created = sdk.module.createAgentSession;
     sdk.module.createAgentSession = async (options: { tools?: string[]; customTools?: { name: string }[] }) => {
       const result = await created(options);
-      const registry = new Map((options.tools ?? []).map((name) => [name, { name }]));
+      const registry = new Set(options.tools ?? []);
       const session = result.session as unknown as {
-        agent: { state: { tools: { name: string }[] } };
+        activeTools: string[];
         setActiveToolsByName?: (names: string[]) => void;
       };
-      session.agent.state.tools = [...registry.values()];
+      session.activeTools = [...registry];
       if (withByName) {
         session.setActiveToolsByName = (names: string[]) => {
-          session.agent.state.tools = names.flatMap((name) => {
-            const tool = registry.get(name);
-            return tool === undefined ? [] : [tool];
-          });
+          session.activeTools = names.filter((name) => registry.has(name));
           rebuilt.push(names);
         };
       } else {
@@ -770,8 +763,8 @@ describe("the real adapter narrows and widens a session's tools from the set it 
     execute: async () => ({ text: name }),
   });
 
-  /** The names on the stub's one session, which is the object the adapter changes. */
-  const toolNames = (sdk: ReturnType<typeof stubSdk>): string[] => sdk.session.agent.state.tools.map((tool) => tool.name);
+  /** The names the stub's one session declares, read the way the adapter reads them. */
+  const toolNames = (sdk: ReturnType<typeof stubSdk>): string[] => sdk.session.getActiveToolNames();
 
   it("writes nothing itself when the SDK cannot change the active tools, and says so", async () => {
     const { sdk } = registrySdk(false);
@@ -808,20 +801,6 @@ describe("the real adapter narrows and widens a session's tools from the set it 
     await adapter.setActiveTools(handle.sessionId, ["b", "read", "bash"]);
     expect(state()).toEqual(["b"]);
     expect(rebuilt).toEqual([["a"], ["a", "b", "c"], ["b"]]);
-  });
-
-  it("keeps a tool registered after creation whatever the active set is", async () => {
-    const { sdk } = registrySdk(true);
-    const adapter = adapterWith(sdk);
-    const handle = await adapter.createWorkerSession({
-      goal: "g",
-      projectRoots: [],
-      allowedCapabilityRefs: [],
-      customTools: [custom("a"), custom("b")],
-    });
-    await adapter.registerTool(handle.sessionId, custom("late"));
-    await adapter.setActiveTools(handle.sessionId, ["a"]);
-    expect(toolNames(sdk)).toEqual(["a", "late"]);
   });
 });
 

@@ -58,8 +58,8 @@ export interface WorkerBrief {
    *
    * The filesystem half of the boundary does not depend on this flag: any brief carrying a root runs with the
    * scoped tools bound to it and without the SDK's own file tools. What this adds is the rest of the
-   * project-session lane — the adapter refuses `registerTool` afterwards, because a tool added after creation
-   * never passes the SDK allowlist and would be a filesystem primitive the boundary never saw. A brief that
+   * project-session lane — `setActiveTools` can never bring back a tool the session was not created with,
+   * and the adapter has no way to add one afterwards. A brief that
    * declares it without an approved root is refused by name: a session confined to nothing has no filesystem
    * tool at all, which is a configuration error rather than a constraint somebody chose.
    */
@@ -298,8 +298,6 @@ export interface PiAdapter {
 
   /** Replace the active tool set. Cheaper than reloading resources. */
   setActiveTools(sessionId: string, toolNames: readonly string[]): Promise<void>;
-
-  registerTool(sessionId: string, tool: ToolDefinition): Promise<void>;
 
   /**
    * Refresh resources at a command/idle boundary.
