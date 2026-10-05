@@ -11,6 +11,7 @@
 
 import { type ReactElement } from "react";
 
+import { readableInstant } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 
 export interface DevicePairingPanelProps {
@@ -21,6 +22,8 @@ export interface DevicePairingPanelProps {
   unblockedBy: string;
   /** Nodes already paired, if any. Empty on a single-node install. */
   pairedNodes?: { nodeId: string; label: string; lastSeenAt: string }[];
+  /** The interface language, for when a paired node was last seen. */
+  locale?: string;
   /**
    * Passed in explicitly rather than read via `useT()`: this panel is exercised by plain function calls in
    * unit tests with no `LocaleProvider` mounted, so the translator has to arrive as data rather than through
@@ -34,6 +37,7 @@ export function DevicePairingPanel({
   nodeLabel,
   unblockedBy,
   pairedNodes = [],
+  locale = "vi",
   t,
 }: DevicePairingPanelProps): ReactElement {
   return (
@@ -49,9 +53,7 @@ export function DevicePairingPanel({
       <div className="cc-card-body">
         <dl className="cc-fields">
           <dt>{t("settings.pairing.thisNode")}</dt>
-          <dd>
-            {nodeLabel} · <code>{nodeId}</code>
-          </dd>
+          <dd>{nodeLabel}</dd>
           <dt>{t("settings.pairing.unblockedByLabel")}</dt>
           <dd data-pairing-unblocked-by="true">{unblockedBy}</dd>
         </dl>
@@ -68,11 +70,16 @@ export function DevicePairingPanel({
                   <span className="cc-setting-label">{node.label}</span>
                   <code className="cc-setting-desc">{node.nodeId}</code>
                 </span>
-                <span className="cc-freshness">{node.lastSeenAt}</span>
+                <span className="cc-freshness">{readableInstant(node.lastSeenAt, locale)}</span>
               </li>
             ))}
           </ul>
         )}
+        {/* The id is what a bug report or a second machine needs, not what a person reads to know which machine this is. */}
+        <details className="cc-text-alt" data-pairing-references="true">
+          <summary>{t("inbox.capability.details")}</summary>
+          <code data-pairing-node-id="true">{nodeId}</code>
+        </details>
       </div>
     </section>
   );

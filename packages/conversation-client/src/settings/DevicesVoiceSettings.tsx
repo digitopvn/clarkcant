@@ -9,7 +9,7 @@ import { wakeAvailability } from "../wake-word.ts";
 import type { GatewayClient } from "../api.ts";
 import { InlineStatus, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
-import { useT } from "../i18n/locale-context.tsx";
+import { useLocale, useT } from "../i18n/locale-context.tsx";
 
 /**
  * Devices & Voice: how Clark hears and speaks.
@@ -35,6 +35,7 @@ export interface DevicesVoiceSettingsProps {
 
 export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSettingsProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
   /*
    * Asked rather than assumed.
    *
@@ -51,6 +52,7 @@ export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSetti
           nodeId={facts?.nodeId ?? t("settings.developer.node.unread")}
           nodeLabel={facts?.label ?? t("settings.developer.node.unread")}
           unblockedBy={t("settings.devices.unblockedBy")}
+          locale={locale}
           t={t}
         />
       </section>
