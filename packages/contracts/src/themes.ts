@@ -285,10 +285,12 @@ export const appearanceApiRangeSchema = z
  *
  * Profiles rather than family names, because a family name is a string that reaches a stylesheet, and because a font
  * this build does not ship would silently fall back on one machine and not another. `clark` is Plus Jakarta Sans.
+ * `inter`, `geist`, `jetbrains` and `geist-mono` are faces the host ships itself, so they draw the same on every
+ * platform; the others are system stacks. New profiles are only ever appended.
  */
-export const THEME_FONT_PROFILES = ["clark", "system", "serif", "rounded", "mono"] as const;
+export const THEME_FONT_PROFILES = ["clark", "system", "serif", "rounded", "mono", "inter", "geist"] as const;
 export type ThemeFontProfile = (typeof THEME_FONT_PROFILES)[number];
-export const THEME_MONO_PROFILES = ["clark", "typewriter"] as const;
+export const THEME_MONO_PROFILES = ["clark", "typewriter", "jetbrains", "geist-mono"] as const;
 export type ThemeMonoProfile = (typeof THEME_MONO_PROFILES)[number];
 
 export const THEME_BORDER_STYLES = ["solid", "dashed"] as const;
@@ -765,8 +767,21 @@ export const accentPreferenceSchema = z.strictObject({
   dark: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   light: z.string().regex(/^#[0-9a-fA-F]{6}$/),
 }).nullable();
+/** A personal typeface: a profile, or `null` to keep the one the theme chose. */
+export const fontPreferenceSchema = z.enum(THEME_FONT_PROFILES).nullable();
+export const codeFontPreferenceSchema = z.enum(THEME_MONO_PROFILES).nullable();
 export const appearanceCustomizationSchema = z.strictObject({
   accent: accentPreferenceSchema.default(null),
   density: z.enum(["comfortable", "compact"]).default("comfortable"),
+  /** The interface's typeface, for body text and headings alike. */
+  font: fontPreferenceSchema.default(null),
+  /** The typeface of code blocks, inline code, paths and figures set in monospace. */
+  codeFont: codeFontPreferenceSchema.default(null),
 });
 export type AppearanceCustomization = z.infer<typeof appearanceCustomizationSchema>;
+
+/** Whether any personal choice departs from the defaults, so a response or cache needs to carry the customization. */
+export function isPersonalAppearance(customization: AppearanceCustomization): boolean {
+  return customization.accent !== null || customization.density !== "comfortable"
+    || customization.font !== null || customization.codeFont !== null;
+}

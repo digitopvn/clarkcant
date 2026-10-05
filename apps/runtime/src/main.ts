@@ -216,6 +216,7 @@ async function main(): Promise<void> {
             id: modelTurn.selection.id,
             maxWallClockMs: modelTurn.budget.maxWallClockMs,
             maxTokens: modelTurn.budget.maxTokens,
+            ...(modelTurn.selection.thinkingLevel === undefined ? {} : { thinkingLevel: modelTurn.selection.thinkingLevel }),
           },
         }),
   });

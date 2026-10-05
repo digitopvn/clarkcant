@@ -35,7 +35,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 test("a takeover changes who may act, and a stop ends the session", async ({ page }) => {
@@ -53,7 +53,8 @@ test("a takeover changes who may act, and a stop ends the session", async ({ pag
   // The agent is driving, at the epoch its plan was made under.
   await expect(card).toHaveAttribute("data-control-driver", "agent");
   await expect(card).toHaveAttribute("data-control-status", "running");
-  await expect(card).toContainText("agent");
+  // Named as the one Clark the person talks to, not as the machinery behind it.
+  await expect(card.locator("[data-control-driver-label]")).toHaveText("Clark");
 
   /*
    * The captured frame, as a picture rather than a promise. A card that carried a digest but rendered nothing would
@@ -103,9 +104,17 @@ test("a takeover changes who may act, and a stop ends the session", async ({ pag
   expect(captured.height).toBeGreaterThan(0);
   expect(decoded).toEqual(captured);
 
+  // Drawn inside the card at any capture size: a 1280px frame used to run past the card's right edge and be cut off.
+  const box = await card.boundingBox();
+  const drawn = await picture.boundingBox();
+  expect(drawn?.width ?? Infinity).toBeLessThanOrEqual(box?.width ?? 0);
+  expect(drawn?.x ?? -1).toBeGreaterThanOrEqual(box?.x ?? 0);
+
+  // The moment reads as a time, and the exact instant rides on the `time` element rather than in the sentence.
   const caption = (await frame.locator("figcaption").innerText()).trim();
-  const labelled = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/.exec(caption)?.[1];
-  expect(labelled).toBeDefined();
+  expect(caption).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+  const labelled = await frame.locator("figcaption time").getAttribute("datetime");
+  expect(labelled).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   const takenAt = Date.parse(labelled ?? "");
   expect(takenAt).toBeGreaterThanOrEqual(startedAt - 1_000);
   expect(takenAt).toBeLessThanOrEqual(Date.now());

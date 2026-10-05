@@ -30,7 +30,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -130,7 +130,7 @@ test("a choice switches the chart's series and a search narrows the table, and t
 
   // Reloaded, the live surface shows what the node kept: the series, the pick, the query and the rows it narrows to.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const again = page.locator("[data-pin-live]").last().locator("[data-surface-composition]");
   await expect(again).toBeVisible({ timeout: 30_000 });
   await expect(again.locator("[data-slot='trend'] [data-chart-series]")).toHaveAttribute("data-chart-series", "created", { timeout: 15_000 });
@@ -233,7 +233,7 @@ test("a picture picked in a composed gallery reaches the carousel beside it, the
 
   // Reloaded, both leaves draw the picture the node kept.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const again = page.locator("[data-pin-live]").last().locator("[data-surface-composition]");
   await expect(again).toBeVisible({ timeout: 30_000 });
   await expect(again.locator("[data-section-id='pictures-2'] [data-carousel-index]")).toHaveAttribute("data-carousel-index", "1", { timeout: 15_000 });

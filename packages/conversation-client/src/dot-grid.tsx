@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactElement, useEffect, useRef } from "react";
 
 /**
  * The dotted field behind the conversation, lit where the pointer is.
@@ -12,7 +12,14 @@ import { type ReactElement, useEffect, useRef } from "react";
  * pointer over the shell the light fades out, so a keyboard-only reader sees the faint grid and nothing that follows
  * a cursor they are not using.
  */
-export function DotGrid(): ReactElement {
+/** A circle the field leaves empty, in the shell's coordinates: where the orb's ball is. */
+export interface DotGridClearing {
+  x: number;
+  y: number;
+  radius: number;
+}
+
+export function DotGrid({ clearing }: { clearing?: DotGridClearing | undefined } = {}): ReactElement {
   const grid = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,5 +56,22 @@ export function DotGrid(): ReactElement {
     };
   }, []);
 
-  return <div className="cc-dot-grid" data-lit="false" aria-hidden="true" ref={grid} />;
+  const clearingStyle =
+    clearing === undefined
+      ? undefined
+      : ({
+          "--cc-grid-clear-x": `${clearing.x}px`,
+          "--cc-grid-clear-y": `${clearing.y}px`,
+          "--cc-grid-clear-r": `${clearing.radius}px`,
+        } as CSSProperties);
+  return (
+    <div
+      className="cc-dot-grid"
+      data-lit="false"
+      data-clearing={clearing === undefined ? undefined : "true"}
+      style={clearingStyle}
+      aria-hidden="true"
+      ref={grid}
+    />
+  );
 }

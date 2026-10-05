@@ -29,7 +29,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -79,12 +79,17 @@ test("a grid of two tiles and a card is drawn as the tree says, and again from h
   const wide = await columnsOf(body);
   expect(wide).toBeGreaterThan(1);
   expect(wide).toBeLessThanOrEqual(3);
+  // When it was read is said as a time, not as the wire's timestamp; the exact instant stays on the element.
+  const captured = page.locator("[data-surface-captured-at]").last();
+  await expect(captured).toHaveAttribute("data-surface-captured-at", /^\d{4}-\d{2}-\d{2}T/);
+  await expect(captured).toContainText("chụp lúc");
+  await expect(captured).not.toContainText(/\d{4}-\d{2}-\d{2}T/);
   await surface.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("layout-dashboard-desktop.png") });
 
   // History: the reloaded conversation draws the same tree from the stored bundle.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const again = page.locator("[data-layout-root]").last();
   await expect(again.locator(":scope > [data-layout='grid'] > .cc-layout-grid-body > [data-layout='card'] [data-slot='table']")).toBeVisible({
     timeout: 30_000,

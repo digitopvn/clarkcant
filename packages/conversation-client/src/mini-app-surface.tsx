@@ -19,7 +19,8 @@ import {
 } from "@clarkcant/contracts";
 
 import { type RendererDataset, resolveRenderer } from "./renderers.tsx";
-import { useT } from "./i18n/locale-context.tsx";
+import { readableInstant } from "./blocks.tsx";
+import { useLocale, useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -168,6 +169,7 @@ function regionDataset(section: CompositeSurfaceSection, availability: RegionAva
 
 export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
   const { view, onIntent, busy } = props;
   const [state, setState] = useState<Record<string, Record<string, unknown>>>({});
   const sections = useMemo(() => orderSections(view.sections), [view.sections]);
@@ -252,7 +254,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
       <figcaption className="cc-card-head">
         <span className="cc-card-title">{props.title ?? t("widgets.surface.overviewTitle")}</span>
         <span className="cc-freshness" data-surface-captured-at={view.capturedAt ?? ""}>
-          {view.capturedAt === undefined ? "" : t("widgets.surface.capturedAt").replace("{at}", view.capturedAt)}
+          {view.capturedAt === undefined ? "" : t("widgets.surface.capturedAt").replace("{at}", readableInstant(view.capturedAt, locale))}
           {view.stale === true ? t("widgets.surface.staleSuffix") : ""}
         </span>
       </figcaption>

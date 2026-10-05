@@ -7,8 +7,10 @@ import {
   ProjectPickerCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
+  readableElapsed,
   renderBlock,
 } from "../src/blocks.tsx";
+import { MESSAGES_EN, type MessageKey } from "../src/i18n/messages.ts";
 import { findAll, nonHost, textOf } from "./block-helpers.ts";
 
 /**
@@ -235,10 +237,18 @@ describe("the model answer note", () => {
     const line = textOf(summary);
     expect(line).toContain("Trả lời bằng model");
     expect(line).toContain("deepseek");
-    expect(line).toContain("1042 ms");
+    // The node's exact milliseconds, read as the seconds a person waited.
+    expect(line).toContain("1 giây");
     expect(line).not.toContain("Câu trả lời này do model sinh ra.");
     // And it is reachable once opened.
     expect(textOf(element)).toContain("Câu trả lời này do model sinh ra.");
+  });
+
+  it("reads a duration in seconds past one, and leaves anything else as the node wrote it", () => {
+    expect(readableElapsed("17681 ms", "vi", "giây")).toBe("17,7 giây");
+    expect(readableElapsed("17681 ms", "en", "s")).toBe("17.7 s");
+    expect(readableElapsed("640 ms", "vi", "giây")).toBe("640 ms");
+    expect(readableElapsed("about a minute", "en", "s")).toBe("about a minute");
   });
 
   it("marks a reply a fallback model wrote, so the line itself says the choice did not answer", () => {
@@ -260,6 +270,53 @@ describe("the model answer note", () => {
     const element = SystemCardBlock({ block: failed });
     expect(element?.type).toBe("section");
     expect(textOf(element)).toContain("provider exploded");
+  });
+
+  it("says its state in words, not as the wire's status id", () => {
+    const failed = { ...note, status: "blocked", title: "Không gọi được model", detail: "provider exploded" };
+    expect(textOf(SystemCardBlock({ block: failed }))).toContain("bị chặn");
+    expect(textOf(SystemCardBlock({ block: failed }))).not.toContain("blocked");
+    const english = (key: MessageKey): string => MESSAGES_EN[key];
+    expect(textOf(SystemCardBlock({ block: { ...failed, status: "needs-sign-in" }, t: english }))).toContain("needs sign-in");
+    expect(textOf(SystemCardBlock({ block: { ...failed, status: "something-new" } }))).toContain("something-new");
+  });
+
+  it("says a field's freshness in words, once when the value is only that freshness", () => {
+    const card = (fields: Record<string, unknown>[]): Record<string, unknown> => ({ type: "system-card", owner: "host", status: "ready", title: "Ghi chú", fields });
+    const sample = textOf(SystemCardBlock({ block: card([{ label: "Nguồn dữ liệu", value: "sample", freshness: "sample" }]) }));
+    expect(sample).toContain("dữ liệu mẫu");
+    expect(sample).not.toContain("sample");
+    const cached = textOf(SystemCardBlock({ block: card([{ label: "Nhiệt độ", value: "31°C", freshness: "cached" }]) }));
+    expect(cached).toMatch(/31°C\s+· dữ liệu đã lưu/u);
+    const unknownFreshness = textOf(SystemCardBlock({ block: card([{ label: "X", value: "1", freshness: "stale-ish" }]) }));
+    expect(unknownFreshness).toMatch(/1\s+· stale-ish/u);
+  });
+
+  it("keeps a task's and a node's id one click down, under the facts a person reads", () => {
+    const parked = SystemCardBlock({
+      block: {
+        type: "system-card",
+        owner: "host",
+        subject: "capability",
+        status: "blocked",
+        title: "Cần một capability chưa cài",
+        detail: "Task đang chờ.",
+        fields: [
+          { label: "Capability", value: "project.code.change@1" },
+          { label: "Task", value: "task_muuej1j4c11811c" },
+          { label: "Node", value: "node_343a7787e51a4b02a02665e5" },
+        ],
+      },
+    });
+    const references = findAll(parked, "data-card-references");
+    expect(references).toHaveLength(1);
+    expect(references[0]?.type).toBe("details");
+    expect(textOf(references[0])).toContain("Chi tiết kỹ thuật");
+    expect(textOf(references[0])).toContain("task_muuej1j4c11811c");
+    expect(textOf(references[0])).toContain("node_343a7787e51a4b02a02665e5");
+    expect(textOf(references[0])).not.toContain("project.code.change@1");
+    const recipe = { type: "system-card", owner: "host", status: "done", title: "Mẫu", detail: "Chạy recipe.", fields: [{ label: "Recipe", value: "quick-play.chart.line" }] };
+    expect(findAll(SystemCardBlock({ block: recipe }), "data-card-references")).toHaveLength(0);
   });
 });
 

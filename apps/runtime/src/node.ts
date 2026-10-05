@@ -137,6 +137,8 @@ export interface NodeModelInfo {
   id: string;
   maxWallClockMs: number;
   maxTokens: number;
+  /** The thinking level every session is created with, when the node names one; absent means pi's own default. */
+  thinkingLevel?: string;
 }
 
 export interface Runtime {

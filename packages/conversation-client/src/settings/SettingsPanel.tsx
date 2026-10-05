@@ -234,7 +234,12 @@ export function SettingsPanel({
    */
   useEffect(() => {
     if (!open) return;
-    document.getElementById(`cc-tab-${tab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const selected = document.getElementById(`cc-tab-${tab}`);
+    // A tab opens at its top. The dialog keeps one scroll position for every tab, so without this a tab chosen after
+    // reading to the bottom of another one opened partway down, under whatever happened to be at that depth.
+    const body = selected?.closest(".cc-modal-body");
+    if (body !== null && body !== undefined) body.scrollTop = 0;
+    selected?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [open, tab]);
 
   const orbChanged = useCallback(() => {
@@ -401,7 +406,7 @@ export function SettingsPanel({
         <span className="cc-freshness" data-settings-status={problem === undefined ? "ok" : "error"}>
           {nodeStatus()}
         </span>
-        <button type="button" className="cc-badge cc-modal-done" onClick={onClose}>
+        <button type="button" className="cc-action cc-modal-done" data-emphasis="primary" onClick={onClose}>
           {t("settings.done")}
         </button>
       </footer>

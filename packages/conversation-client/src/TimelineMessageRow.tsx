@@ -3,8 +3,12 @@ import { memo, type ReactElement } from "react";
 import type { GatewayClient, Timeline, TimelineMessage } from "./api.ts";
 import { TranscriptRow } from "./transcript-row.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
+import { echoesCommandReceipt } from "./command-receipts.ts";
+import { repeatsDrawnSurface } from "./surface-refs.ts";
 import type { MessageKey } from "./i18n/messages.ts";
-import { useT } from "./i18n/locale-context.tsx";
+import { useLocale, useT } from "./i18n/locale-context.tsx";
+import { WorkStepsFold } from "./work-steps-fold.tsx";
+import { countsAsStep, foldWorkSteps, isWorkBlock } from "./work-steps.ts";
 
 export interface TimelineMessageRowProps {
   message: Timeline["messages"][number];
@@ -52,6 +56,7 @@ function TimelineMessageRowComponent({
   settled,
 }: TimelineMessageRowProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
   if (message.hostWritten !== undefined && message.hostWritten !== null) {
     // A quiet, centred line rather than a bubble: nobody typed it, so it must not sit where the person's words do.
     return (
@@ -60,9 +65,28 @@ function TimelineMessageRowComponent({
       </div>
     );
   }
+  // A block that only echoes a command receipt, or only names a widget a surface above already draws, is left out
+  // before folding, so it neither splits a run nor counts in it.
+  const shown = message.blocks
+    .map((block, blockIndex) => ({ block, blockIndex }))
+    .filter(({ blockIndex }) => !echoesCommandReceipt(message.blocks, blockIndex) && !repeatsDrawnSurface(message.blocks, blockIndex));
+  const draw = ({ block, blockIndex }: (typeof shown)[number]): ReactElement | null =>
+    renderBlock(block, blockIndex, renderSurface, blockActions, client, t, locale);
   return (
     <TranscriptRow role={message.role} index={index} settled={settled}>
-      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client, t))}
+      {foldWorkSteps(shown, (entry) => isWorkBlock(entry.block), (entry) => countsAsStep(entry.block)).map((run) =>
+        run.kind === "item" ? (
+          draw(run.item)
+        ) : (
+          <WorkStepsFold
+            key={`steps-${run.entries[0]!.item.blockIndex}`}
+            count={run.count}
+            failed={run.entries.filter((entry) => entry.item.block.status === "failed").length}
+          >
+            {run.entries.map((entry) => draw(entry.item))}
+          </WorkStepsFold>
+        ),
+      )}
     </TranscriptRow>
   );
 }

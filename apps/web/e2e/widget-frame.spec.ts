@@ -33,7 +33,7 @@ function token(): string {
 /** Compose the fixture widget, then open the current view — which is what mounts the frame. */
 async function openFrame(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(`http://127.0.0.1:${NODE_PORT}`)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
@@ -181,7 +181,7 @@ test("state the widget saves is stored by the node and is there when the frame i
 
   // A fresh page has no memory of the frame: whatever it shows now came from the node.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const open = page.locator("[data-open-live]").last();
   await expect(open).toBeVisible({ timeout: 20_000 });
   await open.click();

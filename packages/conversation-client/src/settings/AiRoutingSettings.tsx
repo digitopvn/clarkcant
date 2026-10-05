@@ -2,11 +2,23 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
-import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool } from "@clarkcant/contracts";
+import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool, type ModelRole } from "@clarkcant/contracts";
+import type { MessageKey } from "../i18n/messages.ts";
 import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
-import { useT } from "../i18n/locale-context.tsx";
+import { useLocale, useT } from "../i18n/locale-context.tsx";
+import { modelSwitchShortcut } from "../use-model-alias.ts";
+
+/** A model's roles in the interface language: the ids are the contract's, and read as English words in a Vietnamese panel. */
+const MODEL_ROLE_LABEL: Record<ModelRole, MessageKey> = {
+  foreground: "settings.modelPool.role.foreground",
+  background: "settings.modelPool.role.background",
+  coding: "settings.modelPool.role.coding",
+  research: "settings.modelPool.role.research",
+  fast: "settings.modelPool.role.fast",
+  "long-context": "settings.modelPool.role.long-context",
+};
 
 /**
  * Every credential the node holds, listed once. DESIGN.md 11.6 keeps a key's row in the domain that explains
@@ -43,6 +55,15 @@ export interface AiRoutingSettingsProps {
 
 export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
+  // In the units a person reads a limit in: "2 phút · 32.000 token" rather than "120000 ms · 32000 token".
+  const turnCap = (ms: number, tokens: number): string => {
+    const time =
+      ms >= 60_000 && ms % 60_000 === 0
+        ? `${String(ms / 60_000)} ${t("settings.ai.turnCap.minutes")}`
+        : `${String(Math.round(ms / 1000))} ${t("settings.ai.turnCap.seconds")}`;
+    return `${time} · ${tokens.toLocaleString(locale)} token`;
+  };
   const [catalogue, setCatalogue] = useState<
     | { id: string; models: { provider: string; id: string; contextWindow?: number; current: boolean }[] }[]
     | undefined
@@ -116,9 +137,7 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
               <code>{facts.model.id}</code>
             </SettingsRow>
             <SettingsRow label={t("settings.ai.turnCap.label")} description={t("settings.ai.turnCap.description")}>
-              <code>
-                {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
-              </code>
+              <code>{turnCap(facts.model.maxWallClockMs, facts.model.maxTokens)}</code>
             </SettingsRow>
           </>
         )}
@@ -211,6 +230,7 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
   const [checked, setChecked] = useState<{ alias: string; ok: boolean; message?: string }[]>([]);
   const [current, setCurrent] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState("");
+  const shortcut = modelSwitchShortcut(typeof navigator === "undefined" ? undefined : navigator.platform);
 
   useEffect(() => {
     let live = true;
@@ -248,10 +268,10 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
   return (
     <section className="cc-panel-section" data-model-pool="true">
       <h3>{t("settings.modelPool.heading")}</h3>
-      <p className="cc-panel-note">{t("settings.modelPool.intro")}</p>
+      <p className="cc-panel-note">{t("settings.modelPool.intro").replace("{shortcut}", shortcut)}</p>
       {pool.profiles.length === 0 ? (
         <p className="cc-panel-note" data-model-pool="none">
-          {t("settings.modelPool.empty")}
+          {t("settings.modelPool.empty").replace("{shortcut}", shortcut)}
         </p>
       ) : (
         // Scrolls on its own rather than widening the dialog: five columns do not fit a phone, and a table that
@@ -284,10 +304,11 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
                         </span>
                       )}
                     </td>
-                    <td>{profile.roles.join(", ")}</td>
+                    <td>{profile.roles.map((role) => t(MODEL_ROLE_LABEL[role])).join(", ")}</td>
                     <td>
                       <input
                         type="number"
+                        className="cc-model-priority"
                         min={0}
                         value={profile.priority}
                         data-model-priority={profile.alias}
@@ -310,22 +331,25 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
         </div>
       )}
 
-      <div className="cc-panel-row">
-        <button
-          type="button"
-          className="cc-chip"
-          data-model-pool-save="true"
-          onClick={() => {
-            client
-              .putModelPool(pool)
-              .then((answer) => setPool(answer.pool))
-              .then(() => setStatus(t("settings.modelPool.saved")))
-              .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : t("settings.modelPool.saveFailed")));
-          }}
-        >
-          {t("settings.modelPool.save")}
-        </button>
-      </div>
+      {/* Nothing to save until there is a profile to order: a save button over an empty list only looks like a step. */}
+      {pool.profiles.length > 0 && (
+        <div className="cc-panel-row">
+          <button
+            type="button"
+            className="cc-chip"
+            data-model-pool-save="true"
+            onClick={() => {
+              client
+                .putModelPool(pool)
+                .then((answer) => setPool(answer.pool))
+                .then(() => setStatus(t("settings.modelPool.saved").replace("{shortcut}", shortcut)))
+                .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : t("settings.modelPool.saveFailed")));
+            }}
+          >
+            {t("settings.modelPool.save")}
+          </button>
+        </div>
+      )}
       {status === "" ? null : <p className="cc-panel-note">{status}</p>}
     </section>
   );

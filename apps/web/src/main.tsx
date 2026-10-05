@@ -5,6 +5,12 @@ import { createRoot } from "react-dom/client";
 // fonts only from its own origin, and a local-first app should not need the network to render its
 // own interface. The package ships the vietnamese subset, which this UI needs.
 import "@fontsource-variable/plus-jakarta-sans";
+// The other faces a person can choose in Settings → Experience. Importing declares the faces only; the browser
+// downloads a file the first time text is actually drawn in it, so an unused choice costs nothing.
+import "@fontsource-variable/inter";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/geist-mono";
 
 import { App } from "./App.tsx";
 

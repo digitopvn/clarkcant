@@ -87,7 +87,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -209,7 +209,7 @@ test("audio fetched from an allowed origin plays from the node, never by itself,
   // After a reload the player opens where it was paused, still paused.
   await page.waitForTimeout(1_500);
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const reloaded = page.locator("[data-widget-role='audio'] audio[data-audio-ref]").last();
   await expect.poll(async () => (await audioState(reloaded)).time, { timeout: 15_000 }).toBeGreaterThan(pausedAt - 0.6);
   expect((await audioState(reloaded)).paused).toBe(true);
@@ -302,7 +302,7 @@ test("a text document previews in pages a keyboard turns, marks hidden character
   // The page held by the node comes back after a reload.
   await page.waitForTimeout(500);
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const reloaded = page.locator("[data-widget-role='document']").last();
   await expect(reloaded.locator("[data-document-page]")).toHaveAttribute("data-document-page", "2", { timeout: 15_000 });
 

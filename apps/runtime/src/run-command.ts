@@ -45,6 +45,12 @@ export const COMMAND_LIMITS = {
 const ACTIVITY_LABEL_MAX = 300;
 const ACTIVITY_PATH_MAX = 1000;
 
+/** How long a command took, in the unit a person reads it in: milliseconds under a second, seconds after. */
+export function durationWords(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  return `${new Intl.NumberFormat("vi", { maximumFractionDigits: 1 }).format(ms / 1000)} giây`;
+}
+
 export interface CommandOutcome {
   exitCode: number | null;
   stdout: string;
@@ -448,8 +454,10 @@ export async function runGuardedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.operationId}`,
       name: "run_command",
+      // What the command was for, when the model said; the folder is the receipt's `path`, drawn beside the label, so
+      // a turn of ten commands in one project does not repeat the same path ten times in front of what each one did.
       label: fitHead(
-        `Chạy lệnh trong ${cwd}` + (because === "" ? "" : ` (${because})`) + (why === "" ? "" : `: ${why}`),
+        (why === "" ? `Chạy lệnh trong ${cwd}` : why) + (because === "" ? "" : ` (${because})`),
         ACTIVITY_LABEL_MAX,
       ),
       status: succeeded ? "done" : "failed",
@@ -463,8 +471,8 @@ export async function runGuardedCommand(input: {
       type: "evidence",
       kind: "exit-status",
       summary: outcome.timedOut
-        ? `Lệnh bị dừng sau ${outcome.durationMs} ms vì vượt thời gian cho phép.`
-        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms.`,
+        ? `Lệnh bị dừng sau ${durationWords(outcome.durationMs)} vì vượt thời gian cho phép.`
+        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${durationWords(outcome.durationMs)}.`,
       // Non-zero is not "unverified": it is a result, and it contradicts success.
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.operationId,
@@ -641,8 +649,8 @@ export async function runApprovedCommand(input: {
       type: "evidence",
       kind: "exit-status",
       summary: outcome.timedOut
-        ? `Lệnh bị dừng sau ${outcome.durationMs} ms vì vượt thời gian cho phép.`
-        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms.`,
+        ? `Lệnh bị dừng sau ${durationWords(outcome.durationMs)} vì vượt thời gian cho phép.`
+        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${durationWords(outcome.durationMs)}.`,
       // Non-zero is not "unverified": it is a result, and it contradicts success.
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.approvalId,

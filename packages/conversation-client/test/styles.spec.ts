@@ -254,12 +254,12 @@ describe("the look a theme's identity reaches", () => {
     }
 
     // The primary action is filled with the accent directly, so no recipe reaches it, and the plain one beside it is
-    // the elevated surface: the two differ in fill.
+    // the elevated surface lightly tinted with the text colour: the two differ in fill.
     const primary = rules(APP_CSS).find(({ selector }) => selector === '.cc-action[data-emphasis="primary"]:not(:disabled)')?.body ?? "";
     expect(primary).toMatch(/background:\s*var\(--cc-accent\)/);
     expect(primary).toMatch(/border-color:\s*var\(--cc-accent\)/);
     expect(primary).not.toMatch(/var\(--cc-button-/);
-    expect(declared.get("--cc-button-bg")).toBe("var(--cc-elevated)");
+    expect(declared.get("--cc-button-bg")).toBe("color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated))");
     // And the contrast audit holds the accent to text contrast on the elevated surface, so for every theme that can be
     // drawn the filled answer stands apart from the plain one.
     for (const palette of [DARK, LIGHT]) {
@@ -310,8 +310,17 @@ describe("the look a theme's identity reaches", () => {
   it("draws every focus ring in the protected focus colour", () => {
     const rings = rules(APP_CSS).filter(({ selector, body }) => selector.includes(":focus-visible") && /\boutline\s*:/.test(body));
     expect(rings.length).toBeGreaterThan(20);
+    // A field that hands its ring to the control around it. Each one is allowed to drop its own outline only because
+    // the container draws focus in the same protected colour, which is checked below rather than taken on trust.
+    const delegated: Readonly<Record<string, string>> = { ".cc-composer textarea:focus-visible": ".cc-composer:focus-within" };
     for (const { selector, body } of rings) {
       const outline = /\boutline\s*:\s*([^;]+)/.exec(body)?.[1] ?? "";
+      const container = delegated[selector];
+      if (container !== undefined && outline.trim() === "none") {
+        const ring = rules(APP_CSS).find((rule) => rule.selector === container)?.body ?? "";
+        expect(ring, `${selector} delegates to ${container}`).toContain("var(--cc-focus)");
+        continue;
+      }
       expect(outline, selector).toContain("var(--cc-focus)");
     }
   });

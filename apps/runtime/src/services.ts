@@ -144,6 +144,11 @@ export interface NodeServices {
    * rather than as an error - the node is still a node.
    */
   modelCatalogue?: () => Promise<ModelCatalogue>;
+  /**
+   * The provider and model the next session runs: a pick made in Settings while the node is running, else the one it
+   * booted with. Assigned after boot beside the catalogue; `model` alone is the boot snapshot and goes stale on a pick.
+   */
+  currentModel?: () => { provider: string; id: string };
 
   /**
    * What the configured voice provider can do, as it reports it.

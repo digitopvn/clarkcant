@@ -36,7 +36,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 test("a secret typed into the card is stored, and is nowhere afterwards", async ({ page }) => {
@@ -51,11 +51,16 @@ test("a secret typed into the card is stored, and is nowhere afterwards", async 
   // description the requester gave, so the text is asserted once — the card deliberately does not print the same
   // sentence twice, and a second marker for it would be asserting duplication.
   await expect(card).toContainText("Dùng để chạy model OpenAI trên node này.");
+  // Who uses it and where it is kept are machine names, so they wait under technical details until asked for.
+  const references = card.locator("[data-credential-references='true']");
+  await expect(card.locator('[data-credential-consumer="capability:openai"]')).toBeHidden();
+  await expect(card.locator(".cc-card-head")).not.toContainText("vault");
+  await references.locator("summary").click();
   await expect(card.locator('[data-credential-consumer="capability:openai"]')).toBeVisible();
   await expect(card.locator('[data-credential-scope^="node:"]')).toBeVisible();
 
   await card.locator("[data-credential-field='openai_api_key']").fill(TYPED_VALUE);
-  await card.getByRole("button").click();
+  await card.locator("[data-credential-submit='true']").click();
 
   // Stored, and gone from the screen: the field is cleared by the card as soon as it hands the value over.
   await expect(card.locator("[data-credential-field='openai_api_key']")).toHaveValue("", { timeout: 15_000 });

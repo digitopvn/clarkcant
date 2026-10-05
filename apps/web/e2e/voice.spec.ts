@@ -58,7 +58,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /**
@@ -192,7 +192,7 @@ test("a microphone session carries audio both ways and records the transcript", 
   // and recording a session. It is the assistant's answer that is stored, because that is the message
   // the agent's turn wrote while the sentence was being said.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('[data-role="assistant"]').last()).toContainText(AGENT_REPLY, {
     timeout: 15_000,
   });

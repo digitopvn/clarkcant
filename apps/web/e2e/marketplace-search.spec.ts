@@ -28,7 +28,7 @@ function token(): string {
 /** The app connects to a node by token and gateway; a bare "/" reaches a page with no conversation on it. */
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(`http://127.0.0.1:${NODE_PORT}`)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function search(page: Page): Promise<void> {
@@ -75,4 +75,22 @@ test("every install control belongs to the row it acts on", async ({ page }) => 
     // Each control names the package it installs, rather than relying on where it happens to sit.
     await expect(card.locator(`[data-marketplace-package='${id}'] [data-install-package='${id}']`)).toHaveCount(1);
   }
+});
+
+test("search results read as a card of rows, not a bulleted list against the card's edge", async ({ page }) => {
+  await search(page);
+
+  const card = page.locator("[data-marketplace='true']").first();
+  await expect(card).toBeVisible();
+  // The heading is the card's own head, like every other host card.
+  await expect(card.locator(".cc-card-head .cc-card-title")).toContainText("/tmp/cc-directory.json");
+  // Rows, not prose bullets.
+  const row = card.locator("[data-marketplace-package='com.acme.dashboard']");
+  expect(await row.evaluate((el) => getComputedStyle(el).listStyleType)).toBe("none");
+  // The install press is the card's action button, inset from the card's edge.
+  const install = row.locator("[data-install-package='com.acme.dashboard']");
+  await expect(install).toHaveClass(/\bcc-action\b/);
+  const cardBox = await card.boundingBox();
+  const installBox = await install.boundingBox();
+  expect(installBox!.x - cardBox!.x).toBeGreaterThanOrEqual(8);
 });

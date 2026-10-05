@@ -31,7 +31,7 @@ function token(): string {
 
 async function openSearch(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(`http://127.0.0.1:${NODE_PORT}`)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill("tìm gói");

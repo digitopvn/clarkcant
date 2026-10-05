@@ -32,7 +32,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Switches the UI language through the same settings control `language.spec.ts` drives. */
@@ -81,5 +81,7 @@ test("switching to English translates an approval card and a tool call's chrome"
   await expect(receipt).toContainText("result");
   await expect(receipt).toContainText("fixture ran");
 
-  await expect(card.locator('[data-approval-decision="answered"]')).toBeVisible();
+  await expect(card.locator('[data-approval-decision="answered"]')).toHaveText("approved");
+  // Decided, the card stops asking.
+  await expect(card.locator(".cc-card-title").first()).toHaveText("Confirmation request");
 });

@@ -27,7 +27,7 @@ describe("what this build tells a surface about wake words", () => {
     expect(availability.available).toBe(false);
     expect(availability.reason).toBe(WAKE_UNAVAILABLE_REASON);
     // The reason names the fallback that is not being taken, so nobody has to guess whether it was considered.
-    expect(availability.reason ?? "").toContain("provider");
+    expect(availability.reason ?? "").toContain("nhà cung cấp");
   });
 
   it("says yes and hands over the detector when there is one", () => {

@@ -537,8 +537,7 @@ export function useSurfaceRenderer({
             )}
             {conversationId !== undefined && (
               <button
-                className="cc-icon-btn"
-                style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
+                className="cc-action"                style={{ marginTop: "var(--cc-space-xs)" }}
                 data-open-live={instance.instanceId}
                 onClick={(event) => {
                   liveTrigger.current = event.currentTarget;
@@ -770,8 +769,7 @@ export function useSurfaceRenderer({
           )}
           {conversationId !== undefined && (
             <button
-              className="cc-icon-btn"
-              style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
+              className="cc-action"              style={{ marginTop: "var(--cc-space-xs)" }}
               {...(Renderer === undefined
                 ? { "data-open-live": instance.instanceId }
                 : { "data-pin-instance": instance.instanceId })}
@@ -791,7 +789,7 @@ export function useSurfaceRenderer({
                   .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
               }}
             >
-              {Renderer === undefined ? t("widgets.surface.openCurrent") : t("widgets.surface.pinAgain")}
+              {Renderer === undefined ? t("widgets.surface.openCurrent") : t("widgets.surface.pin")}
             </button>
           )}
         </div>

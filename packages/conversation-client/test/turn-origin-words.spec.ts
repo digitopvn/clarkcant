@@ -20,7 +20,7 @@ function inLocale(locale: "vi" | "en", element: ReactElement): string {
   return renderToStaticMarkup(createElement(LocaleProvider, { value: { locale, setLocale: () => undefined, t }, children: element }));
 }
 
-function card(origin?: string): ReactElement {
+function card(origin?: string, decision = "pending"): ReactElement {
   return createElement(ApprovalCardBlock, {
     block: {
       type: "approval-card",
@@ -29,7 +29,7 @@ function card(origin?: string): ReactElement {
       operationDescription: "Run git push",
       operationDigest: "sha256:abc",
       effectCategory: "external-write",
-      decision: "pending",
+      decision,
       ...(origin === undefined ? {} : { origin }),
     },
   });
@@ -49,6 +49,31 @@ describe("an approval card says who asked", () => {
     for (const origin of ["person", undefined, "admin"]) {
       expect(inLocale("en", card(origin))).not.toContain("data-approval-origin");
     }
+  });
+});
+
+describe("an approval card says what kind of effect it is", () => {
+  it("in the words the Control tab uses, not the wire's", () => {
+    const en = inLocale("en", card());
+    expect(en).toContain('data-effect="external-write"');
+    expect(en).toContain(CATALOGS.en["settings.control.category.externalWrite"]);
+    expect(en).not.toContain(">external-write<");
+    expect(en).not.toContain("operation sha256");
+    expect(inLocale("vi", card())).toContain(CATALOGS.vi["settings.control.category.externalWrite"]);
+  });
+});
+
+describe("an approval card read back from history says what was decided", () => {
+  it("in words, and stops asking once it is decided", () => {
+    const granted = inLocale("vi", card(undefined, "granted"));
+    expect(granted).toContain(CATALOGS.vi["blocks.approval.granted"]);
+    expect(granted).not.toContain(">granted<");
+    expect(granted).not.toContain(CATALOGS.vi["blocks.approval.onlyYouCanConfirm"]);
+    expect(granted).not.toContain(CATALOGS.vi["blocks.approval.needsConfirm"]);
+    expect(granted).toContain(CATALOGS.vi["blocks.approval.request"]);
+    expect(inLocale("vi", card())).toContain(CATALOGS.vi["blocks.approval.needsConfirm"]);
+    expect(inLocale("en", card(undefined, "expired"))).toContain(CATALOGS.en["blocks.approval.expired"]);
+    expect(inLocale("en", card(undefined, "denied"))).toContain(CATALOGS.en["blocks.approval.denied"]);
   });
 });
 

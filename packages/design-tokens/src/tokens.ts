@@ -257,9 +257,12 @@ export const MIN_TARGET_SIZE_PX = 24;
  */
 export const LAYOUT = {
   /** The reading measure of a conversation. */
-  conversationMaxWidth: "800px",
-  /** The composer is deliberately wider than the column it sits under. */
-  composerMaxWidth: "840px",
+  conversationMaxWidth: "720px",
+  /**
+   * The composer shares the column's measure. A pill wider than the text above it read as a toolbar across the
+   * window rather than as the place the next line of the conversation is written.
+   */
+  composerMaxWidth: "720px",
   composerMinHeight: "70px",
   topBarHeight: "62px",
   modalWidth: "700px",

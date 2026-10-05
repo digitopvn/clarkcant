@@ -5,6 +5,7 @@ import {
   nowInstant,
   parseThemeRef,
   appearanceCustomizationSchema,
+  isPersonalAppearance,
   type AppearanceFallbackCode,
   type AppearanceFallbackView,
   type AppearanceResponse,
@@ -193,7 +194,12 @@ export function readAppearanceCustomization(deps: ThemeRegistryDeps) {
   const read = (key: string): unknown => readRegisteredPreference(
     { db: deps.db, now: nowInstant }, { principalId: deps.ownerPrincipalId, key },
   )?.value;
-  const parsed = appearanceCustomizationSchema.safeParse({ accent: read("experience.accent"), density: read("experience.density") });
+  const parsed = appearanceCustomizationSchema.safeParse({
+    accent: read("experience.accent"),
+    density: read("experience.density"),
+    font: read("experience.font"),
+    codeFont: read("experience.codeFont"),
+  });
   return parsed.success ? parsed.data : appearanceCustomizationSchema.parse({});
 }
 
@@ -207,7 +213,7 @@ export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegist
   const customization = readAppearanceCustomization(deps);
   const customProblem = customization.accent === null ? undefined
     : themeDrawProblem(customizedTheme(resolved.ok ? resolved.theme ?? CLARK_THEME : CLARK_THEME, customization));
-  const personal = customization.accent === null && customization.density === "comfortable" ? {} : {
+  const personal = !isPersonalAppearance(customization) ? {} : {
     customization: customProblem === undefined ? customization : { ...customization, accent: null },
     ...(customProblem === undefined ? {} : { customizationFallback: customProblem }),
   };

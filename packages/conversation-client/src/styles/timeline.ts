@@ -14,7 +14,23 @@ export const TIMELINE_CSS = `
   /* Positioned so the leaving hero can be taken out of the flow inside it, and below the orb layer
      so the transcript is never drawn over the orb's light. */
   position: relative; z-index: 0;
+  /* Room for the scrollbar on both edges, always: the transcript stays centred over the composer, and it does not
+     shift sideways the moment a reply grows long enough to scroll. */
+  scrollbar-gutter: stable both-edges;
 }
+/* On a narrow window that reserved room cost a gutter on both sides on top of the timeline's own, so the transcript
+   sat 30px inside the composer's edge. There a scrollbar takes room only when there is one, which a phone's overlay
+   scrollbar never does. */
+@media (max-width: 560px) {
+  .cc-scroll { scrollbar-gutter: auto; }
+}
+/*
+ * On the start screen the transcript area is only as tall as the group in it, so the body can centre the orb, the
+ * heading, the chips and the input under them as one composition. It still shrinks and scrolls when that group is
+ * taller than the window. Here rather than beside the body rule in base: a later layer wins whatever the selector,
+ * and the rule above had left the input at the foot of a tall window, a screen away from the chips.
+ */
+.cc-shell[data-view="hero"] .cc-scroll { flex: 0 1 auto; }
 .cc-timeline {
   max-width: var(--cc-conversation-max-width); margin: 0 auto;
   padding: var(--cc-space-xl) var(--cc-space-lg) var(--cc-space-lg);
@@ -86,6 +102,20 @@ export const TIMELINE_CSS = `
 .cc-hero-orb {
   --cc-hero-orb-size: min(394px, max(197px, calc(100vh - 420px)));
   width: var(--cc-hero-orb-size); height: var(--cc-hero-orb-size); flex: none; visibility: hidden;
+}
+/*
+ * The "no model yet" card is a second block above the heading, about a hundred pixels with its gap. The orb gives that
+ * room up rather than the note under the chips, which otherwise sank behind the composer on a laptop-height window.
+ */
+.cc-empty:has(> .cc-setup-card) > .cc-hero-orb { --cc-hero-orb-size: min(394px, max(197px, calc(100vh - 530px))); }
+/*
+ * On a phone the four suggestions take two rows of two, and the same orb would be most of the screen: at 375 by 812
+ * it was 392px across, wider than the page, and the start screen scrolled so that the orb sat under the header. The
+ * orb takes what the screen has left once the words and the chips are placed (the chips' two rows are in voice).
+ */
+@media (max-width: 480px) {
+  .cc-hero-orb { --cc-hero-orb-size: min(260px, max(140px, calc(100vh - 470px))); }
+  .cc-empty:has(> .cc-setup-card) > .cc-hero-orb { --cc-hero-orb-size: min(260px, max(120px, calc(100vh - 610px))); }
 }
 .cc-empty-orb {
   border-radius: var(--cc-radius-pill);
@@ -193,7 +223,8 @@ export const TIMELINE_CSS = `
 .cc-md a, .cc-text a { color: var(--cc-accent); }
 .cc-md a:focus-visible, .cc-text a:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: 2px; }
 .cc-md-inline-code {
-  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm);
+  /* Relative to the sentence it sits in: a fixed small size made a path in a paragraph read as a footnote. */
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.88em;
   background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
   border-radius: var(--cc-radius-badge); padding: 0 4px;
 }

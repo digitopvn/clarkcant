@@ -48,7 +48,7 @@ import { createRequestSecretTool, type RequestSecretDeps } from "./request-secre
 import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
-import { SECRET_REQUEST_MESSAGE, asksForSecret, buildQuestionCard, createQuestion } from "./interactions.ts";
+import { SECRET_REQUEST_MESSAGE, asksForSecret, buildQuestionCard } from "./interactions.ts";
 import type { SecretBroker } from "./secret-broker.ts";
 import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
 import { extractPdfText } from "./pdf-text.ts";
@@ -924,7 +924,7 @@ function askWhichFolder(
   found: { message: string; options: readonly string[] },
 ): { text: string; hostBlocks: Record<string, unknown>[] } | undefined {
   if (input.interactions === undefined || found.options.length === 0) return undefined;
-  const created = createQuestion(input.interactions, {
+  const created = buildQuestionCard(input.interactions, {
     question: found.message,
     kind: "single-choice",
     options: found.options.slice(0, 8).map((folder, index) => ({ id: `folder-${index + 1}`, label: folder })),
@@ -933,9 +933,9 @@ function askWhichFolder(
   if (!created.ok) return undefined;
   return {
     text: "Đã hỏi người dùng muốn dùng thư mục nào. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau.",
-    // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it
+    // SAFETY: built against the message-block union by `buildQuestionCard`; the adapter's shape is loose because it
     // must not depend on contracts, and the node validates every block before it reaches a transcript.
-    hostBlocks: [created.block as unknown as Record<string, unknown>],
+    hostBlocks: [created.card as unknown as Record<string, unknown>],
   };
 }
 
@@ -951,15 +951,15 @@ function askClarify(
   question: string,
 ): { text: string; hostBlocks: Record<string, unknown>[] } | undefined {
   if (input.interactions === undefined) return undefined;
-  const created = createQuestion(input.interactions, { question, kind: "text", allowOther: true });
+  const created = buildQuestionCard(input.interactions, { question, kind: "text", allowOther: true });
   if (!created.ok) return undefined;
   return {
     text:
       "Đã hỏi người dùng cho rõ trước khi chạy. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau, và không có gì " +
       "chạy trước khi có câu trả lời. Đừng nói là đã chạy.",
-    // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it must
+    // SAFETY: built against the message-block union by `buildQuestionCard`; the adapter's shape is loose because it must
     // not depend on contracts, and the node validates every block before it reaches a transcript.
-    hostBlocks: [created.block as unknown as Record<string, unknown>],
+    hostBlocks: [created.card as unknown as Record<string, unknown>],
   };
 }
 

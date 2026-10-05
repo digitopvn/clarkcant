@@ -51,6 +51,10 @@ describe("a surface behind an external gate", () => {
     expect(text).toContain("hai máy chạy node độc lập");
     expect(text).toContain("chạy node thứ hai rồi ghép");
     expect((element as ReactElement<Record<string, unknown>>).props["data-paired-count"]).toBe(0);
+    // The machine's id is kept for a bug report, folded under the technical details rather than read beside its name.
+    const references = findAll(element, "data-pairing-references");
+    expect(references).toHaveLength(1);
+    expect(textOf(references[0]!)).toContain("node_a");
   });
 
   it("lists already-paired nodes when there are any, instead of claiming it cannot pair", () => {
@@ -64,6 +68,8 @@ describe("a surface behind an external gate", () => {
     expect((element as ReactElement<Record<string, unknown>>).props["data-paired-count"]).toBe(1);
     expect(findAll(element, "data-paired-node")[0]!.props["data-paired-node"]).toBe("node_b");
     expect(findAll(element, "data-pairing-blocked")).toHaveLength(0);
+    // When it was last seen reads as a time, not as the stored instant.
+    expect(textOf(element)).not.toContain("2026-09-16T10:00:00.000Z");
   });
 });
 
@@ -71,7 +77,7 @@ describe("the desktop pieces", () => {
   it("uses the same connection wording as the app window", () => {
     // Two surfaces describing one node differently is how a user learns to trust neither.
     for (const [connection, expected] of [
-      ["ready", "Ready"],
+      ["ready", "Sẵn sàng"],
       ["connecting", "Đang kết nối"],
       ["offline", "Mất kết nối"],
     ] as const) {

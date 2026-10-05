@@ -45,7 +45,7 @@ async function openRevenueTable(page: Page): Promise<Locator> {
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await page.locator("[data-composer]").click();
   await page.keyboard.type("báo cáo doanh thu");
   await page.keyboard.press("Enter");

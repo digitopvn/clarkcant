@@ -36,7 +36,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** The theme actually applied to the document, which is always a resolved dark or light. */
@@ -72,7 +72,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.locator('[data-theme-choice="light"]').click();
   await expect.poll(() => appliedTheme(page)).toBe("light");
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => appliedTheme(page)).toBe("light");
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
@@ -160,6 +160,114 @@ test("the settings tabs are operable from the keyboard alone", async ({ page }) 
   expect(tabbable).toBe(1);
 });
 
+test("on a phone the settings tab strip fades only the edges that have more beyond them", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  const strip = page.locator("[role='dialog'] .cc-tabs");
+  await expect(strip).toBeVisible();
+  const fades = () =>
+    strip.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.getPropertyValue("--cc-tabs-fade-start").trim(), style.getPropertyValue("--cc-tabs-fade-end").trim()];
+    });
+
+  // At rest the first tab sits on a hard edge, and the end says there is more.
+  await expect.poll(fades).toEqual(["0px", expect.not.stringMatching(/^0px$/)]);
+  // Scrolled to the end, it is the other way round: the start fades, the last tab sits on a hard edge.
+  await strip.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
+  await expect.poll(fades).toEqual([expect.not.stringMatching(/^0px$/), "0px"]);
+});
+test("on a phone Settings takes the whole screen instead of cutting through the header behind it", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  const dialog = page.locator("[role='dialog']:has(.cc-tabs)");
+  await expect(dialog).toBeVisible();
+  await page.waitForFunction(() =>
+    (document.querySelector("[role='dialog']")?.getAnimations() ?? []).every((animation) => animation.playState === "finished"),
+  );
+  const box = await dialog.boundingBox();
+  expect(Math.round(box!.x)).toBe(0);
+  expect(Math.round(box!.y)).toBe(0);
+  expect(Math.round(box!.width)).toBe(375);
+  expect(Math.round(box!.height)).toBe(812);
+  // Done stays on screen at the bottom, so leaving never needs a scroll.
+  const done = await dialog.locator(".cc-modal-done").boundingBox();
+  expect(done!.y + done!.height).toBeLessThanOrEqual(812);
+});
+test("the start screen is one composition: everything above the composer, and the composer right under it", async ({ page }) => {
+  for (const [width, height] of [[1280, 720], [1280, 820], [768, 1024], [375, 812]] as const) {
+    await page.setViewportSize({ width, height });
+    await openApp(page);
+    // This node has no model, so the setup card is the extra block the start screen has to make room for.
+    await expect(page.locator("[data-needs-model='true']")).toBeVisible();
+    const [lastBottom, scrollBottom, composerTop] = await page.evaluate(() => {
+      const empty = document.querySelector(".cc-empty");
+      const scroll = document.querySelector(".cc-scroll");
+      const composer = document.querySelector(".cc-composer-wrap");
+      return [
+        empty?.lastElementChild?.getBoundingClientRect().bottom ?? Infinity,
+        scroll?.getBoundingClientRect().bottom ?? 0,
+        composer?.getBoundingClientRect().top ?? Infinity,
+      ];
+    });
+    expect(lastBottom).toBeLessThanOrEqual(scrollBottom);
+    // Under the chips, not at the foot of a tall window with a screen of nothing between them.
+    expect(composerTop - lastBottom).toBeLessThan(64);
+  }
+});
+test("on a phone the start screen's suggestions take two even rows and the orb fits the page", async ({ page }) => {
+  for (const model of [false, true]) {
+    // Both start screens: with the setup card, and with a model, when nothing hedges about a missing one.
+    await page.route("**/readiness", (route) => route.fulfill({ json: { model, credentials: [] } }));
+    // The written chips, not what the node offers: an earlier spec's session would otherwise come back as a resume chip.
+    await page.route("**/suggestions", (route) => route.fulfill({ json: { items: [] } }));
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openApp(page);
+    await expect(page.locator("[data-needs-model='true']")).toHaveCount(model ? 0 : 1);
+    await expect(page.locator("[data-suggestion-static='true'] > .cc-chip")).toHaveCount(4);
+    // Measured once the chips have finished arriving: each one rises into place on its own delay.
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("[data-suggestion-static='true'] > .cc-chip")].every((chip) =>
+        chip.getAnimations().every((animation) => animation.playState === "finished"),
+      ),
+    );
+    const layout = await page.evaluate(() => {
+      const chips = [...document.querySelectorAll("[data-suggestion-static='true'] > .cc-chip")].map((chip) => chip.getBoundingClientRect());
+      const scroll = document.querySelector(".cc-scroll") as HTMLElement;
+      return {
+        tops: [...new Set(chips.map((box) => Math.round(box.top)))].length,
+        widths: [...new Set(chips.map((box) => Math.round(box.width)))].length,
+        tallest: Math.max(...chips.map((box) => box.height)),
+        orb: document.querySelector(".cc-hero-orb")?.getBoundingClientRect().width ?? Infinity,
+        spills: scroll.scrollHeight - scroll.clientHeight,
+      };
+    });
+    expect(layout.tops).toBe(2);
+    expect(layout.widths).toBe(1);
+    // One line of label and one of note: a third line means the pill's ends squeezed the words.
+    expect(layout.tallest).toBeLessThan(64);
+    expect(layout.orb).toBeLessThanOrEqual(375 - 32);
+    expect(layout.spills).toBeLessThanOrEqual(1);
+    await expect(page.locator(".cc-empty > p.cc-freshness")).toHaveCount(0);
+    await page.unroute("**/readiness");
+    await page.unroute("**/suggestions");
+  }
+});
+test("on a narrow window the transcript starts at the composer's edge, not a gutter inside it", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page);
+  await page.locator("[data-composer]").fill("xem diff");
+  await page.locator("[data-send]").click();
+  const reply = page.locator("[data-role='assistant']").last();
+  await expect(reply.locator("[data-host-card]")).toBeVisible({ timeout: 20_000 });
+  const row = await reply.boundingBox();
+  const composer = await page.locator(".cc-composer").boundingBox();
+  // A scrollbar gutter reserved on both edges used to add 15px on each side of the timeline's own inset. A few pixels
+  // are the composer's ring and the row's arrival, not a gutter.
+  expect(Math.abs((row?.x ?? 0) - (composer?.x ?? 100))).toBeLessThanOrEqual(4);
+});
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
   // This is a measurement, not a style assertion: the orb's position is computed from the box it
   // belongs to, and the canvas inside that box is larger than it, so "the rule is present" would not
@@ -215,14 +323,14 @@ test("the extensions tab tells the node's tools from the agent's", async ({ page
   await page.locator("#cc-tab-extensions").click();
 
   // The agent's built-ins are a fixed list, so this half is exact.
-  await expect(page.locator("[data-tool-list='Công cụ của agent (pi)'] code").first()).toHaveText("read");
+  await expect(page.locator("[data-tool-list='agent'] code").first()).toHaveText("read");
 
   // The node's half is whatever the node reported, which is the point: the tab renders both sections and lists what
   // the node actually published - its tools, or a line saying it registered none. Asserting specific tool names here
   // would make this test depend on how a fixture node happens to be configured rather than on whether the tab says
   // what the node says. The registration itself is covered where it is built: apps/runtime/test/tool-catalogue.spec.ts.
-  await expect(page.getByRole("heading", { name: "Công cụ của node này" })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("heading", { name: "Công cụ của agent (pi)" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Của node này" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("heading", { name: "Của agent (pi)" })).toBeVisible();
 
   await page.screenshot({ path: join(EVIDENCE, "tools-tab.png") });
 });
@@ -426,7 +534,7 @@ test("personal instructions can be written, survive a reload, and are never sent
 
   // And it comes back after a reload, rather than being a value only this tab knew about.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await page.locator("[data-settings='true']").click();
   await page.locator("#cc-tab-ai").click();
   await expect(page.locator("[data-personal-instructions-input='true']")).toHaveValue(text);

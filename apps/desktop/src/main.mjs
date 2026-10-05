@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 import { startSmokeNode } from "./smoke-node.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import {
@@ -65,6 +65,7 @@ import {
   initialWindowMode,
   nextWindowMode,
 } from "./window-mode.mjs";
+import { placementToRemember, restoredPlacement } from "./window-placement.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /*
@@ -209,6 +210,44 @@ const activeNotifications = new Set();
 
 /** Files the person picked for a widget: handle to path, in this process only (`file-bridge.mjs`). */
 const fileHandles = createFileHandles();
+
+/** The file the conversation window's last place is kept in, beside Electron's own per-user state. */
+function windowPlacementPath() {
+  return join(app.getPath("userData"), "window-placement.json");
+}
+
+/**
+ * Where to open the conversation window, or `undefined` for the default.
+ *
+ * A missing, unreadable or unusable file is the default, never an error: the window opening at its first-run size is
+ * the worst case, and it is not worth a dialog.
+ */
+function readWindowPlacement() {
+  try {
+    const saved = JSON.parse(readFileSync(windowPlacementPath(), "utf8"));
+    return restoredPlacement(saved, screen.getAllDisplays().map((display) => display.workArea));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Keep the window's place as it closes.
+ *
+ * The size outside maximize and full screen, so a window closed maximized comes back maximized over the size it had
+ * before; while collapsed into the bar or the orb, the size the person had before collapsing. A write that fails costs
+ * only the next window's placement, so it is reported and nothing else.
+ */
+function rememberWindowPlacement(window, openedAs) {
+  const collapsed = windowMode !== undefined && windowMode.mode !== "normal";
+  const normalBounds = collapsed ? windowMode.normalBounds : window.getNormalBounds();
+  const placement = placementToRemember({ normalBounds, maximized: window.isMaximized(), fullScreen: window.isFullScreen(), openedAs });
+  try {
+    writeFileSync(windowPlacementPath(), JSON.stringify(placement));
+  } catch (cause) {
+    process.stderr.write(`window placement: not remembered (${cause instanceof Error ? cause.message : String(cause)})\n`);
+  }
+}
 
 /** The work area of the display the window is on, so a compact window lands somewhere reachable. */
 function workAreaFor(window) {
@@ -928,9 +967,14 @@ async function createShellWindow({ show = true, url } = {}) {
    * exercised for real. Every other caller loads the app.
    */
   const document = url ?? rendererUrl;
+  // Only the conversation window a person sees reopens where they left it; the smoke test's window keeps the default.
+  const remembers = show && url === undefined;
+  const placement = remembers ? readWindowPlacement() : undefined;
+  // What was asked for and what the OS made of it, so a window nobody touched is remembered as asked rather than
+  // growing by a rounding pixel at every launch on a scaled display.
+  let openedAs;
   const window = new BrowserWindow({
-    width: 1100,
-    height: 760,
+    ...(placement?.bounds ?? { width: 1100, height: 760 }),
     // Always created hidden and shown once it has something to show: a frameless window that appears before its
     // document has painted is a blank rectangle that reads as a failure.
     show: false,
@@ -970,16 +1014,27 @@ async function createShellWindow({ show = true, url } = {}) {
   // http comes before `loadURL` resolves. A listener attached after the await never hears it, and the window stays
   // hidden with only a dock icon to show it exists.
   window.once("ready-to-show", () => {
-    if (show) window.show();
+    if (!show) return;
+    if (placement !== undefined) openedAs = { requested: placement.bounds, actual: window.getNormalBounds() };
+    if (placement?.maximized === true) window.maximize();
+    window.show();
+    if (placement?.fullScreen === true) window.setFullScreen(true);
   });
-  await window.loadURL(document);
+  if (remembers) window.on("close", () => rememberWindowPlacement(window, openedAs));
 
-  // The chrome shows what the window is, and the OS can change that without the client asking.
+  // The chrome shows what the window is, and the OS can change that without the client asking. Attached before the
+  // load, because a window reopened in full screen enters it on first paint. The full-screen events say which way
+  // the window went themselves: Windows sends `leave-full-screen` while `isFullScreen()` still answers true, and a
+  // chrome told that kept showing full screen over an ordinary window.
+  const fullScreenAfter = { "enter-full-screen": true, "leave-full-screen": false };
   for (const event of ["enter-full-screen", "leave-full-screen", "minimize", "restore"]) {
     window.on(event, () => {
-      if (!window.webContents.isDestroyed()) window.webContents.send("desktop:windowStateChanged", windowState(window));
+      if (window.webContents.isDestroyed()) return;
+      const state = windowState(window);
+      window.webContents.send("desktop:windowStateChanged", { ...state, fullScreen: fullScreenAfter[event] ?? state.fullScreen });
     });
   }
+  await window.loadURL(document);
 
   // A window somebody dragged is the window they expect back, so a resize while expanded is remembered as the
   // size to return to. A resize during compact is the bar being moved, and remembering that as the normal size

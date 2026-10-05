@@ -429,6 +429,13 @@ Required:
   keeping the draft, when it has gone stale. While an input method is composing a word, its Enter finishes the word:
   it neither chooses a row nor sends. Shift+Enter starts a new line with the list open or closed. This is an
   enhancement, not the primary navigation.
+- basic Markdown is marked while it is typed — strong, emphasis, strike, inline code, fenced code, headings, lists,
+  quotes and links — with its syntax kept visible but quiet, so what is sent is what is seen and still edited as plain
+  text. The field stays a native textarea (caret, selection, undo, spell-check and input methods unchanged) over a
+  mirror that draws the same text; marks change only colour, a tint, a stroke or a line-through, never a glyph's width,
+  so the caret never drifts. Under forced colours the mirror steps aside and the textarea draws its own text;
+- focus is shown on the pill (accent edge and a soft halo), never as a second rectangle around the field inside it;
+- the composer is as wide as the conversation column (720px), and scrolls past five lines with a hairline thumb.
 
 While a turn is running:
 
@@ -457,7 +464,9 @@ Preserve chronology:
 
     text → reasoning → tool → text
 
-Tool activity is compact by default. Expand when the user wants to see arguments/result.
+Tool activity is compact by default, including while a call runs; a failed call opens on its reason. Expand when the user wants to see arguments/result.
+
+Three or more consecutive working steps (reasoning, tool calls and the checks under them) fold into one line that says how many steps were done and how many failed, and opens onto every step in order. While a reply is streaming, its newest step stays outside the fold.
 
 The thinking state ends as soon as the first content/tool event appears.
 
@@ -1224,10 +1233,17 @@ Use segmented controls, toggles and swatches:
   draw the theme's own accent, explain the fallback, and keep the preference for recovery.
 - Motion: Full / Reduced / Follow system.
 - Density: Comfortable / Compact, compiled into shared spacing tokens while preserving type and layout minima.
-- Reset theme customization clears accent, density, motion and explicit Orb tuning through the existing preference
+- Interface font and code font: a row of specimens, each tile set in the face it names, with "Theme's" first (choosing
+  it clears the preference). The interface face covers body and headings together, so the page keeps one voice; the
+  code face covers code blocks, inline code, paths and tabular figures. Choices are closed profiles compiled by the
+  same snapshot compiler, never free family names; the host ships the extra faces (Inter, Geist, JetBrains Mono, Geist
+  Mono) itself, so no choice needs the network.
+- Reset theme customization clears accent, density, fonts, motion and explicit Orb tuning through the existing preference
   reset/Undo path. It preserves the selected theme, color scheme and language; each confirmed change is redrawn, and
   a failed write stops the remaining reset and reports the failure.
 - Window behavior: remember size, start mode.
+  - Shipped: the desktop window reopens where it was closed (size, position, maximized or full screen) while that
+    display is still attached, and at the default size otherwise.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: opens a subpanel.
 

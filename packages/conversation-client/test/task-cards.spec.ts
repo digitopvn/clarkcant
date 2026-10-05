@@ -6,10 +6,11 @@ import {
   TaskOverviewCardBlock,
   TaskProgressCardBlock,
   TaskSummaryCardBlock,
+  readableInstant,
   renderBlock,
 } from "../src/blocks.tsx";
 import { type BlockActions } from "../src/blocks.tsx";
-import { findAll, nonHost } from "./block-helpers.ts";
+import { findAll, nonHost, textOf } from "./block-helpers.ts";
 
 /**
  * The task cards.
@@ -124,6 +125,39 @@ describe("a finished task", () => {
     }) as ReactElement<Record<string, unknown>>;
     expect(element.props["data-outcome"]).toBe("not-verified");
     expect(findAll(element, "data-verdict")[0]!.props["data-verdict"]).toBe("not-verified");
+  });
+
+  it("names the outcome and the evidence in the reader's words, not the wire's", () => {
+    const text = textOf(TaskSummaryCardBlock({ block: SUMMARY }));
+    expect(text).toContain("thành công");
+    expect(text).toContain("đã kiểm chứng");
+    expect(text).not.toContain("succeeded");
+    // A state this build has no words for still reaches the person rather than vanishing.
+    expect(textOf(TaskSummaryCardBlock({ block: { ...SUMMARY, outcome: "paused" } }))).toContain("paused");
+  });
+
+  it("says how long it ran in the reader's number format, and when it started as a time rather than a timestamp", () => {
+    expect(textOf(TaskSummaryCardBlock({ block: SUMMARY }))).toContain("12,5 giây");
+    expect(textOf(TaskSummaryCardBlock({ block: SUMMARY, t: (key) => (key === "settings.ai.turnCap.seconds" ? "s" : key), locale: "en" }))).toContain("12.5 s");
+    expect(textOf(TaskSummaryCardBlock({ block: { ...SUMMARY, durationMs: 640 } }))).toContain("640 ms");
+    const started = textOf(TaskProgressCardBlock({ block: PROGRESS }));
+    expect(started).not.toContain("2026-09-16T10:00:00.000Z");
+    expect(started).toContain(readableInstant(PROGRESS.startedAt, "vi"));
+  });
+});
+
+describe("a recorded moment", () => {
+  const now = new Date(2026, 8, 16, 18, 0);
+  it("is the time alone when it is today, and the day and time otherwise", () => {
+    const today = new Date(2026, 8, 16, 9, 5).toISOString();
+    const earlier = new Date(2026, 8, 14, 9, 5).toISOString();
+    expect(readableInstant(today, "en", now)).toBe(new Intl.DateTimeFormat("en", { timeStyle: "short" }).format(new Date(today)));
+    expect(readableInstant(earlier, "en", now)).toContain("Sep 14, 2026");
+  });
+
+  it("passes anything that is not a moment through as it came", () => {
+    expect(readableInstant("", "vi", now)).toBe("");
+    expect(readableInstant("soon", "vi", now)).toBe("soon");
   });
 });
 

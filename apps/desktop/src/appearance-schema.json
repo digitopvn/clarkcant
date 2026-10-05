@@ -568,7 +568,9 @@
                     "system",
                     "serif",
                     "rounded",
-                    "mono"
+                    "mono",
+                    "inter",
+                    "geist"
                   ]
                 },
                 "display": {
@@ -578,14 +580,18 @@
                     "system",
                     "serif",
                     "rounded",
-                    "mono"
+                    "mono",
+                    "inter",
+                    "geist"
                   ]
                 },
                 "mono": {
                   "type": "string",
                   "enum": [
                     "clark",
-                    "typewriter"
+                    "typewriter",
+                    "jetbrains",
+                    "geist-mono"
                   ]
                 },
                 "headingWeight": {

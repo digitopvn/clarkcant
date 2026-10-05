@@ -32,7 +32,7 @@ function authorized(): Record<string, string> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -118,7 +118,7 @@ test("a program's turn asks first when the person opted in, and the card and act
     }, { timeout: 20_000 })
     .toBe(true);
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const card = page.locator("[data-host-card='approval'][data-decision='pending']");
   await expect(card.locator("[data-approval-origin='cli-api']")).toHaveText("Do một chương trình yêu cầu qua CLI hoặc API", {
     timeout: 20_000,

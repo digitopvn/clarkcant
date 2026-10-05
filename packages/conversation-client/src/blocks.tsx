@@ -13,6 +13,7 @@ import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
+import { effectCategoryLabels } from "./inbox/inbox-model.ts";
 import { UnreadListingFieldsNote, readUnreadFields } from "./unread-listing-fields.tsx";
 import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
@@ -71,9 +72,9 @@ export function TextBlock({ block }: { block: Record<string, unknown> }): ReactE
 /**
  * A tool call, drawn as a widget that opens and closes.
  *
- * Open while it runs, closed once it is done: a call in flight is the thing the user is waiting on, and
- * a call that finished is a receipt they can open if they want it. A failure stays open, because the
- * one thing nobody wants collapsed is the reason something did not work.
+ * Compact while it runs and once it is done: the spinning mark and the label already say what is happening, and the
+ * arguments are machinery the person opens only if they want it. A failure opens, because the one thing nobody wants
+ * collapsed is the reason something did not work.
  *
  * The state is a `details` element with React driving its open attribute, rather than a div with a click
  * handler: a disclosure built from the platform is keyboard operable, announced as one, and reachable
@@ -84,35 +85,49 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
   const status = typeof block.status === "string" ? block.status : "done";
   const name = typeof block.name === "string" ? block.name : "tool";
   const label = typeof block.label === "string" && block.label !== "" ? block.label : name;
-  const path = typeof block.path === "string" ? block.path : undefined;
+  // The path beside the label is for a call whose label does not say where; one that already names the folder in
+  // its own words would otherwise show it twice on the same line.
+  const path = typeof block.path === "string" && block.path !== "" && !label.includes(block.path) ? block.path : undefined;
   const result = typeof block.result === "string" ? block.result : "";
   const args = typeof block.args === "object" && block.args !== null ? (block.args as Record<string, unknown>) : {};
   const language = typeof block.language === "string" ? block.language : undefined;
-  const [open, setOpen] = useState(status === "running" || status === "failed");
+  // The node's record of what became of a question (expired, cancelled, asked again) rather than a call that ran.
+  // The question card above already says it in words, so this is a quiet note: never a failure, never opened onto
+  // its JSON, and still there to open for anyone who wants the record.
+  const questionRecord = name === "ask_user_question" && typeof args.decision === "string" && args.decision !== "answered";
+  const mark = questionRecord ? "noted" : status;
+  const [open, setOpen] = useState(!questionRecord && status === "failed");
 
-  // A call that finishes closes itself — keyed on the status so it happens once, and so a widget the
-  // user opened by hand is not closed again underneath them.
+  // A call that fails opens itself — keyed on the status so it happens once, and so a widget the user closed by hand
+  // is not opened again underneath them.
   useEffect(() => {
-    if (status === "done") setOpen(false);
-  }, [status]);
+    if (status === "failed" && !questionRecord) setOpen(true);
+  }, [status, questionRecord]);
 
   return (
     <details
       className="cc-tool"
       data-tool-name={name}
       data-tool-status={status}
+      data-tool-record={questionRecord ? "question" : undefined}
       data-tool-call={typeof block.toolCallId === "string" ? block.toolCallId : undefined}
       open={open}
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
       <summary className="cc-tool-head">
-        <span className="cc-tool-mark" data-status={status} aria-hidden="true">
-          {status === "running" ? "◐" : status === "failed" ? "✕" : "✓"}
+        <span className="cc-tool-mark" data-status={mark} aria-hidden="true">
+          {mark === "noted" ? "·" : mark === "running" ? "◐" : mark === "failed" ? "✕" : "✓"}
         </span>
         <span className="cc-tool-label">{label}</span>
-        {path !== undefined && <code className="cc-tool-path">{path}</code>}
+        {path !== undefined && (
+          <code className="cc-tool-path" title={path}>
+            {path}
+          </code>
+        )}
         <span className="cc-sr-only">
-          {status === "running"
+          {questionRecord
+            ? ""
+            : status === "running"
             ? t("blocks.tool.status.running")
             : status === "failed"
               ? t("blocks.tool.status.failed")
@@ -178,16 +193,26 @@ export function ReasoningBlock({
   );
 }
 
+/**
+ * What the host checked about the step above it.
+ *
+ * A footnote to that step rather than a row of its own: the verdict is a word in the reader's language with a glyph
+ * that repeats it (so it survives without colour), and only a verdict that is not good keeps a colour strong enough to
+ * be noticed.
+ */
 export function EvidenceBlock({ block }: { block: Record<string, unknown> }): ReactElement {
-  const verdict = typeof block.verdict === "string" ? block.verdict : "not-verified";
+  const t = useT();
+  const raw = typeof block.verdict === "string" ? block.verdict : "not-verified";
+  const verdict = raw === "verified" || raw === "contradicted" ? raw : "not-verified";
   const summary = typeof block.summary === "string" ? block.summary : "";
   const kind = typeof block.kind === "string" ? block.kind : "evidence";
   return (
     <div className="cc-evidence" data-verdict={verdict} data-evidence-kind={kind}>
-      <span className="cc-badge" data-tone={verdict === "verified" ? "ok" : verdict === "contradicted" ? "danger" : "warn"}>
-        {verdict}
+      <span className="cc-evidence-verdict">
+        <span aria-hidden="true">{verdict === "verified" ? "✓" : verdict === "contradicted" ? "✕" : "!"}</span>{" "}
+        {t(`blocks.evidence.${verdict}`)}
       </span>
-      <span>{summary}</span>
+      <span className="cc-evidence-summary">{summary}</span>
     </div>
   );
 }
@@ -196,10 +221,13 @@ export function ArtifactBlock({
   block,
   actions,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   t?: (key: MessageKey) => string;
+  /** The interface language, for when the file was made and when it expires; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement {
   const labelValue = typeof block.label === "string" ? block.label : "artifact";
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream";
@@ -214,72 +242,82 @@ export function ArtifactBlock({
         <span className="cc-card-title">{labelValue}</span>
         <span>
           {/* A node id is an internal name; the fallback phrase says the same useful thing without exposing one. */}
-          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : t("blocks.artifact.fromAnotherNode")}
+          {mimeType} · {formatFileSize(sizeBytes)}
+          {originNodeId === undefined ? "" : t("blocks.artifact.fromAnotherNode")}
         </span>
       </div>
-      {/*
-        The snapshot is what the message recorded. What the node holds now is a separate question, and only the
-        node can answer it — an artifact can expire between the message being written and somebody reading it.
-      */}
-      {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
-        <div className="cc-chip-row">
-          <button
-            type="button"
-            className="cc-chip"
-            data-artifact-open={artifactId}
-            /*
-             * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
-             * than a state change: the answer can have changed since it was asked — an artifact that had expired
-             * may have been produced again — so asking a second time has to stay possible.
-             */
-            disabled={state?.status === "pending"}
-            onClick={() => actions.onArtifactOpen?.({ artifactId })}
-          >
-            {state?.status === "pending" ? t("blocks.artifact.opening") : t("blocks.artifact.reopen")}
-          </button>
-        </div>
-      ) : null}
-      {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
-        <p className="cc-freshness" data-artifact-error="true">
-          {state.message}
-        </p>
-      ) : (
-        <dl className="cc-fields" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
-          {/*
-            An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
-            file and a retention window passed, which calls for asking for it again rather than for looking for
-            a fault.
-          */}
-          {state.expired ? (
-            <p className="cc-freshness" data-artifact-expiry="true">
-              {t("blocks.artifact.expiredNotice").replace(
-                "{since}",
-                state.expiresAt === null
-                  ? ""
-                  : t("blocks.artifact.expiredSince").replace("{at}", state.expiresAt),
-              )}
-            </p>
-          ) : null}
-          <dt>{t("blocks.artifact.size")}</dt>
-          <dd>{state.sizeBytes} B</dd>
-          <dt>{t("blocks.artifact.type")}</dt>
-          <dd>{state.mimeType}</dd>
-          <dt>{t("blocks.artifact.digest")}</dt>
-          <dd>
-            <code>{state.digest}</code>
-          </dd>
-          <dt>{t("blocks.artifact.createdAt")}</dt>
-          <dd>{state.createdAt}</dd>
-          <dt>{t("blocks.artifact.source")}</dt>
-          <dd>{state.originNodeId}</dd>
-          <dt>{t("blocks.artifact.expiresAt")}</dt>
-          <dd>{state.expiresAt ?? t("blocks.artifact.none")}</dd>
-        </dl>
-      )}
+      <div className="cc-card-body">
+        {/*
+          The snapshot is what the message recorded. What the node holds now is a separate question, and only the
+          node can answer it — an artifact can expire between the message being written and somebody reading it.
+        */}
+        {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
+          <div className="cc-card-actions">
+            <button
+              type="button"
+              className="cc-action"
+              data-artifact-open={artifactId}
+              /*
+               * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
+               * than a state change: the answer can have changed since it was asked — an artifact that had expired
+               * may have been produced again — so asking a second time has to stay possible.
+               */
+              disabled={state?.status === "pending"}
+              onClick={() => actions.onArtifactOpen?.({ artifactId })}
+            >
+              {state?.status === "pending" ? t("blocks.artifact.opening") : t("blocks.artifact.reopen")}
+            </button>
+          </div>
+        ) : null}
+        {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
+          <p className="cc-freshness" data-artifact-error="true">
+            {state.message}
+          </p>
+        ) : (
+          <div className="cc-card-stack" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
+            {/*
+              An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
+              file and a retention window passed, which calls for asking for it again rather than for looking for
+              a fault.
+            */}
+            {state.expired ? (
+              <p className="cc-freshness" data-artifact-expiry="true">
+                {t("blocks.artifact.expiredNotice").replace(
+                  "{since}",
+                  state.expiresAt === null
+                    ? ""
+                    : t("blocks.artifact.expiredSince").replace("{at}", readableInstant(state.expiresAt, locale)),
+                )}
+              </p>
+            ) : null}
+            <dl className="cc-fields">
+              <dt>{t("blocks.artifact.size")}</dt>
+              <dd>{formatFileSize(state.sizeBytes)}</dd>
+              <dt>{t("blocks.artifact.type")}</dt>
+              <dd>{state.mimeType}</dd>
+              <dt>{t("blocks.artifact.createdAt")}</dt>
+              <dd>{readableInstant(state.createdAt, locale)}</dd>
+              <dt>{t("blocks.artifact.expiresAt")}</dt>
+              <dd>{state.expiresAt === null ? t("blocks.artifact.none") : readableInstant(state.expiresAt, locale)}</dd>
+            </dl>
+            {/* What identifies the file to a machine — its digest and the node that holds it — is there when asked for. */}
+            <details className="cc-text-alt" data-artifact-references="true">
+              <summary>{t("inbox.capability.details")}</summary>
+              <dl className="cc-fields">
+                <dt>{t("blocks.artifact.digest")}</dt>
+                <dd>
+                  <code>{state.digest}</code>
+                </dd>
+                <dt>{t("blocks.artifact.source")}</dt>
+                <dd>{state.originNodeId}</dd>
+              </dl>
+            </details>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
 const CARD_TONE: Record<string, string> = {
   "needs-decision": "warn",
   blocked: "danger",
@@ -293,13 +331,50 @@ const CARD_TONE: Record<string, string> = {
 };
 
 /**
+ * A turn's duration as a person reads a wait.
+ *
+ * The node records "17681 ms", which is exact and hard to read at a glance. Past one second it reads as seconds in the
+ * interface's number format ("17,7 giây"); anything else, including a value the node may word differently later, is
+ * shown as it came.
+ */
+export function readableElapsed(value: string, locale: string, secondsUnit: string): string {
+  const match = /^(\d+) ms$/u.exec(value);
+  if (match === null) return value;
+  return readableDuration(Number(match[1]), locale, secondsUnit);
+}
+
+/** A duration in milliseconds as a person reads a wait: "850 ms" under a second, seconds in the locale's format past it. */
+export function readableDuration(ms: number, locale: string, secondsUnit: string): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(ms / 1000)} ${secondsUnit}`;
+}
+
+/**
+ * A moment the node recorded, as the reader would say it: the time alone when it is today, the day and time otherwise,
+ * in the reader's own timezone. The node stores ISO instants in UTC, which are exact and read as a code. Anything that
+ * is not a moment is shown as it came.
+ */
+export function readableInstant(value: string, locale: string, now: Date = new Date()): string {
+  const at = new Date(value);
+  if (value === "" || Number.isNaN(at.getTime())) return value;
+  const today = now.toDateString() === at.toDateString();
+  return new Intl.DateTimeFormat(locale, today ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" }).format(at);
+}
+
+/**
  * Host-owned system card.
  *
  * `owner` must be `"host"`. A card that claims host ownership without it is refused
  * outright rather than rendered with weaker chrome — the whole point of the attribute is
  * that it cannot be obtained by anyone except the host.
  */
-export function SystemCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function SystemCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
 
   const title = typeof block.title === "string" ? block.title : "";
@@ -320,7 +395,13 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
       const field = fields.find((entry) => entry.label === label);
       return typeof field?.value === "string" ? field.value : undefined;
     };
-    const summary = [valueOf("Provider"), valueOf("Model"), valueOf("Thời gian")].filter(
+    const elapsed = valueOf("Thời gian");
+    const summary = [
+      valueOf("Provider"),
+      valueOf("Model"),
+      // In the card's own language: the node writes these fields in Vietnamese, and this block is drawn without hooks.
+      elapsed === undefined ? undefined : readableElapsed(elapsed, "vi", MESSAGES_VI["settings.ai.turnCap.seconds"]),
+    ].filter(
       (value): value is string => value !== undefined,
     );
     const rest = fields.filter((field) => !["Provider", "Model", "Thời gian"].includes(String(field.label)));
@@ -358,30 +439,26 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
     );
   }
 
+  // Internal identifiers (a task's or a node's id) are kept for whoever needs to quote them, one click down: read
+  // first, they put the machinery in front of the sentence that says what happened.
+  const plainFields = fields.filter((field) => !isInternalId(field.value));
+  const referenceFields = fields.filter((field) => isInternalId(field.value));
   return (
     <section className="cc-card" data-host-card="system" data-owner="host" data-status={status} data-subject={subject}>
       <header className="cc-card-head">
         <span className="cc-card-title">{title}</span>
         <span className="cc-badge" data-tone={CARD_TONE[status] ?? ""}>
-          {status}
+          {cardStatusLabel(status, t)}
         </span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{detail}</p>
-        {fields.length > 0 && (
-          <dl className="cc-fields">
-            {fields.map((field, index) => (
-              <Fragment key={index}>
-                <dt>{String(field.label ?? "")}</dt>
-                <dd>
-                  {String(field.value ?? "")}
-                  {typeof field.freshness === "string" && (
-                    <span className="cc-freshness" data-freshness={field.freshness}>{` · ${field.freshness}`}</span>
-                  )}
-                </dd>
-              </Fragment>
-            ))}
-          </dl>
+        {plainFields.length > 0 && cardFields(plainFields, t)}
+        {referenceFields.length > 0 && (
+          <details className="cc-text-alt" data-card-references="true">
+            <summary>{t("inbox.capability.details")}</summary>
+            {cardFields(referenceFields, t)}
+          </details>
         )}
       </div>
     </section>
@@ -698,12 +775,12 @@ export function QuestionCardBlock({
         )}
 
         {!answered && canAnswer && (kind === "single-choice" || kind === "multi-choice") && (
-          <div className="cc-card-actions">
+          <div className="cc-card-actions cc-question-options">
             {offered.map((option) => (
               <button
                 key={option.id}
                 type="button"
-                className="cc-action"
+                className="cc-action cc-question-option"
                 data-question-option={option.id}
                 data-selected={chosen.includes(option.id)}
                 disabled={!canAnswer}
@@ -715,9 +792,9 @@ export function QuestionCardBlock({
                   toggle(option.id);
                 }}
               >
-                {option.label}
+                <span className="cc-question-option-label">{option.label}</span>
                 {option.description === undefined ? null : (
-                  <span className="cc-setting-desc"> {option.description}</span>
+                  <span className="cc-question-option-desc"> {option.description}</span>
                 )}
               </button>
             ))}
@@ -819,9 +896,13 @@ export function ApprovalCardBlock({
   return (
     <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision} data-approval-id={approvalId}>
       <header className="cc-card-head">
-        <span className="cc-card-title">{t("blocks.approval.needsConfirm")}</span>
-        <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"}>
-          {effect}
+        {/* A card that has been decided no longer asks: the title says what it was, and the badge below says how it ended. */}
+        <span className="cc-card-title">
+          {decision === "pending" && !decided ? t("blocks.approval.needsConfirm") : t("blocks.approval.request")}
+        </span>
+        {/* In the words the Control settings use for the same kind of effect, so a rule and the card it raises match. */}
+        <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"} data-effect={effect}>
+          {(effectCategoryLabels(t) as Record<string, string>)[effect] ?? effect}
         </span>
       </header>
       <div className="cc-card-body">
@@ -843,11 +924,13 @@ export function ApprovalCardBlock({
           ))}
         {/* The digest is shown so an approved plan cannot be swapped for another one. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
-          operation {digest.slice(0, 20)}…
+          {t("blocks.approval.digest")} <code>{digest.slice(0, 20)}…</code>
         </p>
-        <p className="cc-freshness" style={{ margin: 0 }}>
-          {t("blocks.approval.onlyYouCanConfirm")}
-        </p>
+        {decision === "pending" && !decided ? (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            {t("blocks.approval.onlyYouCanConfirm")}
+          </p>
+        ) : null}
         {decision === "pending" && !decided ? (
           <div className="cc-card-actions">
             {/*
@@ -875,8 +958,16 @@ export function ApprovalCardBlock({
             </button>
           </div>
         ) : (
+          // What was decided, in words: a granted card says approved, and one read back from history says what its record
+          // says rather than the wire's value.
           <span className="cc-badge" data-approval-decision={denied ? "denied" : decided ? "answered" : decision}>
-            {denied ? t("blocks.approval.denied") : decided ? t("blocks.approval.decided") : decision}
+            {denied || decision === "denied"
+              ? t("blocks.approval.denied")
+              : decided || decision === "granted"
+                ? t("blocks.approval.granted")
+                : decision === "expired"
+                  ? t("blocks.approval.expired")
+                  : t("blocks.approval.decided")}
           </span>
         )}
       </div>
@@ -983,7 +1074,6 @@ export function CredentialCardBlock({
     <section className="cc-card" data-host-card="credential" data-owner="host">
       <header className="cc-card-head">
         <span className="cc-card-title">{t("blocks.credential.needed")}</span>
-        <span className="cc-badge">{destination}</span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{purpose}</p>
@@ -992,16 +1082,26 @@ export function CredentialCardBlock({
             {description}
           </p>
         )}
-        {consumer !== "" && (
-          <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
-            {t("blocks.credential.usedByLabel")}: {consumer}
+        {/*
+          Who will use it and where it is kept are machine names (a capability, a node, a vault). They stay one press
+          away for the person who wants to check them, and out of the way of the person who only needs to paste a key.
+        */}
+        <details className="cc-text-alt" data-credential-references="true">
+          <summary>{t("inbox.capability.details")}</summary>
+          {consumer !== "" && (
+            <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
+              {t("blocks.credential.usedByLabel")}: {consumer}
+            </p>
+          )}
+          {scope !== "" && (
+            <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
+              {t("blocks.credential.storedOnLabel")}: {scope}
+            </p>
+          )}
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-destination={destination}>
+            {t("blocks.credential.vaultLabel")}: {destination}
           </p>
-        )}
-        {scope !== "" && (
-          <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
-            {t("blocks.credential.storedOnLabel")}: {scope}
-          </p>
-        )}
+        </details>
         {fields.length === 0 ? null : (
           <form
             className="cc-credential-form"
@@ -1038,15 +1138,17 @@ export function CredentialCardBlock({
                 />
               </label>
             ))}
-            <button
-              type="submit"
-              className="cc-icon-btn"
-              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-              disabled={!complete}
-              data-credential-submit="true"
-            >
-              {t("blocks.credential.save")}
-            </button>
+            <div className="cc-card-actions">
+              <button
+                type="submit"
+                className="cc-action"
+                data-emphasis="primary"
+                disabled={!complete}
+                data-credential-submit="true"
+              >
+                {t("blocks.credential.save")}
+              </button>
+            </div>
           </form>
         )}
         {status !== undefined && (
@@ -1095,6 +1197,57 @@ const TASK_STATUS_TONE: Record<string, string> = {
   working: "",
 };
 
+/**
+ * A task status in the reader's words. A status this build has no words for is shown as sent rather than hidden, so
+ * a newer node's state still reaches the person.
+ */
+function taskStatusLabel(status: string, t: (key: MessageKey) => string): string {
+  const key = `blocks.taskStatus.${status}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : status;
+}
+
+/** A runtime identifier such as "task_muuej1j4c11811c" or "node_343a…": a lowercase prefix, then an opaque id. */
+function isInternalId(value: unknown): boolean {
+  return typeof value === "string" && /^[a-z]+_[0-9a-z]{8,}$/u.test(value);
+}
+
+function cardFields(fields: Record<string, unknown>[], t: (key: MessageKey) => string): ReactElement {
+  return (
+    <dl className="cc-fields">
+      {fields.map((field, index) => (
+        <Fragment key={index}>
+          <dt>{String(field.label ?? "")}</dt>
+          <dd>
+            {/* A value that is only its own freshness ("sample", marked sample) is said once, in words. */}
+            {field.value === field.freshness ? "" : String(field.value ?? "")}
+            {typeof field.freshness === "string" && (
+              <span className="cc-freshness" data-freshness={field.freshness}>
+                {`${field.value === field.freshness ? "" : " · "}${freshnessLabel(field.freshness, t)}`}
+              </span>
+            )}
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function freshnessLabel(freshness: string, t: (key: MessageKey) => string): string {
+  const key = `widgets.freshness.${freshness}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : freshness;
+}
+
+/** A system card's state in words: the card's own states first, then the ones it shares with a task. */
+function cardStatusLabel(status: string, t: (key: MessageKey) => string): string {
+  const key = `blocks.cardStatus.${status}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : taskStatusLabel(status, t);
+}
+
+function evidenceLabel(evidence: string, t: (key: MessageKey) => string): string {
+  const key = `blocks.evidence.${evidence}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : evidence;
+}
+
 function fieldText(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -1113,10 +1266,13 @@ export function TaskProgressCardBlock({
   block,
   actions,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   t?: (key: MessageKey) => string;
+  /** The interface language, for the start time; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
@@ -1124,7 +1280,7 @@ export function TaskProgressCardBlock({
   const steps = listOf(block.steps);
   const targetNode = (block.targetNode ?? undefined) as Record<string, unknown> | undefined;
   const cancellable = block.cancellable === true;
-  const startedAt = fieldText(block.startedAt);
+  const startedAt = readableInstant(fieldText(block.startedAt), locale);
   const taskId = fieldText(block.taskId);
   const stopState = taskId === "" ? undefined : actions?.taskStop?.[taskId];
 
@@ -1133,7 +1289,7 @@ export function TaskProgressCardBlock({
       <header className="cc-card-head">
         <span className="cc-card-title">{goal}</span>
         <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
-          {status}
+          {taskStatusLabel(status, t)}
         </span>
       </header>
       <div className="cc-card-body">
@@ -1174,10 +1330,10 @@ export function TaskProgressCardBlock({
           exactly when the block says the task is cancellable, so the claim and the affordance cannot drift.
         */}
         {cancellable && taskId !== "" && actions?.onTaskStop !== undefined ? (
-          <div className="cc-chip-row">
+          <div className="cc-card-actions">
             <button
               type="button"
-              className="cc-chip"
+              className="cc-action"
               data-task-stop={taskId}
               disabled={stopState !== undefined && stopState.status !== "failed"}
               onClick={() => actions.onTaskStop?.({ taskId })}
@@ -1211,7 +1367,15 @@ export function TaskProgressCardBlock({
  * questions: whether the run ended, and whether it achieved anything. Collapsing them into one
  * badge is how a task that stopped without evidence comes to be read as a success.
  */
-export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function TaskSummaryCardBlock({
+  block,
+  t = defaultT,
+  locale = "vi",
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+  locale?: string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
   const outcome = fieldText(block.outcome, "not-verified");
@@ -1225,16 +1389,16 @@ export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown>
       <header className="cc-card-head">
         <span className="cc-card-title">{goal}</span>
         <span className="cc-badge" data-tone={TASK_STATUS_TONE[outcome] ?? ""}>
-          {outcome}
+          {taskStatusLabel(outcome, t)}
         </span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{summary}</p>
         <p className="cc-evidence" data-verdict={evidence} style={{ margin: 0 }}>
           <span className="cc-badge" data-tone={evidence === "verified" ? "ok" : evidence === "contradicted" ? "danger" : "warn"}>
-            {evidence}
+            {evidenceLabel(evidence, t)}
           </span>
-          <span className="cc-freshness">{`${(durationMs / 1000).toFixed(1)}s`}</span>
+          <span className="cc-freshness">{readableDuration(durationMs, locale, t("settings.ai.turnCap.seconds"))}</span>
         </p>
         {changes.length > 0 && (
           <ul className="cc-changes">
@@ -1260,9 +1424,11 @@ export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown>
 export function TaskOverviewCardBlock({
   block,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   t?: (key: MessageKey) => string;
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const tasks = listOf(block.tasks);
@@ -1289,10 +1455,10 @@ export function TaskOverviewCardBlock({
             return (
               <li key={index} data-task-status={status}>
                 <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
-                  {status}
+                  {taskStatusLabel(status, t)}
                 </span>
                 <span>{fieldText(task.goal)}</span>
-                <span className="cc-freshness">{fieldText(task.updatedAt)}</span>
+                <span className="cc-freshness">{readableInstant(fieldText(task.updatedAt), locale)}</span>
               </li>
             );
           })}
@@ -1712,6 +1878,8 @@ export function renderBlock(
    * plain function by its own unit tests, not only from within a component's render pass.
    */
   t: (key: MessageKey) => string = defaultT,
+  /** The interface language, for dates and numbers the cards format themselves; Vietnamese by default, like `t`. */
+  locale: string = "vi",
 ): ReactElement | null {
   const type = typeof block.type === "string" ? block.type : "";
 
@@ -1733,9 +1901,9 @@ export function renderBlock(
     case "artifact":
       // Forwarded, for the reason the task card's control taught: a component tested by calling it directly
       // passes whether or not the dispatcher hands it anything.
-      return <ArtifactBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />;
+      return <ArtifactBlock key={index} block={block} t={t} locale={locale} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
-      return <SystemCardBlock key={index} block={block} />;
+      return <SystemCardBlock key={index} block={block} t={t} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "question-card":
@@ -1750,12 +1918,12 @@ export function renderBlock(
       // `actions` must be forwarded, or the card's Stop control is unreachable in the browser while its
       // own unit test — which calls the component directly — still passes.
       return (
-        <TaskProgressCardBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />
+        <TaskProgressCardBlock key={index} block={block} t={t} locale={locale} {...(actions === undefined ? {} : { actions })} />
       );
     case "task-summary-card":
-      return <TaskSummaryCardBlock key={index} block={block} />;
+      return <TaskSummaryCardBlock key={index} block={block} t={t} locale={locale} />;
     case "task-overview-card":
-      return <TaskOverviewCardBlock key={index} block={block} t={t} />;
+      return <TaskOverviewCardBlock key={index} block={block} t={t} locale={locale} />;
     case "code-diff-card":
       return <CodeDiffCardBlock key={index} block={block} t={t} />;
     case "project-picker-card":
@@ -1772,6 +1940,7 @@ export function renderBlock(
           block={block}
           client={client}
           t={t}
+          locale={locale}
           {...(actions === undefined ? {} : { actions })}
         />
       );
@@ -1862,6 +2031,11 @@ export function FormCardBlock({
   const [values, setValues] = useState<Record<string, string>>({});
   const missing = fields.filter((field) => field.required && (values[field.id] ?? "").trim() === "");
   const complete = missing.length === 0 && fields.length > 0;
+  /*
+   * A closed form this view holds no answers for: never sent, or sent before a reload emptied the draft. A dash per
+   * field would read as an answer of nothing, so the card says it is closed and where a sent answer lives instead.
+   */
+  const unanswered = !open && fields.every((field) => (values[field.id] ?? "").trim() === "");
 
   const summary = (): string => {
     const lines = fields
@@ -1882,78 +2056,88 @@ export function FormCardBlock({
       data-form-open={open ? "true" : "false"}
       aria-label={title}
     >
-      <div className="cc-card-title">{title}</div>
-      <div className="cc-form-fields" data-form-fields={fields.length}>
-        {fields.map((field) => (
-          <label key={field.id} className="cc-credential-field">
-            <span>
-              {field.label}
-              {field.required ? <span aria-hidden="true"> *</span> : null}
-            </span>
-            {/*
-              Rendered as text once the form is closed. The value the user gave stays readable — it is what the
-              conversation is about — and the control goes, because there is nothing left to submit.
-            */}
-            {!open ? (
-              <span className="cc-chip" data-form-answer={field.id}>
-                {(values[field.id] ?? "").trim() === "" ? "—" : values[field.id]}
+      <header className="cc-card-head">
+        <span className="cc-card-title">{title}</span>
+      </header>
+      <div className="cc-card-body">
+        {unanswered ? (
+          <p className="cc-freshness" data-form-closed="true">
+            {t("blocks.form.closed")}
+          </p>
+        ) : null}
+        <div className="cc-form-fields" data-form-fields={fields.length} hidden={unanswered}>
+          {fields.map((field) => (
+            <label key={field.id} className="cc-credential-field">
+              <span>
+                {field.label}
+                {field.required ? <span aria-hidden="true"> *</span> : null}
               </span>
-            ) : field.kind === "textarea" ? (
-              <textarea
-                className="cc-personal-instructions"
-                data-form-input={field.id}
-                rows={3}
-                value={values[field.id] ?? ""}
-                placeholder={field.placeholder}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
-              />
-            ) : field.kind === "select" ? (
-              <select
-                className="cc-select"
-                data-form-input={field.id}
-                value={values[field.id] ?? ""}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              {/*
+                Rendered as text once the form is closed. The value the user gave stays readable — it is what the
+                conversation is about — and the control goes, because there is nothing left to submit.
+              */}
+              {!open ? (
+                <span className="cc-form-answer" data-form-answer={field.id}>
+                  {(values[field.id] ?? "").trim() === "" ? "—" : values[field.id]}
+                </span>
+              ) : field.kind === "textarea" ? (
+                <textarea
+                  className="cc-personal-instructions"
+                  data-form-input={field.id}
+                  rows={3}
+                  value={values[field.id] ?? ""}
+                  placeholder={field.placeholder}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                />
+              ) : field.kind === "select" ? (
+                <select
+                  className="cc-select"
+                  data-form-input={field.id}
+                  value={values[field.id] ?? ""}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                >
+                  <option value="">—</option>
+                  {field.options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  data-form-input={field.id}
+                  value={values[field.id] ?? ""}
+                  placeholder={field.placeholder}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                />
+              )}
+            </label>
+          ))}
+        </div>
+        {!open ? null : (
+          <>
+            <div className="cc-card-actions">
+              <button
+                type="button"
+                className="cc-action"
+                data-emphasis="primary"
+                data-form-submit="true"
+                // Disabled with the reason shown, rather than submitting a form with holes in it.
+                disabled={!complete}
+                onClick={() => actions?.onFormSubmit?.({ formId, summary: summary(), values })}
               >
-                <option value="">—</option>
-                {field.options.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type="text"
-                data-form-input={field.id}
-                value={values[field.id] ?? ""}
-                placeholder={field.placeholder}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
-              />
+                {submitLabel}
+              </button>
+            </div>
+            {complete ? null : (
+              <p className="cc-freshness" data-form-incomplete="true">
+                {t("blocks.form.missingFieldsLabel")}: {missing.map((field) => field.label).join(", ")}
+              </p>
             )}
-          </label>
-        ))}
+          </>
+        )}
       </div>
-      {!open ? null : (
-        <>
-          <div className="cc-chip-row">
-            <button
-              type="button"
-              className="cc-chip"
-              data-form-submit="true"
-              // Disabled with the reason shown, rather than submitting a form with holes in it.
-              disabled={!complete}
-              onClick={() => actions?.onFormSubmit?.({ formId, summary: summary(), values })}
-            >
-              {submitLabel}
-            </button>
-          </div>
-          {complete ? null : (
-            <p className="cc-freshness" data-form-incomplete="true">
-              {t("blocks.form.missingFieldsLabel")}: {missing.map((field) => field.label).join(", ")}
-            </p>
-          )}
-        </>
-      )}
     </section>
   );
 }
@@ -2024,114 +2208,119 @@ export function MarketplaceResultsBlock({
 
   return (
     <div className="cc-card cc-marketplace" role="group" aria-label={t("blocks.marketplace.searchResultsAria")} data-marketplace="true">
-      <div className="cc-card-title">{t("blocks.marketplace.resultsIn").replace("{directory}", directory)}</div>
-      {reason !== undefined ? (
-        // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
-        <p className="cc-card-note" data-marketplace-unavailable="true">
-          {reason}
-        </p>
-      ) : results.length === 0 ? (
-        <p className="cc-card-note">{t("blocks.marketplace.noMatch").replace("{query}", query)}</p>
-      ) : (
-        <ul className="cc-marketplace-list">
-          {results.map((raw, position) => {
-            const result = (raw ?? {}) as Record<string, unknown>;
-            const packageId = typeof result.packageId === "string" ? result.packageId : "";
-            const version = typeof result.version === "string" ? result.version : "";
-            const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
-            const description = typeof result.description === "string" ? result.description : "";
-            const digest = typeof result.digest === "string" ? result.digest : "";
-            // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
-            const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
-            const lane = typeof result.riskTier === "string" ? result.riskTier : "";
-            const attempt = actions?.packageInstall?.[packageId];
-            /*
-             * Out of date only on a row that shows the digest the refused press sent: pressing it again would send the
-             * same digest and be refused the same way, so it offers a new search instead. A row from a newer search
-             * shows the files as they are now and is not affected.
-             */
-            const stale =
-              attempt?.status === "stale" && contentDigest !== undefined && attempt.staleContentDigest === contentDigest;
-            const installState = attempt?.status === "stale" && !stale ? undefined : attempt;
-            const stateId = `cc-marketplace-state-${packageId}-${String(position)}`;
-            return (
-              <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
-                <div className="cc-marketplace-name">
-                  {displayName} <span className="cc-marketplace-version">{version}</span>
-                </div>
-                {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
-                {Array.isArray(result.widgetAppearance) && result.widgetAppearance.some((entry) =>
-                  entry !== null && typeof entry === "object" && entry.mode === "fixed") && (
-                  <div className="cc-marketplace-desc" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</div>
-                )}
-                {/* What installing lets it reach, before the Install press: the install refuses an artifact that differs. */}
-                <PackageReach reach={readReach(result.declaredReach)} />
-                {/* What the listing says that this node does not read, so the row does not pass for all of it. */}
-                <UnreadListingFieldsNote fields={readUnreadFields(result.unreadFields)} />
-                <div className="cc-marketplace-meta">
-                  <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
-                  <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
-                  {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
-                  <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
-                    {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
-                  </span>
-                </div>
-                {/*
-                  Installing goes through the single install route, which applies the execution policy and the install
-                  supervisor that already existed. The card was deliberately without this control while that route did
-                  not exist, because a button whose action is missing is worse than no button; it exists now, so the
-                  control does too — and only where a caller supplied the action, which a read-only snapshot does not.
-                */}
-                {actions?.onInstallPackage !== undefined && (
-                  <div className="cc-marketplace-actions">
-                    <button
-                      type="button"
-                      className="cc-chip"
-                      data-install-package={packageId}
-                      disabled={installState?.status === "installing" || stale}
-                      {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
-                      onClick={() =>
-                        actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
-                      }
-                    >
-                      {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
-                    </button>
-                    {installState !== undefined && installState.status !== "installing" && (
-                      <span id={stateId} className="cc-marketplace-install-state" data-install-state={installState.status}>
-                        {installState.message ?? ""}
-                      </span>
-                    )}
-                    {/* The way forward from an out-of-date list: the same search again, as the person's own message. */}
-                    {stale && actions.onSearchAgain !== undefined && (
+      <header className="cc-card-head">
+        <span className="cc-card-title">{t("blocks.marketplace.resultsIn").replace("{directory}", directory)}</span>
+      </header>
+      <div className="cc-card-body">
+        {reason !== undefined ? (
+          // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
+          <p className="cc-card-note" data-marketplace-unavailable="true">
+            {reason}
+          </p>
+        ) : results.length === 0 ? (
+          <p className="cc-card-note">{t("blocks.marketplace.noMatch").replace("{query}", query)}</p>
+        ) : (
+          <ul className="cc-marketplace-list">
+            {results.map((raw, position) => {
+              const result = (raw ?? {}) as Record<string, unknown>;
+              const packageId = typeof result.packageId === "string" ? result.packageId : "";
+              const version = typeof result.version === "string" ? result.version : "";
+              const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
+              const description = typeof result.description === "string" ? result.description : "";
+              const digest = typeof result.digest === "string" ? result.digest : "";
+              // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
+              const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
+              const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+              const attempt = actions?.packageInstall?.[packageId];
+              /*
+               * Out of date only on a row that shows the digest the refused press sent: pressing it again would send the
+               * same digest and be refused the same way, so it offers a new search instead. A row from a newer search
+               * shows the files as they are now and is not affected.
+               */
+              const stale =
+                attempt?.status === "stale" && contentDigest !== undefined && attempt.staleContentDigest === contentDigest;
+              const installState = attempt?.status === "stale" && !stale ? undefined : attempt;
+              const stateId = `cc-marketplace-state-${packageId}-${String(position)}`;
+              return (
+                <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
+                  <div className="cc-marketplace-name">
+                    {displayName} <span className="cc-marketplace-version">{version}</span>
+                  </div>
+                  {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
+                  {Array.isArray(result.widgetAppearance) && result.widgetAppearance.some((entry) =>
+                    entry !== null && typeof entry === "object" && entry.mode === "fixed") && (
+                    <div className="cc-marketplace-desc" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</div>
+                  )}
+                  {/* What installing lets it reach, before the Install press: the install refuses an artifact that differs. */}
+                  <PackageReach reach={readReach(result.declaredReach)} />
+                  {/* What the listing says that this node does not read, so the row does not pass for all of it. */}
+                  <UnreadListingFieldsNote fields={readUnreadFields(result.unreadFields)} />
+                  <div className="cc-marketplace-meta">
+                    <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
+                    <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
+                    {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
+                    <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
+                      {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
+                    </span>
+                  </div>
+                  {/*
+                    Installing goes through the single install route, which applies the execution policy and the install
+                    supervisor that already existed. The card was deliberately without this control while that route did
+                    not exist, because a button whose action is missing is worse than no button; it exists now, so the
+                    control does too — and only where a caller supplied the action, which a read-only snapshot does not.
+                  */}
+                  {actions?.onInstallPackage !== undefined && (
+                    <div className="cc-card-actions cc-marketplace-actions">
                       <button
                         type="button"
-                        className="cc-chip"
-                        data-marketplace-search-again={packageId}
-                        onClick={() => actions.onSearchAgain?.({ query })}
+                        className="cc-action"
+                        data-emphasis="primary"
+                        data-install-package={packageId}
+                        disabled={installState?.status === "installing" || stale}
+                        {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
+                        onClick={() =>
+                          actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
+                        }
                       >
-                        {t("blocks.marketplace.searchAgain")}
+                        {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
                       </button>
-                    )}
-                    {/* The install waits in the inbox, where the person decides it: one step there, never a decision here. */}
-                    {installState?.status === "approval-required" &&
-                      installState.approvalId !== undefined &&
-                      actions.onOpenInbox !== undefined && (
+                      {installState !== undefined && installState.status !== "installing" && (
+                        <span id={stateId} className="cc-marketplace-install-state" data-install-state={installState.status}>
+                          {installState.message ?? ""}
+                        </span>
+                      )}
+                      {/* The way forward from an out-of-date list: the same search again, as the person's own message. */}
+                      {stale && actions.onSearchAgain !== undefined && (
                         <button
                           type="button"
-                          className="cc-chip"
-                          data-install-open-inbox={installState.approvalId}
-                          onClick={() => actions.onOpenInbox?.(`install-approval:${installState.approvalId ?? ""}`)}
+                          className="cc-action"
+                          data-marketplace-search-again={packageId}
+                          onClick={() => actions.onSearchAgain?.({ query })}
                         >
-                          {t("blocks.marketplace.openInbox")}
+                          {t("blocks.marketplace.searchAgain")}
                         </button>
                       )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                      {/* The install waits in the inbox, where the person decides it: one step there, never a decision here. */}
+                      {installState?.status === "approval-required" &&
+                        installState.approvalId !== undefined &&
+                        actions.onOpenInbox !== undefined && (
+                          <button
+                            type="button"
+                            className="cc-action"
+                            data-install-open-inbox={installState.approvalId}
+                            onClick={() => actions.onOpenInbox?.(`install-approval:${installState.approvalId ?? ""}`)}
+                          >
+                            {t("blocks.marketplace.openInbox")}
+                          </button>
+                        )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -2152,12 +2341,14 @@ function SessionPreviewFrame({
   digest,
   viewport,
   capturedAt,
+  locale,
 }: {
   client: GatewayClient | undefined;
   label: string;
   digest: string;
   viewport: { width: number; height: number } | undefined;
   capturedAt: string | undefined;
+  locale: string;
 }): ReactElement {
   const t = useT();
   const url = useObjectUrls(
@@ -2168,7 +2359,10 @@ function SessionPreviewFrame({
     [digest],
   )(digest);
 
-  const taken = capturedAt === undefined ? "" : t("blocks.session.takenAtSuffix").replace("{at}", capturedAt);
+  // Said the way the reader tells time; the exact instant stays on the `time` element for anything that needs it.
+  const readable = capturedAt === undefined ? undefined : readableInstant(capturedAt, locale);
+  const taken = readable === undefined ? "" : t("blocks.session.takenAtSuffix").replace("{at}", readable);
+  const [takenBefore = "", takenAfter = ""] = t("blocks.session.takenAtSuffix").split("{at}");
   return (
     /*
      * The digest is on the element as well as in the fetch, so an assertion can ask the node for the frame the
@@ -2189,7 +2383,13 @@ function SessionPreviewFrame({
       )}
       <figcaption>
         {t("blocks.session.captionPrefix")}
-        {taken}
+        {readable === undefined ? null : (
+          <>
+            {takenBefore}
+            <time dateTime={capturedAt}>{readable}</time>
+            {takenAfter}
+          </>
+        )}
         {t("blocks.session.captionSuffix")}
       </figcaption>
     </figure>
@@ -2201,11 +2401,14 @@ export function ControlSessionCardBlock({
   actions,
   client,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   client?: GatewayClient | undefined;
   t?: (key: MessageKey) => string;
+  /** The interface language, for when the frame was taken; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
 
@@ -2265,6 +2468,7 @@ export function ControlSessionCardBlock({
           digest={frameDigest}
           viewport={frameViewport}
           capturedAt={frameCapturedAt}
+          locale={locale}
         />
       )}
       <header className="cc-card-head">
@@ -2273,75 +2477,77 @@ export function ControlSessionCardBlock({
           {stopped ? t("blocks.session.stopped") : t("blocks.session.running")}
         </span>
       </header>
-      <dl className="cc-fields">
-        <dt>{t("blocks.session.whoIsDriving")}</dt>
-        <dd data-control-driver-label="true">{driver === "user" ? t("blocks.session.you") : t("blocks.session.agent")}</dd>
+      <div className="cc-card-body">
+        <dl className="cc-fields">
+          <dt>{t("blocks.session.whoIsDriving")}</dt>
+          <dd data-control-driver-label="true">{driver === "user" ? t("blocks.session.you") : t("blocks.session.agent")}</dd>
 
-      </dl>
-      {/*
-        Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
-        the operating system has not granted to this node cannot be driven, and the permission is not the node's to
-        assume — so the card says what is missing and who owns it.
-      */}
-      {observable ? null : (
-        <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
-          {declaredPreview === "needs-permission" ? t("blocks.session.needsPermission") : t("blocks.session.cannotView")}
-          {previewReason === undefined ? "" : `: ${previewReason}`}
-          {t("blocks.session.permissionNotice")}
-        </p>
-      )}
-      {running ? (
-        <div className="cc-chip-row">
-          {/*
-            Offered only while the agent still has the wheel, and only when something can carry the verb out: a
-            takeover control on a session the user already drives would be a control with nothing left to do.
-          */}
-          {driver === "agent" && actions?.onControlTakeover !== undefined ? (
-            <button
-              type="button"
-              className="cc-chip"
-              data-control-takeover={sessionId}
-              disabled={busy}
-              onClick={() => actions.onControlTakeover?.({ sessionId })}
-            >
-              {busy ? t("blocks.session.switching") : t("blocks.session.takeControl")}
-            </button>
-          ) : null}
-          {actions?.onControlStop !== undefined ? (
-            <button
-              type="button"
-              className="cc-chip"
-              data-control-stop={sessionId}
-              disabled={busy}
-              onClick={() => actions.onControlStop?.({ sessionId })}
-            >
-              {t("blocks.session.stopSession")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {/*
-        Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
-        question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
-        thing twice.
-      */}
-      {state?.status === "failed" ? (
-        <p className="cc-freshness" data-control-error="true">
-          {state.message}
-        </p>
-      ) : !running ? (
-        <p className="cc-freshness" data-control-notice="stopped">
-          {state?.status === "stopped" ? t("blocks.session.stoppedByYou") : t("blocks.session.stoppedOther")}
-        </p>
-      ) : state?.status === "taken-over" ? (
-        /*
-         * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
-         * planned action was refused, because that is the part that makes the browser theirs.
-         */
-        <p className="cc-freshness" data-control-notice="taken-over">
-          {t("blocks.session.takenOverNotice")}
-        </p>
-      ) : null}
+        </dl>
+        {/*
+          Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
+          the operating system has not granted to this node cannot be driven, and the permission is not the node's to
+          assume — so the card says what is missing and who owns it.
+        */}
+        {observable ? null : (
+          <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
+            {declaredPreview === "needs-permission" ? t("blocks.session.needsPermission") : t("blocks.session.cannotView")}
+            {previewReason === undefined ? "" : `: ${previewReason}`}
+            {t("blocks.session.permissionNotice")}
+          </p>
+        )}
+        {running ? (
+          <div className="cc-card-actions">
+            {/*
+              Offered only while the agent still has the wheel, and only when something can carry the verb out: a
+              takeover control on a session the user already drives would be a control with nothing left to do.
+            */}
+            {driver === "agent" && actions?.onControlTakeover !== undefined ? (
+              <button
+                type="button"
+                className="cc-action"
+                data-control-takeover={sessionId}
+                disabled={busy}
+                onClick={() => actions.onControlTakeover?.({ sessionId })}
+              >
+                {busy ? t("blocks.session.switching") : t("blocks.session.takeControl")}
+              </button>
+            ) : null}
+            {actions?.onControlStop !== undefined ? (
+              <button
+                type="button"
+                className="cc-action"
+                data-control-stop={sessionId}
+                disabled={busy}
+                onClick={() => actions.onControlStop?.({ sessionId })}
+              >
+                {t("blocks.session.stopSession")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {/*
+          Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
+          question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
+          thing twice.
+        */}
+        {state?.status === "failed" ? (
+          <p className="cc-freshness" data-control-error="true">
+            {state.message}
+          </p>
+        ) : !running ? (
+          <p className="cc-freshness" data-control-notice="stopped">
+            {state?.status === "stopped" ? t("blocks.session.stoppedByYou") : t("blocks.session.stoppedOther")}
+          </p>
+        ) : state?.status === "taken-over" ? (
+          /*
+           * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
+           * planned action was refused, because that is the part that makes the browser theirs.
+           */
+          <p className="cc-freshness" data-control-notice="taken-over">
+            {t("blocks.session.takenOverNotice")}
+          </p>
+        ) : null}
+      </div>
     </section>
   );
 }

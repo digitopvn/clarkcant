@@ -69,7 +69,7 @@ async function openApp(page: Page): Promise<void> {
   await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
   // The status pill, not merely the textarea: the composer renders before the health check
   // answers, and sending a message to a node that is not up yet proves nothing.
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** The gateway, with the node's own token. Used to create records the way a client would. */
@@ -202,7 +202,7 @@ test("a widget the client cannot render shows its text alternative instead of no
   }
 
   await openConversation(page, conversation.conversationId);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 
   // The message is readable and the fallback is what is shown — not a blank card, and not the
   // renderer that does not exist.
@@ -375,7 +375,7 @@ test("a carousel selection reaches the next turn and survives pinning and a relo
   await page.locator(`[data-pin-instance='${instanceId}']`).click();
   await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.carousel@1']")).toBeVisible();
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.carousel@1']")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-pin-shelf] [data-carousel-index]")).toHaveCount(0);
   await expect(page.locator("[data-carousel-index]").last()).toHaveAttribute("data-carousel-index", "1", { timeout: 20_000 });
@@ -520,7 +520,7 @@ test("a paused local video is read back by inspect_ui and restored without playi
   await page.locator(`[data-pin-instance='${instanceId}']`).click();
   await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.video@1']")).toBeVisible();
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.video@1']")).toBeVisible({ timeout: 20_000 });
   const restored = page.locator(`video[data-video-ref='${LOCAL_CLIP_REF}']`);
   await expect(restored).toHaveCount(1, { timeout: 20_000 });

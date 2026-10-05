@@ -57,7 +57,9 @@ export function ConversationHeader({
       <div className="cc-header-end">
         <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
           <span className="cc-dot" data-state={connection} aria-hidden="true" />
-          {connection === "ready" ? t("shell.status.ready") : connection === "connecting" ? t("shell.status.connecting") : t("shell.status.offline")}
+          <span className="cc-status-label">
+            {connection === "ready" ? t("shell.status.ready") : connection === "connecting" ? t("shell.status.connecting") : t("shell.status.offline")}
+          </span>
         </div>
         {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
             permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it

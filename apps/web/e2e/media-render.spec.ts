@@ -81,7 +81,7 @@ async function restartServices(request: APIRequestContext): Promise<void> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /**
@@ -298,7 +298,7 @@ test("Escape stops a render mid-way, and the stopped render leaves no file", asy
 
   // And after a reload the stopped render is still a stopped render, with no file shown as finished.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const remounted = await openLive(page, { restored: true });
   await expect(remounted.locator("[data-media-job]")).toHaveAttribute("data-media-job-status", "cancelled", { timeout: 30_000 });
   await expect(remounted.locator("[data-media-preview]")).toBeHidden();
@@ -317,7 +317,7 @@ test("a remounted frame follows the same render to its file", async ({ page }) =
   await page.waitForTimeout(500);
 
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   widget = await openLive(page, { restored: true });
   const job = widget.locator("[data-media-job]");
   await expect(job).toHaveAttribute("data-media-job-id", jobId, { timeout: 30_000 });
@@ -327,7 +327,7 @@ test("a remounted frame follows the same render to its file", async ({ page }) =
 
   // Another reload shows the finished file again from widget state, without rendering anything new.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   widget = await openLive(page, { restored: true });
   await expect(widget.locator("[data-media-job]")).toHaveAttribute("data-media-job-id", jobId, { timeout: 30_000 });
   await expect(widget.locator("[data-media-preview]")).toHaveAttribute("data-media-preview", "ready", { timeout: 30_000 });

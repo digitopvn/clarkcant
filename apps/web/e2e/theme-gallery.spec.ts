@@ -33,7 +33,7 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto(`/?token=${encodeURIComponent(identity.localToken)}&gateway=${encodeURIComponent(gateway)}`);
-      await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+      await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible();
       const composer = page.locator('[data-composer="true"]').first();
       await composer.fill("Conversation draft survives Theme Lab");
       await composer.evaluate((element) => element.setAttribute("data-kept", "true"));
@@ -51,7 +51,7 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       expect(before.selectedRef).toBe("builtin:clark");
       const draft = preview.locator('[data-composer="true"]');
       await draft.fill("Local example draft");
-      const modalOpener = preview.locator("button").filter({ hasText: /Mở modal ví dụ|Open example modal/ });
+      const modalOpener = preview.locator("button").filter({ hasText: /Mở hộp thoại ví dụ|Open example modal/ });
       await modalOpener.click();
       await expect(page.locator('[data-modal="true"]')).toHaveCount(3);
       await page.keyboard.press("Escape");
@@ -63,13 +63,18 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-modal="true"]')).toHaveCount(1);
       await expect(browse).toBeFocused();
-      await expect(page.locator("[data-theme-recent]")).toContainText("Dusk");
+      // The theme in use is the pressed card already; the recent row is only a way back to the others.
+      await expect(page.locator("[data-theme-recent] button", { hasText: "Dusk" })).toHaveCount(0);
       await page.locator(`[data-theme-choice="${scheme}"]`).click();
       const normalSpace = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-space-md"));
       await page.locator('[data-theme-customization] [data-segment="compact"]').click();
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-space-md").trim())).toBe("0.5625rem");
-      await page.locator('[data-accent-scheme="dark"]').fill("#7AA2F7");
+      // The swatch beside each code is the colour itself and a picker for it: choosing there writes the code.
+      await page.locator('[data-accent-picker="dark"]').fill("#336699");
+      await expect(page.locator('[data-accent-scheme="dark"]')).toHaveValue("#336699");
+      await expect(page.locator('[data-accent-picker="dark"]')).toHaveAccessibleName(/./);      await page.locator('[data-accent-scheme="dark"]').fill("#7AA2F7");
       await page.locator('[data-accent-scheme="light"]').fill("#2453A8");
+      await expect(page.locator('[data-accent-picker="light"]')).toHaveValue("#2453a8");
       await page.locator("[data-accent-save]").click();
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase())).toBe(scheme === "dark" ? "#7AA2F7" : "#2453A8");
       await page.locator('[data-accent-scheme="dark"]').fill("#111114");

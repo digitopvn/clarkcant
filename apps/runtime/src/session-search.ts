@@ -555,7 +555,7 @@ export function ingestSessionEntries(
 export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition {
   return {
     name: "search_history",
-    label: "Search this node's history",
+    label: "Tìm trong lịch sử của máy này",
     description:
       "Search what was said in this conversation and what workers did on this node. " +
       "Use it when the user refers to something earlier. Results are snippets with their source; " +

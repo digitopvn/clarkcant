@@ -61,7 +61,7 @@ async function say(page: Page, text: string): Promise<void> {
 /** Place the widget through `place_widget` and open it live, as the person would. */
 async function placeAndOpen(page: Page, widgetId: string, ready: string): Promise<FrameLocator> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await say(page, `place widget ${widgetId}`);
   await expect(page.getByText("Fixture: tui gọi place_widget").last()).toContainText("Actions you can perform on it", { timeout: 20_000 });
   const open = page.locator("[data-open-live]").last();

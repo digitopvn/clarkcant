@@ -11,7 +11,7 @@
 export const MESSAGES_SHELL_VI = {
   "shell.header.restartTitle": "Bắt đầu lại",
   "shell.header.restartAria": "Bắt đầu lại: về màn hình đầu và mở một phiên mới",
-  "shell.status.ready": "Ready",
+  "shell.status.ready": "Sẵn sàng",
   "shell.status.connecting": "Đang kết nối",
   "shell.status.offline": "Mất kết nối",
   "shell.connection.unreachable": "Không kết nối được tới node.",
@@ -69,14 +69,15 @@ export const MESSAGES_SHELL_VI = {
   "shell.hero.suggestion4Label": "Chỉ trò chuyện",
   "shell.hero.sampleDataDetail": "chạy trên dữ liệu mẫu",
   "shell.hero.needsModelDetail": "cần model",
-  "shell.hero.noModelTitle": "Node này chưa có model",
+  "shell.hero.noModelTitle": "Clark chưa có model để trò chuyện",
   "shell.hero.noModelDesc":
-    "Nó vẫn trả lời được bằng recipe và capability đã cài. Muốn hỏi tự do thì cần chọn provider và model trước — mở Cài đặt, tab AI & Định tuyến.",
+    "Những việc đã cài sẵn vẫn làm được. Để hỏi gì cũng được, hãy chọn một model trong Cài đặt → AI & Định tuyến.",
   "shell.hero.openSettings": "Mở Cài đặt",
   "shell.hero.orbLabel": "Đang chờ bạn nói điều muốn làm",
   "shell.hero.heading": "Bạn đang nghĩ gì?",
   "shell.hero.subheading": "Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.",
-  "shell.hero.footerNote": "Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.",
+  "shell.hero.footerNote": "Gợi ý đánh dấu “cần model” chỉ chạy được khi đã chọn một model.",
+  "shell.send.unreachable": "Chưa gửi được: không kết nối tới node. Tin nhắn vẫn còn trong ô nhập — gửi lại khi kết nối trở lại.",
 
   "shell.reply.thinkingAria": "ClarkCant đang trả lời",
 
@@ -208,7 +209,7 @@ export const MESSAGES_SHELL_VI = {
   "voice.defaultUnblockedBy": "đặt GEMINI_API_KEY cho node rồi thử lại",
 
   "voice.wakeUnavailableReason":
-    "Chưa có bộ nhận diện chạy trên máy này. Không dùng cách gửi âm thanh liên tục lên provider thay thế.",
+    "Chưa có bộ nhận diện chạy trên máy này. Không dùng cách gửi âm thanh liên tục lên nhà cung cấp thay thế.",
   "voice.unavailableBadge": "chưa dùng được",
   "voice.noNodeMessage": "Màn hình này chưa nối tới node nào, nên không thể mở phiên giọng nói ở đây.",
   "voice.requiresLabel": "Cần",
@@ -288,14 +289,15 @@ export const MESSAGES_SHELL_EN = {
   "shell.hero.suggestion4Label": "Just chat",
   "shell.hero.sampleDataDetail": "runs on sample data",
   "shell.hero.needsModelDetail": "needs a model",
-  "shell.hero.noModelTitle": "This node has no model yet",
+  "shell.hero.noModelTitle": "Clark has no model to talk with yet",
   "shell.hero.noModelDesc":
-    "It can still answer with installed recipes and capabilities. Open-ended questions need a provider and model chosen first — open Settings, the AI & Routing tab.",
+    "What is already installed still works. To ask anything, choose a model in Settings → AI & Routing.",
   "shell.hero.openSettings": "Open Settings",
   "shell.hero.orbLabel": "Waiting for you to say what you want to do",
   "shell.hero.heading": "What's on your mind?",
   "shell.hero.subheading": "Say what you want to do, or start from a suggestion below.",
-  "shell.hero.footerNote": "Suggestions marked \"needs a model\" will error if this node has no model configured.",
+  "shell.hero.footerNote": "Suggestions marked \"needs a model\" work once a model is chosen.",
+  "shell.send.unreachable": "Not sent: the node can't be reached. Your message is still in the box — send it again once the connection is back.",
 
   "shell.reply.thinkingAria": "ClarkCant is replying",
 

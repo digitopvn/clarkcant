@@ -9,10 +9,11 @@
 export const PANELS_CSS = `
 @layer panels {
 /* Evidence and artifacts */
-.cc-evidence { display: flex; gap: var(--cc-space-sm); align-items: flex-start; font-size: var(--cc-text-label); }
-.cc-evidence[data-verdict="not-verified"] { color: var(--cc-warning); }
-.cc-evidence[data-verdict="contradicted"] { color: var(--cc-danger); }
-.cc-evidence[data-verdict="verified"] { color: var(--cc-success); }
+.cc-evidence { display: flex; gap: var(--cc-space-sm); align-items: baseline; font-size: var(--cc-text-label); }
+/* The verdict carries the colour; the sentence beside it stays in the reading tone, so a good result is quiet. */
+.cc-evidence[data-verdict="not-verified"] .cc-evidence-verdict { color: var(--cc-warning); }
+.cc-evidence[data-verdict="contradicted"] .cc-evidence-verdict { color: var(--cc-danger); }
+.cc-evidence[data-verdict="verified"] .cc-evidence-verdict { color: color-mix(in oklab, var(--cc-success) 75%, var(--cc-text-muted)); }
 
 /* Focus: never removed, only restyled. Keyboard users must be able to see where they are. */
 :focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
@@ -20,6 +21,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 /* A code or diff scroll fills a card that clips whatever overflows it, so its ring is drawn inside the scroll. It is
    here, after the rule above, because this layer comes last and an outer ring from above would be cut off. */
 .cc-viewer-scroll:focus-visible { outline-offset: -2px; }
+/* The composer's field draws its focus on the pill around it (see the composer layer), not as a rectangle inside a
+   stadium. Restated here because this layer comes last and the rule above would otherwise put the rectangle back. */
+.cc-composer textarea:focus-visible { outline: none; }
 
 /* Screen-reader-only text: the text alternative for every rich surface. */
 .cc-sr-only {
@@ -87,6 +91,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  */
 .cc-setting-row[data-layout="stacked"] { flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
 .cc-setting-row[data-layout="stacked"] > .cc-setting-control { flex: initial; display: block; }
+/* A plain value in the control column, such as a date, at the size of the row text beside it rather than the reply size. */
+.cc-setting-control > time { font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); }
 .cc-setting-control code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 
 /* A capability, with its real readiness. The reason is shown whenever there is one. */
@@ -96,7 +102,35 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 .cc-tool-row:last-of-type { border-bottom: none; }
 .cc-tool-row code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text); }
-.cc-tool-blocked { color: var(--cc-warning); }
+.cc-tool-blocked { color: var(--cc-text-muted); }
+.cc-tool-why { margin-top: var(--cc-space-xxs); font-size: var(--cc-text-label); }
+.cc-tool-why > summary { cursor: pointer; width: fit-content; color: var(--cc-text-tertiary); }
+.cc-tool-why > summary:hover { color: var(--cc-text); }
+.cc-tool-why[open] > summary { margin-bottom: var(--cc-space-xxs); }
+.cc-memory-empty > p { margin: 0; }
+/* The tool lists: a subgroup heading in sentence case under the section's capitals, then one row per tool. */
+.cc-tool-list-heading {
+  margin: var(--cc-space-md) 0 var(--cc-space-xs); font-size: var(--cc-text-body-sm); font-weight: 600; color: var(--cc-text);
+}
+.cc-tool-list-heading:first-child { margin-top: 0; }
+.cc-tool-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cc-tool-list > li {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--cc-space-sm);
+  padding: var(--cc-space-xs) 0; border-top: var(--cc-line, 1px solid) var(--cc-border);
+}
+.cc-tool-list > li:first-child { border-top: 0; }
+.cc-tool-list > li > code { font-size: var(--cc-text-label); color: var(--cc-text-tertiary); }
+.cc-tool-list > li > .cc-tool-why { flex-basis: 100%; }
+.cc-tool-list .cc-tool-why .cc-panel-note { margin: 0; }
+/* One tag per extension: names set inline with nothing between them run together into one unreadable word. */
+.cc-pi-extensions { gap: var(--cc-space-xs); }
+/* pi's settings: one key and value per line, as the node reports them. */
+.cc-pi-settings { display: flex; flex-direction: column; gap: var(--cc-space-xxs); margin-top: var(--cc-space-sm); }
+.cc-pi-settings > code { overflow-wrap: anywhere; }
+.cc-pi-extensions > code {
+  font-size: var(--cc-text-label); color: var(--cc-text-muted); padding: 2px var(--cc-space-xs);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-badge); overflow-wrap: anywhere;
+}
 .cc-panel-note { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-badge[data-selected="true"], .cc-swatch[aria-pressed="true"] {
   outline: 2px solid var(--cc-focus); outline-offset: 2px;
@@ -129,7 +163,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  * One container, several leaf regions. The grid is the only layout the container performs: each
  * region is an ordinary card, so a leaf that fails still leaves the rest of the surface readable.
  * ------------------------------------------------------------------ */
-.cc-surface { padding: 0; }
+/* A figure element, so without this the browser's own 40px a side indents it from the reply it belongs to and takes the room
+   a split or a grid needs for its columns. */
+.cc-surface { padding: 0; margin: 0; }
 .cc-surface-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -502,6 +538,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 
 /* The live view of a pinned instance, and the notice when another surface holds it. */
 .cc-live-surface { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+/* An open widget's head: its name on the left, its window controls on the right. */
+.cc-live-head { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--cc-space-xs); }
+.cc-live-title { flex: 1 1 12ch; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-live-surface[data-ownership="elsewhere"] { opacity: 0.9; }
 .cc-live-surface[data-ownership="owner"] .cc-surface-region { border-left: 2px solid transparent; }
 
@@ -515,8 +554,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-segmented-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
 .cc-segmented { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); justify-content: flex-end; }
 .cc-segmented[data-pending="true"] { opacity: 0.6; }
-/* The note belongs to the whole group, so it is aligned with the controls rather than with the label. */
-.cc-segmented-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
+/*
+ * The note belongs to the whole group, so it sits under the controls rather than under the label: as wide as the
+ * row of choices and starting where they start. A note set flush right ran two or three ragged lines that were
+ * hard to read from their first word. Containment keeps a long note from widening the column it explains, and the
+ * minimum keeps it from becoming one word a line under a choice of two.
+ */
+.cc-segmented-wrap > .cc-panel-note { margin: 0; align-self: stretch; text-align: start; contain: inline-size; min-width: 20ch; }
 
 .cc-toggle-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
 /*
@@ -535,7 +579,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 .cc-toggle-track {
   width: 38px; height: 22px; border-radius: var(--cc-radius-pill);
-  background: var(--cc-card); border: var(--cc-line, 1px solid) var(--cc-border); position: relative;
+  /* The off track is drawn as a recess with a visible edge: on a raised surface the plain card fill vanished,
+     leaving a lone grey knob that read as a radio button. */
+  background: color-mix(in oklab, var(--cc-text) 10%, var(--cc-card));
+  border: var(--cc-line, 1px solid) color-mix(in oklab, var(--cc-text) 20%, var(--cc-border)); position: relative;
   transition: background var(--cc-motion-micro) var(--cc-motion-easing), border-color var(--cc-motion-micro) var(--cc-motion-easing);
 }
 .cc-toggle-track::after {
@@ -778,7 +825,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-library-scrim { position: fixed; inset: 0; background: color-mix(in oklab, var(--cc-code) 78%, transparent); z-index: 80; }
 .cc-widget-library {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: min(1100px, calc(100vw - 24px)); max-height: calc(100vh - 32px);
+  /* One size for the gallery and a widget's page, so opening a card does not make the surface jump. */
+  width: min(1100px, calc(100vw - 24px)); height: calc(100vh - 32px);
   display: flex; flex-direction: column;
   background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-modal);
   box-shadow: var(--cc-shadow-modal, 0 24px 64px color-mix(in oklab, var(--cc-code) 70%, transparent));
@@ -789,11 +837,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-library-head { display: flex; align-items: center; gap: var(--cc-space-md); padding: var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-widget-library-head h2 { margin: 0; font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-size: var(--cc-text-heading-md); line-height: var(--cc-leading-heading-md); }
 .cc-widget-library-head-left { display: flex; align-items: center; gap: var(--cc-space-sm); }
-.cc-widget-library-search { flex: 1; min-width: 0; }
+/* A field you type into, dressed like the other fields rather than left to the operating system's default. */
+.cc-widget-library-search {
+  flex: 1; min-width: 0; min-height: 36px; padding: var(--cc-space-xs) var(--cc-space-sm); font: inherit; color: inherit;
+  background: var(--cc-input-bg, var(--cc-card));
+  border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
+  border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
+}
+.cc-widget-library-search:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-widget-library-facets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); padding: var(--cc-space-sm) var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-widget-library-facet { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-button); border: var(--cc-line, 1px solid) var(--cc-border); background: transparent; color: inherit; }
 .cc-widget-library-facet[data-selected="true"] { border-color: var(--cc-accent); }
-.cc-widget-library-body { overflow-y: auto; padding: var(--cc-space-lg); }
+.cc-widget-library-facet:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
+.cc-widget-library-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--cc-space-lg); }
+/* Close stays in the corner whether the search field or a widget's name fills the row beside it. */
+.cc-widget-library-head > [data-widget-library-close] { margin-left: auto; }
 .cc-widget-library-empty { margin: 0; color: var(--cc-text-muted); }
 .cc-library-builtin h3, .cc-library-provenance h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }
 /* Installed packages are separated from the built-in catalog by a rule, so the two lists read as two
@@ -826,16 +885,21 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-host-card-caption { font-size: var(--cc-text-label); font-style: italic; }
 .cc-host-card-open { color: inherit; }
 .cc-widget-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cc-space-md); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.cc-widget-card { margin: 0; }
-.cc-widget-card-btn { display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; }
+/* Cards in one row share its height, so the row reads as a row and every source line sits on the same baseline. */
+.cc-widget-card { margin: 0; display: flex; }
+/* A card is as wide as its column: a chart's own width must not size the column, or one wide preview pushes the
+   single phone column past the screen edge. */
+.cc-widget-card, .cc-widget-card-btn { min-width: 0; }
+.cc-widget-card-btn { flex: 1; display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; transition: border-color var(--cc-motion-micro) var(--cc-motion-easing); }
+.cc-widget-card-btn:hover { border-color: color-mix(in oklab, var(--cc-text) 24%, var(--cc-border)); }
 .cc-widget-card-btn:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-widget-card-preview { display: block; min-height: 96px; overflow: hidden; pointer-events: none; }
 .cc-widget-card-text { display: block; color: var(--cc-text-muted); }
-.cc-widget-card-meta { display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
+.cc-widget-card-meta { flex: 1; display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
 .cc-widget-card-name { font-weight: 600; }
 .cc-widget-card-family { color: var(--cc-text-muted); }
 .cc-widget-card-desc { color: var(--cc-text-muted); }
-.cc-widget-card-source { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-widget-card-source { margin-top: auto; padding-top: var(--cc-space-xs); color: var(--cc-text-muted); font-size: var(--cc-text-label); }
 .cc-widget-preview { display: block; }
 .cc-widget-preview-missing { margin: 0; color: var(--cc-text-muted); }
 .cc-widget-detail { display: flex; flex-direction: column; gap: var(--cc-space-lg); }
@@ -846,8 +910,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 /* A 320 px viewport is a supported width, not a degraded one: one column, and the surface still fits. */
 @media (max-width: 520px) {
   .cc-widget-library { width: calc(100vw - 12px); max-height: calc(100vh - 16px); }
-  .cc-widget-grid { grid-template-columns: 1fr; }
+  .cc-widget-grid { grid-template-columns: minmax(0, 1fr); }
   .cc-widget-library-head { flex-wrap: wrap; }
+  /*
+   * The families are one row that scrolls sideways, fading at its end to say there is more. Wrapped, twenty-odd of
+   * them took seven lines, and the first widget started below the fold of a phone.
+   */
+  .cc-widget-library-facets {
+    flex: none; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--cc-space-xl)), transparent);
+    padding-inline-end: var(--cc-space-xl);
+  }
+  .cc-widget-library-facets::-webkit-scrollbar { display: none; }
+  .cc-widget-library-facet { flex: none; white-space: nowrap; }
 }
 
 /* ------------------------------------------------------------------ *
@@ -920,7 +995,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  * sized for two lines of text rather than one verb.
  */
 .cc-tabpanel .cc-chip-row { justify-content: flex-start; }
-.cc-tabpanel .cc-chip-row > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
+.cc-tabpanel .cc-chip-row > .cc-chip, .cc-tabpanel .cc-panel-row > .cc-chip {
+  justify-content: center; min-height: 32px; padding: var(--cc-space-xs) var(--cc-space-lg);
+  font-size: var(--cc-text-body-sm); border-radius: var(--cc-radius-button);
+  background: var(--cc-button-bg, color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated)));
+  border-color: var(--cc-button-edge, color-mix(in oklab, var(--cc-text) 16%, var(--cc-border)));
+}
+.cc-tabpanel :is(.cc-chip-row, .cc-panel-row) > .cc-chip:hover:not(:disabled) { border-color: var(--cc-accent); }
+.cc-tabpanel .cc-chip-row, .cc-tabpanel .cc-panel-section > .cc-panel-row { margin-top: var(--cc-space-sm); }
+/* Each stored key is its own small form; a hairline between them keeps one key's buttons from reading as the next's. */
+.cc-credential-form p { margin: 0; }
+.cc-credential-form + .cc-credential-form { margin-top: var(--cc-space-md); padding-top: var(--cc-space-md); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-tabpanel .cc-chip:disabled { opacity: 0.45; cursor: default; border-color: var(--cc-border); }
 
 /* A wide table scrolls inside its own box instead of widening the dialog. */
@@ -928,15 +1013,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-model-pool { width: 100%; border-collapse: collapse; font-size: var(--cc-text-label); font-variant-numeric: tabular-nums; }
 .cc-model-pool th, .cc-model-pool td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: var(--cc-line, 1px solid) var(--cc-border); white-space: nowrap; }
 .cc-model-pool th { color: var(--cc-text-muted); font-weight: 500; }
+.cc-model-pool td { vertical-align: middle; }
+.cc-model-pool td > .cc-badge { margin-inline-start: var(--cc-space-xs); }
+/* The order is a short number, so its field is a short field drawn like the panel's other inputs. */
+.cc-model-priority {
+  inline-size: 8ch; min-height: 32px; padding: 0 var(--cc-space-xs); font: inherit; font-variant-numeric: tabular-nums;
+  color: var(--cc-text); background: var(--cc-card); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+}
+.cc-model-priority:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-model-pool input[type="checkbox"] { accent-color: var(--cc-accent); margin: 0; }
 
 /* The guarded categories are a list of checkboxes; they wrap as a group instead of pushing past the edge. */
 .cc-guard-classes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--cc-space-xs) var(--cc-space-md); }
 .cc-guard-classes label { display: inline-flex; align-items: center; gap: var(--cc-space-xs); cursor: pointer; font-size: var(--cc-text-label); color: var(--cc-text); }
 .cc-guard-classes input { accent-color: var(--cc-accent); margin: 0; }
+.cc-setting-row[data-layout="stacked"] .cc-guard-classes { justify-content: flex-start; }
 
 /* A definition list's value may be a path or an id; it wraps rather than pushing the column off the page. */
 .cc-fields { grid-template-columns: max-content minmax(0, 1fr); }
 .cc-fields dd { min-width: 0; overflow-wrap: anywhere; }
+/* Settings sets its labels at the small body size; a card there kept the reply size and read a step louder than its row. */
+.cc-tabpanel .cc-fields { font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); }
 
 /* In this layer rather than beside .cc-setup-card, because the voice layer's .cc-chip padding comes later and wins. */
 .cc-setup-card > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
@@ -960,13 +1057,38 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-setting-control { flex: initial; flex-wrap: wrap; justify-content: flex-start; }
   .cc-segmented-wrap, .cc-toggle-wrap, .cc-range { align-items: flex-start; }
   .cc-segmented { justify-content: flex-start; }
-  .cc-segmented-wrap > .cc-panel-note, .cc-toggle-wrap > .cc-panel-note { text-align: left; max-width: none; }
+  /*
+   * Under the label, a choice spans the width it now has, and each line of segments shares it out. Left to their own
+   * widths, four choices broke as three and a stray fourth, which read as a control that had come apart.
+   */
+  .cc-setting-control > .cc-segmented-wrap { width: 100%; }
+  .cc-segmented-wrap > .cc-segmented { align-self: stretch; }
+  .cc-segmented > .cc-badge { flex: 1 1 auto; justify-content: center; text-align: center; }
+  /* Four choices break evenly, two and two, rather than three and one. */
+  .cc-segmented:has(> .cc-badge:nth-child(4):last-child) > .cc-badge { flex-basis: 40%; }
+  .cc-segmented-wrap > .cc-panel-note, .cc-toggle-wrap > .cc-panel-note { text-align: left; max-width: none; contain: none; min-width: 0; }
   .cc-range { min-width: 0; width: 100%; }
   .cc-range > .cc-setting-desc { align-self: flex-start; }
   .cc-guard-classes { justify-content: flex-start; }
   .cc-setting-control > textarea { min-width: 0; }
 }
 
+/*
+ * On a phone, Settings is the whole screen. As a centred card 32 px short of the viewport, its top edge cut through
+ * the app's header behind the scrim, so the title, the inbox count and the gear showed as half-hidden shapes above
+ * it, and the card gave up 32 px of width it had nothing to show in. It rises into place rather than settling from
+ * the centre, and keeps clear of a notch or home indicator.
+ */
+@media (max-width: 480px) {
+  .cc-modal:has(> .cc-modal-body > .cc-tabs) {
+    top: 0; left: 0; transform: none;
+    width: 100vw; height: 100dvh; max-height: none;
+    border: none; border-radius: 0;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation-name: cc-sheet-in;
+  }
+  @keyframes cc-sheet-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+}
 /*
  * The tab strip scrolls once the dialog is narrower than its 640 px, which happens below a viewport of 640 px
  * plus the dialog's 16 px gutters, not only at the stacking breakpoint above. Its scrollbar is hidden, so the
@@ -978,6 +1100,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
     mask-image: linear-gradient(to right, #000 calc(100% - var(--cc-space-xl)), transparent);
     padding-inline-end: var(--cc-space-xl);
     scroll-padding-inline-end: var(--cc-space-xl);
+  }
+}
+/*
+ * Where the strip's own scroll position can drive a style, each edge fades only while there is more beyond it:
+ * the start edge once the strip has been scrolled, the end edge until it reaches the end. Without this, a strip
+ * scrolled to its last tabs cut the first visible label in half against a hard edge.
+ */
+@supports (animation-timeline: scroll()) {
+  @media (max-width: 672px) {
+    .cc-tabs {
+      mask-image: linear-gradient(to right, transparent, #000 var(--cc-tabs-fade-start), #000 calc(100% - var(--cc-tabs-fade-end)), transparent);
+      scroll-padding-inline-start: var(--cc-space-xl);
+      animation: cc-tabs-edges linear both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+  @keyframes cc-tabs-edges {
+    0% { --cc-tabs-fade-start: 0px; --cc-tabs-fade-end: var(--cc-space-xl); }
+    8% { --cc-tabs-fade-start: var(--cc-space-xl); }
+    92% { --cc-tabs-fade-end: var(--cc-space-xl); }
+    100% { --cc-tabs-fade-start: var(--cc-space-xl); --cc-tabs-fade-end: 0px; }
   }
 }
 

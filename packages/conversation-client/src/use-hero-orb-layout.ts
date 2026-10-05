@@ -19,6 +19,9 @@ export const ORB_DRAW_SIZE = 960;
 /** The ball's radius as a fraction of the canvas half-height: 0.54 x 960 is the 518 pixel ball. */
 export const ORB_RADIUS = 0.54;
 
+/** The ball's radius in pixels at scale 1, which is what the dotted field clears around. */
+export const ORB_BALL_RADIUS = (ORB_DRAW_SIZE / 2) * ORB_RADIUS;
+
 /**
  * The orb's diameter once it is docked behind the composer.
  *

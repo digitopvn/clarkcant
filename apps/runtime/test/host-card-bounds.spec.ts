@@ -227,7 +227,7 @@ describe("the question and form cards ask_user builds", () => {
   });
 });
 
-describe("the question card ask_user_question records", () => {
+describe("the question card ask_user_question raises", () => {
   function interactions(): { deps: InteractionDeps; appended: MessageBlock[] } {
     const appended: MessageBlock[] = [];
     return {
@@ -250,8 +250,8 @@ describe("the question card ask_user_question records", () => {
     const parsed = expectValidCard(card);
     if (parsed.type !== "question-card") throw new Error("expected a question card");
     expect(parsed.voicePrompt).toHaveLength(500);
-    // The card the transcript keeps is the same one.
-    expect(appended).toEqual([card]);
+    // The turn's reply is the only place it goes: nothing is written beside it.
+    expect(appended).toEqual([]);
   });
 
   it("records an answer, a drop and an ask-again for the longest question in blocks that parse", () => {
@@ -377,6 +377,14 @@ describe("the cards run_command builds", () => {
     expect(activity.label).toHaveLength(300);
     expect(activity.label.endsWith("…")).toBe(true);
     expect(activity.args).toMatchObject({ command: "pnpm build", cwd: work });
+  });
+
+  it("names a run by what it was for and leaves the folder to the path beside it", async () => {
+    const answer = (await runCommandTool("autonomous").execute({ command: "pnpm build", why: "Dựng lại ứng dụng" })) as ToolAnswer;
+    const [activity] = (answer.hostBlocks ?? []).map(expectValidCard);
+    if (activity?.type !== "tool-activity") throw new Error("expected a tool-activity block");
+    expect(activity.label).toBe("Dựng lại ứng dụng");
+    expect(activity.path).toBe(work);
   });
 
   it("shows a folder too long for the card by its end, and keeps it whole in the record", async () => {

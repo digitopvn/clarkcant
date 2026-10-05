@@ -1213,6 +1213,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-approve={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideCommand(item, "granted")}
@@ -1243,7 +1244,7 @@ export function InboxPanel({
                               {/* The package id, capability ref and version are progressive disclosure: a person decides
                                   from the sentence above, and reaches these only if the decision needs more than that
                                   (AGENTS.md: no capability refs in the default row). */}
-                              <details className="cc-inbox-capability-details">
+                              <details className="cc-inbox-capability-details cc-text-alt">
                                 <summary>{t("inbox.capability.details")}</summary>
                                 <p className="cc-freshness" style={{ margin: 0 }}>
                                   {t("inbox.capability.title").replace("{package}", item.packageId).replace("{capability}", item.ref)}
@@ -1256,6 +1257,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-grant={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideCapability(item, "granted")}
@@ -1296,7 +1298,7 @@ export function InboxPanel({
                                 {t("inbox.install.note")}
                                 {left === undefined ? "" : ` · ${left}`}
                               </p>
-                              <details className="cc-inbox-capability-details">
+                              <details className="cc-inbox-capability-details cc-text-alt">
                                 <summary>{t("inbox.capability.details")}</summary>
                                 <p className="cc-freshness" style={{ margin: 0 }}>
                                   {item.packageId}
@@ -1309,6 +1311,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-install-approve={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideInstall(item, "granted")}
@@ -1353,6 +1356,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-approve={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideTask(item, "granted")}

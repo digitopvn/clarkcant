@@ -862,7 +862,7 @@ export function findProjectAtPath(deps: ProjectFinderDeps, path: string): Projec
 export function createFindProjectTool(deps: ProjectFinderDeps): ToolDefinition {
   return {
     name: "find_project",
-    label: "Find a project directory",
+    label: "Tìm thư mục project",
     description:
       "Find a project or folder on this machine by name, alias or topic. Returns names and paths " +
       "relative to the home directory. Use it when the user names a project without giving a path. " +

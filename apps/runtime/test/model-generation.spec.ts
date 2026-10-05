@@ -6,7 +6,7 @@ import { FakePiAdapter, type WorkerBrief, type WorkerSessionHandle } from "@clar
 
 import { turnInstructions } from "../src/conditional-instructions.ts";
 import { SESSION_POLICY_LIMITS } from "../src/session-policy.ts";
-import { createModelTurn, redactLocalPaths, type ViewDescriptor } from "../src/model-turn.ts";
+import { createModelTurn, readableLimit, redactLocalPaths, type ViewDescriptor } from "../src/model-turn.ts";
 
 const VIEW: ViewDescriptor = {
   id: "canvas.table@1",
@@ -457,6 +457,14 @@ describe("a changed model", () => {
     await say(turn, "ba", "msg_3");
     expect(adapter.handoffs).toHaveLength(2);
     expect(adapter.promptsFor("fake-session-3")).toHaveLength(1);
+  });
+
+  it("states a turn limit in minutes or seconds, never in milliseconds", () => {
+    expect(readableLimit(300_000, "vi")).toBe("5 phút");
+    expect(readableLimit(300_000, "en")).toBe("5 minutes");
+    expect(readableLimit(60_000, "en")).toBe("1 minute");
+    expect(readableLimit(90_000, "vi")).toBe("90 giây");
+    expect(readableLimit(150, "en")).toBe("1 s");
   });
 
   it("ends a setup that never finishes with a clear error, and does not hold the messages behind it", async () => {

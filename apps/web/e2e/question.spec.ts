@@ -32,7 +32,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 test("an answer becomes the user's own message, and the card stops asking", async ({ page }) => {
@@ -89,6 +89,11 @@ test("a form's draft survives a rerender, and submitting sends the answers as a 
   const card = page.locator("[data-host-card='form']").last();
   await expect(card).toBeVisible({ timeout: 20_000 });
   await expect(card).toHaveAttribute("data-form-open", "true");
+  // Laid out like every other host card: the title in the card's head, the fields inset from its edge.
+  await expect(card.locator(".cc-card-head .cc-card-title")).toHaveText("Cho tôi biết vài thông tin");
+  const cardBox = await card.boundingBox();
+  const fieldBox = await card.locator("[data-form-input='field-1']").boundingBox();
+  expect((fieldBox?.x ?? 0) - (cardBox?.x ?? 0)).toBeGreaterThanOrEqual(8);
 
   // A required field with nothing in it cannot be submitted, and the form says which one is missing rather than
   // leaving a disabled button unexplained.
@@ -124,4 +129,26 @@ test("a form's draft survives a rerender, and submitting sends the answers as a 
   // And the form stops accepting input, because a second submission would send a second message.
   await expect(card).toHaveAttribute("data-form-open", "false");
   await expect(card.locator("[data-form-submit='true']")).toHaveCount(0);
+  // What was given stays as text, not as a chip that looks like something to press.
+  await expect(card.locator("[data-form-answer='field-1']")).toHaveText("clarkcant");
+  await expect(card.locator(".cc-chip[data-form-answer]")).toHaveCount(0);
+});
+
+test("a form closed without an answer says it is closed rather than showing empty answers", async ({ page }) => {
+  await openApp(page);
+
+  const composer = page.locator("textarea[aria-label='Nhập tin nhắn']");
+  await composer.fill("cho tôi một biểu mẫu");
+  await composer.press("Enter");
+  const card = page.locator("[data-host-card='form']").last();
+  await expect(card).toHaveAttribute("data-form-open", "true", { timeout: 20_000 });
+
+  // Moving on without answering closes the form; nothing was sent from it.
+  await composer.fill("thử audio giả lập");
+  await composer.press("Enter");
+  await expect(card).toHaveAttribute("data-form-open", "false", { timeout: 20_000 });
+
+  // A dash per field would read as answers of nothing. The card says it is closed and where a sent answer would be.
+  await expect(card.locator("[data-form-closed='true']")).toContainText("đã đóng");
+  await expect(card.locator("[data-form-fields]")).toBeHidden();
 });

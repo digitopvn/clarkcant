@@ -88,7 +88,7 @@ async function open(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 const rootVar = (page: Page, name: string): Promise<string> =>
@@ -98,7 +98,7 @@ const rootVar = (page: Page, name: string): Promise<string> =>
 const drawnColor = (page: Page, name: string): Promise<string> =>
   page.evaluate((variable) => {
     const probe = document.createElement("span");
-    probe.style.color = `var(${variable})`;
+    probe.style.color = variable.startsWith("--") ? `var(${variable})` : variable;
     document.body.append(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();
@@ -192,7 +192,7 @@ test("a recipe-and-effect theme reaches the page, brings its Orb default, and lo
   const chosen = await request.put(`${GATEWAY}/preferences/orb.profile`, { headers: headers(), data: { value: "calm" } });
   expect(chosen.ok()).toBe(true);
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(conversationOrb(page)).toHaveAttribute("data-orb-profile", "calm", { timeout: 15_000 });
   await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
 });
@@ -300,6 +300,16 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
   await page.keyboard.press("Escape");
 });
 
+/**
+ * Clark's own plain button, as `.cc-action` draws it inside a host card: a whisper of the text colour over the raised
+ * surface, so the button reads as one on a card that is already `--cc-elevated`. Colours, not token names, because the
+ * button mixes two tokens; `drawnColor` resolves them the way the page does.
+ */
+const CLARK_BUTTON = {
+  fill: "color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated))",
+  edge: "color-mix(in oklab, var(--cc-text) 16%, var(--cc-border))",
+} as const;
+
 /** What a button is drawn with: its fill, its edge and its shadow, as the browser computed them. */
 const buttonLook = (button: Locator): Promise<{ fill: string; edge: string; shadow: string }> =>
   button.evaluate((element) => {
@@ -340,8 +350,8 @@ test("a theme's button recipe never reaches the host's answers or Stop", async (
       const accent = await drawnColor(page, "--cc-accent");
       expect(approve, `${name} ${scheme} Approve`).toEqual({ fill: accent, edge: accent, shadow: "none" });
       expect(deny, `${name} ${scheme} Deny`).toEqual({
-        fill: await drawnColor(page, "--cc-elevated"),
-        edge: await drawnColor(page, "--cc-border"),
+        fill: await drawnColor(page, CLARK_BUTTON.fill),
+        edge: await drawnColor(page, CLARK_BUTTON.edge),
         shadow: "none",
       });
       expect(approve.fill).not.toBe(deny.fill);

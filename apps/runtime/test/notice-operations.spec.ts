@@ -410,7 +410,8 @@ describe("an update notice", () => {
       at: now as Instant,
     });
     const listed = (await inbox()).notices.find((item) => item.noticeId === pi.notificationId);
-    expect(listed?.actions).toContainEqual({ id: "skip-version", placement: "menu" });
+    // It asks nothing of the person, so putting it away leads: Skip this version sits beside Dismiss.
+    expect(listed?.actions).toContainEqual({ id: "skip-version", placement: "secondary" });
     expect(listed?.actions?.map((action) => action.id)).not.toContain("update");
 
     const skipped = await request("POST", `/inbox/notices/${pi.notificationId}/skip-version`);

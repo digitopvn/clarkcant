@@ -169,6 +169,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    */
   if (modelTurn !== undefined) {
     deps.services.modelCatalogue = modelTurn.catalogue;
+    deps.services.currentModel = modelTurn.configuredModel;
   } else if (!modelFixture) {
     deps.services.modelCatalogue = createModelCatalogue({ cwd: process.cwd() });
   }

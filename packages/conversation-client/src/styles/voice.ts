@@ -218,6 +218,20 @@ export const VOICE_CSS = `
 .cc-tabpanel { display: flex; flex-direction: column; gap: var(--cc-space-md); }
 .cc-modal-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-md) var(--cc-space-lg); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-modal-done { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-md); }
+/*
+ * A tabbed dialog keeps one size. Sized to its content, it grew and shrank with every tab, and because it is centred
+ * the tab strip itself jumped up and down under the pointer that had just pressed it. The strip stays at the top and
+ * the footer at the bottom while a long tab scrolls between them, so switching tab never needs a scroll back up.
+ */
+.cc-modal:has(> .cc-modal-body > .cc-tabs) { height: calc(100vh - 64px); max-height: 900px; }
+.cc-modal:has(> .cc-modal-body > .cc-tabs) > .cc-modal-body { flex: 1; min-height: 0; }
+.cc-modal-body > .cc-tabs {
+  position: sticky; top: calc(var(--cc-space-lg) * -1); z-index: 2; background: var(--cc-elevated);
+}
+.cc-modal-body > .cc-modal-foot {
+  position: sticky; bottom: calc(var(--cc-space-lg) * -1); z-index: 2;
+  margin: auto calc(var(--cc-space-lg) * -1) calc(var(--cc-space-lg) * -1); background: var(--cc-elevated);
+}
 
 /* Menu bar popover: the same connection wording the app window uses. */
 .cc-menubar {
@@ -237,6 +251,13 @@ export const VOICE_CSS = `
  * before they click, not after.
  */
 .cc-chip-row { display: flex; gap: var(--cc-space-sm); flex-wrap: wrap; justify-content: center; }
+/* On a phone the start screen's suggestions share two rows evenly, rather than wrapping one, one, then two by the
+   length of their labels. */
+@media (max-width: 480px) {
+  .cc-empty > .cc-chip-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  /* Half a phone is too narrow for the pill's wide ends: they wrapped each label and its note onto a second line. */
+  .cc-empty > .cc-chip-row > .cc-chip { padding-inline: var(--cc-space-lg); }
+}
 .cc-chip {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   cursor: pointer; font: inherit; text-align: left;
@@ -260,11 +281,13 @@ export const VOICE_CSS = `
  * distinction the whole settings surface is built around.
  */
 .cc-card-actions { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; padding-top: var(--cc-space-xs); }
+/* Under a terminal screen rather than under a card body's text, so the row keeps the card's own inset. */
+.cc-card-actions.cc-terminal-actions { padding: var(--cc-space-sm) var(--cc-space-md); }
 .cc-action {
   cursor: pointer; font: inherit; font-size: var(--cc-text-body-sm);
   padding: var(--cc-space-xs) var(--cc-space-md);
-  background: var(--cc-button-bg, var(--cc-elevated)); color: var(--cc-text);
-  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-button-edge, var(--cc-border));
+  background: var(--cc-button-bg, color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated))); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-button-edge, color-mix(in oklab, var(--cc-text) 16%, var(--cc-border)));
   border-radius: var(--cc-radius-button);
   box-shadow: var(--cc-button-shadow, none);
   min-height: 32px;
@@ -278,8 +301,8 @@ export const VOICE_CSS = `
  * rule still draws the button exactly as Clark does, and its colours still follow the audited tokens.
  */
 [data-owner="host"] .cc-action {
-  --cc-button-bg: var(--cc-elevated);
-  --cc-button-edge: var(--cc-border);
+  --cc-button-bg: color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated));
+  --cc-button-edge: color-mix(in oklab, var(--cc-text) 16%, var(--cc-border));
   --cc-button-shadow: none;
   --cc-button-press: scale(0.97);
   --cc-button-press-shadow: none;
@@ -304,6 +327,28 @@ export const VOICE_CSS = `
  */
 .cc-action[data-emphasis="primary"]:not(:disabled) { background: var(--cc-accent); border-color: var(--cc-accent); color: var(--cc-on-accent); font-weight: 600; }
 .cc-action[data-emphasis="primary"]:hover:not(:disabled) { background: color-mix(in oklab, var(--cc-accent) 88%, var(--cc-text)); }
+
+/*
+ * The choices a question offers.
+ *
+ * A list, one choice per row, read top to bottom like the options they are: the name first and in the reading tone,
+ * what it means under it in the muted one. Centred buttons of uneven widths made each option a different shape and put
+ * its explanation in the middle of the label it explains.
+ */
+.cc-question-options { flex-direction: column; align-items: stretch; gap: var(--cc-space-xs); }
+/* The options of a question that no longer takes an answer: a record of what was offered, quiet and not pressable. */
+ul.cc-question-options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; }
+ul.cc-question-options > li {
+  min-width: 0; padding: var(--cc-space-xxs) var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label); overflow-wrap: anywhere;
+}
+.cc-action.cc-question-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: var(--cc-space-sm) var(--cc-space-md); border-radius: var(--cc-radius-button);
+}
+.cc-question-option-label { font-weight: 600; color: var(--cc-text); }
+.cc-question-option-desc { font-size: var(--cc-text-label); color: var(--cc-text-muted); line-height: 1.45; }
+.cc-question-option[data-selected="true"] { border-color: var(--cc-accent); background: color-mix(in oklab, var(--cc-accent) 10%, var(--cc-elevated)); }
 
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }

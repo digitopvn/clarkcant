@@ -202,26 +202,30 @@ export function ExperienceSettings({
       <section className="cc-panel-section">
         <h3>{t("settings.experience.appearance.heading")}</h3>
         <SettingsRow label={t("settings.experience.theme.label")} description={t("settings.experience.theme.description")}>
-          <div className="cc-segmented" role="group" aria-label={t("settings.experience.theme.label")}>
-            {THEME_CHOICES.map((choice) => (
-              <button
-                key={choice}
-                type="button"
-                className="cc-badge"
-                aria-pressed={themeChoice === choice}
-                data-selected={themeChoice === choice}
-                data-theme-choice={choice}
-                onClick={() => onThemeChoice(choice)}
-              >
-                {THEME_LABELS[choice]}
-              </button>
-            ))}
+          <div className="cc-segmented-wrap">
+            <div className="cc-segmented" role="group" aria-label={t("settings.experience.theme.label")}>
+              {THEME_CHOICES.map((choice) => (
+                <button
+                  key={choice}
+                  type="button"
+                  className="cc-badge"
+                  aria-pressed={themeChoice === choice}
+                  data-selected={themeChoice === choice}
+                  data-theme-choice={choice}
+                  onClick={() => onThemeChoice(choice)}
+                >
+                  {THEME_LABELS[choice]}
+                </button>
+              ))}
+            </div>
+            {/* Only following the system leaves the person unsure which scheme is drawn; a chosen one names itself. */}
+            {themeChoice === "system" ? (
+              <p className="cc-panel-note" data-resolved-theme={resolvedTheme}>
+                {t("settings.experience.theme.showingPrefix")} {THEME_LABELS[resolvedTheme]} {t("settings.experience.theme.systemSuffix")}
+              </p>
+            ) : null}
           </div>
         </SettingsRow>
-        <p className="cc-panel-note" data-resolved-theme={resolvedTheme}>
-          {t("settings.experience.theme.showingPrefix")} {THEME_LABELS[resolvedTheme]}
-          {themeChoice === "system" ? ` ${t("settings.experience.theme.systemSuffix")}` : ""}
-        </p>
         <InlineStatus status={prefs.status} forKey="experience.colorScheme" />
         <ThemeSettings client={client} prefs={prefs} appearance={appearance} galleryRequest={themeGalleryRequest} />
         <ThemeCustomization prefs={prefs} appearance={appearance} onOrbChange={onOrbChange} />

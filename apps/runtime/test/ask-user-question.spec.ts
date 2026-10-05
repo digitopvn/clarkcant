@@ -11,7 +11,10 @@ import { SECRET_REQUEST_MESSAGE, type InteractionDeps, pendingForConversation } 
  * The property under test is a refusal to wait. `execute` has to return in the same turn, because the
  * alternative — holding the call until a person answers — parks a provider call and an HTTP stream on somebody's
  * decision. So what is asserted is that the call resolves with a card and a "your turn is over" message, that
- * nothing was answered, and that the question is on record waiting.
+ * nothing was answered, and that the question waits once the turn's reply carries the card.
+ *
+ * The tool writes nothing itself. The card travels in the reply, like every card a tool raises; a tool that also
+ * wrote it as a message of its own drew the same question twice in the transcript.
  */
 function fixture(): { deps: InteractionDeps; blocks: MessageBlock[] } {
   const blocks: MessageBlock[] = [];
@@ -32,8 +35,8 @@ function fixture(): { deps: InteractionDeps; blocks: MessageBlock[] } {
 }
 
 describe("asking the user a question", () => {
-  it("writes a card, ends the turn, and does not wait for anybody", async () => {
-    const { deps } = fixture();
+  it("hands the turn one card, ends the turn, and does not wait for anybody", async () => {
+    const { deps, blocks } = fixture();
     const tool = createAskUserQuestionTool(deps);
     const answer = await tool.execute({
       question: "Chọn môi trường triển khai.",
@@ -49,7 +52,11 @@ describe("asking the user a question", () => {
     expect(answer.text).toContain("lượt này kết thúc");
     expect(answer.text).not.toContain("Production");
 
-    // And the question really is waiting: the answer arrives later, on its own request.
+    // Nothing written behind the reply's back: the card is drawn once, where the turn puts it.
+    expect(blocks).toHaveLength(0);
+
+    // And once the reply is stored the question really is waiting: the answer arrives later, on its own request.
+    blocks.push(...(answer.hostBlocks as unknown as MessageBlock[]));
     expect(pendingForConversation(deps)).toHaveLength(1);
   });
 

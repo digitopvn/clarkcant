@@ -31,7 +31,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 test("the hotkey moves to the next profile and the label follows", async ({ page }) => {
@@ -55,4 +55,49 @@ test("the hotkey moves to the next profile and the label follows", async ({ page
   await expect(table).toBeVisible({ timeout: 15_000 });
   await expect(table).toContainText("fast");
   await expect(table).toContainText("smart");
+  // The roles read in the interface language, and the order field fits inside the table rather than off its edge.
+  const smart = table.locator('[data-model-profile="smart"]');
+  await expect(smart).toContainText("trò chuyện, viết code");
+  await expect(smart).not.toContainText("foreground");
+  const priority = smart.locator("[data-model-priority]");
+  const fieldBox = await priority.boundingBox();
+  const tableBox = await table.boundingBox();
+  expect(fieldBox!.x + fieldBox!.width).toBeLessThanOrEqual(tableBox!.x + tableBox!.width);
+  expect(fieldBox!.width).toBeLessThan(140);});
+
+test("a touch phone is told which model it is on, without a key chord it has no keys for", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  await openApp(page);
+  await expect(page.locator("[data-model-label]").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toBeHidden();
+  await context.close();
+});
+
+test("a keyboard is told the chord that changes the model", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toContainText("Ctrl+]");
+});
+test("the statusline names the model the next turn runs and its thinking level, and follows a switch", async ({ page }) => {
+  // The fixture node runs no model, so the node's answer is given one; everything else in it is the node's own.
+  let model: { provider: string; id: string; thinkingLevel?: string } = { provider: "deepseek", id: "deepseek-v4-flash" };
+  await page.route("**/node", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, model: { ...model, maxWallClockMs: 300_000, maxTokens: 32_000 } } });
+  });
+  await openApp(page);
+
+  const statusline = page.locator("[data-statusline='true']");
+  await expect(statusline).toContainText("deepseek-v4-flash");
+  await expect(statusline).toContainText("thinking: mặc định");
+
+  // A switch made from this page is read back at once, without a reload.
+  model = { provider: "anthropic", id: "claude-opus-5-5", thinkingLevel: "high" };
+  await page.locator("body").press("Control+]");
+  await expect(statusline).toContainText("claude-opus-5-5");
+  await expect(statusline).toContainText("thinking: high");
+  await expect(statusline).not.toContainText("deepseek-v4-flash");
+  await page.unroute("**/node");
 });

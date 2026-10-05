@@ -6,6 +6,19 @@
  * Wrapped in its own CSS `@layer` so the concatenation order in styles.ts stays the visible,
  * intentional cascade order rather than an accident of import order.
  */
+/**
+ * Custom properties registered with a type, so a transition can interpolate them.
+ *
+ * Outside every layer: a registration is global and is not a rule that takes part in the cascade.
+ */
+export const REGISTERED_PROPERTIES_CSS = `
+@property --cc-grid-clear-x { syntax: "<length>"; inherits: false; initial-value: -9999px; }
+@property --cc-grid-clear-y { syntax: "<length>"; inherits: false; initial-value: -9999px; }
+@property --cc-grid-clear-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --cc-tabs-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --cc-tabs-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+`;
+
 export const BASE_CSS = `
 @layer base {
 * { box-sizing: border-box; }
@@ -57,6 +70,23 @@ body {
   transition: opacity var(--cc-motion-normal) var(--cc-motion-easing);
 }
 .cc-dot-grid[data-lit="true"]::after { opacity: 1; }
+/*
+ * The field parts around the orb.
+ *
+ * The orb is glass, dimmed and faded where it sinks behind the composer, so the dots under it showed through and read
+ * as if they were printed on top of it. The field is masked away in a soft circle where the ball is, which keeps the
+ * orb an object in front of the field at every opacity. The centre and radius are registered lengths (see
+ * REGISTERED_PROPERTIES_CSS) so the clearing travels with the orb when it moves between the start screen and the dock,
+ * on the orb's own timing; where they are not animatable the clearing simply arrives with the orb.
+ */
+.cc-dot-grid[data-clearing="true"] {
+  mask-image: radial-gradient(circle var(--cc-grid-clear-r, 0px) at var(--cc-grid-clear-x, -9999px) var(--cc-grid-clear-y, -9999px), transparent 0%, transparent 72%, #000 100%);
+  -webkit-mask-image: radial-gradient(circle var(--cc-grid-clear-r, 0px) at var(--cc-grid-clear-x, -9999px) var(--cc-grid-clear-y, -9999px), transparent 0%, transparent 72%, #000 100%);
+  transition:
+    --cc-grid-clear-x var(--cc-motion-orb) var(--cc-motion-easing),
+    --cc-grid-clear-y var(--cc-motion-orb) var(--cc-motion-easing),
+    --cc-grid-clear-r var(--cc-motion-orb) var(--cc-motion-easing);
+}
 
 /*
  * Everything between the header and the foot of the window.
@@ -68,7 +98,7 @@ body {
  */
 .cc-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cc-shell[data-view="hero"] .cc-body { justify-content: center; }
-.cc-shell[data-view="hero"] .cc-scroll { flex: 0 0 auto; overflow: visible; }
+
 
 /*
  * The first-run screen can be taller than the window - this machine's catalogue alone lists a provider with more models
@@ -80,10 +110,10 @@ body {
 
 /* Built for choosing from a long list, and dressed so it belongs to this surface rather than to the operating system. */
 .cc-select {
-  background: var(--cc-input-bg, var(--cc-elevated));
+  background: var(--cc-input-bg, var(--cc-card));
   color: inherit;
   border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border));
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
   border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
   padding: 10px 12px;
   font: inherit;
@@ -106,10 +136,10 @@ body {
 .cc-search-select { position: relative; }
 .cc-search-select input {
   width: 100%;
-  background: var(--cc-input-bg, var(--cc-elevated));
+  background: var(--cc-input-bg, var(--cc-card));
   color: inherit;
   border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border));
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
   border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
   padding: 10px 12px;
   font: inherit;
@@ -266,10 +296,12 @@ body {
 }
 .cc-selection-menu button:hover { background: var(--cc-card); }
 .cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-text-label); }
+/* Each field's label belongs to the field below it, so the space before a label is wider than the space under it. */
+.cc-credential-field + .cc-credential-field, .cc-credential-field + .cc-chip-row { margin-top: var(--cc-space-sm); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);
-  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-card));
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-card));
 }
 .cc-orb {
   width: 27px; height: 27px; border-radius: var(--cc-radius-pill);
@@ -288,6 +320,18 @@ body {
   display: flex; align-items: center; gap: var(--cc-space-xs);
   color: var(--cc-text-muted); font-size: var(--cc-text-label);
 }
+/*
+ * A phone has room for the wordmark, the inbox and the gear, not also for a word saying all is well: there the green dot
+ * says it alone, and the word stays for a screen reader. Connecting and offline keep their words, because those are
+ * the states someone needs to read.
+ */
+@media (max-width: 480px) {
+  .cc-header { padding-inline: var(--cc-space-md); }
+  .cc-header-end { gap: var(--cc-space-sm); }
+  .cc-status[data-connection="ready"] .cc-status-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
 .cc-dot { width: 6px; height: 6px; border-radius: var(--cc-radius-pill); background: var(--cc-success); }
 .cc-dot[data-state="offline"] { background: var(--cc-danger); }
 .cc-dot[data-state="connecting"] { background: var(--cc-warning); }
@@ -302,7 +346,7 @@ body {
 }
 .cc-connection-notice p { margin: 0; min-width: 0; }
 .cc-connection-notice button { cursor: pointer; font: inherit; min-height: 32px; }
-.cc-connection-notice button:disabled { cursor: default; opacity: 0.6; }
+.cc-connection-notice button[aria-disabled="true"] { cursor: default; opacity: 0.6; }
 
 /*
  * The inbox mark and the inbox panel.
@@ -331,7 +375,14 @@ body {
   color: var(--cc-text); font-size: var(--cc-text-label); line-height: var(--cc-leading-label); font-weight: 600;
 }
 .cc-inbox-section { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
-.cc-inbox-heading { margin: 0; font-size: var(--cc-text-label); font-weight: 600; color: var(--cc-text-muted); }
+/* Headed like the settings groups, so the two lists read as groups rather than as two more lines of body text. */
+.cc-inbox-heading {
+  margin: 0; font-size: var(--cc-text-label); line-height: var(--cc-leading-label); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--cc-text-muted);
+}
+/* The read time belongs to the panel, not to the first list: the first heading stands off it as a group would. */
+.cc-inbox > .cc-inbox-section:first-of-type { margin-top: var(--cc-space-sm); }
+.cc-inbox-section + .cc-inbox-section { margin-top: var(--cc-space-sm); padding-top: var(--cc-space-md); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-inbox-command {
   margin: 0; padding: var(--cc-space-sm); overflow-x: auto; max-height: 160px;

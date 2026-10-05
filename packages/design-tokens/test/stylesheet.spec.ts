@@ -68,8 +68,8 @@ describe("the generated stylesheet", () => {
 
   it("keeps the specification's layout numbers", () => {
     // The three numbers the design specifies, asserted where a rounding mistake would show.
-    expect(CSS).toContain("--cc-conversation-max-width: 800px;");
-    expect(CSS).toContain("--cc-composer-max-width: 840px;");
+    expect(CSS).toContain("--cc-conversation-max-width: 720px;");
+    expect(CSS).toContain("--cc-composer-max-width: 720px;");
     expect(CSS).toContain("--cc-composer-min-height: 70px;");
     expect(CSS).toContain("--cc-topbar-height: 62px;");
   });

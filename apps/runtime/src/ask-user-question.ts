@@ -1,21 +1,25 @@
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
-import { type InteractionDeps, SECRET_REQUEST_MESSAGE, createQuestion } from "./interactions.ts";
+import { type InteractionDeps, SECRET_REQUEST_MESSAGE, buildQuestionCard } from "./interactions.ts";
 
 /**
  * Asking the user something, as the model may do it.
  *
- * The tool's whole behaviour is one sentence long: it writes a card and returns. It does not wait, subscribe,
+ * The tool's whole behaviour is one sentence long: it builds a card and returns. It does not wait, subscribe,
  * poll or hold anything open — a turn that asked a question is *over*, and the answer arrives as a new turn
  * with the note the manager builds. That is not a limitation of this implementation; it is the design, because
  * the alternative is an open provider call and an HTTP stream parked on a person's decision, which is what
  * makes a question cost a call per minute it goes unanswered.
  *
+ * The card goes into the turn's own reply, like every other card a tool raises, and nowhere else. Writing it as a
+ * message of its own as well drew the same question twice, and the reply is already the record a later answer
+ * finds it in.
+ *
  * It also refuses one whole category of question. A secret typed into this card would become a conversation
  * message and would travel to the provider, so the refusal is deterministic and names the tool that can do the
  * job properly (`request_secret`), rather than leaving the model to guess why it was declined.
  */
-export function createAskUserQuestionTool(interactions: InteractionDeps): ToolDefinition {
+export function createAskUserQuestionTool(interactions: Pick<InteractionDeps, "now" | "newId">): ToolDefinition {
   return {
     name: "ask_user_question",
     label: "Hỏi người dùng một câu",
@@ -57,7 +61,7 @@ export function createAskUserQuestionTool(interactions: InteractionDeps): ToolDe
     },
     promptSnippet: "ask_user_question — ask the user to choose; your turn ends and they answer in a new one",
     execute: async (params: Record<string, unknown>): Promise<{ text: string; hostBlocks?: Record<string, unknown>[] }> => {
-      const created = createQuestion(interactions, params);
+      const created = buildQuestionCard(interactions, params);
       if (!created.ok) {
         // Refused in the same turn, so the model can correct itself instead of the person finding out that
         // their answer had nowhere to go. The secret refusal is the one message that must travel verbatim.
@@ -68,10 +72,10 @@ export function createAskUserQuestionTool(interactions: InteractionDeps): ToolDe
         text:
           "Câu hỏi đã được hiển thị cho người dùng và lượt này kết thúc ở đây. Câu trả lời sẽ tới ở lượt sau — " +
           "đừng đoán câu trả lời, và đừng nói là bạn đã có nó.",
-        // SAFETY: the block was built against the message-block union in `createQuestion`; the adapter's shape
+        // SAFETY: the block was built against the message-block union in `buildQuestionCard`; the adapter's shape
         // is deliberately loose because it must not depend on contracts, and the node validates every block
         // before it reaches a transcript.
-        hostBlocks: [created.block as unknown as Record<string, unknown>],
+        hostBlocks: [created.card as unknown as Record<string, unknown>],
       };
     },
   };

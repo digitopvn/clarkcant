@@ -96,7 +96,7 @@ async function interceptLiveReads(page: Page): Promise<LiveReads> {
 /** Compose the fixture widget and open it, with the frames minted from here on lasting `SHORT_LIFETIME_MS`. */
 async function openShortLivedFrame(page: Page, request: APIRequestContext): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(NODE)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill("widget cách ly");

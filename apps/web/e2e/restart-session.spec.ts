@@ -39,7 +39,7 @@ async function openApp(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /**
@@ -77,7 +77,7 @@ test("the logo returns to the start screen, and the fresh start survives a reloa
   // The remembered id is gone, so the restart is not undone by a reload.
   expect(await page.evaluate(() => window.sessionStorage.getItem("cc_conversation"))).toBeNull();
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".cc-empty")).toBeVisible({ timeout: 10_000 });
   await expect(page.locator('[data-role="user"]')).toHaveCount(0);
 });

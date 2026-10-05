@@ -80,7 +80,7 @@ const orbContexts = (page: Page): Promise<number> =>
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   // The orb in the header, which is present in both the start screen and the conversation.
   await page.waitForSelector(".cc-orb[data-orb]");
 }
@@ -143,7 +143,7 @@ test("a stored profile reaches the renderer and survives a reload", async ({ pag
   expect(listed.preferences.find((entry) => entry.key === "orb.profile")?.value).toBe("jelly");
 
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => orbProfile(page)).toBe("jelly");
   await page.screenshot({ path: join(EVIDENCE, "orb-01-jelly-after-reload.png"), fullPage: true });
 
@@ -153,7 +153,7 @@ test("a stored profile reaches the renderer and survives a reload", async ({ pag
     value: { physics: { stiffness: 140, damping: 6 }, motion: { speed: 2 } },
   });
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => orbProfile(page)).toBe("custom");
 });
 
@@ -172,7 +172,7 @@ test("the node refuses a profile value outside the declared bounds, and the orb 
   // The orb is unaffected: a refused write left the previous value where it was, and the product's own face
   // is still drawn rather than blanked by a bad preference.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".cc-orb[data-orb='gl']").first()).toBeVisible();
 });
 
@@ -295,7 +295,7 @@ test("a style chosen in Settings changes the orb at once, keeps its colours in t
   const listed = await api<{ preferences: { key: string; value: unknown }[] }>("GET", "/preferences");
   expect(listed.preferences.find((entry) => entry.key === "orb.profile")?.value).toBe("plasma");
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => orbProfile(page)).toBe("plasma");
   await expect(page.locator(".cc-orb[data-orb='gl']").first()).toBeVisible();
 
@@ -516,7 +516,7 @@ test("reduced motion stills every style, and the preview says so", async ({ page
   await api("POST", "/preferences/experience.motion/undo");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => orbMotion(page)).toBe("reduced");
   expect(await looksStill(page, ".cc-orb[data-orb]")).toBe(true);
 });

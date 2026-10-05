@@ -263,7 +263,7 @@ export function verifyRuntimeCandidate(deps: RuntimeCandidateDeps, id: string): 
 export function createFindRuntimeTool(deps: RuntimeCandidateDeps): ToolDefinition {
   return {
     name: "find_runtime",
-    label: "Find what is running",
+    label: "Tìm những gì đang chạy",
     description:
       "List the workers, leases, open voice sessions and running tasks on this machine. " +
       "Use it when the user refers to something that is running right now. It only reports state; " +

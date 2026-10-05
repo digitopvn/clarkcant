@@ -13,6 +13,7 @@ import {
 import type { GatewayClient } from "../api.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import { builtInLabel } from "../package-provenance.ts";
+import { familyLabel } from "./family-labels.ts";
 import { resolveRenderer } from "../renderers.tsx";
 import { HOST_CARD_ENTRIES, visibleHostCards } from "./host-card-entries.ts";
 import { HostCardShowcase } from "./HostCardShowcase.tsx";
@@ -228,7 +229,7 @@ export function WidgetLibrarySurface({
           {selected !== undefined && develop && (
             <button
               type="button"
-              className="cc-badge cc-widget-lab-pane-toggle"
+              className="cc-action cc-widget-lab-pane-toggle"
               aria-pressed={showInspector}
               onClick={() => setShowInspector((current) => !current)}
               data-widget-lab-pane-toggle="true"
@@ -260,7 +261,7 @@ export function WidgetLibrarySurface({
                 onClick={() => onAction({ kind: "family", value: family })}
                 data-widget-library-facet={family}
               >
-                {family === "all" ? t("widgets.library.allFamilies") : family}
+                {family === "all" ? t("widgets.library.allFamilies") : familyLabel(family, t)}
               </button>
             ))}
           </nav>
@@ -278,6 +279,7 @@ export function WidgetLibrarySurface({
                 <h3>{builtInLabel(t)}</h3>
                 <WidgetGallery
                   entries={visible}
+                  showDescription={develop}
                   onSelect={(cardId) => onAction({ kind: "select", cardId })}
                 />
               </section>
@@ -341,13 +343,19 @@ export function WidgetLibrarySurface({
                 {!develop && (
                   <dl className="cc-widget-detail-meta">
                     <dt>{t("widgets.library.family")}</dt>
-                    <dd>{selected.family}</dd>
+                    <dd>{familyLabel(selected.family, t)}</dd>
                     <dt>{t("widgets.library.semanticDescription")}</dt>
                     <dd>{selected.description}</dd>
                     <dt>{t("widgets.library.source")}</dt>
-                    <dd>{selected.source === "builtin" ? "Built-in" : selected.source}</dd>
+                    <dd>
+                      {selected.source === "builtin"
+                        ? t("widgets.gallery.sourceBuiltin")
+                        : selected.source === "installed"
+                          ? t("widgets.gallery.sourceInstalled")
+                          : t("widgets.gallery.sourceLocal")}
+                    </dd>
                     <dt>{t("widgets.library.status")}</dt>
-                    <dd>{selected.status}</dd>
+                    <dd>{selected.status === "experimental" ? t("widgets.library.statusExperimental") : t("widgets.library.statusStable")}</dd>
                     <dt>{t("widgets.library.textFallback")}</dt>
                     <dd>{selected.definition.textFallback}</dd>
                   </dl>

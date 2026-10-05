@@ -35,7 +35,7 @@ for (const name of ["pixel-arcade", "neo-brutalism"]) for (const width of [1280,
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: scheme, reducedMotion: "no-preference" });
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(gateway)}`);
-    await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+    await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible();
     const composer = page.locator("[data-composer]");
     await composer.fill("bố cục có liên kết");
     await composer.press("Enter");

@@ -85,7 +85,7 @@ async function openApp(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function windowCalls(page: Page): Promise<unknown[]> {

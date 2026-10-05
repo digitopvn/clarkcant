@@ -49,7 +49,7 @@ async function openApp(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 test("the empty state offers four chips and says which need a model", async ({ page }) => {
@@ -149,6 +149,10 @@ test.describe("the first run on a node that has been told nothing", () => {
     const card = page.locator("[data-needs-model='true']");
     await expect(card).toBeVisible({ timeout: 20_000 });
     await expect(card).toContainText("chưa có model");
+    // In the person's words: the machinery behind the gap (node, recipe, capability, provider) is not the point.
+    await expect(card).not.toContainText(/\b(?:Node|recipe|capability|provider)\b/);
+    // Said once: the footnote that warns a chip may fail without a model would only repeat the card above it.
+    await expect(page.locator(".cc-empty > p.cc-freshness")).toHaveCount(0);
 
     // And the control leads to the place that fixes it, which is what makes this a setup step rather than a
     // dead end. The card closes with the panel it opened, because the panel is the fix.

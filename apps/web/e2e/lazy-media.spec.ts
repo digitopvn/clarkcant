@@ -77,7 +77,7 @@ function token(): string {
 }
 
 async function ready(page: Page): Promise<void> {
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {

@@ -57,7 +57,7 @@ test.afterEach(async ({ request }) => {
 
 test("choosing English changes the composer, a voice control, and the marketplace heading", async ({ page }) => {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 
   // The composer placeholder starts in Vietnamese, the product default.
   await waitForFullPlaceholder(page, PLACEHOLDER_PHRASES_VI);

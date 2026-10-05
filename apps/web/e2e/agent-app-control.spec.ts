@@ -45,7 +45,7 @@ async function openApp(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function startConversation(page: Page): Promise<void> {
@@ -81,7 +81,7 @@ test("the agent opens Settings on a tab and is told it is done only because the 
 
   // Carried out once: the action is not stored for replay, so a reload lands on the plain conversation.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('[role="tablist"]')).toHaveCount(0);
 });
 

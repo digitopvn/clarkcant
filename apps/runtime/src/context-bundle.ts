@@ -299,7 +299,7 @@ export function contextSourceOf(bundles: ContextBundles, bundle: ContextBundle, 
 export function readContextTool(reader: ContextReader): ToolDefinition {
   return {
     name: READ_CONTEXT_TOOL,
-    label: "Read retrieved context",
+    label: "Đọc ngữ cảnh đã tìm được",
     description: readContextDescription(reader.items),
     parameters: READ_CONTEXT_PARAMETERS,
     execute: async (params: Record<string, unknown>) => {

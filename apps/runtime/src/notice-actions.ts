@@ -87,13 +87,16 @@ export function noticeActionsFor(
     // Lead with what can be done about the thing, then the usual pair; the first two are buttons, the rest go to "More".
     // "Dismiss" stands in for "Open" only as a button: pushed into "More" by an operation, it keeps its usual place
     // there, after "Add to context" and the rest.
-    const leading: NoticeActionId[] = [
-      ...operations.lead,
-      ...(look ? (["open", "ask-clark"] as const) : (["ask-clark", canOpen ? "open" : "dismiss"] as const)),
-    ].filter((id, index) => index < 2 || id !== "dismiss");
+    // A notice that asks nothing leads with going to look or putting it away, then its own operations; asking Clark
+    // about it is still there, behind "More".
+    const leading: NoticeActionId[] = (operations.askable === false
+      ? [canOpen ? "open" as const : "dismiss" as const, ...operations.lead]
+      : [...operations.lead, ...(look ? (["open", "ask-clark"] as const) : (["ask-clark", canOpen ? "open" : "dismiss"] as const))]
+    ).filter((id, index) => index < 2 || id !== "dismiss");
     for (const [index, id] of leading.entries()) {
       actions.push({ id, placement: index === 0 ? "primary" : index === 1 ? "secondary" : "menu" });
     }
+    if (operations.askable === false) actions.push({ id: "ask-clark", placement: "menu" });
   }
   actions.push({ id: "add-to-context", placement: "menu" });
   actions.push({ id: notice.readAt === undefined ? "mark-read" : "mark-unread", placement: "menu" });
@@ -119,6 +122,12 @@ interface SubjectOperations {
   menu: NoticeActionId[];
   /** Listed with why they cannot be taken now, at the end of "More". */
   unavailable: NoticeAction[];
+  /**
+   * `false` when the notice asks nothing of the person, so "Ask Clark" is not one of its buttons. It stays behind
+   * "More": a button that sends the person to a conversation about something that needs no decision — and that only
+   * works while a model answers — is the wrong first thing to offer.
+   */
+  askable?: false;
 }
 
 const NONE: SubjectOperations = { lead: [], menu: [], unavailable: [] };
@@ -144,7 +153,8 @@ export function retryableBackgroundRun(run: WorkRunRecord): boolean {
  *   - A package update: "Update" and "Review" while the package is installed at an older version than the notice
  *     names, and "Skip this version" with them; only "Review" for a version from a local folder, which cannot be
  *     installed by id and version alone. A package no longer installed, or already at that version, says which.
- *   - A Pi SDK update: "Skip this version". Updating the SDK is updating ClarkCant itself, which is not done from here.
+ *   - A Pi SDK update: "Dismiss" and "Skip this version", and not "Ask Clark" as a button. Updating the SDK is updating
+ *     ClarkCant itself, which is not done from here, so the notice asks nothing of the person.
  *   - An expired question: "Ask again" while nobody has answered, dropped or re-asked it and its conversation is there.
  */
 function subjectOperations(
@@ -179,18 +189,23 @@ function subjectOperations(
       return { lead: ["update", "review-update"], menu: ["skip-version"], unavailable: [] };
     }
     case "pi-update":
-      return { lead: [], menu: ["skip-version"], unavailable: [] };
+      // Nothing to decide: the SDK arrives with the next ClarkCant release. "Dismiss" leads, "Skip this version" is the
+      // button beside it.
+      return { lead: ["skip-version"], menu: [], unavailable: [], askable: false };
     case "question": {
       if (!conversationExists) return NONE;
       const state = askAgainState(questionBlocks(db, subject.conversationId, subject.questionId), subject.questionId, context.now);
       return state === "expired" ? { lead: ["ask-again"], menu: [], unavailable: [] } : NONE;
     }
+    case undefined:
+      // A Pi SDK notice written before notices named their subject still asks nothing of the person; it only has no
+      // version to skip.
+      return notice.sourceKind === "pi" && notice.category === "update" ? { ...NONE, askable: false } : NONE;
     case "task":
     case "peer":
     case "automation":
     case "signal-source":
     case "conversation":
-    case undefined:
       return NONE;
     default: {
       // A notice kind added later has to decide here what can be done about it, rather than silently offering nothing.

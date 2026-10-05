@@ -36,12 +36,13 @@ import { AgentAvatarProvider } from "./AgentAvatar.tsx";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
 import { useConnectionStatus } from "./use-connection-status.ts";
 import { ConnectionNotice } from "./connection-notice.tsx";
+import { useActiveModel } from "./use-active-model.ts";
 import { useModelAlias } from "./use-model-alias.ts";
 import { useDynamicSuggestions } from "./use-dynamic-suggestions.ts";
 import { useInputModalityState } from "./use-input-modality-state.ts";
 import { usePolicyModeState } from "./use-policy-mode-state.ts";
 import { useConversationTimeline } from "./use-conversation-timeline.ts";
-import { useHeroOrbLayout, ORB_DRAW_SIZE, ORB_RADIUS } from "./use-hero-orb-layout.ts";
+import { useHeroOrbLayout, ORB_BALL_RADIUS, ORB_DRAW_SIZE, ORB_RADIUS } from "./use-hero-orb-layout.ts";
 import { useAttachmentComposer } from "./use-attachment-composer.ts";
 import { useComposerReferences } from "./use-composer-references.ts";
 import { useVoiceSession } from "./use-voice-session.ts";
@@ -149,6 +150,7 @@ export function Conversation({
   const appearance = useAppearance(client);
   const localeState = useLocale();
   const { modelAlias, modelNote, cycleModel, selectModel } = useModelAlias(client, localeState.t);
+  const activeModel = useActiveModel(client);
   const dynamicSuggestions = useDynamicSuggestions(client);
 
   const {
@@ -257,6 +259,7 @@ export function Conversation({
     onReferencesSent: references.clear,
     beginHeroExit,
     resetHero,
+    t: localeState.t,
     setDatasets,
     setSnapshots,
     setPendingIntent: (decision) => appIntents.setPendingIntent(decision),
@@ -604,6 +607,7 @@ export function Conversation({
           onOpenVoice={() => void openVoice()}
           modelAlias={modelAlias}
           modelNote={modelNote}
+          activeModel={activeModel}
           error={error}
           messages={timeline?.messages ?? []}
         />
@@ -614,7 +618,14 @@ export function Conversation({
         browser, so this is one line rather than a branch around the whole conversation.
       */}
       <DesktopChrome />
-      <DotGrid />
+      {/* The field parts around the ball, a little wider than it, so the glass never has dots showing through it. */}
+      <DotGrid
+        clearing={
+          orbPlacement === undefined
+            ? undefined
+            : { x: orbPlacement.x, y: orbPlacement.y, radius: ORB_BALL_RADIUS * orbPlacement.scale * 1.35 }
+        }
+      />
 
       {/*
         The one orb. It is not two elements that swap places with a transition between them: it is a

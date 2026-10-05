@@ -2,6 +2,7 @@ import { isValidElement, type ReactElement } from "react";
 
 import { describe, expect, it } from "vitest";
 
+import { formatFileSize } from "../src/attachments.ts";
 import { ArtifactBlock, type BlockActions, renderBlock } from "../src/blocks.tsx";
 import { findAll } from "./block-helpers.ts";
 
@@ -61,8 +62,11 @@ describe("the artifact block", () => {
     const fields = findAll(opened, "data-artifact-opened")[0];
     expect(fields?.props["data-artifact-expired"]).toBe("false");
     const text = JSON.stringify(fields);
-    // The node's values, not the block's: the message said 20480 bytes of pdf and the node says otherwise.
-    expect(text).toContain("4096");
+    // The node's values, not the block's: the message said 20480 bytes of pdf and the node says otherwise — in a size
+    // a person reads, and a moment rather than an ISO code.
+    expect(text).toContain(formatFileSize(4096));
+    expect(text).not.toContain("4096 B");
+    expect(text).not.toContain("2026-09-19T17:00:00.000Z");
     expect(text).toContain("sha256:def");
     expect(findAll(opened, "data-artifact-expiry")).toHaveLength(0);
   });

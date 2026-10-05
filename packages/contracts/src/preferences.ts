@@ -24,7 +24,15 @@ import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./e
 import { MAP_TILE_POLICY_PREFERENCE, mapTilePolicySchema } from "./map-view.ts";
 import { orbPalettePreferenceSchema } from "./orb-palette.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
-import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, accentPreferenceSchema, colorSchemeSchema, themeRefSchema } from "./themes.ts";
+import {
+  BUILTIN_CLARK_THEME_REF,
+  DEFAULT_COLOR_SCHEME,
+  accentPreferenceSchema,
+  codeFontPreferenceSchema,
+  colorSchemeSchema,
+  fontPreferenceSchema,
+  themeRefSchema,
+} from "./themes.ts";
 
 /** Where a preference lives. A key declares one, and a write cannot choose another. */
 export const preferenceScopeNameSchema = z.enum(["global", "node", "conversation"]);
@@ -638,6 +646,20 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: "comfortable",
     schema: z.enum(["comfortable", "compact"]),
+  },
+  "experience.font": {
+    key: "experience.font",
+    scope: "global",
+    applies: "immediate",
+    default: null,
+    schema: fontPreferenceSchema,
+  },
+  "experience.codeFont": {
+    key: "experience.codeFont",
+    scope: "global",
+    applies: "immediate",
+    default: null,
+    schema: codeFontPreferenceSchema,
   },
   "orb.profile": {
     key: "orb.profile",

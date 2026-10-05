@@ -47,18 +47,26 @@ export function ToolLists({ client }: { client: GatewayClient }): ReactElement {
   if (problem !== undefined) return <p className="cc-panel-note">{problem}</p>;
   if (lists === undefined) return <p className="cc-panel-note">{t("widgets.toolLists.loading")}</p>;
 
-  const section = (title: string, rows: ToolRow[], empty: string): ReactElement => (
+  // Each tool by what it does in the reader's language, with its name beside it for anyone matching it to a log. The
+  // description is what the model is told, written for the model and in its language: one click away rather than a
+  // paragraph of instructions under every row, so the list reads as a list of abilities.
+  const section = (list: "node" | "agent", title: string, rows: ToolRow[], empty: string): ReactElement => (
     <>
-      <h3>{title}</h3>
+      <h4 className="cc-tool-list-heading">{title}</h4>
       {rows.length === 0 ? (
         <p className="cc-panel-note">{empty}</p>
       ) : (
-        <ul className="cc-tool-list" data-tool-list={title}>
+        <ul className="cc-tool-list" data-tool-list={list}>
           {rows.map((row) => (
             <li key={row.name}>
+              <span className="cc-tool-list-label">{row.label === "" ? row.name : row.label}</span>
               <code>{row.name}</code>
-              <span> — {row.label}</span>
-              <p className="cc-panel-note">{row.description}</p>
+              {row.description !== "" && (
+                <details className="cc-tool-why">
+                  <summary>{t("widgets.toolLists.modelNote")}</summary>
+                  <p className="cc-panel-note">{row.description}</p>
+                </details>
+              )}
             </li>
           ))}
         </ul>
@@ -68,8 +76,8 @@ export function ToolLists({ client }: { client: GatewayClient }): ReactElement {
 
   return (
     <>
-      {section(t("widgets.toolLists.nodeToolsTitle"), lists.self, t("widgets.toolLists.nodeToolsEmpty"))}
-      {section(t("widgets.toolLists.agentToolsTitle"), lists.agent, t("widgets.toolLists.agentToolsEmpty"))}
+      {section("node", t("widgets.toolLists.nodeToolsTitle"), lists.self, t("widgets.toolLists.nodeToolsEmpty"))}
+      {section("agent", t("widgets.toolLists.agentToolsTitle"), lists.agent, t("widgets.toolLists.agentToolsEmpty"))}
       {lists.agentNote !== undefined && <p className="cc-panel-note">{lists.agentNote}</p>}
     </>
   );

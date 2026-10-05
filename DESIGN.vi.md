@@ -429,6 +429,14 @@ Bắt buộc:
   lượt gửi, nói rõ reference nào, đồng thời giữ nguyên bản nháp. Khi bộ gõ đang ghép một chữ, Enter của nó chỉ để hoàn
   tất chữ đó: không chọn dòng nào và không gửi. Shift+Enter xuống dòng dù danh sách đang mở hay đóng. Đây là tính năng
   bổ trợ, không phải navigation chính.
+- Markdown cơ bản được đánh dấu ngay khi gõ — đậm, nghiêng, gạch ngang, code inline, khối code, tiêu đề, danh sách,
+  trích dẫn và liên kết — cú pháp vẫn hiện nhưng nhạt đi, nên thứ được gửi chính là thứ người dùng thấy và vẫn sửa
+  như văn bản thường. Ô nhập vẫn là textarea gốc (con trỏ, vùng chọn, undo, kiểm tra chính tả và bộ gõ không đổi)
+  nằm trên một lớp gương vẽ cùng văn bản; dấu hiệu chỉ đổi màu, nền nhạt, nét viền hoặc gạch ngang, không bao giờ đổi
+  độ rộng ký tự, nên con trỏ không bao giờ lệch. Ở chế độ forced colors, lớp gương lùi ra và textarea tự vẽ chữ;
+- focus hiện trên viên composer (viền màu nhấn và quầng sáng nhẹ), không bao giờ là một khung chữ nhật thứ hai quanh
+  ô nhập bên trong;
+- composer rộng bằng cột hội thoại (720px), và cuộn khi quá năm dòng với thanh cuộn mảnh.
 
 Khi turn đang chạy:
 
@@ -457,7 +465,9 @@ Giữ chronology:
 
     text → reasoning → tool → text
 
-Tool activity mặc định compact. Expand khi user muốn xem arguments/result.
+Tool activity mặc định compact, kể cả khi lệnh đang chạy; lệnh lỗi tự mở ra lý do. Expand khi user muốn xem arguments/result.
+
+Từ ba bước làm việc liên tiếp trở lên (suy luận, lời gọi công cụ và phần kiểm chứng bên dưới) được gộp thành một dòng cho biết đã làm bao nhiêu bước và bao nhiêu bước lỗi; mở ra thì thấy đủ các bước theo đúng thứ tự. Khi câu trả lời đang chạy, bước mới nhất luôn nằm ngoài nhóm.
 
 Thinking state kết thúc ngay khi content/tool event đầu tiên xuất hiện.
 
@@ -1207,10 +1217,17 @@ Dùng segmented controls, toggles và swatches:
 - Motion: Full / Reduced / Follow system.
 - Density: Comfortable / Compact, biên dịch thành token khoảng cách dùng chung, giữ nguyên chữ và kích thước bố cục
   tối thiểu.
-- Đặt lại tùy chỉnh theme xóa màu nhấn, mật độ, chuyển động và lựa chọn Orb riêng qua đường reset/Undo của preference
+- Phông chữ giao diện và phông chữ code: một hàng mẫu chữ, mỗi ô được vẽ bằng chính phông nó gọi tên, "Theo chủ đề"
+  đứng đầu (chọn nó là xóa preference). Phông giao diện áp dụng cho cả nội dung và tiêu đề để trang giữ một giọng;
+  phông code áp dụng cho khối code, code trong dòng, đường dẫn và số liệu căn cột. Lựa chọn là các profile đóng do
+  cùng trình biên dịch snapshot xử lý, không bao giờ là tên family tự do; host tự đóng gói các phông thêm (Inter,
+  Geist, JetBrains Mono, Geist Mono) nên không lựa chọn nào cần mạng.
+- Đặt lại tùy chỉnh theme xóa màu nhấn, mật độ, phông chữ, chuyển động và lựa chọn Orb riêng qua đường reset/Undo của preference
   hiện có. Giữ nguyên theme, chế độ màu và ngôn ngữ đã chọn; mỗi thay đổi được xác nhận sẽ được vẽ lại, còn lỗi ghi sẽ
   dừng phần đặt lại còn lại và báo lỗi.
 - Window behavior: remember size, start mode.
+  - Đã có: cửa sổ desktop mở lại đúng chỗ lúc đóng (kích thước, vị trí, phóng to hay toàn màn hình) khi màn hình đó
+    vẫn còn gắn, nếu không thì mở ở kích thước mặc định.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: mở subpanel.
 

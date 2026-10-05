@@ -94,7 +94,7 @@ test("the update notice and the install question show the origin 1.1.0 adds, bef
   await writePolicy(request, { ...previousPolicy, rules: [{ effectCategory: "local-write", decision: "ask" }] });
 
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await page.locator("[data-inbox-mark]").click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.locator('[data-inbox-panel="ready"]')).toBeVisible({ timeout: 20_000 });

@@ -41,6 +41,18 @@ export const CARDS_CSS = `
 }
 .cc-card-title { font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-weight: var(--cc-weight-heading, 600); color: var(--cc-text); }
 .cc-card-body { padding: var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+/* A badge in a card body is a mark, not a field: stretched across the column it read as an empty input. */
+.cc-card-body > .cc-badge { align-self: flex-start; }
+/*
+ * A session's last frame, across the top of its card. Without these the figure kept the browser's 40px indent and the
+ * picture its captured size, so a 1280px frame ran past the card's edge and was cut off on the right.
+ */
+.cc-card-preview { margin: 0; border-bottom: 1px solid var(--cc-border); background: var(--cc-elevated); }
+.cc-card-preview img { display: block; width: 100%; height: auto; max-height: 420px; object-fit: contain; }
+.cc-card-preview figcaption, .cc-card-preview-pending {
+  margin: 0; padding: var(--cc-space-xs) var(--cc-space-md);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
 .cc-fields { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
 .cc-fields dt { color: var(--cc-text-muted); }
 .cc-fields dd { margin: 0; }
@@ -97,6 +109,15 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-artifact-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-xs); }
 .cc-artifact-notice p { flex: 1 1 16ch; min-width: 0; }
 .cc-artifact-notice[data-tone="error"] p { color: var(--cc-danger); }
+/* Marketplace results: one row per package, divided by a hairline rather than bulleted like prose. */
+.cc-marketplace-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cc-marketplace-item { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; padding-block: var(--cc-space-sm); }
+.cc-marketplace-item + .cc-marketplace-item { border-top: 1px solid var(--cc-border); }
+.cc-marketplace-item:first-child { padding-top: 0; }
+.cc-marketplace-item:last-child { padding-bottom: 0; }
+.cc-marketplace-name { font-weight: 600; overflow-wrap: anywhere; }
+.cc-marketplace-version { font-weight: 400; color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-marketplace-desc { color: var(--cc-text); overflow-wrap: anywhere; }
 /* A marketplace result's source, risk lane and digest: three parts that read apart and wrap on a phone. */
 .cc-marketplace-meta { display: flex; flex-wrap: wrap; gap: var(--cc-space-xxs) var(--cc-space-md); min-width: 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-marketplace-meta > span { min-width: 0; overflow-wrap: anywhere; }
@@ -195,8 +216,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-table-search { flex: 1 1 200px; min-width: 0; display: flex; }
 .cc-table-search input {
   flex: 1; min-width: 0; min-height: 32px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-xs) var(--cc-space-sm);
 }
 .cc-table-search input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
@@ -274,8 +295,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 
 /* Note */
 .cc-note-area {
-  width: 100%; background: var(--cc-input-bg, var(--cc-elevated)); color: var(--cc-text);
-  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-input-edge, var(--cc-border));
+  width: 100%; background: var(--cc-input-bg, var(--cc-card)); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
   border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-sm); font: inherit;
 }
@@ -389,8 +410,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-field-error { margin: 0; font-size: var(--cc-text-label); color: var(--cc-danger); }
 .cc-field-input {
   width: 100%; min-width: 0; min-height: 44px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-xs) var(--cc-space-sm);
 }
 textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-md); }
@@ -437,6 +458,10 @@ textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-m
 .cc-switch:disabled { cursor: not-allowed; opacity: 0.6; }
 .cc-form-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--cc-space-sm); }
 .cc-form-foot > p { flex: 1 1 200px; margin: 0; }
+/* A closed form's answer is what was said, so it reads as text rather than as a chip that looks pressable. */
+/* A group inside a card body that keeps the body's rhythm between its own parts. */
+.cc-card-stack { display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; }
+.cc-form-answer { font-size: var(--cc-text-body-md); color: var(--cc-text); overflow-wrap: anywhere; white-space: pre-wrap; }
 .cc-form-foot [data-form-result="refused"], .cc-form-foot [data-form-result="invalid"] { color: var(--cc-danger); }
 .cc-search-row { display: flex; gap: var(--cc-space-sm); align-items: center; }
 .cc-search-row .cc-action { flex: none; }

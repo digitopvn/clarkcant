@@ -16,6 +16,11 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.tool.args.label": "tham số",
   "blocks.tool.result.label": "kết quả",
 
+  // blocks.tsx — evidence under a tool call
+  "blocks.evidence.verified": "đã kiểm chứng",
+  "blocks.evidence.not-verified": "chưa kiểm chứng",
+  "blocks.evidence.contradicted": "mâu thuẫn",
+
   // TimelineMessageRow.tsx — a turn the host opened, not words anyone typed
   "timeline.hostWritten.continuation": "Đã duyệt — Clark tiếp tục",
   "timeline.hostWritten.other": "Clark tiếp tục",
@@ -23,6 +28,8 @@ export const MESSAGES_TIMELINE_VI = {
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
+  "blocks.workSteps.done": "Đã làm {count} bước",
+  "blocks.workSteps.failed": "{count} bước lỗi",
 
   // blocks.tsx — artifact
   "blocks.artifact.fromAnotherNode": " · từ một node khác",
@@ -56,15 +63,19 @@ export const MESSAGES_TIMELINE_VI = {
 
   // blocks.tsx — approval card
   "blocks.approval.needsConfirm": "Cần bạn xác nhận",
+  "blocks.approval.request": "Yêu cầu xác nhận",
   "blocks.approval.commandLabel": "lệnh sẽ chạy",
   "blocks.approval.tilePolicyLabel": "chính sách ô bản đồ sẽ ghi",
   "blocks.approval.performInputLabel": "toàn bộ dữ liệu sẽ gửi cho widget",
   "blocks.approval.onlyYouCanConfirm": "Chỉ bạn xác nhận được. Model không thể tự duyệt.",
+  "blocks.approval.digest": "Mã thao tác",
   "blocks.approval.running": "Đang chạy…",
   "blocks.approval.approveAndRun": "Duyệt và chạy",
   "blocks.approval.deny": "Từ chối",
   "blocks.approval.decided": "đã quyết định",
   "blocks.approval.denied": "đã từ chối",
+  "blocks.approval.granted": "đã duyệt",
+  "blocks.approval.expired": "đã hết hạn, chưa chạy gì",
   "turnOrigin.askedBy.person": "Do bạn yêu cầu",
   "turnOrigin.askedBy.mcp": "Do một ứng dụng AI yêu cầu qua MCP",
   "turnOrigin.askedBy.relay": "Do một ứng dụng kết nối yêu cầu qua relay",
@@ -81,11 +92,25 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.credential.needed": "Cần thông tin đăng nhập",
   "blocks.credential.usedByLabel": "Sẽ được dùng bởi",
   "blocks.credential.storedOnLabel": "Lưu trên",
+  "blocks.credential.vaultLabel": "Kho lưu",
   "blocks.credential.save": "Lưu",
   "blocks.credential.notInTranscript": "Giá trị bạn nhập không đi vào hội thoại, không vào model.",
 
   // blocks.tsx — task progress card
   "blocks.task.started": "Bắt đầu",
+  "blocks.cardStatus.ready": "sẵn sàng",
+  "blocks.cardStatus.downloading": "đang tải",
+  "blocks.cardStatus.verifying": "đang kiểm tra",
+  "blocks.cardStatus.needs-sign-in": "cần đăng nhập",
+  "blocks.taskStatus.queued": "đang chờ",
+  "blocks.taskStatus.working": "đang làm",
+  "blocks.taskStatus.blocked": "bị chặn",
+  "blocks.taskStatus.needs-decision": "cần bạn quyết định",
+  "blocks.taskStatus.done": "xong",
+  "blocks.taskStatus.failed": "thất bại",
+  "blocks.taskStatus.cancelled": "đã huỷ",
+  "blocks.taskStatus.succeeded": "thành công",
+  "blocks.taskStatus.not-verified": "chưa rõ kết quả",
   "blocks.task.runsOn": "Chạy trên",
   "blocks.task.anotherNode": "một node khác",
   "blocks.task.cancellable": "Dừng được",
@@ -133,6 +158,7 @@ export const MESSAGES_TIMELINE_VI = {
 
   // blocks.tsx — form card
   "blocks.form.missingFieldsLabel": "Còn thiếu",
+  "blocks.form.closed": "Biểu mẫu này đã đóng. Câu trả lời đã gửi, nếu có, nằm trong tin nhắn của bạn ngay sau nó.",
 
   // blocks.tsx — marketplace
   "blocks.marketplace.searchResultsAria": "Kết quả tìm gói",
@@ -146,7 +172,7 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.marketplace.searchAgainMessage": "Tìm lại các gói khớp “{query}”",
   "blocks.marketplace.unknownSource": "không rõ nguồn",
   "blocks.marketplace.lane.isolatedUi": "widget cách ly",
-  "blocks.marketplace.lane.service": "service",
+  "blocks.marketplace.lane.service": "dịch vụ",
   "blocks.marketplace.lane.declarative": "khai báo",
   "blocks.marketplace.lane.trustedNative": "native tin cậy",
 
@@ -161,7 +187,7 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.session.running": "đang chạy",
   "blocks.session.whoIsDriving": "Ai đang điều khiển",
   "blocks.session.you": "bạn",
-  "blocks.session.agent": "agent",
+  "blocks.session.agent": "Clark",
   "blocks.session.needsPermission": "Chưa được cấp quyền xem màn hình",
   "blocks.session.cannotView": "Không xem được màn hình",
   "blocks.session.permissionNotice":
@@ -224,7 +250,8 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.note.placeholder": "Viết gì đó…",
   "widgets.note.unsaved": "Có thay đổi chưa lưu.",
   "widgets.note.saved": "Đã lưu.",
-  "widgets.note.currentRevision": "Bản lưu hiện tại: revision {revision}.",
+  "widgets.note.currentRevision": "Đã lưu bản {revision}.",
+  "widgets.note.neverSaved": "Chưa lưu lần nào.",
   "widgets.note.conflict":
     "Bản trên máy đã đổi ở chỗ khác. Bản nháp của bạn vẫn còn — chọn giữ bản nháp hoặc tải bản mới.",
   "widgets.note.save": "Lưu",
@@ -650,9 +677,10 @@ export const MESSAGES_TIMELINE_VI = {
   // tool-lists.tsx
   "widgets.toolLists.readFailed": "Không đọc được danh sách công cụ từ node.",
   "widgets.toolLists.loading": "Đang đọc…",
-  "widgets.toolLists.nodeToolsTitle": "Công cụ của node này",
+  "widgets.toolLists.nodeToolsTitle": "Của node này",
   "widgets.toolLists.nodeToolsEmpty": "Node này chưa đăng ký công cụ nào.",
-  "widgets.toolLists.agentToolsTitle": "Công cụ của agent (pi)",
+  "widgets.toolLists.agentToolsTitle": "Của agent (pi)",
+  "widgets.toolLists.modelNote": "Chỉ dẫn cho model",
   "widgets.toolLists.agentToolsEmpty": "Agent không báo công cụ gốc nào.",
 
   // WidgetFrame.tsx
@@ -749,7 +777,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.surface.openCurrent": "Mở bản hiện tại",
   "widgets.snapshot.unreadable":
     "Không đọc lại được phần này của cuộc trò chuyện nên nó không được hiển thị. Phần còn lại vẫn được giữ nguyên. Nếu cần, hãy nhờ Clark hiển thị lại.",
-  "widgets.surface.pinAgain": "Ghim lại",
+  "widgets.surface.pin": "Ghim lại",
 
   // DetachedWidgetSurface.tsx
   "widgets.detached.cannotOpen": "Không mở được widget này",
@@ -777,17 +805,17 @@ export const MESSAGES_TIMELINE_VI = {
   // widget-library/WidgetFixtureControls.tsx
   "widgets.lab.fixture": "Fixture",
   "widgets.lab.viewport": "Khung",
-  "widgets.lab.theme": "Theme",
+  "widgets.lab.theme": "Chủ đề",
   "widgets.lab.reducedMotion": "Giảm chuyển động",
 
   // widget-library/WidgetGallery.tsx
   "widgets.gallery.noMatches": "Không có widget nào khớp với bộ lọc này. Xoá ô tìm kiếm hoặc chọn “Tất cả” để xem lại danh mục.",
   "widgets.gallery.cardAria": "{name} — {description}",
   "widgets.gallery.noFixture": "Chưa có fixture cho widget này.",
-  "widgets.gallery.sourceBuiltin": "Built-in",
-  "widgets.gallery.sourceInstalled": "Installed package",
-  "widgets.gallery.sourceLocal": "Local development package",
-  "widgets.gallery.experimentalSuffix": " · experimental",
+  "widgets.gallery.sourceBuiltin": "Có sẵn",
+  "widgets.gallery.sourceInstalled": "Gói đã cài",
+  "widgets.gallery.sourceLocal": "Gói đang phát triển trên máy",
+  "widgets.gallery.experimentalSuffix": " · thử nghiệm",
   "widgets.appearance.fixed": "Widget này sử dụng giao diện riêng.",
 
   // widget-library/WidgetInspector.tsx
@@ -828,7 +856,7 @@ export const MESSAGES_TIMELINE_VI = {
 
   // widget-library/WidgetLibrarySurface.tsx
   "widgets.library.titleLab": "Widget Lab",
-  "widgets.library.titleBrowse": "Widget Library",
+  "widgets.library.titleBrowse": "Thư viện widget",
   "widgets.library.back": "Quay lại danh mục",
   "widgets.library.searchPlaceholder": "Tìm widget…",
   "widgets.library.searchAria": "Tìm widget",
@@ -837,6 +865,29 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.library.close": "Đóng",
   "widgets.library.familiesAria": "Nhóm widget",
   "widgets.library.allFamilies": "Tất cả",
+"widgets.family.action": "Hành động",
+  "widgets.family.artifact": "Tài liệu",
+  "widgets.family.board": "Bảng việc",
+  "widgets.family.calendar": "Lịch",
+  "widgets.family.chart": "Biểu đồ",
+  "widgets.family.choice": "Lựa chọn",
+  "widgets.family.cta": "Kêu gọi hành động",
+  "widgets.family.diagram": "Sơ đồ",
+  "widgets.family.filter": "Bộ lọc",
+  "widgets.family.form": "Biểu mẫu",
+  "widgets.family.hierarchy": "Phân cấp",
+  "widgets.family.input": "Ô nhập",
+  "widgets.family.layout": "Bố cục",
+  "widgets.family.list": "Danh sách",
+  "widgets.family.map": "Bản đồ",
+  "widgets.family.media": "Đa phương tiện",
+  "widgets.family.metrics": "Chỉ số",
+  "widgets.family.note": "Ghi chú",
+  "widgets.family.search": "Tìm kiếm",
+  "widgets.family.status": "Trạng thái",
+  "widgets.family.tables": "Bảng dữ liệu",
+  "widgets.family.timeline": "Dòng thời gian",
+  "widgets.family.trend": "Xu hướng",
   "widgets.library.installedUnreadable": "Không đọc được widget của các gói đã cài. Danh mục dựng sẵn vẫn dùng được bình thường.",
   "widgets.library.installedUnseenTitle": "Gói đã cài: phần chưa xem được",
   "widgets.library.noFixture": "Chưa có fixture cho widget này.",
@@ -844,6 +895,8 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.library.semanticDescription": "Mô tả ngữ nghĩa",
   "widgets.library.source": "Nguồn",
   "widgets.library.status": "Trạng thái",
+  "widgets.library.statusStable": "Ổn định",
+  "widgets.library.statusExperimental": "Thử nghiệm",
   "widgets.library.textFallback": "Phương án chữ",
 
   // widget-library/HostCardShowcase.tsx
@@ -877,6 +930,8 @@ export const MESSAGES_TIMELINE_VI = {
   // statusline.ts
   "widgets.statusline.cache": "cache {percent}%",
   "widgets.statusline.tokPerSec": "{value} tok/s",
+  "widgets.statusline.thinking": "thinking: {level}",
+  "widgets.statusline.thinkingDefault": "thinking: mặc định",
   "widgets.statusline.backgroundRunning": "{count} đang chạy",
   "widgets.statusline.backgroundDone": "{count} xong",
   "widgets.statusline.backgroundFailed": "{count} lỗi",
@@ -899,7 +954,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.provenanceLane.isolatedUi": "widget cách ly",
   "widgets.provenanceLane.service": "service riêng tiến trình",
   "widgets.provenanceLane.trustedNative": "extension Pi gốc — chạy cùng tiến trình",
-  "widgets.provenance.builtInLabel": "widget dựng sẵn trong Clark",
+  "widgets.provenance.builtInLabel": "Widget dựng sẵn trong Clark",
   // terminal-card.tsx
   "blocks.terminal.aria": "Terminal {title}",
   "blocks.terminal.running": "đang chạy",
@@ -969,11 +1024,18 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.tool.args.label": "parameters",
   "blocks.tool.result.label": "result",
 
+  // blocks.tsx — evidence under a tool call
+  "blocks.evidence.verified": "verified",
+  "blocks.evidence.not-verified": "not verified",
+  "blocks.evidence.contradicted": "contradicted",
+
   "timeline.hostWritten.continuation": "Approved — Clark carries on",
   "timeline.hostWritten.other": "Clark carries on",
 
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",
+  "blocks.workSteps.done": "Worked through {count} steps",
+  "blocks.workSteps.failed": "{count} failed",
 
   "blocks.artifact.fromAnotherNode": " · from another node",
   "blocks.artifact.opening": "Opening…",
@@ -1004,15 +1066,19 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.question.askedAgainNote": "This question was asked again below; answer the new one.",
 
   "blocks.approval.needsConfirm": "Needs your confirmation",
+  "blocks.approval.request": "Confirmation request",
   "blocks.approval.commandLabel": "command to run",
   "blocks.approval.tilePolicyLabel": "map tile policy to write",
   "blocks.approval.performInputLabel": "everything the widget will be sent",
   "blocks.approval.onlyYouCanConfirm": "Only you can confirm this. The model cannot approve on its own.",
+  "blocks.approval.digest": "Operation",
   "blocks.approval.running": "Running…",
   "blocks.approval.approveAndRun": "Approve and run",
   "blocks.approval.deny": "Deny",
   "blocks.approval.decided": "decided",
   "blocks.approval.denied": "denied",
+  "blocks.approval.granted": "approved",
+  "blocks.approval.expired": "expired, nothing ran",
   "turnOrigin.askedBy.person": "Asked by you",
   "turnOrigin.askedBy.mcp": "Asked by an AI client over MCP",
   "turnOrigin.askedBy.relay": "Asked by a connected client over the relay",
@@ -1027,10 +1093,24 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.credential.needed": "Credentials needed",
   "blocks.credential.usedByLabel": "Will be used by",
   "blocks.credential.storedOnLabel": "Stored on",
+  "blocks.credential.vaultLabel": "Vault",
   "blocks.credential.save": "Save",
   "blocks.credential.notInTranscript": "What you enter does not go into the conversation or the model.",
 
   "blocks.task.started": "Started",
+  "blocks.cardStatus.ready": "ready",
+  "blocks.cardStatus.downloading": "downloading",
+  "blocks.cardStatus.verifying": "verifying",
+  "blocks.cardStatus.needs-sign-in": "needs sign-in",
+  "blocks.taskStatus.queued": "queued",
+  "blocks.taskStatus.working": "working",
+  "blocks.taskStatus.blocked": "blocked",
+  "blocks.taskStatus.needs-decision": "needs your decision",
+  "blocks.taskStatus.done": "done",
+  "blocks.taskStatus.failed": "failed",
+  "blocks.taskStatus.cancelled": "cancelled",
+  "blocks.taskStatus.succeeded": "succeeded",
+  "blocks.taskStatus.not-verified": "outcome unknown",
   "blocks.task.runsOn": "Runs on",
   "blocks.task.anotherNode": "another node",
   "blocks.task.cancellable": "Cancellable",
@@ -1072,6 +1152,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.attachment.retry": "Try again",
 
   "blocks.form.missingFieldsLabel": "Missing",
+  "blocks.form.closed": "This form is closed. Anything you sent from it is in your message right after it.",
 
   "blocks.marketplace.searchResultsAria": "Package search results",
   "blocks.marketplace.resultsIn": "Results in {directory}",
@@ -1098,7 +1179,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.session.running": "running",
   "blocks.session.whoIsDriving": "Who is in control",
   "blocks.session.you": "you",
-  "blocks.session.agent": "agent",
+  "blocks.session.agent": "Clark",
   "blocks.session.needsPermission": "Screen viewing permission not granted",
   "blocks.session.cannotView": "Cannot view the screen",
   "blocks.session.permissionNotice":
@@ -1159,7 +1240,8 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.note.placeholder": "Write something…",
   "widgets.note.unsaved": "Unsaved changes.",
   "widgets.note.saved": "Saved.",
-  "widgets.note.currentRevision": "Current save: revision {revision}.",
+  "widgets.note.currentRevision": "Saved version {revision}.",
+  "widgets.note.neverSaved": "Not saved yet.",
   "widgets.note.conflict":
     "The saved copy changed elsewhere. Your draft is still here — choose to keep your draft or load the newer copy.",
   "widgets.note.save": "Save",
@@ -1583,9 +1665,10 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.details.unreadable": "This details card could not be read, so it is not shown.",
   "widgets.toolLists.readFailed": "Could not read the tool list from the node.",
   "widgets.toolLists.loading": "Reading…",
-  "widgets.toolLists.nodeToolsTitle": "This node's tools",
+  "widgets.toolLists.nodeToolsTitle": "On this node",
   "widgets.toolLists.nodeToolsEmpty": "This node has no registered tools.",
-  "widgets.toolLists.agentToolsTitle": "The agent's tools (pi)",
+  "widgets.toolLists.agentToolsTitle": "The agent's own (pi)",
+  "widgets.toolLists.modelNote": "What the model is told",
   "widgets.toolLists.agentToolsEmpty": "The agent reports no native tools.",
 
   "widgets.frame.opening": "Opening widget…",
@@ -1677,7 +1760,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.surface.openCurrent": "Open current view",
   "widgets.snapshot.unreadable":
     "This part of the conversation could not be read back, so it is not shown. The rest is kept as it was. Ask Clark to show it again if you need it.",
-  "widgets.surface.pinAgain": "Pin again",
+  "widgets.surface.pin": "Pin",
 
   "widgets.detached.cannotOpen": "Could not open this widget",
   "widgets.detached.opening": "Opening widget…",
@@ -1757,6 +1840,29 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.library.close": "Close",
   "widgets.library.familiesAria": "Widget families",
   "widgets.library.allFamilies": "All",
+"widgets.family.action": "Actions",
+  "widgets.family.artifact": "Artifacts",
+  "widgets.family.board": "Boards",
+  "widgets.family.calendar": "Calendars",
+  "widgets.family.chart": "Charts",
+  "widgets.family.choice": "Choices",
+  "widgets.family.cta": "Calls to action",
+  "widgets.family.diagram": "Diagrams",
+  "widgets.family.filter": "Filters",
+  "widgets.family.form": "Forms",
+  "widgets.family.hierarchy": "Hierarchies",
+  "widgets.family.input": "Inputs",
+  "widgets.family.layout": "Layouts",
+  "widgets.family.list": "Lists",
+  "widgets.family.map": "Maps",
+  "widgets.family.media": "Media",
+  "widgets.family.metrics": "Metrics",
+  "widgets.family.note": "Notes",
+  "widgets.family.search": "Search",
+  "widgets.family.status": "Status",
+  "widgets.family.tables": "Tables",
+  "widgets.family.timeline": "Timelines",
+  "widgets.family.trend": "Trends",
   "widgets.library.installedUnreadable": "Could not read widgets from installed packages. The built-in catalog still works normally.",
   "widgets.library.installedUnseenTitle": "Installed packages: not shown",
   "widgets.library.noFixture": "No fixture for this widget yet.",
@@ -1764,6 +1870,8 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.library.semanticDescription": "Semantic description",
   "widgets.library.source": "Source",
   "widgets.library.status": "Status",
+  "widgets.library.statusStable": "Stable",
+  "widgets.library.statusExperimental": "Experimental",
   "widgets.library.textFallback": "Text fallback",
 
   "widgets.hostCards.title": "System cards",
@@ -1793,6 +1901,8 @@ export const MESSAGES_TIMELINE_EN = {
 
   "widgets.statusline.cache": "cache {percent}%",
   "widgets.statusline.tokPerSec": "{value} tok/s",
+  "widgets.statusline.thinking": "thinking: {level}",
+  "widgets.statusline.thinkingDefault": "thinking: default",
   "widgets.statusline.backgroundRunning": "{count} running",
   "widgets.statusline.backgroundDone": "{count} done",
   "widgets.statusline.backgroundFailed": "{count} failed",
@@ -1813,7 +1923,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.provenanceLane.isolatedUi": "isolated widget",
   "widgets.provenanceLane.service": "own-process service",
   "widgets.provenanceLane.trustedNative": "native Pi extension — runs in-process",
-  "widgets.provenance.builtInLabel": "widget built into Clark",
+  "widgets.provenance.builtInLabel": "Widgets built into Clark",
   // terminal-card.tsx
   "blocks.terminal.aria": "Terminal {title}",
   "blocks.terminal.running": "running",

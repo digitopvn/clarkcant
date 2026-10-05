@@ -42,7 +42,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Settings → Extensions, which is where browsing belongs: it is not a navigation destination. */
@@ -78,6 +78,40 @@ test("the library opens from Extensions and the conversation stays mounted", asy
    * model only allows the former.
    */
   await expect(page.locator("[data-composer='true']")).toHaveCount(1);
+
+  // Browsing shows each widget's picture, name and family; the description written for the model stays in the
+  // card's accessible name and its detail view rather than printed under every card.
+  const line = page.locator("[data-widget-card='canvas.line@1']");
+  await expect(line).toBeVisible({ timeout: 20_000 });
+  await expect(line.locator(".cc-widget-card-desc")).toHaveCount(0);
+  await expect(line).toHaveAccessibleName(/dataset/);
+});
+
+test("on a phone every catalog card fits inside the library", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openLibraryFromExtensions(page);
+  const grid = page.locator("[data-widget-grid]");
+  await expect(grid.locator("[data-widget-card]").first()).toBeVisible({ timeout: 20_000 });
+  // A chart drawn at its own width used to size the one column, so every card ran past the right edge of the screen.
+  // Polled: the surface rises into place and the charts measure themselves once it has.
+  await expect
+    .poll(() =>
+      grid.evaluate((element) =>
+        Math.max(
+          element.scrollWidth - element.clientWidth,
+          ...[...element.querySelectorAll("[data-widget-card]")].map((card) => card.getBoundingClientRect().right - window.innerWidth),
+        ),
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  // The families are one row that scrolls, not seven lines of chips above the first widget.
+  const facetTops = await page.locator("[data-widget-library-facet]").evaluateAll((facets) => new Set(facets.map((facet) => Math.round(facet.getBoundingClientRect().top))).size);
+  expect(facetTops).toBe(1);
+  // The last family is still reachable by scrolling the row.
+  const last = page.locator("[data-widget-library-facet]").last();
+  await last.scrollIntoViewIfNeeded();
+  await last.click();
+  await expect(last).toHaveAttribute("aria-pressed", "true");
 });
 
 test("the terminal is listed as a host card, described and never opened from the library", async ({ page }) => {
@@ -204,6 +238,8 @@ test("the Lab shows developer controls that actually change the preview", async 
    * The controls belong to a selected widget, so a card is chosen first. A Lab that showed fixture and
    * viewport controls for nothing would be a control that looks usable before its subject exists.
    */
+  // The Lab is for the people who write those descriptions, so its cards print them.
+  await expect(page.locator("[data-widget-card='canvas.table@1'] .cc-widget-card-desc")).toHaveCount(1);
   await page.locator("[data-widget-card='canvas.table@1']").click();
   await expect(page.locator("[data-widget-detail='canvas.table@1']")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-widget-lab-controls='true']")).toBeVisible({ timeout: 20_000 });
@@ -347,7 +383,7 @@ test("an installed package's widget becomes a card, rendered by the catalog", as
   const card = page.locator("[data-widget-card='com.example.chart-widget/canvas.line@1']");
   await expect(card).toBeVisible({ timeout: 20_000 });
   // Labelled for what it is rather than mixed in with the built-ins.
-  await expect(card).toContainText("Local development package");
+  await expect(card).toContainText("Gói đang phát triển trên máy");
   // And the catalog's own card for the same definition is still there, rather than being replaced by the package's.
   await expect(page.locator("[data-widget-card='canvas.line@1']")).toBeVisible();
 

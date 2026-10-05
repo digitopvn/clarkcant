@@ -32,7 +32,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Ask for the scripted proposal and wait for its card. */
@@ -64,7 +64,7 @@ test("a proposed command runs only after the user approves it", async ({ page })
   // And the card stops offering a decision that has been made: messages are immutable, so this is read
   // from the receipt rather than from the card itself.
   await expect(card.locator("[data-approve]")).toHaveCount(0);
-  await expect(card.locator('[data-approval-decision="answered"]')).toBeVisible();
+  await expect(card.locator('[data-approval-decision="answered"]')).toHaveText("đã duyệt");
 
   // And the agent picked the work back up. The turn that proposed the command ended with the card, so nothing
   // else would ever tell it what happened: the outcome is fed back and this is the answer to it.

@@ -1,12 +1,14 @@
-import type { ReactElement, RefObject } from "react";
+import { useRef, type ReactElement, type RefObject } from "react";
 
 import { referenceToken } from "@clarkcant/contracts";
 
 import type { Timeline } from "./api.ts";
 import { formatFileSize, type AttachmentChip } from "./attachments.ts";
+import { ComposerMirror, useComposerMirror } from "./composer-mirror.tsx";
 import { COMPOSER_LISTBOX_ID, ComposerSuggestions, composerOptionId } from "./composer-suggestions.tsx";
 import { useT } from "./i18n/locale-context.tsx";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
+import type { ActiveModel } from "./use-active-model.ts";
 import type { ComposerReferencesState } from "./use-composer-references.ts";
 import { modelSwitchShortcut } from "./use-model-alias.ts";
 
@@ -31,6 +33,8 @@ export interface ConversationComposerBarProps {
   onOpenVoice: () => void;
   modelAlias: string | undefined;
   modelNote: string;
+  /** The model the next turn runs and its thinking level, drawn first on the statusline. */
+  activeModel?: ActiveModel | null | undefined;
   error: string | undefined;
   messages: Timeline["messages"];
 }
@@ -61,10 +65,13 @@ export function ConversationComposerBar({
   onOpenVoice,
   modelAlias,
   modelNote,
+  activeModel,
   error,
   messages,
 }: ConversationComposerBarProps): ReactElement {
   const t = useT();
+  const mirror = useRef<HTMLDivElement>(null);
+  useComposerMirror(composerInput, mirror, draft);
   return (
     <div
       className="cc-composer-wrap"
@@ -180,40 +187,43 @@ export function ConversationComposerBar({
           >
             +
           </button>
-          <textarea
-            ref={composerInput}
-            value={draft}
-            aria-label={t("composer.input")}
-            // The typed placeholder, and the plain one as soon as there is nothing to type — which
-            // is also what a reduced-motion user sees, unchanged.
-            placeholder={placeholder === "" ? t("composer.placeholder") : placeholder}
-            rows={1}
-            data-composer="true"
-            // The picker is a listbox this field controls, so focus stays where the person is typing.
-            {...(references === undefined ? {} : { role: "combobox", "aria-autocomplete": "list" as const, "aria-expanded": references.open, "aria-controls": COMPOSER_LISTBOX_ID })}
-            {...(references?.open === true && references.suggestions.length > 0
-              ? { "aria-activedescendant": composerOptionId(references.activeIndex) }
-              : {})}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              references?.track(event.currentTarget);
-            }}
-            onSelect={(event) => references?.track(event.currentTarget)}
-            onBlur={references?.leave}
-            onCompositionStart={() => references?.setComposing(true)}
-            onCompositionEnd={(event) => {
-              references?.setComposing(false);
-              references?.track(event.currentTarget);
-            }}
-            onKeyDown={(event) => {
-              if (references?.onKeyDown(event) === true) return;
-              // An input method still composing a word takes its own Enter to finish it; that is not a send.
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                onSubmit();
-              }
-            }}
-          />
+          <div className="cc-composer-field">
+            <ComposerMirror draft={draft} mirror={mirror} />
+            <textarea
+              ref={composerInput}
+              value={draft}
+              aria-label={t("composer.input")}
+              // The typed placeholder, and the plain one as soon as there is nothing to type — which
+              // is also what a reduced-motion user sees, unchanged.
+              placeholder={placeholder === "" ? t("composer.placeholder") : placeholder}
+              rows={1}
+              data-composer="true"
+              // The picker is a listbox this field controls, so focus stays where the person is typing.
+              {...(references === undefined ? {} : { role: "combobox", "aria-autocomplete": "list" as const, "aria-expanded": references.open, "aria-controls": COMPOSER_LISTBOX_ID })}
+              {...(references?.open === true && references.suggestions.length > 0
+                ? { "aria-activedescendant": composerOptionId(references.activeIndex) }
+                : {})}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                references?.track(event.currentTarget);
+              }}
+              onSelect={(event) => references?.track(event.currentTarget)}
+              onBlur={references?.leave}
+              onCompositionStart={() => references?.setComposing(true)}
+              onCompositionEnd={(event) => {
+                references?.setComposing(false);
+                references?.track(event.currentTarget);
+              }}
+              onKeyDown={(event) => {
+                if (references?.onKeyDown(event) === true) return;
+                // An input method still composing a word takes its own Enter to finish it; that is not a send.
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  onSubmit();
+                }
+              }}
+            />
+          </div>
           <button
             type="button"
             className="cc-icon-btn"
@@ -258,7 +268,7 @@ export function ConversationComposerBar({
       {modelAlias !== undefined && (
         <div className="cc-model-switch" data-model-label={modelAlias}>
           <span className="cc-freshness">model: {modelAlias}</span>
-          <span className="cc-freshness" data-model-note="true">
+          <span className="cc-freshness" data-model-note={modelNote === "" ? "shortcut" : "true"}>
             {modelNote === ""
               ? t("shell.model.switchHint").replace(
                   "{shortcut}",
@@ -278,13 +288,13 @@ export function ConversationComposerBar({
       */}
       <div className="cc-hint" data-statusline={error === undefined ? "true" : "false"}>
         {error === undefined ? (
-          statuslineParts({ metrics: latestTurnMetrics(messages) }, t).map((part) => (
+          statuslineParts({ ...(activeModel === undefined || activeModel === null ? {} : { model: activeModel }), metrics: latestTurnMetrics(messages) }, t).map((part) => (
             <span key={part} className="cc-statusline-part">
               {part}
             </span>
           ))
         ) : (
-          <span>{error}</span>
+          <span role="alert" data-send-error="true">{error}</span>
         )}
       </div>
     </div>

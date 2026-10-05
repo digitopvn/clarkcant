@@ -66,7 +66,7 @@ test.afterAll(async ({ request }) => {
 /** Compose a frame, open it live, and return its surface and the frame inside it. */
 async function openFrame(page: Page, prompt: string): Promise<{ surface: Locator; frame: Locator }> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill(prompt);
