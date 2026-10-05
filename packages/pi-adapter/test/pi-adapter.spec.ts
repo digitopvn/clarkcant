@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import { describe, expect, it, afterAll, beforeAll } from "vitest";
 
+import { checkSendBoundary } from "@clarkcant/contracts";
+
 import {
   FakePiAdapter,
   RealPiAdapter,
@@ -16,6 +18,7 @@ import {
   type WorkerEvent,
 } from "../src/index.ts";
 import { toSdkTool } from "../src/real.ts";
+import { guardToolResult } from "../src/tool-result-guard.ts";
 
 describe("a tool result that carries an image", () => {
   type CapturedConfig = {
@@ -67,6 +70,46 @@ describe("a tool result that carries an image", () => {
 
     const result = await captured.execute?.("call-1", {});
     expect(result?.content).toEqual([{ type: "text", text: "Nội dung của “ghi-chu.txt”:\nchi la chu" }]);
+  });
+
+  const withhold: NonNullable<WorkerBrief["toolResultGuard"]> = ({ tool, text }) =>
+    text.includes("withhold me") ? { withheld: true, text: `${tool}: withheld` } : { withheld: false };
+
+  it("drops the image with the text when the guard withholds a result", async () => {
+    const captured = capture(
+      guardToolResult(
+        {
+          name: "read_attachment",
+          label: "read",
+          description: "reads a file the user attached",
+          parameters: { type: "object", additionalProperties: false, properties: {} },
+          execute: async () => ({ text: "withhold me", image: { mimeType: "image/png", dataBase64: "AAAA" } }),
+        },
+        withhold,
+      ),
+    );
+
+    const result = await captured.execute?.("call-1", {});
+    expect(result?.content).toEqual([{ type: "text", text: "read_attachment: withheld" }]);
+  });
+
+  it("holds a failing tool's message to the same guard", async () => {
+    const failing = (message: string): ToolDefinition =>
+      guardToolResult(
+        {
+          name: "read_attachment",
+          label: "read",
+          description: "reads a file the user attached",
+          parameters: { type: "object", additionalProperties: false, properties: {} },
+          execute: async () => {
+            throw new Error(message);
+          },
+        },
+        withhold,
+      );
+
+    await expect(failing("could not parse: withhold me").execute({})).rejects.toThrow(/^read_attachment: withheld$/);
+    await expect(failing("file not found").execute({})).rejects.toThrow(/^file not found$/);
   });
 });
 
@@ -306,6 +349,27 @@ function adapterWith(sdk: ReturnType<typeof stubSdk>): RealPiAdapter {
     sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
   });
 }
+
+describe("a session whose tool results are guarded", () => {
+  const brief = { goal: "g", projectRoots: [], allowedCapabilityRefs: [] };
+  const guard: NonNullable<WorkerBrief["toolResultGuard"]> = () => ({ withheld: false });
+
+  it("is refused the SDK's own tools, whose results would reach the model past the guard", async () => {
+    const sdk = stubSdk();
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      builtinTools: ["read", "grep"],
+      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+    await expect(adapter.createWorkerSession({ ...brief, toolResultGuard: guard })).rejects.toThrow(
+      /guarded cannot run the SDK's own tools \(read, grep\)/,
+    );
+    expect(sdk.sessions).toHaveLength(0);
+    // Without a guard the adapter's opt-in still stands, as the SDK probe uses it.
+    await adapter.createWorkerSession(brief);
+    expect(sdk.sessions[0]?.tools).toEqual(["read", "grep"]);
+  });
+});
 
 describe("the fake records what it was told", () => {
   it("the fake records the prompt it was given", async () => {
@@ -636,6 +700,37 @@ describe("a brief confined to its approved project roots", () => {
     expect(inside?.content[0]?.text).not.toContain("the caller's tool answered");
     expect(outside?.content[0]?.text).toMatch(/^refused: /);
     expect(outside?.content[0]?.text).not.toContain("not for the worker");
+  });
+
+  it("passes what the scoped tools read through the brief's result guard before the model sees it", async () => {
+    // Assembled from parts so no scanner sees a credential in the repository.
+    const credential = ["ghp", "_", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"].join("");
+    writeFileSync(join(root, "deploy.env"), `GITHUB_TOKEN=${credential}\n`, "utf8");
+    const seen: string[] = [];
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+
+    await adapter.createWorkerSession({
+      goal: "work in the project",
+      projectRoots: [root],
+      allowedCapabilityRefs: [],
+      toolResultGuard: ({ tool, text }) => {
+        seen.push(tool);
+        // A first-party ceiling: the read's header names the file's absolute path, which is itself `confidential`.
+        const check = checkSendBoundary({ allowed: ["public", "internal", "confidential"], texts: [text] });
+        return check.ok ? { withheld: false } : { withheld: true, text: `${tool} returned ${check.dataClass} data, withheld` };
+      },
+    });
+
+    const read = sdk.sessions[0]?.customTools?.find((custom) => custom.name === "clarkcant_read");
+    const carrying = await read?.execute?.("call-1", { path: join(root, "deploy.env") });
+    const plain = await read?.execute?.("call-2", { path: join(root, "notes.md") });
+
+    // The real scoped read ran and found the credential; the model is handed only the guard's sentence.
+    expect(carrying?.content).toEqual([{ type: "text", text: "clarkcant_read returned secret data, withheld" }]);
+    expect(JSON.stringify(carrying)).not.toContain(credential);
+    expect(plain?.content[0]?.text).toContain("inside the approved root");
+    expect(seen).toEqual(["clarkcant_read", "clarkcant_read"]);
   });
 
   it("refuses a brief that declares confinement with no approved root", async () => {

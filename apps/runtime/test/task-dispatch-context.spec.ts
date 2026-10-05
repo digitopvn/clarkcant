@@ -14,6 +14,7 @@ import type { BackgroundFallback } from "../src/model-turn.ts";
 import { BUNDLE_DATA_HEADER, type ContextBundles, createContextBundles } from "../src/context-bundle.ts";
 import { rememberMemory } from "../src/memory.ts";
 import { bootRuntime, type Runtime } from "../src/node.ts";
+import { dataClassUnavailable } from "../src/send-boundary.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
 import { runWorkerProcess, type WorkerProcessOptions, type WorkerProcessResult } from "../src/worker-process.ts";
 
@@ -106,6 +107,8 @@ function emptyResult(): WorkerProcessResult {
 interface Dispatched {
   options: WorkerProcessOptions | undefined;
   settled: boolean;
+  /** What the task settled with: its outcome, message and whether a worker ran. */
+  settledWith: { outcome: string; message: string; ran?: boolean } | undefined;
   bundles: ContextBundles | undefined;
   leaseHeld: boolean;
   launched: unknown[];
@@ -126,6 +129,8 @@ async function dispatch(
     fallback?: BackgroundFallback;
     /** Report the worker process as started, so the host writes its audit row. */
     recordsStart?: boolean;
+    /** The launch refuses, as it does when no model the worker could start on may receive the task. */
+    launchRefuses?: DataClass;
   } = {},
 ): Promise<Dispatched> {
   const { conductor, task } = setup(goal, overrides.origin);
@@ -139,6 +144,7 @@ async function dispatch(
   const bundles = overrides.bundles === false ? undefined : createContextBundles({ db });
   let seen: WorkerProcessOptions | undefined;
   let settled = false;
+  let settledWith: Dispatched["settledWith"];
   const launched: unknown[] = [];
   const allowed = overrides.allowed;
   const dispatcher = createTaskDispatcher({
@@ -153,6 +159,9 @@ async function dispatch(
             available: () => true,
             launch: async (work) => {
               launched.push(work);
+              if (overrides.launchRefuses !== undefined) {
+                throw dataClassUnavailable({ dataClass: overrides.launchRefuses, model: "acme/narrow", message: "not sent" });
+              }
               return {
                 model: { provider: "acme", id: "narrow" },
                 via: "configured" as const,
@@ -181,8 +190,9 @@ async function dispatch(
             return bundles;
           },
         }),
-    onSettled: () => {
+    onSettled: ({ outcome, message, ran }) => {
       settled = true;
+      settledWith = { outcome, message, ...(ran === undefined ? {} : { ran }) };
     },
     runWorker: async (options) => {
       seen = options;
@@ -197,7 +207,7 @@ async function dispatch(
   const leaseHeld = db.prepare("SELECT COUNT(*) AS n FROM leases WHERE holder_task_id = ? AND released_at IS NULL").get(task.taskId) as {
     n: number;
   };
-  return { options: seen, settled, bundles, leaseHeld: leaseHeld.n > 0, launched };
+  return { options: seen, settled, settledWith, bundles, leaseHeld: leaseHeld.n > 0, launched };
 }
 
 async function dispatchOnce(goal: string, overrides: { owner?: boolean; bundles?: boolean } = {}): Promise<WorkerProcessOptions> {
@@ -261,19 +271,42 @@ describe("a dispatched task's context", () => {
     }
   });
 
-  it("routes by the goal's data class, and is narrowed to what the launched model may receive", async () => {
+  it("routes by the goal's data class, and starts no worker on a model that may not receive the goal", async () => {
     const goal = `${GOAL}, gửi kết quả cho duy@example.com`;
-    const narrowed = await dispatch(goal, { allowed: ["public"] });
-    expect(narrowed.launched).toEqual([{ dataClass: "confidential" }]);
-    // The note is internal and this model may receive only public data: no reader, no count, nothing retrieved shown.
-    expect(narrowed.options?.brief.contextItems).toBeUndefined();
-    expect(narrowed.options?.onContext).toBeUndefined();
+    const refused = await dispatch(goal, { allowed: ["public"] });
+    expect(refused.launched).toEqual([{ dataClass: "confidential" }]);
+    // The goal is above what the launched model may receive: refused before a worker exists, the lease let go.
+    expect(refused.options).toBeUndefined();
+    expect(refused.leaseHeld).toBe(false);
+    expect(refused.settledWith?.message).toContain("MODEL_DATA_CLASS_UNAVAILABLE");
+    expect(refused.settledWith?.message).toContain("acme/narrow");
     runtime?.close();
     runtime = undefined;
 
     const wide = await dispatch(GOAL, { allowed: ["public", "internal"] });
     expect(wide.launched).toEqual([{ dataClass: "internal" }]);
     expect(wide.options?.brief.contextItems).toBe(1);
+    // The worker is told its model's ceiling, so it can check what its own tools return.
+    expect(wide.options?.brief.allowedDataClasses).toEqual(["public", "internal"]);
+  });
+
+  it("is refused, with what to change and an audit row naming only the class and the model, when no model may receive it", async () => {
+    const goal = `${GOAL}, gửi kết quả cho duy@example.com`;
+    const outcome = await dispatch(goal, { allowed: ["public", "internal"], launchRefuses: "confidential" });
+    expect(outcome.options).toBeUndefined();
+    expect(outcome.leaseHeld).toBe(false);
+    expect(outcome.settledWith?.ran).toBe(false);
+    expect(outcome.settledWith?.message).toContain("refused: MODEL_DATA_CLASS_UNAVAILABLE: the task carries confidential data");
+    expect(outcome.settledWith?.message).toContain("nothing was sent to a model and the worker was never started");
+    expect(outcome.settledWith?.message).toContain("Settings → AI & Routing");
+    const rows = runtime?.db.prepare("SELECT summary, outcome FROM audit_log WHERE kind = 'model'").all() as {
+      summary: string;
+      outcome: string;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.outcome).toBe("refused");
+    expect(rows[0]?.summary).toContain("not sent to acme/narrow (MODEL_DATA_CLASS_UNAVAILABLE: confidential data above its ceiling)");
+    expect(rows[0]?.summary).not.toContain("duy@example.com");
   });
 
   it("records on the audit trail why its model is the node's own when routing fell back", async () => {

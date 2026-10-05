@@ -62,6 +62,19 @@ test("a command is found after a slash and answered in the conversation with a c
   await expect(page.locator('.cc-row[data-role="user"]', { hasText: "/sessions" })).toHaveCount(0);
 });
 
+test("Enter sends a command typed in full, even with the list showing it", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await page.keyboard.type("/sessions");
+  // The list is up and its row is the command already typed: there is nothing left for Enter to complete.
+  await expect(page.locator('[data-reference-option="sessions"]')).toBeVisible();
+
+  await page.keyboard.press("Enter");
+  await expect(lastCard(page, "sessions")).toBeVisible({ timeout: 20_000 });
+  await expect(composer).toHaveValue("");
+});
+
 test("the thinking level is chosen from the card the command answers with", async ({ page }) => {
   await openApp(page);
   await send(page, "/thinking");

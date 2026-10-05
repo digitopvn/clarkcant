@@ -38,6 +38,15 @@ describe("the model reply card", () => {
     expect(card).toMatchObject({ title: "Trả lời bằng model" });
     expect(JSON.stringify(card)).not.toContain("Model đã chọn");
   });
+
+  it("says what was left out for its data class after who answered, and not on a stopped reply", () => {
+    const withheldNote = "Withheld from deepseek/deepseek-v4-flash for their data class: AGENTS.md (confidential).";
+    const detail = String((modelReplyCard(deps, { ...reply, withheldNote }, AT) as { detail?: string }).detail);
+    expect(detail.startsWith("Câu trả lời này do model sinh ra.")).toBe(true);
+    expect(detail.endsWith(withheldNote)).toBe(true);
+    const stopped = modelReplyCard(deps, { ...reply, withheldNote, stopped: true }, AT);
+    expect(JSON.stringify(stopped)).not.toContain("AGENTS.md");
+  });
 });
 
 /** Any letter only Vietnamese writes: a host-written English card must contain none of them. */

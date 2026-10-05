@@ -1,4 +1,5 @@
 import type { Instant } from "@clarkcant/contracts";
+import type { ContextGuard } from "./context-guard-overrides.ts";
 
 /**
  * The Pi seam.
@@ -76,7 +77,28 @@ export interface WorkerBrief {
   model?: { provider: string; id: string };
   /** The thinking level the person chose, for the same reason; absent keeps the adapter's configured level. */
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * What the model reads of a tool result, decided by the host: applied by the adapter to every tool it hands the
+   * session — the scoped filesystem tools it binds itself included — and to a failed call's message, after the tool ran
+   * and before the model reads anything of it. Absent sends results as they are.
+   */
+  toolResultGuard?: ToolResultGuard;
+  /**
+   * What the session's resource loader may take from the machine into its prompt — context files (`AGENTS.md`,
+   * `CLAUDE.md`), a `SYSTEM.md`/`APPEND_SYSTEM.md`, skills (description and body) and prompt templates — decided by the
+   * host for this session's model (`context-guard-overrides.ts`). A session with a guard gets a loader of its own built
+   * with it, so a file is left out only for a model that may not receive it, and a `/skill:` message it is prompted or
+   * steered with is checked again on the skill's file as it is when the message is sent. Absent loads everything the SDK
+   * finds. An isolated adapter loads none of these in the first place.
+   */
+  contextGuard?: ContextGuard;
 }
+
+/**
+ * The host's say over a tool result on its way to the model. `withheld` replaces the whole result with `text`: nothing
+ * else the call returned, an image included, is sent.
+ */
+export type ToolResultGuard = (input: { tool: string; text: string }) => { withheld: false } | { withheld: true; text: string };
 
 export interface WorkerSessionHandle {
   sessionId: string;

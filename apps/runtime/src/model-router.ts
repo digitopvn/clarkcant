@@ -19,6 +19,10 @@ import {
  * and a fallback that always exists.** Every filter below is a fact the node can check, so the policy layer is only
  * ever asked to choose among models that can actually run — and when it cannot be reached, a worker still starts.
  * Routing that could fail a task is worse than routing that is occasionally unambitious.
+ *
+ * The one exception is the data class: availability may fall back, trust may not. A profile that may not be sent the
+ * work is not a candidate, and the model a fallback lands on is held to the send boundary before anything is sent to it
+ * (`send-boundary.ts`), so `confidential` or `secret` work no eligible model may receive does not start.
  */
 
 export interface ModelCandidate {
@@ -62,6 +66,15 @@ export interface FilterOutcome {
   eligible: ModelCandidate[];
   /** Every profile that was left out, with the reason — so a panel can say why the pool is not being used. */
   rejected: { alias: string; reason: string }[];
+}
+
+/**
+ * Whether routing offers a profile work of this class: its list names the class. Stricter than the send boundary, which
+ * refuses only `confidential` and `secret` — routing prefers a model whose list names even `internal`, and a fallback
+ * that lands elsewhere is then held to the boundary. No class is work nothing has labelled, which any profile may take.
+ */
+export function profileMayReceive(profile: UserModelProfile, dataClass: DataClass | undefined): boolean {
+  return dataClass === undefined || allowedDataClassesFor(profile).includes(dataClass);
 }
 
 function candidateFor(profile: UserModelProfile): ModelCandidate {
@@ -108,7 +121,7 @@ function filterByCapability(
       rejected.push({ alias: profile.alias, reason: `không nhận vai trò ${role}` });
       continue;
     }
-    if (input.dataClass !== undefined && !allowedDataClassesFor(profile).includes(input.dataClass)) {
+    if (!profileMayReceive(profile, input.dataClass)) {
       rejected.push({ alias: profile.alias, reason: `không được nhận dữ liệu mức ${input.dataClass}` });
       continue;
     }

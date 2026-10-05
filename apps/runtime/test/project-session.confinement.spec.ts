@@ -95,6 +95,32 @@ describe("a project session is confined to the approved project roots", () => {
     expect(outside.text).not.toContain(SIBLING_TEXT.trim());
   });
 
+  it("holds what the session's tools read to its model's ceiling, through a tool call", async () => {
+    // Assembled from parts, so a secret scanner reading this file sees no credential.
+    await writeFile(join(project, "deploy.env"), `DB_PASSWORD="${["hunter", "22x"].join("")}"\n`, "utf8");
+    const session = async (allowed: readonly ("public" | "internal" | "confidential" | "secret")[]) => {
+      const adapter = new RecordingAdapter();
+      const seen: { provider: string; id: string }[] = [];
+      const starter = createProjectSessionStarter({
+        sessionDir: join(base, "sessions"),
+        model: { provider: "acme", id: "narrow" },
+        allowedDataClasses: (model) => {
+          seen.push(model);
+          return allowed;
+        },
+        createAdapter: () => adapter,
+      });
+      const handle = await starter.start({ goal: "deploy", projectRoots: [project] });
+      expect(seen).toEqual([{ provider: "acme", id: "narrow" }]);
+      expect(adapter.briefs[0]?.contextGuard).toBeTypeOf("function");
+      return await adapter.callTool(handle.sessionId, "clarkcant_read", { path: join(project, "deploy.env") });
+    };
+    const narrow = await session(["public", "internal", "confidential"]);
+    expect(narrow).toContain("carries secret data");
+    expect(narrow).not.toContain(["hunter", "22x"].join(""));
+    expect(await session(["public", "internal", "confidential", "secret"])).toContain(["hunter", "22x"].join(""));
+  });
+
   it("hands the session every approved root, canonicalised, not just the first", async () => {
     const adapter = new RecordingAdapter();
     const cwds: string[] = [];

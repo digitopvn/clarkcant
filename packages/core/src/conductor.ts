@@ -16,6 +16,7 @@ import {
   type TurnOrigin,
   type WidgetDefinition,
   type WidgetPerformRequest,
+  ContractViolation,
   assertBlockProvenance,
   attachmentRefSchema,
   isTerminal,
@@ -348,6 +349,12 @@ export interface ModelTurnReply {
    * can say so instead of the person discovering it.
    */
   fallback?: { from: string; reason: string };
+  /**
+   * Present when something the answering model's session would have been given — a context file, a `SYSTEM.md`, a
+   * skill, the person's own instructions — was left out for its data class: one sentence, in the person's language,
+   * naming each by file name and class only. Said once per session, on the first reply after it was left out.
+   */
+  withheldNote?: string;
 }
 
 /**
@@ -954,6 +961,9 @@ async function runModelTurn(
     // A throw is turned into a message. The user has already been told their message was
     // accepted, so failing silently here would leave the conversation claiming something is
     // coming when nothing is.
+    // A typed refusal keeps its code on the card and its own sentence as the detail (a message that was never sent to a
+    // model because of its data class says so); anything else is a failed model turn.
+    const typed = cause instanceof ContractViolation ? cause.contract : undefined;
     const message = appendAssistant(
       deps,
       input.conversationId,
@@ -965,8 +975,8 @@ async function runModelTurn(
           subject: "connection",
           title: say.modelFailed.title,
           status: "blocked",
-          detail: cause instanceof Error ? cause.message : String(cause),
-          fields: [{ label: say.modelFailed.kindLabel, value: "model-turn-failed" }],
+          detail: typed?.message ?? (cause instanceof Error ? cause.message : String(cause)),
+          fields: [{ label: say.modelFailed.kindLabel, value: typed?.code ?? "model-turn-failed" }],
           cancellable: false,
           updatedAt: input.at,
         },
@@ -1033,11 +1043,13 @@ export function modelReplyCard(
     title: reply.stopped === true ? say.stoppedTitle : fallback !== undefined ? say.fallbackTitle : say.answeredTitle,
     status: "done",
     detail:
-      reply.stopped === true
+      (reply.stopped === true
         ? (reply.stoppedDetail ?? say.stoppedDetail)
         : fallback !== undefined
           ? say.fallbackDetail(fallback.from, fallback.reason, `${reply.provider}/${reply.model}`)
-          : say.answeredDetail,
+          : say.answeredDetail) +
+      // What the model was not given for its data class, said after what answered, on the same card.
+      (reply.stopped !== true && reply.withheldNote !== undefined ? ` ${reply.withheldNote}` : ""),
     fields: [
       ...(reply.stopped === true ? [{ label: say.endedLabel, value: say.endedValue }] : []),
       ...(fallback === undefined ? [] : [{ label: say.chosenModelLabel, value: fallback.from }]),
