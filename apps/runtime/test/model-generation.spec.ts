@@ -985,15 +985,17 @@ describe("a changed model the session can keep", () => {
     expect(adapter.promptsFor("fake-session-2").join("\n")).not.toContain("duy@example.com");
   });
 
-  it("lets a move that a Stop left behind finish before the next message touches the session", async () => {
+  it("lets go of a session whose move a Stop ended, and answers the next message on a new one", async () => {
     const adapter = new CountingAdapter({ script: ["ok", "ok"] });
     adapter.inPlace = true;
+    const disposed = vi.spyOn(adapter, "dispose");
     let preferred = FIRST;
     const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
     if (turn === undefined) throw new Error("the model turn was not built");
     await say(turn, "một", "msg_1");
 
     preferred = OTHER;
+    // A move Pi never finishes, as when the new model's account check hangs.
     const slow = gate();
     adapter.holdSwitch = slow.promise;
     const stopped = say(turn, "hai", "msg_2");
@@ -1001,19 +1003,41 @@ describe("a changed model the session can keep", () => {
     expect(turn.interrupt(CONVERSATION)).toBe(true);
     expect((await stopped).stopped).toBe(true);
 
-    // Back to the first choice while Pi is still moving the session to the other.
+    // Back to the first choice while Pi is still moving the session: the conversation is not held by that move.
     preferred = FIRST;
-    const reply = say(turn, "ba", "msg_3");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    // Nothing is sent to a session whose model is not settled.
-    expect(adapter.promptsFor("fake-session-1")).toHaveLength(1);
-
-    slow.open();
-    const answered = await reply;
-    // The first move landed, so the session is moved back before it answers, and the reply names the model that did.
-    expect(adapter.modelSwitches.map((move) => move.selection.model)).toEqual([OTHER, FIRST]);
+    const answered = await say(turn, "ba", "msg_3");
     expect(`${answered.provider}/${answered.model}`).toBe("fake/fake-model");
+    // Nothing more was sent to the session whose model is not settled, and it was not moved or handed off again.
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(1);
+    expect(adapter.switchesAsked).toBe(1);
     expect(adapter.handoffs).toHaveLength(0);
+    expect(disposed).not.toHaveBeenCalledWith("fake-session-1");
+
+    // Once Pi is done with it, the session is let go.
+    slow.open();
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledWith("fake-session-1"));
+  });
+
+  it("starts a successor when the session's own model is allowed less than what the session was sent", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    let firstMay: readonly DataClass[] = ["public", "internal", "confidential"];
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => FIRST,
+      allowedDataClasses: () => firstMay,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "gửi cho duy@example.com giúp tôi", "msg_1");
+    firstMay = ["public", "internal"];
+    await say(turn, "xong chưa", "msg_2");
+
+    // The same model, but the session holds an address it may no longer be sent: the transcript is not sent again.
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2").join("\n")).not.toContain("duy@example.com");
   });
 
   it("starts a successor after the provider refused a run of the session", async () => {

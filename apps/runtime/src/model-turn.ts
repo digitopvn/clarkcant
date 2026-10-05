@@ -1581,6 +1581,12 @@ export async function createModelTurn(options: {
    * The conversation's turn, with a session that runs the model the person chose. `setup` aborts when a Stop or the
    * setup's time limit ends the wait: a session created after that is let go rather than adopted.
    */
+  /** Whether everything this session was ever allowed is still within the ceiling of the model it runs. */
+  const holdsOnlyWhatItsModelMay = (turn: Turn): boolean => {
+    const may = ceilingOf(turn.withheld.runs).allowed;
+    return [...turn.withheld.ceiling].every((dataClass) => may.includes(dataClass));
+  };
+
   async function turnFor(conversationId: string, principal: Principal, setup: AbortSignal): Promise<Turn> {
     // A move to another model that an ended setup left behind finishes first: until it has, which model the session
     // runs, and so what it may be sent, is not settled.
@@ -1601,7 +1607,9 @@ export async function createModelTurn(options: {
       existing !== undefined &&
       modelChangeNeedsGeneration({ currentModel: generationModels.get(conversationId), preferredModel }) === "none" &&
       (generationThinking.get(conversationId) ?? "") === (chosenThinking() ?? "") &&
-      !existing.unsure
+      !existing.unsure &&
+      // A model allowed less than it was when this session was sent something gets a successor, as a narrower model would.
+      holdsOnlyWhatItsModelMay(existing)
     ) {
       return existing;
     }
@@ -1874,10 +1882,35 @@ export async function createModelTurn(options: {
         ![...record.left].some((dataClass) => wanted.allowed.includes(dataClass));
       if (keeps) {
         /*
-         * One piece, and marked on the turn while it runs: a Stop ends the wait for it, not the move, and a message
-         * sent next must not move or prompt a session Pi is still moving. What the session runs and may hold is
-         * recorded before anything waiting on it goes on, whether or not this setup is still wanted.
+         * Marked on the turn while it runs: a message sent next must not move or prompt a session Pi is still moving.
+         * What the session runs and may hold is recorded before anything waiting on it goes on.
+         *
+         * A Stop, or the setup's time limit, cannot end a move: Pi offers no way to. It ends the wait instead and
+         * lets the turn go, so the conversation is not held by a move that never finishes — a slow check of the new
+         * model's account, say. The next message starts a session of its own, told what the conversation holds, and
+         * this one is disposed once Pi is done with it.
          */
+        let release: () => void = () => undefined;
+        const marker = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const unmark = (): void => {
+          if (existing.switching === marker) existing.switching = undefined;
+          release();
+        };
+        let retired = false;
+        const retire = (): void => {
+          retired = true;
+          if (turns.get(conversationId) === existing) {
+            turns.delete(conversationId);
+            generationModels.delete(conversationId);
+            generationThinking.delete(conversationId);
+            existing.unsubscribe();
+          }
+          unmark();
+        };
+        existing.switching = marker;
+        setup.addEventListener("abort", retire, { once: true });
         const move = (async (): Promise<boolean> => {
           try {
             await adapter.switchModel(existing.sessionId, {
@@ -1890,7 +1923,8 @@ export async function createModelTurn(options: {
             if (cause instanceof ModelSwitchUnsureError) existing.unsure = true;
             return false;
           } finally {
-            existing.switching = undefined;
+            setup.removeEventListener("abort", retire);
+            if (retired) void disposeSession(existing.sessionId).catch(() => undefined);
           }
           record.runs = preferred;
           for (const dataClass of wanted.allowed) record.ceiling.add(dataClass);
@@ -1899,9 +1933,9 @@ export async function createModelTurn(options: {
             generationThinking.set(conversationId, thinking ?? "");
           }
           return true;
-        })();
-        existing.switching = move.then(() => undefined);
+        })().finally(unmark);
         const moved = await move;
+        if (setup.aborted) throw new SetupStopped("stopped while switching model");
         // Idle eviction may have let this turn go while Pi checked the new model's account.
         if (turns.get(conversationId) !== existing) return await turnFor(conversationId, principal, setup);
         if (moved) return existing;

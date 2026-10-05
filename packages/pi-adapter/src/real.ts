@@ -852,7 +852,8 @@ export class RealPiAdapter implements PiAdapter {
     between();
     const resolved =
       selection.model === undefined ? undefined : (await this.#resolveModel(await this.#load(), selection.model)).model;
-    // Again after the wait: a run may have started while the model was being looked up.
+    // Again after the wait: a run may have started while the model was being looked up. Pi still checks the model's
+    // account before it changes the session, and across that wait it is the caller that keeps runs and steers away.
     between();
     const before = session.model;
     try {
