@@ -148,6 +148,10 @@ export function diffRuleset(config, ruleset) {
   if (!Array.isArray(include) || !include.some((ref) => ref === "~DEFAULT_BRANCH" || ref === "refs/heads/main")) {
     drift.push("ruleset does not target the default branch (conditions.ref_name.include lacks ~DEFAULT_BRANCH)");
   }
+  const exclude = ruleset?.conditions?.ref_name?.exclude ?? [];
+  if (!Array.isArray(exclude) || exclude.length > 0) {
+    drift.push(`ruleset excludes branches (conditions.ref_name.exclude is ${JSON.stringify(exclude)}), expected none`);
+  }
 
   const { rule, error } = statusRule(ruleset);
   if (error) return [...drift, error];
@@ -157,6 +161,7 @@ export function diffRuleset(config, ruleset) {
   }
 
   const live = new Map();
+  if (parameters.do_not_enforce_on_create === true) drift.push("do_not_enforce_on_create: ruleset true, expected false");
   for (const check of parameters.required_status_checks ?? []) {
     if (live.has(check.context)) drift.push(`ruleset requires "${check.context}" more than once`);
     live.set(check.context, check.integration_id);

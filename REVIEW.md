@@ -180,14 +180,18 @@ The merge gate is `.github/required-checks.json`, enforced by the
   file lists it as non-gating with a reason (none today);
 - `review attestation` must pass: a status set by
   `.github/workflows/review-attestation.yml` when the newest attestation by a
-  writer is `ready` for the exact head; docs/plans-only PRs (the prose allowlist
-  in `tools/ci-test-scope.mjs`) pass without one;
+  writer is `ready` for the exact head; PRs that change only Markdown under
+  `docs/` and `plans/` pass without one (`AGENTS.md`, `DESIGN.md`, `README.md`
+  and this file are rules, and are reviewed like code);
 - strict: the PR must be up to date with `main`, so checks ran on the combined
   tree. Use `gh pr update-branch <pr>` (or the button), then re-attest the new
   head;
 - a check counts only on the head SHA it ran on; cancelled is never passing;
 - force-push and deletion of `main` are blocked; admins may bypass only for
   direct docs/plans commits, never to merge a PR with red or pending checks.
+  The drift check cannot read bypass actors with its read-only token, so a
+  change to them is not detected automatically; review them whenever the
+  ruleset is edited.
 
 No human approval is required; an agent's attestation counts the same.
 

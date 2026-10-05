@@ -163,6 +163,17 @@ describe("diffRuleset", () => {
   });
 });
 
+describe("diffRuleset on quieter ways to switch the gate off", () => {
+  it("reports an excluded branch and checks that are not enforced when a branch is created", () => {
+    const live = ruleset({ conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: ["refs/heads/main"] } } });
+    (live.rules[1] as { parameters: Record<string, unknown> }).parameters["do_not_enforce_on_create"] = true;
+    expect(diffRuleset(config(), live)).toEqual([
+      'ruleset excludes branches (conditions.ref_name.exclude is ["refs/heads/main"]), expected none',
+      "do_not_enforce_on_create: ruleset true, expected false",
+    ]);
+  });
+});
+
 describe("rulesetPayload", () => {
   it("replaces only the required-checks rule and keeps every other rule, condition and bypass actor", () => {
     const live = ruleset({ node_id: "x", _links: {}, current_user_can_bypass: "always" }, ["lint"], false);

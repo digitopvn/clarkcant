@@ -9,8 +9,9 @@
  * The gate (`.github/workflows/review-attestation.yml`, through `tools/evaluate-review-attestation.mjs`) sets the
  * `review attestation` commit status on the PR's current head from this module's decision:
  *
- * - a PR that changes only documentation and plans (the prose allowlist in `tools/ci-test-scope.mjs`) passes with
- *   no attestation;
+ * - a PR that changes only Markdown under `docs/` and `plans/` passes with no attestation. That is narrower than the
+ *   prose allowlist that lets CI skip runtime tests: `AGENTS.md`, `DESIGN.md`, `README.md` and `REVIEW.md` are the
+ *   rules agents and reviewers work by, so a change to them is reviewed like code;
  * - otherwise only markers in comments by accounts with write access count — anyone else's comment, edited or not,
  *   is ignored;
  * - the newest counted marker (by comment creation time) decides: `ready` for the exact current head passes,
@@ -31,6 +32,12 @@ const REVIEWER = /^(?:agent|human):[A-Za-z0-9][A-Za-z0-9._@/+-]{0,63}$/u;
 const MARKER = new RegExp(`<!--\\s*${MARKER_NAME}\\s+(\\S+)\\s+([\\s\\S]*?)\\s*-->`, "gu");
 const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 const DESCRIPTION_LIMIT = 140;
+const UNREVIEWED_PROSE = /^(?:docs|plans)\/.+\.md$/u;
+
+/** Whether every changed path is prose that may merge without a review. An odd path or an empty list never is. */
+function isProseOnly(changedFiles) {
+  return classifyPaths(changedFiles).full === false && changedFiles.every((path) => UNREVIEWED_PROSE.test(path));
+}
 
 /** Whether a repository permission name allows writing (and so attesting). */
 export function canAttest(permission) {
@@ -119,7 +126,7 @@ function describe(text) {
 export function evaluateAttestations({ headSha, changedFiles, comments, isWriter }) {
   if (typeof headSha !== "string" || !SHA.test(headSha)) throw new Error("headSha must be a full lowercase commit SHA");
 
-  if (Array.isArray(changedFiles) && classifyPaths(changedFiles).full === false) {
+  if (Array.isArray(changedFiles) && isProseOnly(changedFiles)) {
     return {
       state: "success",
       description: describe("Documentation and plans only: no code review attestation is required for this change"),

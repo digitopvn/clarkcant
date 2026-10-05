@@ -30,7 +30,7 @@ permissions: {}
 # everything, so the last status written always reflects the latest event.
 concurrency:
   group: >-
-    review-attestation-${{ github.event.pull_request.number || github.event.issue.number || 'all' }}
+    review-attestation-${{ github.event.pull_request.number || github.event.issue.number || inputs.pull_request || 'all' }}
   cancel-in-progress: false
 
 jobs:

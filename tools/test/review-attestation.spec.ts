@@ -80,7 +80,7 @@ describe("evaluateAttestations", () => {
   });
 
   it("passes a documentation and plans only change without an attestation", () => {
-    const result = decide([], ["docs/guide.md", "plans/x/plan.md", "README.md"]);
+    const result = decide([], ["docs/guide.md", "plans/x/plan.md"]);
     expect(result.state).toBe("success");
     expect(result.description).toMatch(/^Documentation and plans only/u);
   });
@@ -88,6 +88,8 @@ describe("evaluateAttestations", () => {
   it.each([
     ["a code path", ["docs/guide.md", "tools/x.mjs"]],
     ["REVIEW.md, which is policy rather than prose", ["REVIEW.md"]],
+    ["AGENTS.md, the rules every agent works by", ["docs/guide.md", "AGENTS.md"]],
+    ["the docs manifest, which is not prose", ["docs/manifest.json"]],
     ["an unavailable file list", null],
     ["an empty file list", []],
   ])("requires an attestation for %s", (_label, files) => {
@@ -140,17 +142,25 @@ describe("pullRequestsForEvent", () => {
 });
 
 describe("evaluatePullRequest", () => {
-  function fakeGitHub({ files, comments, permissions, state = "open" }: {
+  function fakeGitHub({ files, comments, permissions, state = "open", base = "main", headAfter = HEAD }: {
     files: { filename: string, previous_filename?: string }[],
     comments: { id: number, user: { login: string }, created_at: string, body: string, html_url: string }[],
     permissions: Record<string, string>,
     state?: string,
+    base?: string,
+    /** The head a second read of the PR returns, for a push that lands while it is being evaluated. */
+    headAfter?: string,
   }) {
+    let reads = 0;
     const statuses: { sha: string, body: Record<string, unknown> }[] = [];
     const permissionLookups: string[] = [];
     const client = {
       async request(method: string, path: string, body?: unknown): Promise<unknown> {
-        if (method === "GET" && path === "/repos/o/r/pulls/9") return { state, head: { sha: HEAD.toUpperCase() }, changed_files: files.length };
+        if (method === "GET" && path === "/repos/o/r/pulls/9") {
+          reads += 1;
+          const sha = reads === 1 ? HEAD.toUpperCase() : headAfter;
+          return { state, head: { sha }, base: { ref: base, repo: { default_branch: "main" } }, changed_files: files.length };
+        }
         const login = /^\/repos\/o\/r\/collaborators\/(.+)\/permission$/u.exec(path)?.[1];
         if (method === "GET" && login !== undefined) {
           permissionLookups.push(login);
@@ -162,9 +172,9 @@ describe("evaluatePullRequest", () => {
         if (method === "POST" && sha !== undefined && body) { statuses.push({ sha, body: body as Record<string, unknown> }); return {}; }
         throw new Error(`unexpected ${method} ${path}`);
       },
-      async paginate(path: string): Promise<unknown[]> {
+      async paginate(path: string, options?: { limit?: number }): Promise<unknown[]> {
         if (path === "/repos/o/r/pulls/9/files") return files;
-        if (path === "/repos/o/r/issues/9/comments") return comments;
+        if (path === "/repos/o/r/issues/9/comments") return comments.slice(0, options?.limit);
         throw new Error(`unexpected list ${path}`);
       },
     };
@@ -193,6 +203,25 @@ describe("evaluatePullRequest", () => {
   it("classifies both sides of a rename, so moving code into docs still needs a review", async () => {
     const github = fakeGitHub({ files: [{ filename: "docs/moved.md", previous_filename: "tools/moved.mjs" }], comments: [], permissions: {} });
     expect((await evaluatePullRequest({ client: github.client, repository: "o/r", number: 9 }))?.state).toBe("pending");
+  });
+
+  it("sets nothing for a PR into another branch, whose diff is not what a PR of the same head into main changes", async () => {
+    const github = fakeGitHub({ files: [{ filename: "docs/only.md" }], comments: [], permissions: {}, base: "feat/unreviewed" });
+    expect(await evaluatePullRequest({ client: github.client, repository: "o/r", number: 9 })).toBeNull();
+    expect(github.statuses).toEqual([]);
+  });
+
+  it("sets nothing when a push lands while the PR is being read", async () => {
+    const github = fakeGitHub({ files: [{ filename: "docs/only.md" }], comments: [], permissions: {}, headAfter: OLD });
+    await expect(evaluatePullRequest({ client: github.client, repository: "o/r", number: 9 })).rejects.toThrow(/changed while/u);
+    expect(github.statuses).toEqual([]);
+  });
+
+  it("refuses to decide from a comment list that was cut short", async () => {
+    const many = Array.from({ length: 10001 }, (_, index) => apiComment(index + 1, "chatty", "a plain comment"));
+    const github = fakeGitHub({ files: [{ filename: "tools/x.mjs" }], comments: many, permissions: {} });
+    await expect(evaluatePullRequest({ client: github.client, repository: "o/r", number: 9 })).rejects.toThrow(/comments/u);
+    expect(github.statuses).toEqual([]);
   });
 
   it("leaves a closed PR alone", async () => {

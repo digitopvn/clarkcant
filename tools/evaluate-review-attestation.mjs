@@ -23,6 +23,7 @@ import { REVIEW_ATTESTATION_CONTEXT, canAttest, evaluateAttestations, parseAttes
 
 /** GitHub lists at most this many files for one PR; a larger PR is never treated as documentation-only. */
 const PR_FILES_LIMIT = 3000;
+const COMMENTS_LIMIT = 10000;
 
 /**
  * The PR numbers an event asks to evaluate. `null` means every open PR.
@@ -49,13 +50,20 @@ export function pullRequestsForEvent(eventName, payload, requested) {
 }
 
 /**
- * Evaluate one PR and set its status. Returns what was decided, or null for a closed PR.
+ * Evaluate one PR and set its status. Returns what was decided, or null for a PR that is closed or does not target
+ * the default branch.
+ *
+ * A status belongs to a commit, not to a PR, so every PR with the same head shows it. A PR into another branch has a
+ * different diff for the same head — documentation only, say, on top of an unreviewed branch — and must not decide
+ * what a PR of that head into the default branch shows. Only the default branch is gated, so such a PR is left alone.
  *
  * @param {{client: ReturnType<typeof createGitHubClient>, repository: string, number: number, runUrl?: string}} input
  */
 export async function evaluatePullRequest({ client, repository, number, runUrl }) {
   const pull = await client.request("GET", `/repos/${repository}/pulls/${number}`);
   if (pull.state !== "open") return null;
+  const defaultBranch = pull.base?.repo?.default_branch;
+  if (typeof defaultBranch !== "string" || pull.base?.ref !== defaultBranch) return null;
   const headSha = String(pull.head?.sha ?? "").toLowerCase();
 
   const files = await client.paginate(`/repos/${repository}/pulls/${number}/files`, { limit: PR_FILES_LIMIT });
@@ -63,7 +71,9 @@ export async function evaluatePullRequest({ client, repository, number, runUrl }
   // A rename lists its new path; its old path is the other half of the change and must be classified too.
   const changedFiles = complete ? files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)) : null;
 
-  const rawComments = await client.paginate(`/repos/${repository}/issues/${number}/comments`, { limit: 10000 });
+  const rawComments = await client.paginate(`/repos/${repository}/issues/${number}/comments`, { limit: COMMENTS_LIMIT });
+  // The newest attestation decides, so a list cut short could let an older `ready` outlive a later refusal.
+  if (rawComments.length >= COMMENTS_LIMIT) throw new Error(`more than ${COMMENTS_LIMIT} comments; the newest attestation cannot be found reliably`);
   const comments = rawComments.map((comment) => ({
     id: comment.id,
     author: comment.user?.login ?? "",
@@ -77,6 +87,12 @@ export async function evaluatePullRequest({ client, repository, number, runUrl }
   for (const comment of comments) {
     if (comment.author === "" || permissions.has(comment.author) || parseAttestation(comment.body).kind === "none") continue;
     permissions.set(comment.author, await permissionOf(client, repository, comment.author));
+  }
+
+  // The file list and comments were read after the head: a push in between would pair this head with another's files.
+  const current = await client.request("GET", `/repos/${repository}/pulls/${number}`);
+  if (String(current.head?.sha ?? "").toLowerCase() !== headSha || current.base?.ref !== pull.base.ref) {
+    throw new Error("the PR changed while it was being evaluated; the event for that change evaluates it again");
   }
 
   const decision = evaluateAttestations({
@@ -135,7 +151,7 @@ export async function main(env, deps = {}) {
     try {
       const result = await evaluatePullRequest({ client, repository, number, runUrl });
       log(result === null
-        ? `#${number}: not open, left as it is\n`
+        ? `#${number}: closed or not into the default branch, left as it is\n`
         : `#${number} ${result.headSha.slice(0, 7)}: ${result.state} — ${result.description}\n`);
     } catch (error) {
       failures += 1;
