@@ -492,13 +492,14 @@ export class FakePiAdapter implements PiAdapter {
    *
    * `callTool` answers with the text, which is what most tests want. This one exists because a tool that
    * read a picture also returns the picture, and a test that only ever sees the text cannot tell that apart
-   * from a tool that described the picture instead of handing it over.
+   * from a tool that described the picture instead of handing it over, nor see the structured value a
+   * program calling the tool would receive.
    */
   async callToolResult(
     sessionId: string,
     toolName: string,
     params: Record<string, unknown>,
-  ): Promise<{ text: string; image?: { mimeType: string; dataBase64: string } }> {
+  ): Promise<Awaited<ReturnType<ToolDefinition["execute"]>>> {
     const session = this.#require(sessionId);
     if (!session.activeTools.includes(toolName)) {
       throw new Error(`tool ${toolName} is not active on ${sessionId}`);

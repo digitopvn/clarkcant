@@ -114,6 +114,86 @@ describe("a tool result that carries an image", () => {
   });
 });
 
+describe("a tool result that carries a structured value", () => {
+  type CapturedConfig = {
+    outputSchema?: unknown;
+    execute?: (id: string, params: Record<string, unknown>) => Promise<{ content: unknown[]; structuredContent?: unknown }>;
+  };
+
+  function capture(tool: ToolDefinition): CapturedConfig {
+    const captured: CapturedConfig = {};
+    const sdk = {
+      defineTool: (config: unknown): unknown => {
+        Object.assign(captured, config as CapturedConfig);
+        return config;
+      },
+    };
+    toSdkTool(sdk as never, tool);
+    return captured;
+  }
+
+  const outputSchema = { type: "object", properties: { celsius: { type: "number" } } };
+  const forecast = (structuredContent: Record<string, never> | { [key: string]: string | number }): ToolDefinition => ({
+    name: "forecast",
+    label: "forecast",
+    description: "returns a forecast",
+    parameters: { type: "object", additionalProperties: false, properties: {} },
+    outputSchema,
+    execute: async () => ({ text: "31 °C in Hà Nội", structuredContent }),
+  });
+
+  const withhold: NonNullable<WorkerBrief["toolResultGuard"]> = ({ tool, text }) =>
+    text.includes("withhold me") ? { withheld: true, text: `${tool}: withheld` } : { withheld: false };
+
+  it("hands the SDK the output schema and the structured value beside the text", async () => {
+    const captured = capture(forecast({ city: "Hà Nội", celsius: 31 }));
+    expect(captured.outputSchema).toEqual(outputSchema);
+    const result = await captured.execute?.("call-1", {});
+    expect(result?.content).toEqual([{ type: "text", text: "31 °C in Hà Nội" }]);
+    expect(result?.structuredContent).toEqual({ city: "Hà Nội", celsius: 31 });
+  });
+
+  it("declares no output schema and returns no structured value for a tool that has neither", async () => {
+    const captured = capture({ ...forecast({}), outputSchema: undefined, execute: async () => ({ text: "plain" }) } as never);
+    expect(captured).not.toHaveProperty("outputSchema");
+    const result = await captured.execute?.("call-1", {});
+    expect(result).not.toHaveProperty("structuredContent");
+  });
+
+  it("withholds the whole result when only the structured value carries what the guard refuses", async () => {
+    const seen: string[] = [];
+    const guard: NonNullable<WorkerBrief["toolResultGuard"]> = (input) => {
+      seen.push(input.text);
+      return withhold(input);
+    };
+    const captured = capture(guardToolResult(forecast({ note: "withhold me" }), guard));
+    const result = await captured.execute?.("call-1", {});
+    expect(seen).toEqual(['31 °C in Hà Nội\n{"note":"withhold me"}']);
+    expect(result?.content).toEqual([{ type: "text", text: "forecast: withheld" }]);
+    // Without dropping it, the refused value would still reach a script the model runs.
+    expect(result).not.toHaveProperty("structuredContent");
+  });
+
+  it("keeps the structured value when the guard lets the result through", async () => {
+    const captured = capture(guardToolResult(forecast({ celsius: 31 }), withhold));
+    const result = await captured.execute?.("call-1", {});
+    expect(result?.structuredContent).toEqual({ celsius: 31 });
+  });
+
+  it("drops a structured value that cannot be written as JSON and classifies the text alone", async () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    const seen: string[] = [];
+    const tool = guardToolResult({ ...forecast({}), execute: async () => ({ text: "31 °C", structuredContent: cyclic as never }) }, (input) => {
+      seen.push(input.text);
+      return { withheld: false };
+    });
+    const result = await tool.execute({});
+    expect(seen).toEqual(["31 °C"]);
+    expect(result).toEqual({ text: "31 °C" });
+  });
+});
+
 describe("fake adapter used by CI and E2E", () => {
   it("runs a scripted turn and emits the same event shapes as the real adapter", async () => {
     const adapter = new FakePiAdapter({ script: ["the fixture file contains three records"] });

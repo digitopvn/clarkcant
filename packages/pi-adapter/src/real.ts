@@ -67,11 +67,15 @@ export function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
     description: tool.description,
     parameters: tool.parameters as never,
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+    // Same reason as `parameters`: a plain JSON Schema where the declaration expects a TypeBox one.
+    ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema as never }),
     execute: async (_toolCallId: string, params: Record<string, unknown>) => {
       const result = await tool.execute(params);
       // A tool that read a picture returns the picture. The SDK's content union has an image member, and
       // flattening it to the sentence beside it would tell the model that a picture exists while hiding what
       // is in it. The sentence stays, so a transcript still says which file the picture came from.
+      // A structured value goes to the SDK as `structuredContent`, which it gives to a program calling the tool and
+      // never to the model; the model reads the text.
       return {
         content: [
           { type: "text" as const, text: result.text },
@@ -80,6 +84,7 @@ export function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
             : [{ type: "image" as const, data: result.image.dataBase64, mimeType: result.image.mimeType }]),
         ],
         details: {},
+        ...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
       };
     },
   }) as unknown as SdkTool;
