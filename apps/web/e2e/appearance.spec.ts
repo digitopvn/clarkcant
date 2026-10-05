@@ -243,7 +243,9 @@ test("on a narrow window the transcript starts at the composer's edge, not a gut
   await expect(reply.locator("[data-host-card]")).toBeVisible({ timeout: 20_000 });
   const row = await reply.boundingBox();
   const composer = await page.locator(".cc-composer").boundingBox();
-  // A scrollbar gutter reserved on both edges used to add 15px on each side of the timeline's own inset. A few pixels\n  // are the composer's ring and the row's arrival, not a gutter.\n  expect(Math.abs((row?.x ?? 0) - (composer?.x ?? 100))).toBeLessThanOrEqual(4);
+  // A scrollbar gutter reserved on both edges used to add 15px on each side of the timeline's own inset. A few pixels
+  // are the composer's ring and the row's arrival, not a gutter.
+  expect(Math.abs((row?.x ?? 0) - (composer?.x ?? 100))).toBeLessThanOrEqual(4);
 });
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
   // This is a measurement, not a style assertion: the orb's position is computed from the box it
