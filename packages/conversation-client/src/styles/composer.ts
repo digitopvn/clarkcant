@@ -305,6 +305,7 @@ div.cc-attachment { flex-wrap: wrap; }
 .cc-model-note-summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
 .cc-model-note-meta { color: var(--cc-text-tertiary); font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-meta); }
 .cc-model-note-body { padding: var(--cc-space-xs) 0 0 var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-model-note[data-fallback="true"] > .cc-model-note-summary > span:first-of-type { color: var(--cc-warning); }
 
 .cc-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); font-size: var(--cc-text-label); }
 .cc-changes li { display: flex; gap: var(--cc-space-sm); align-items: baseline; }

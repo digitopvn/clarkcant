@@ -356,6 +356,13 @@ Provider + model is one control group:
 - toast/status "Switched to …";
 - the conversation command "switch to Claude/Gemini/…" does the same action.
 
+When the chosen model's provider refuses a turn (a stated error, nothing written), Clark answers the same message on the
+next usable model — an enabled, credentialed pool profile, else the model the node's environment names — instead of
+leaving the person with an error. It is never silent: the line under the reply reads "answered by a fallback model" in a
+warning tone and names the chosen model and why it did not answer. The choice in Settings is not rewritten; the refusing
+model is passed over for a few minutes and then tried again. When every model tried refuses, the failure names each one
+with its reason, says the message is kept, and what to do next.
+
 ### 5.3 Policy setup
 
 Do not block onboarding with a permission questionnaire.

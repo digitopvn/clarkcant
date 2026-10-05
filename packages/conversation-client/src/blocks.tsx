@@ -324,6 +324,9 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
       (value): value is string => value !== undefined,
     );
     const rest = fields.filter((field) => !["Provider", "Model", "Thời gian"].includes(String(field.label)));
+    // Answered by a fallback rather than the model the person chose: the one line says so in a warning tone, because a
+    // different model answering is a fact the person should notice without opening anything.
+    const fellBack = valueOf("Model đã chọn") !== undefined;
     return (
       <details
         className="cc-model-note"
@@ -332,6 +335,7 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
         data-subject={subject}
         data-status={status}
         data-model-note="true"
+        {...(fellBack ? { "data-fallback": "true" } : {})}
       >
         <summary className="cc-model-note-summary">
           <span>{title}</span>
