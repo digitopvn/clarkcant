@@ -1,0 +1,33 @@
+{
+  "name": "@clarkcant/media-converter",
+  "version": "1.0.0",
+  "description": "Media Converter: a ClarkCant widget and service that render a WAV clip you pick with a gain change and a trim, as a job you can follow and stop.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "clarkcant",
+    "clarkcant-widget",
+    "clarkcant-service"
+  ],
+  "homepage": "https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/media-render",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/digitopvn/clarkcant.git",
+    "directory": "examples/reference-apps/media-render"
+  },
+  "bugs": {
+    "url": "https://github.com/digitopvn/clarkcant/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "clarkcant.json",
+    "widgets/",
+    "service/",
+    "fixtures/compact.json",
+    "fixtures/default.json",
+    "fixtures/empty.json",
+    "fixtures/error.json"
+  ]
+}

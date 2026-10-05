@@ -87,23 +87,27 @@ async function openOverview(page: Page): Promise<void> {
  * that use it then failed for a reason that had nothing to do with the code they were testing, and CI had passed
  * earlier the same day because it ran before the boundary.
  *
- * Today at 09:00 in the event's own timezone is inside the week that contains today at every hour of every day.
+ * Today at 09:00 is inside the week that contains today at every hour of every day, but only when "today" and "the
+ * week" are read in the same timezone. The node reads the week in its own display timezone, which is the timezone of
+ * the process the suite starts on this machine, so the event is placed in that timezone too. Pinning it to
+ * Asia/Saigon failed on a UTC runner every Sunday from 17:00 UTC, when Saigon is already in the next week.
  */
-function eventTodayAtNine(): { startsAt: string; endsAt: string } {
-  const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Saigon" }).format(new Date());
-  return { startsAt: `${localToday}T09:00:00+07:00`, endsAt: `${localToday}T10:00:00+07:00` };
+function eventTodayAtNine(): { startsAt: string; endsAt: string; timezone: string } {
+  const startsAt = new Date();
+  startsAt.setHours(9, 0, 0, 0);
+  const endsAt = new Date(startsAt);
+  endsAt.setHours(10, 0, 0, 0);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  return { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), timezone };
 }
 
 test("renders a composed overview whose figures come from the node's own records", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
 
   // A calendar event through the production API, on a day inside the current week.
-  const { startsAt, endsAt } = eventTodayAtNine();
   const created = await api<{ event: { eventId: string; date: string; title: string } }>("POST", "/calendar/events", {
     title: "Họp kế hoạch tuần",
-    startsAt,
-    endsAt,
-    timezone: "Asia/Saigon",
+    ...eventTodayAtNine(),
   });
 
   // And an imported image, through the production upload route, because the sketch has a picture

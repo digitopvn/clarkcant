@@ -12,6 +12,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
     "build": "pnpm --filter @clarkcant/app-web run build",
+    "build:widget-tooling": "node tools/build-widget-tooling.mjs --pack",
+    "smoke:widget-tooling": "node tools/smoke-widget-tooling.mjs",
     "clean": "rm -rf apps/*/dist packages/*/dist packs/*/dist examples/*/dist coverage",
     "lint": "eslint .",
     "test": "vitest run",
@@ -37,6 +39,7 @@
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.63.0",
     "@types/node": "^24.10.1",
+    "esbuild": "0.28.2",
     "eslint": "10.10.0",
     "tsx": "4.23.13",
     "typescript": "5.9.3",

@@ -3,10 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import type { Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import react from "@vitejs/plugin-react";
-import { createServer, type ServerOptions } from "vite";
-
-import type { ViteDevServer } from "vite";
+import type { ServerOptions, ViteDevServer } from "vite";
 
 const cacheDirectories = new WeakMap<ViteDevServer, string>();
 
@@ -31,6 +28,11 @@ export async function createDevModuleServer(
     ...sharedServer,
     cors: opaqueFrame,
   };
+  /*
+   * Loaded here rather than at the top of the module: only the dev hosts need Vite, so `--help`, `init`, `test` and
+   * `pack` neither pay for loading it nor fail when it cannot load.
+   */
+  const [{ createServer }, { default: react }] = await Promise.all([import("vite"), import("@vitejs/plugin-react")]);
   const cacheDir = options.isolatedCache === true ? await mkdtemp(join(tmpdir(), "clarkcant-widget-vite-")) : undefined;
   try {
     const vite = await createServer({

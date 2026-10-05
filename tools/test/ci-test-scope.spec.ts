@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { classifyPaths } from "../ci-test-scope.mjs";
+import { classifyPaths, touchesWidgetTooling } from "../ci-test-scope.mjs";
 
 const directories: string[] = [];
 const script = fileURLToPath(new URL("../ci-test-scope.mjs", import.meta.url));
@@ -52,7 +52,7 @@ describe("conservative documentation scope", () => {
     const repo = repository();
     writeFileSync(join(repo.cwd, "docs", "guide with spaces.md"), "guide\n");
     repo.commit();
-    expect(repo.run()).toBe("existing=value\nfull=false\n");
+    expect(repo.run()).toBe("existing=value\nfull=false\nwidget_tooling=false\n");
   });
   it("retains both sides of a source-to-documentation rename", () => {
     const repo = repository();
@@ -70,7 +70,41 @@ describe("conservative documentation scope", () => {
   it("keeps empty diffs and missing or invalid bases full", () => {
     const repo = repository();
     for (const base of [repo.base, "", "0".repeat(40), "f".repeat(40), "--help"]) {
-      expect(repo.run(base)).toContain("full=true\n");
+      expect(repo.run(base)).toContain("full=true\nwidget_tooling=true\n");
     }
+  });
+});
+
+describe("widget tooling smoke scope", () => {
+  it.each([
+    ["packages/widget-cli/src/cli.ts"],
+    ["packages/contracts/src/index.ts"],
+    ["examples/reference-apps/text-editor/clarkcant.json"],
+    ["tools/build-widget-tooling.mjs"],
+    ["tools/test/build-widget-tooling.spec.ts"],
+    ["pnpm-lock.yaml"],
+    [".github/workflows/release-widget-tooling.yml"],
+    ["docs/a.md", "packages/widget-sdk/src/dom.ts"],
+  ].map((paths) => ({ paths })))("runs the smoke for $paths", ({ paths }) => {
+    expect(touchesWidgetTooling(paths)).toBe(true);
+  });
+
+  it.each([[["apps/desktop/src/main.ts"]], [["docs/widget-development.md"]], [["packages/package-registry/src/index.ts"]], [["tools/check-invariants.mjs"]]])(
+    "skips the smoke for %j",
+    (paths) => {
+      expect(touchesWidgetTooling(paths)).toBe(false);
+    },
+  );
+
+  it("runs the smoke when the diff is empty or unreadable", () => {
+    expect(touchesWidgetTooling([])).toBe(true);
+    expect(touchesWidgetTooling(undefined)).toBe(true);
+  });
+
+  it("writes whether a real commit touches the tooling", () => {
+    const repo = repository();
+    writeFileSync(join(repo.cwd, "source.ts"), "export const value = 2;\n");
+    repo.commit();
+    expect(repo.run()).toBe("existing=value\nfull=true\nwidget_tooling=false\n");
   });
 });
