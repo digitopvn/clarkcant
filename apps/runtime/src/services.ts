@@ -39,6 +39,8 @@ import {
 import { bindingAvailability } from "./application/action-bindings.ts";
 import { withCalendarViewBinding } from "./calendar-binding.ts";
 import { loadLocalEmbedder } from "./embeddings-local.ts";
+import { readModelPool } from "./model-registry.ts";
+import { allowedDataClassesForModel } from "./model-router.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import type { SkillCatalog } from "./composer-references.ts";
 import type { ServiceHost } from "./service-host.ts";
@@ -681,6 +683,9 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
       : { model: { provider: options.model.provider, id: options.model.id } }),
     ...(process.env.CC_PI_AGENT_DIR === undefined ? {} : { agentDir: process.env.CC_PI_AGENT_DIR }),
     ...(options.projectSessionAdapter === undefined ? {} : { createAdapter: options.projectSessionAdapter }),
+    // What the session's model may be sent, read from the pool when the session starts.
+    allowedDataClasses: (model) =>
+      allowedDataClassesForModel(readModelPool(runtime.db, runtime.identity.ownerPrincipalId), model),
     onSessionFile: ({ sessionId, sessionFile }) => {
       registerSessionFile(sessions, {
         sessionId,

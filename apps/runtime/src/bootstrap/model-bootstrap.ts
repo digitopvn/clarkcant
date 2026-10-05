@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { allowedDataClassesFor, type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
+import { type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
 import { directoryIndexPath, readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -25,7 +25,13 @@ import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
 import { readCurrentAlias, readModelPool } from "../model-registry.ts";
-import { allowedDataClassesForModel, filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
+import {
+  allowedDataClassesForModel,
+  filterBackgroundCandidates,
+  profileMayReceive,
+  routeBackgroundModel,
+  toolCallsIn,
+} from "../model-router.ts";
 import { type BackgroundRoute, type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-turn.ts";
 import type { Runtime } from "../node.ts";
 import { createNodeTools, type CommandToolDeps } from "../node-tools.ts";
@@ -183,10 +189,12 @@ export function nodeConditionalInstructions(env: NodeJS.ProcessEnv, services: No
  *
  * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
  * tool needs — and only then the policy layer, which may choose among what survived. When nothing is eligible, or
- * when the policy layer cannot be reached, the worker runs what the node is configured with: routing must never be the
- * reason a job does not start. This returns nothing then, or the reason when it was the work's data class that left
- * nothing eligible. A configured model the catalogue states cannot call
- * tools is then refused by the dispatcher before its worker starts, rather than here.
+ * when the policy layer cannot be reached, the caller falls back to what the node is configured with: an unavailable
+ * route is never by itself the reason a job does not start. This returns nothing then, or the reason when it was the
+ * work's data class that left nothing eligible. The fallback is for availability only: the configured model is held to
+ * the same data-class check before anything is sent to it (`ModelTurn.workerModel`, `runInBackground`), and work it may
+ * not receive does not start. A configured model the catalogue states cannot call tools is refused by the dispatcher
+ * before its worker starts, rather than here.
  */
 export async function routeNodeBackgroundModel(
   services: NodeServices,
@@ -216,8 +224,9 @@ export async function routeNodeBackgroundModel(
     ...(work.dataClass === undefined ? {} : { dataClass: work.dataClass }),
   });
 
-  // Nothing in the pool may be sent this work's class, so it falls back to the configured model: said once on stderr, by
-  // class and count only, and answered as the reason, so a dispatched task's audit record says why too.
+  // Nothing in the pool may be sent this work's class: said once on stderr, by class and count only, and answered as the
+  // reason. The caller then tries the configured model, which runs the work only if it may receive it, and a dispatched
+  // task's audit record says why either way.
   const refusedForClass = filtered.rejected.filter((entry) => entry.reason.startsWith("không được nhận dữ liệu mức")).length;
   if (filtered.eligible.length === 0 && refusedForClass > 0 && work.dataClass !== undefined) {
     process.stderr.write(
@@ -242,9 +251,7 @@ export async function routeNodeBackgroundModel(
       const latest = readModelPool(services.runtime.db, owner);
       return latest.profiles.some(
         (profile) =>
-          profile.alias === alias &&
-          profile.enabled &&
-          (work.dataClass === undefined || allowedDataClassesFor(profile).includes(work.dataClass)),
+          profile.alias === alias && profile.enabled && profileMayReceive(profile, work.dataClass),
       );
     },
   });
@@ -289,9 +296,9 @@ export async function nodeFallbackModels(
 }
 
 /**
- * The node's route, with a failure answered as a fallback rather than thrown: the work runs on the configured model,
- * the same as when nothing is eligible, and the failure is said once on stderr — that it failed, never what with — the
- * same way the data-class fallback is. The services are asked for inside the same guard, so a node that cannot give them
+ * The node's route, with a failure answered as a fallback rather than thrown: the work goes to the configured model,
+ * the same as when nothing is eligible — and, the same as then, only if that model may receive it — and the failure is
+ * said once on stderr — that it failed, never what with — the same way the data-class fallback is. The services are asked for inside the same guard, so a node that cannot give them
  * yet still says so.
  */
 export async function routeOrFallBack(

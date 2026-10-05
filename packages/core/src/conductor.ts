@@ -15,6 +15,7 @@ import {
   type TurnOrigin,
   type WidgetDefinition,
   type WidgetPerformRequest,
+  ContractViolation,
   assertBlockProvenance,
   attachmentRefSchema,
   isTerminal,
@@ -333,6 +334,12 @@ export interface ModelTurnReply {
    * can say so instead of the person discovering it.
    */
   fallback?: { from: string; reason: string };
+  /**
+   * Present when something the answering model's session would have been given — a context file, a `SYSTEM.md`, a
+   * skill, the person's own instructions — was left out for its data class: one sentence, in the person's language,
+   * naming each by file name and class only. Said once per session, on the first reply after it was left out.
+   */
+  withheldNote?: string;
 }
 
 /**
@@ -936,6 +943,9 @@ async function runModelTurn(
     // A throw is turned into a message. The user has already been told their message was
     // accepted, so failing silently here would leave the conversation claiming something is
     // coming when nothing is.
+    // A typed refusal keeps its code on the card and its own sentence as the detail (a message that was never sent to a
+    // model because of its data class says so); anything else is a failed model turn.
+    const typed = cause instanceof ContractViolation ? cause.contract : undefined;
     const message = appendAssistant(
       deps,
       input.conversationId,
@@ -947,8 +957,8 @@ async function runModelTurn(
           subject: "connection",
           title: "Không gọi được model",
           status: "blocked",
-          detail: cause instanceof Error ? cause.message : String(cause),
-          fields: [{ label: "Loại lỗi", value: "model-turn-failed" }],
+          detail: typed?.message ?? (cause instanceof Error ? cause.message : String(cause)),
+          fields: [{ label: "Loại lỗi", value: typed?.code ?? "model-turn-failed" }],
           cancellable: false,
           updatedAt: input.at,
         },
@@ -1008,13 +1018,15 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
     title: reply.stopped === true ? "Đã dừng theo yêu cầu" : fallback !== undefined ? "Trả lời bằng model dự phòng" : "Trả lời bằng model",
     status: "done",
     detail:
-      reply.stopped === true
+      (reply.stopped === true
         ? (reply.stoppedDetail ??
           "Bạn đã dừng lượt trả lời này. Phần ở trên là những gì model đã viết trước khi dừng; sau đó không có thêm chữ hay công cụ nào chạy.")
         : fallback !== undefined
           ? `${fallback.from} không trả lời được (${fallback.reason}), nên ${reply.provider}/${reply.model} đã trả lời thay. ` +
             "Lựa chọn của bạn trong Cài đặt vẫn giữ nguyên; Clark sẽ thử lại model đó sau ít phút."
-          : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
+          : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.") +
+      // What the model was not given for its data class, said after what answered, on the same card.
+      (reply.stopped !== true && reply.withheldNote !== undefined ? ` ${reply.withheldNote}` : ""),
     fields: [
       ...(reply.stopped === true ? [{ label: "Kết thúc", value: "dừng theo yêu cầu" }] : []),
       ...(fallback === undefined ? [] : [{ label: "Model đã chọn", value: fallback.from }]),

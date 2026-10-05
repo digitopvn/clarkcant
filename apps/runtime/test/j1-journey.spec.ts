@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { QUICK_PLAY_RECIPES } from "@clarkcant/data-canvas/sample";
-import { instantSchema, nodeIdSchema, principalIdSchema, type MessageRecord } from "@clarkcant/contracts";
+import {
+  ContractViolation,
+  contractError,
+  instantSchema,
+  nodeIdSchema,
+  principalIdSchema,
+  type MessageRecord,
+} from "@clarkcant/contracts";
 import { createConversation, getConversation, migrate, openDatabase, oneRow } from "@clarkcant/storage";
 import { handleUserMessage, registerCapability, runDispatchedTask } from "@clarkcant/core";
 
@@ -447,6 +454,35 @@ describe("a catch-all recipe never displaces a configured model", () => {
     const card = blocksOf(outcome.messages).find((block) => block.type === "system-card");
     if (card?.type !== "system-card") throw new Error("a failed turn must record a host card");
     expect(card.detail).toContain("provider is unreachable");
+    expect(card.fields).toEqual([{ label: "Loại lỗi", value: "model-turn-failed" }]);
+  });
+
+  it("records a turn not sent for its data class under its code, with the sentence the person reads", async () => {
+    const withModel = {
+      ...build(),
+      respondWithModel: async () => {
+        throw new ContractViolation(
+          contractError("MODEL_DATA_CLASS_UNAVAILABLE", "policy", "Tin nhắn này có dữ liệu mức secret; không có gì được gửi tới model.", {
+            dataClass: "secret",
+            model: "acme/cloud",
+            sent: false,
+          }),
+        );
+      },
+    };
+
+    const outcome = await handleUserMessage(withModel, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: askAboutAnything,
+      at: AT,
+    });
+
+    expect(outcome.resolution).toBe("model-failed");
+    const card = blocksOf(outcome.messages).find((block) => block.type === "system-card");
+    if (card?.type !== "system-card") throw new Error("a turn that was not sent must record a host card");
+    expect(card.detail).toBe("Tin nhắn này có dữ liệu mức secret; không có gì được gửi tới model.");
+    expect(card.fields).toEqual([{ label: "Loại lỗi", value: "MODEL_DATA_CLASS_UNAVAILABLE" }]);
   });
 
   it("writes no reply for a message steered into the turn already running", async () => {

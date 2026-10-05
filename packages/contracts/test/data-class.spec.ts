@@ -2,12 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_ALLOWED_DATA_CLASSES,
+  ENFORCED_DATA_CLASSES,
+  MODEL_DATA_CLASS_UNAVAILABLE,
   allowedDataClassesFor,
+  checkSendBoundary,
+  contractError,
   dataClassOfText,
+  dataClassesOfText,
   estimateTokens,
   intersectDataClasses,
   maxDataClass,
+  outboundDataClasses,
   redactSecrets,
+  retryabilityOf,
   userModelProfileSchema,
 } from "../src/index.ts";
 
@@ -56,6 +63,89 @@ describe("the class of a text", () => {
     expect(dataClassOfText(`token: ${GITHUB_PAT}`)).toBe("secret");
     expect(dataClassOfText(`key=${GOOGLE_KEY}`)).toBe("secret");
     expect(dataClassOfText(`DATABASE_URL=${DB_URL}`)).toBe("secret");
+  });
+
+  it("is not secret for an obvious placeholder in a credential's place", () => {
+    const placeholders = [
+      'API_KEY="your_api_key"',
+      'DB_PASSWORD="example"',
+      'password: "changeme"',
+      "Authorization: Bearer YOURTOKENHERE",
+      "client_secret = 'xxxxxxxxxxxx'",
+      'password: "********"',
+      "api_key=INSERT_KEY",
+      "token: <your-token>",
+      `${["postgres://clark", "password@db"].join(":")}`,
+    ];
+    for (const text of placeholders) expect(dataClassOfText(text), text).toBe("internal");
+  });
+
+  it("is still secret for a real-shaped value in the same places", () => {
+    const values = [
+      // Assembled, so a scanner reading this file does not take a test value for a real key.
+      `API_KEY="${["a8f3k29d", "k3l0qpz7"].join("")}"`,
+      'DB_PASSWORD="example2024!"',
+      'password: "hunter22x"',
+      // No digit, but not a stand-in either.
+      'password: "correcthorsebattery"',
+      `Authorization: Bearer ${["abcdefgh", "ijklmnop"].join("")}`,
+      `Authorization: Bearer ${["your9token", "8value7x"].join("")}`,
+      `client_secret = '${["xxxxxxxx", "1xxxx"].join("")}'`,
+      `${["postgres://clark", "s3cretPass@db"].join(":")}`,
+    ];
+    for (const text of values) expect(dataClassOfText(text), text).toBe("secret");
+  });
+
+  it("is secret for an HTTP Basic header whose user name or password is written with accents", () => {
+    const basic = (pair: string): string => `Authorization: Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(pair)))}`;
+    expect(dataClassOfText(basic(["admin", "mậtkhẩu123"].join(":")))).toBe("secret");
+    expect(dataClassOfText(basic(["jürgen", "pässwort1"].join(":")))).toBe("secret");
+    // Bytes that are not text are no user name and password.
+    expect(dataClassOfText(`Authorization: Basic ${btoa(String.fromCharCode(0xff, 0xfe, 0x3a, 0x00, 0x01, 0x80))}`)).toBe("internal");
+  });
+
+  it("is secret for an HTTP Basic header and a SendGrid key", () => {
+    // "aladdin:opensesame"
+    expect(dataClassOfText(`Authorization: Basic ${["YWxhZGRpbjpv", "cGVuc2VzYW1l"].join("")}`)).toBe("secret");
+    expect(dataClassOfText(`curl -H "authorization: basic ${["dXNlcjpzM2Ny", "ZXQ="].join("")}"`)).toBe("secret");
+    const sendgrid = ["SG", "aB3dE5gH7jK9mN1pQ3sT5v", "x7Z9b1D3f5H7j9L1n3P5r7T9v1X3z5B7d9F1h3J5l7N"].join(".");
+    expect(dataClassOfText(`SENDGRID=${sendgrid}`)).toBe("secret");
+    expect(redactSecrets(`key ${sendgrid} end`)).toBe("key [redacted] end");
+    // "Basic" as a word, a header with no credential in it, or a SendGrid-like name of the wrong length is not.
+    expect(dataClassOfText("Basic information about the project")).toBe("internal");
+    expect(dataClassOfText("Authorization: Basic realm")).toBe("internal");
+    expect(dataClassOfText(`Authorization: Basic ${["bm90IGEgcGFp", "cg=="].join("")}`)).toBe("internal");
+    expect(dataClassOfText("SG.short.value")).toBe("internal");
+  });
+
+  it("is secret for a Basic header whose either side is a real value", () => {
+    const basic = (decoded: string): string => `Authorization: Basic ${btoa(decoded)}`;
+    // A key sent as the user with an empty password, and a one-letter password.
+    expect(dataClassOfText(basic(["k3yAsUser", "Name9x:"].join("")))).toBe("secret");
+    expect(dataClassOfText(basic(["someone", "X"].join(":")))).toBe("secret");
+    // Both sides placeholders, or nothing at all, is no credential.
+    expect(dataClassOfText(basic(["example", "changeme"].join(":")))).toBe("internal");
+    expect(dataClassOfText(basic(["", "xxxxxxxx"].join(":")))).toBe("internal");
+  });
+
+  it("takes a mask for a placeholder only when it is at least four characters long", () => {
+    expect(dataClassOfText('password: "****"')).toBe("internal");
+    expect(dataClassOfText(`Authorization: Basic ${btoa("  :xxxx")}`)).toBe("internal");
+    expect(dataClassOfText(`Authorization: Basic ${btoa("  :xxx")}`)).toBe("secret");
+  });
+
+  it("does not take a value that only starts by addressing the reader for a placeholder", () => {
+    expect(dataClassOfText('password = "YourMomsMaidenNameIsSecret"')).toBe("secret");
+    expect(dataClassOfText('password = "insert_your_password_here"')).toBe("internal");
+    expect(dataClassOfText('API_KEY="replace-api-key"')).toBe("internal");
+  });
+
+  it("does not read a URL's placeholder password and host as an email address", () => {
+    expect(dataClassOfText(["postgres://app", "password@db.example.com/app"].join(":"))).toBe("internal");
+    // An address elsewhere in the same text still is one.
+    expect(dataClassOfText(`${["postgres://app", "password@db.example.com/app"].join(":")} owner duy@example.com`)).toBe(
+      "confidential",
+    );
   });
 
   it("is not secret for ordinary code", () => {
@@ -145,5 +235,61 @@ describe("helpers", () => {
   it("estimates four characters a token", () => {
     expect(estimateTokens("")).toBe(0);
     expect(estimateTokens("abcde")).toBe(2);
+  });
+});
+
+describe("the send boundary", () => {
+  it("takes the class of every part separately, skipping empty ones, with known classes added", () => {
+    expect(outboundDataClasses({ texts: ["xin chào", undefined, "  ", "gửi cho duy@example.com"] })).toEqual([
+      "internal",
+      "confidential",
+    ]);
+    expect(outboundDataClasses({ texts: [], classes: ["public"] })).toEqual(["public"]);
+    expect(outboundDataClasses({})).toEqual([]);
+  });
+
+  it("finds every class one text carries, not only its most sensitive", () => {
+    const both = "password: hunter22x, gửi cho duy@example.com";
+    expect(dataClassesOfText(both)).toEqual(["internal", "confidential", "secret"]);
+    expect(dataClassOfText(both)).toBe("secret");
+    expect(dataClassesOfText("xin chào")).toEqual(["internal"]);
+    expect(outboundDataClasses({ texts: [both] })).toEqual(["internal", "confidential", "secret"]);
+  });
+
+  it("lets a request go when every class it carries is allowed, and names the class that stops it when not", () => {
+    expect(checkSendBoundary({ allowed: DEFAULT_ALLOWED_DATA_CLASSES, texts: ["gửi cho duy@example.com"] })).toEqual({
+      ok: true,
+      dataClass: "confidential",
+    });
+    expect(checkSendBoundary({ allowed: DEFAULT_ALLOWED_DATA_CLASSES, texts: ["xin chào", "password: hunter22x"] })).toEqual({
+      ok: false,
+      code: MODEL_DATA_CLASS_UNAVAILABLE,
+      dataClass: "secret",
+      allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+    });
+    // Nothing to send is nothing to stop.
+    expect(checkSendBoundary({ allowed: ["public"], texts: ["", undefined] }).ok).toBe(true);
+  });
+
+  it("checks each class present against an explicit list, not only the most sensitive", () => {
+    // A list that names secret but not confidential does not admit a request carrying confidential data.
+    const check = checkSendBoundary({ allowed: ["public", "internal", "secret"], texts: ["duy@example.com", "password: hunter22x"] });
+    expect(check).toMatchObject({ ok: false, dataClass: "confidential" });
+    expect(checkSendBoundary({ allowed: ["public"], classes: ["confidential"] })).toMatchObject({ ok: false, dataClass: "confidential" });
+  });
+
+  it("never refuses a send for public or internal data, which only steer routing and narrowing", () => {
+    expect(ENFORCED_DATA_CLASSES).toEqual(["confidential", "secret"]);
+    expect(checkSendBoundary({ allowed: ["public"], texts: ["hi"] })).toEqual({ ok: true, dataClass: "internal" });
+    expect(checkSendBoundary({ allowed: [], classes: ["public", "internal"] }).ok).toBe(true);
+    expect(checkSendBoundary({ allowed: ["public"], texts: ["hi", "duy@example.com"] })).toMatchObject({ ok: false, dataClass: "confidential" });
+  });
+
+  it("is a policy refusal a person can act on", () => {
+    expect(retryabilityOf(MODEL_DATA_CLASS_UNAVAILABLE)).toBe("after-user-action");
+    expect(contractError(MODEL_DATA_CLASS_UNAVAILABLE, "policy", "not sent")).toMatchObject({
+      code: MODEL_DATA_CLASS_UNAVAILABLE,
+      retryability: "after-user-action",
+    });
   });
 });
