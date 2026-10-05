@@ -489,19 +489,21 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
     `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
     version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có
-    (`readDirectoryIndex`, cùng resolver dùng khi cài — không viết resolver thứ hai), và so version SDK Pi
-    (`sdkVersion()`, `packages/pi-adapter`) với npm registry qua `fetch` có timeout. Directory thường liệt kê nhiều
+    (`readDirectoryIndex`, cùng resolver dùng khi cài — không viết resolver thứ hai). Pi SDK không được kiểm tra: nó
+    được pin chính xác trong `packages/pi-adapter` và đóng gói cùng ClarkCant, nên hộp thư không có gì để làm với một
+    bản mới hơn; mỗi lượt kiểm tra rút (bằng thao tác bỏ thông báo thông thường) mọi thông báo `update:pi:` mà node đã
+    ghi trước đó. Directory thường liệt kê nhiều
     version của cùng một gói: mọi entry của gói đó được lọc qua đúng preflight mà installer chạy (`entryFitsHost`
     cho host API/platform, cộng digest không rỗng), rồi version cao nhất còn lại thắng — không bao giờ báo một bản
     mà lệnh cài sẽ từ chối. So version là semver chặt: một phía không parse được thì không coi là mới hơn, prerelease
-    so theo từng identifier, và một bản cài stable không bao giờ được mời lên prerelease; version npm trả về cũng
-    phải qua `semverSchema`. `stop()` huỷ cả fetch đang bay (`AbortController`), nên một lượt bị dừng giữa chừng
-    kết thúc im lặng như khi offline chứ không ghi thông báo sau khi node đã đóng. Lỗi mạng hoặc registry không
-    trả lời **không tạo thông báo lỗi** — im lặng và thử lại ở lượt sau — vì một node offline là trạng thái bình
-    thường, không phải sự cố. `dedupKey` là `update:<npm|git|local>:<packageId>@<newVersion>` (gói/widget) hoặc
-    `update:pi:<tên gói>@<newVersion>` (Pi SDK), nên lượt kiểm tra sau không tạo dòng thứ hai cho cùng version
+    so theo từng identifier, và một bản cài stable không bao giờ được mời lên prerelease. Một lượt chỉ đọc trạng thái
+    cục bộ, nên không gọi mạng và các lượt không chồng lên nhau. `dedupKey` là
+    `update:<npm|git|local>:<packageId>@<newVersion>`, nên lượt kiểm tra sau không tạo dòng thứ hai cho cùng version
     khi dòng cũ còn đó (một thông báo đã bỏ bị dọn sau 30 ngày, và lúc đó cùng version có thể được báo lại); một
-    version mới hơn nữa thì có dòng riêng. Nội dung nói rõ version hiện tại → mới và risk lane
+    version mới hơn nữa thì có dòng riêng, và khi ghi dòng đó, mọi thông báo cập nhật chưa bỏ trước đó của cùng gói
+    (từ bất kỳ nguồn nào) bị rút đi — so theo tiền tố key ấy, nên cả dòng từ trước khi thông báo có
+    subject cũng tính — bằng đúng thao tác bỏ thông báo thông thường, nên các dòng vẫn được giữ trong thời hạn lưu và
+    hộp thư chỉ còn bản mới nhất. Một lượt kiểm tra gặp lại version đã báo thì không rút gì. Nội dung nói rõ version hiện tại → mới và risk lane
     (`trusted-native`/`isolated-ui`/`service`/`declarative`, cùng cách gọi tên với marketplace — AGENTS.md coi việc
     lẫn lộn hai cách gọi là lỗi cần tránh). Hộp thư chưa vẽ nút "Cập nhật": route cập nhật thật đi qua lifecycle
     cài/rollback chưa nối tới thông báo này.

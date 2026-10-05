@@ -4,9 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type ConversationId, DEFAULT_ALLOWED_DATA_CLASSES, type Principal } from "@clarkcant/contracts";
+import { type ConversationId, DEFAULT_ALLOWED_DATA_CLASSES, HOST_WRITTEN_MESSAGE_VERSION, type Instant, type Principal } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
-import { migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { appendMessage, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import { contextWiring } from "../src/bootstrap/context-wiring.ts";
 import { EARLIER_DATA_HEADER, rerankTop } from "../src/context-planner.ts";
@@ -134,6 +134,30 @@ describe("the recap, wired", () => {
     expect(recap.earlier).toContain("SQLite");
     expect(recap.earlier).not.toContain("sk-live");
     expect(recap.text).toContain("[1 tin bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]");
+  });
+
+  it("leaves out the sentence the host wrote to carry on after an approval, and keeps the reply to it", async () => {
+    seedMessage(db, { messageId: "msg_ask", role: "user", text: "cho tui chạy git log", principalId: PRINCIPAL, conversationId: CONVERSATION, createdAt: AT });
+    appendMessage(
+      db,
+      {
+        messageId: "msg_host",
+        conversationId: CONVERSATION,
+        role: "user",
+        blocks: [{ type: "text", format: "markdown", content: "Lệnh đã được duyệt và đã chạy xong.", streaming: false }],
+        authorNodeId: "n1",
+        createdAt: AT as Instant,
+        delivery: "accepted",
+        origin: "person",
+        hostWritten: { kind: "host-continuation", version: HOST_WRITTEN_MESSAGE_VERSION },
+      },
+      2,
+    );
+    seedMessage(db, { messageId: "msg_reply", role: "assistant", text: "Đã đọc log, đi tiếp.", principalId: PRINCIPAL, conversationId: CONVERSATION, createdAt: AT });
+
+    const messages = await wiring().history!(CONVERSATION);
+    // Nobody said it, so the recap never puts it in the person's mouth.
+    expect(messages.map((message) => message.messageId)).toEqual(["msg_ask", "msg_reply"]);
   });
 
   it("offers progressive disclosure only when it is asked for", () => {

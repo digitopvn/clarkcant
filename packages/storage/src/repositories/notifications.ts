@@ -406,20 +406,27 @@ export function dismissNotification(
  * Matched on the start of the dedup key as a range of the dedup index — every key from the prefix up to the first
  * string past all keys that start with it — rather than with `LIKE`, so an id carrying `%` or `_` cannot widen the
  * match and the lookup reads only the family, not the principal's whole inbox. `except` keeps the one notice that
- * still holds.
+ * still holds, compared as stored (bounded to the column's 300 chars, as `recordNotification` stores it).
+ *
+ * `restWithout` keeps a family from reaching into a neighbour whose name only starts like it: a key whose rest after
+ * the prefix contains that text is left alone. `update:npm:foo@` with `restWithout: "@"` takes `update:npm:foo@1.2.0`
+ * but not `update:npm:foo@bar@1.2.0`, which is another package's.
  */
 export function dismissNotificationsByKeyPrefix(
   db: Database,
-  input: { principalId: string; dedupKeyPrefix: string; at: Instant; except?: string },
+  input: { principalId: string; dedupKeyPrefix: string; at: Instant; except?: string; restWithout?: string },
 ): number {
   if (input.dedupKeyPrefix === "") return 0;
   const upper = prefixUpperBound(input.dedupKeyPrefix);
   const range = upper === undefined ? "dedup_key >= ?" : "dedup_key >= ? AND dedup_key < ?";
+  const except = input.except === undefined ? null : input.except.slice(0, 300);
+  const restWithout = input.restWithout === undefined || input.restWithout === "" ? null : input.restWithout;
   const result = db
     .prepare(
       `UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?)
         WHERE principal_id = ? AND ${range}
-          AND dismissed_at IS NULL AND (? IS NULL OR dedup_key <> ?)`,
+          AND dismissed_at IS NULL AND (? IS NULL OR dedup_key <> ?)
+          AND (? IS NULL OR instr(substr(dedup_key, ? + 1), ?) = 0)`,
     )
     .run(
       input.at,
@@ -427,8 +434,11 @@ export function dismissNotificationsByKeyPrefix(
       input.principalId,
       input.dedupKeyPrefix,
       ...(upper === undefined ? [] : [upper]),
-      input.except ?? null,
-      input.except ?? null,
+      except,
+      except,
+      restWithout,
+      [...input.dedupKeyPrefix].length,
+      restWithout,
     );
   return Number(result.changes);
 }

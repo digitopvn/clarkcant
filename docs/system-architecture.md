@@ -481,20 +481,20 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     `bootstrap/runtime-bootstrap.ts` on an `unref()` timer (it does not keep the process alive) and stopped when the
     node closes. It compares the version of installed packages/widgets (`listInstalledPackages`, `packages/core`)
     with the available directory index (`readDirectoryIndex`, the same resolver the installer uses — no second
-    resolver), and the Pi SDK version (`sdkVersion()`, `packages/pi-adapter`) with the npm registry through a `fetch`
-    with a timeout. A directory often lists several versions of the same package: every entry for that package is
+    resolver). The Pi SDK is not checked: it is pinned exactly in `packages/pi-adapter` and ships with ClarkCant, so
+    nothing in the inbox could act on a newer one; every pass retires (ordinary dismissal) any `update:pi:` notice a
+    node wrote before. A directory often lists several versions of the same package: every entry for that package is
     filtered through the same preflight the installer runs (`entryFitsHost` for host API/platform, plus a non-empty
     digest), then the highest remaining version wins — it never offers a version the install would refuse. Version
     comparison is strict semver: a side that does not parse is never considered newer, prereleases compare per
-    identifier, and a stable install is never offered a prerelease; the version npm returns must also pass
-    `semverSchema`. `stop()` also aborts a fetch in flight (`AbortController`), so a check stopped midway ends
-    silently like an offline one instead of recording a notice after the node closed. A network failure or a
-    registry that does not answer **creates no error notice** — it stays silent and retries on the next run —
-    because an offline node is a normal state, not an incident. The `dedupKey` is
-    `update:<npm|git|local>:<packageId>@<newVersion>` (package/widget) or `update:pi:<package name>@<newVersion>`
-    (Pi SDK), so a later check does not create a second row for the same version while the earlier row still exists
+    identifier, and a stable install is never offered a prerelease. A pass reads only local state, so it makes no
+    network call and passes never overlap. The `dedupKey` is `update:<npm|git|local>:<packageId>@<newVersion>`, so a
+    later check does not create a second row for the same version while the earlier row still exists
     (a dismissed notice is cleaned up after 30 days, and the same version may then be announced again); a newer
-    version still gets its own row. The text states the current → new version and the risk lane
+    version still gets its own row, and writing it retires every earlier undismissed update notice for the same
+    package (from any source) — matched on that key prefix, so rows from before notices had a subject are
+    included — with the ordinary dismissal, so the rows stay for the retention window and the inbox shows only the
+    newest offer. A check that finds a version it already announced retires nothing. The text states the current → new version and the risk lane
     (`trusted-native`/`isolated-ui`/`service`/`declarative`, named the same way as the marketplace — AGENTS.md treats
     mixing the two namings as the mistake to avoid). The inbox does not draw an "Update" button yet: the real update
     route goes through an install/rollback lifecycle that is not wired to this notice.

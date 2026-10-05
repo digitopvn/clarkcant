@@ -1,4 +1,4 @@
-import { entryFitsHost, platformForHost, semverSchema, type Instant, type Platform } from "@clarkcant/contracts";
+import { entryFitsHost, platformForHost, type Instant, type Platform } from "@clarkcant/contracts";
 import {
   HOST_API_VERSION,
   directoryIndexPath,
@@ -7,32 +7,33 @@ import {
   type InstallDeps,
   type InstalledPackageView,
 } from "@clarkcant/core";
-import { sdkVersion } from "@clarkcant/pi-adapter";
 import { skippedVersionsOf, type SkippedVersionKind } from "@clarkcant/storage";
 
-import { packageUpdateNotice, piUpdateNotice, tryRecordNodeNotice, type NoticeServices } from "./notices.ts";
+import {
+  packageUpdateKeyPrefixes,
+  packageUpdateNotice,
+  tryRecordUpdateNotice,
+  tryRetirePiUpdateNotices,
+  type NoticeServices,
+} from "./notices.ts";
 
 /**
- * Checking whether an installed package, widget or the Pi SDK has a newer version published.
+ * Checking whether an installed package or widget has a newer version published.
  *
- * Two upstreams, both read-only and both already owned elsewhere:
+ * The upstream is the directory index this node already reads for search and install (`packages/core`'s
+ * `readDirectoryIndex`/`directoryIndexPath`) — no second resolver, no network call of its own. A directory that is not
+ * configured, or entries that name no newer version, produce nothing. A directory commonly lists several versions of
+ * the same package; every entry for that `packageId` is considered, filtered to the ones the installer would actually
+ * accept (`entryFitsHost`, the same host/platform preflight `installPackage` runs, plus a non-empty digest), and the
+ * highest surviving version wins. A host this vocabulary cannot name skips the check entirely rather than guessing.
  *
- *   - **Packages and widgets** are compared against the directory index this node already reads for search and
- *     install (`packages/core`'s `readDirectoryIndex`/`directoryIndexPath`) — no second resolver, no network call
- *     of its own. A directory that is not configured, or entries that name no newer version, produce nothing. A
- *     directory commonly lists several versions of the same package; every entry for that `packageId` is
- *     considered, filtered to the ones the installer would actually accept (`entryFitsHost`, the same host/platform
- *     preflight `installPackage` runs, plus a non-empty digest), and the highest surviving version wins. A host
- *     this vocabulary cannot name skips the package half entirely rather than guessing.
- *   - **The Pi SDK** is compared against what `@earendil-works/pi-coding-agent` publishes on npm. This is the one
- *     real network call in this module, and it is the one place "offline" has to be handled without becoming an
- *     error notice: a person working on a plane should never get told something went wrong because nothing could
- *     be reached.
+ * The Pi SDK is not checked. It is pinned exactly in `packages/pi-adapter` and ships with ClarkCant itself, so there
+ * is nothing the person could do about a newer one from the inbox: a notice for it would be a pointer with no action
+ * behind it. A node that still holds Pi update notices from before has them retired on the next pass.
  *
- * `checkForUpdates` is the testable core — every IO it needs (installed packages, directory entries, the SDK's own
- * pinned version, `fetch`, the clock) arrives as an argument, so a test drives it without a real filesystem,
- * registry or process. `startUpdateCheckTimer` is the thin periodic wrapper the runtime actually boots: an unref'd
- * interval, one run in flight at a time, stopped by the caller when the node closes.
+ * `checkForUpdates` is the testable core — every IO it needs (installed packages, directory entries, the clock) arrives
+ * as an argument, so a test drives it without a real filesystem or directory. `startUpdateCheckTimer` is the thin
+ * periodic wrapper the runtime actually boots: an unref'd interval, stopped by the caller when the node closes.
  *
  * There is no npm range for a `git`-sourced package's revision — the directory lists an exact commit, and the only
  * way to learn whether a newer commit exists is to clone and look. That upstream is not implemented here: a
@@ -42,9 +43,6 @@ import { packageUpdateNotice, piUpdateNotice, tryRecordNodeNotice, type NoticeSe
  */
 
 export const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
-const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
-const DEFAULT_TIMEOUT_MS = 5_000;
-const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
 /**
  * A minimal view of a directory entry: enough to compare, to check installability, and to label a package update
@@ -72,7 +70,7 @@ export interface UpdateCandidate {
  * before an alphanumeric one at the same position, per semver precedence.
  *
  * Either side not parsing as semver answers `false` rather than falling back to a string compare: a malformed
- * directory entry or a junk registry response must never be reported as an update just because it happened to sort
+ * directory entry must never be reported as an update just because it happened to sort
  * higher lexically.
  *
  * A candidate that is itself a prerelease is only ever reported when `current` is a prerelease too — a stable
@@ -134,9 +132,6 @@ function comparePrereleaseIdentifiers(a: string, b: string): number {
 /** What `checkForUpdates` learned, for a caller (or a test) that wants to assert on counts rather than notices. */
 export interface UpdateCheckReport {
   packageUpdates: number;
-  piUpdate: boolean;
-  /** True when the Pi SDK half could not reach the registry. Never an error — offline is an expected state. */
-  piOffline: boolean;
 }
 
 export interface CheckForUpdatesInput {
@@ -144,15 +139,7 @@ export interface CheckForUpdatesInput {
   installedPackages: readonly InstalledPackageView[];
   /** The directory index, already read. A node with no directory configured passes an empty array. */
   directory: readonly UpdateCandidate[];
-  /** The Pi SDK version this node runs, e.g. from `sdkVersion()`. */
-  piInstalledVersion: string;
-  piPackageName?: string;
-  registryUrl?: string;
-  fetchImpl?: typeof fetch;
-  timeoutMs?: number;
   now: () => Instant;
-  /** Aborts the Pi SDK registry fetch, combined with the 5s timeout. Set by `startUpdateCheckTimer` on `stop()`. */
-  signal?: AbortSignal;
   /** The platform the installer checks entries against. Defaults to this process's host; a test pins it. */
   platform?: Platform | undefined;
 }
@@ -172,21 +159,23 @@ function isInstallableCandidate(candidate: UpdateCandidate, platform: Platform):
 }
 
 /**
- * The pure check: given what is installed and what the two upstreams say, write the notices that are new.
+ * The pure check: given what is installed and what the directory lists, write the notices that are new.
  *
- * Every notice goes through `tryRecordNodeNotice`, so a storage failure is reported on stderr and never turns a
+ * Every notice goes through `tryRecordUpdateNotice`, so a storage failure is reported on stderr and never turns a
  * finished check into a thrown error — and every notice's `dedupKey` names the exact package+version, so calling
  * this again (the periodic job does, every interval) writes nothing new until an actually newer version appears.
+ * When one does, its notice retires the earlier update notices for the same package, so the inbox offers only the
+ * newest. Pi SDK update notices left from before the SDK stopped being checked are retired on every pass.
  *
  * A directory commonly lists several versions of the same package. Every entry for a given `packageId` is
  * filtered to the ones `isInstallableCandidate` accepts and then to the ones actually newer than what is
  * installed, and the highest of those wins — never the first entry the directory happens to list. When this host's
- * platform is not one the vocabulary names at all, the package half is skipped entirely rather than guessing.
+ * platform is not one the vocabulary names at all, the check is skipped entirely rather than guessing.
  *
- * A version the owner skipped from an earlier notice, or anything older than it, is not reported again, for a package
- * or for the Pi SDK (`skipped_versions`); a newer one still is.
+ * A version the owner skipped from an earlier notice, or anything older than it, is not reported again
+ * (`skipped_versions`); a newer one still is.
  */
-export async function checkForUpdates(input: CheckForUpdatesInput): Promise<UpdateCheckReport> {
+export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport {
   let packageUpdates = 0;
   const platform = "platform" in input ? input.platform : platformForHost(process.platform, process.arch);
   if (platform !== undefined) {
@@ -205,7 +194,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
           undefined,
         );
       if (newest === undefined) continue;
-      tryRecordNodeNotice(
+      tryRecordUpdateNotice(
         input.services,
         packageUpdateNotice({
           packageId: installed.packageId,
@@ -215,37 +204,14 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
           lane: newest.lane,
           at: input.now(),
         }),
+        packageUpdateKeyPrefixes(installed.packageId),
       );
       packageUpdates += 1;
     }
   }
 
-  const piPackageName = input.piPackageName ?? PI_PACKAGE_NAME;
-  const latest = await fetchLatestNpmVersion({
-    name: piPackageName,
-    registryUrl: input.registryUrl,
-    fetchImpl: input.fetchImpl ?? fetch,
-    timeoutMs: input.timeoutMs,
-    signal: input.signal,
-  });
-  if (!latest.ok) {
-    // Unreachable registry, a timeout, or a malformed response: offline is an expected state for a local-first
-    // node, not a failure worth telling the person about every few hours it happens to be true.
-    return { packageUpdates, piUpdate: false, piOffline: true };
-  }
-  if (!isNewerVersion(latest.version, input.piInstalledVersion) || skippedFor(input.services, "pi", piPackageName)(latest.version)) {
-    return { packageUpdates, piUpdate: false, piOffline: false };
-  }
-  tryRecordNodeNotice(
-    input.services,
-    piUpdateNotice({
-      packageName: piPackageName,
-      currentVersion: input.piInstalledVersion,
-      newVersion: latest.version,
-      at: input.now(),
-    }),
-  );
-  return { packageUpdates, piUpdate: true, piOffline: false };
+  tryRetirePiUpdateNotices(input.services, input.now());
+  return { packageUpdates };
 }
 
 /**
@@ -255,40 +221,6 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
 function skippedFor(services: NoticeServices, kind: SkippedVersionKind, name: string): (version: string) => boolean {
   const skipped = skippedVersionsOf(services.runtime.db, services.runtime.identity.ownerPrincipalId, kind, name);
   return (version) => skipped.some((mark) => !isNewerVersion(version, mark));
-}
-
-/**
- * The npm registry's own `GET /<package>/latest` shorthand: the packument for exactly the `latest` dist-tag,
- * rather than every published version. Any failure — network, timeout, an abort, a non-2xx status, a body that
- * does not carry a valid-semver `version` string — is folded into `{ ok: false }` rather than thrown, so the
- * caller's "offline never errors" rule holds without a try/catch of its own around this call.
- *
- * The request signal combines the 5s timeout with the caller's own `signal` (`AbortSignal.any`), when one is
- * given, so a check `stop()` interrupts mid-fetch ends the same way a timeout does: quietly, as `{ ok: false }`,
- * never as a notice written after the caller asked this to stop.
- */
-async function fetchLatestNpmVersion(input: {
-  name: string;
-  registryUrl: string | undefined;
-  fetchImpl: typeof fetch;
-  timeoutMs: number | undefined;
-  signal: AbortSignal | undefined;
-}): Promise<{ ok: true; version: string } | { ok: false }> {
-  const registry = (input.registryUrl ?? DEFAULT_REGISTRY_URL).replace(/\/$/, "");
-  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = input.signal === undefined ? timeoutSignal : AbortSignal.any([timeoutSignal, input.signal]);
-  try {
-    const response = await input.fetchImpl(`${registry}/${encodeURIComponent(input.name)}/latest`, { signal });
-    if (!response.ok) return { ok: false };
-    const body = (await response.json()) as { version?: unknown };
-    if (typeof body.version !== "string") return { ok: false };
-    const parsed = semverSchema.safeParse(body.version.trim());
-    if (!parsed.success) return { ok: false };
-    return { ok: true, version: parsed.data };
-  } catch {
-    return { ok: false };
-  }
 }
 
 /** A directory entry's git/npm/local source, narrowed to the label an update notice shows. */
@@ -301,22 +233,14 @@ export interface UpdateCheckJobDeps {
   installDeps: InstallDeps;
   /** Where the directory index lives, when one is configured. Defaults to reading `CC_DIRECTORY_INDEX`. */
   env?: NodeJS.ProcessEnv;
-  fetchImpl?: typeof fetch;
-  registryUrl?: string;
-  timeoutMs?: number;
   now?: () => Instant;
-  /** Reads the Pi SDK version this node actually runs. Defaults to `sdkVersion` from `@clarkcant/pi-adapter`. */
-  piInstalledVersion?: () => Promise<string>;
   intervalMs?: number;
   /** The platform directory entries are checked against. Defaults to this process's host; a test pins it. */
   platform?: Platform | undefined;
 }
 
-/** One pass: read what is installed, what the directory says, what the SDK reports, and check. */
-export async function runUpdateCheckOnce(
-  deps: UpdateCheckJobDeps,
-  options: { signal?: AbortSignal } = {},
-): Promise<UpdateCheckReport> {
+/** One pass: read what is installed and what the directory says, and check. */
+export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport {
   const now = deps.now ?? (() => new Date().toISOString() as Instant);
   const installed = listInstalledPackages(deps.installDeps);
   const index = readDirectoryIndex(directoryIndexPath(deps.env ?? process.env));
@@ -332,53 +256,35 @@ export async function runUpdateCheckOnce(
           platforms: entry.platforms,
         }))
       : [];
-  const piInstalledVersion = await (deps.piInstalledVersion ?? sdkVersion)();
 
   return checkForUpdates({
     services: deps.services,
     installedPackages: installed,
     directory,
-    piInstalledVersion,
-    ...(deps.registryUrl === undefined ? {} : { registryUrl: deps.registryUrl }),
-    ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
-    ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...("platform" in deps ? { platform: deps.platform } : {}),
     now,
   });
 }
 
 /**
- * Start the periodic job. An unref'd interval so it never holds the process open on its own, and never more than
- * one pass in flight — a slow or hung registry fetch cannot pile up a second, overlapping check.
+ * Start the periodic job: an unref'd interval, so it never holds the process open on its own.
  *
- * Runs once shortly after start (so a node does not wait a full interval to say anything), then every
- * `intervalMs`. `stop()` clears the timer and, if a pass is in flight, aborts its registry fetch (the same
- * `AbortSignal` `checkForUpdates` combines with its 5s timeout) — so a pass `stop()` catches mid-flight ends
- * quietly as `{ ok: false }`, the same as an offline registry, rather than finishing on its own time and writing a
- * notice after the caller already asked this to stop. The caller runs `stop()` when the node closes, the same as
+ * Runs once shortly after start (so a node does not wait a full interval to say anything), then every `intervalMs`. A
+ * pass reads only local state and finishes before the next tick can start, so passes never overlap. A pass that throws
+ * is reported on stderr and the next tick runs as usual. The caller runs `stop()` when the node closes, the same as
  * every other unref'd timer this runtime owns (`pi-session-watch.ts`, `server.ts`'s keep-alive).
  */
 export function startUpdateCheckTimer(deps: UpdateCheckJobDeps): { stop: () => void } {
   const intervalMs = deps.intervalMs ?? DEFAULT_UPDATE_CHECK_INTERVAL_MS;
-  let inFlight = false;
   let stopped = false;
-  let controller: AbortController | undefined;
 
   const runOnce = (): void => {
-    if (inFlight || stopped) return;
-    inFlight = true;
-    controller = new AbortController();
-    void runUpdateCheckOnce(deps, { signal: controller.signal })
-      .catch((cause: unknown) => {
-        process.stderr.write(
-          `update check: not completed — ${cause instanceof Error ? cause.message : String(cause)}\n`,
-        );
-      })
-      .finally(() => {
-        inFlight = false;
-        controller = undefined;
-      });
+    if (stopped) return;
+    try {
+      runUpdateCheckOnce(deps);
+    } catch (cause: unknown) {
+      process.stderr.write(`update check: not completed — ${cause instanceof Error ? cause.message : String(cause)}\n`);
+    }
   };
 
   const startTimer = setTimeout(runOnce, 0);
@@ -391,7 +297,6 @@ export function startUpdateCheckTimer(deps: UpdateCheckJobDeps): { stop: () => v
       stopped = true;
       clearTimeout(startTimer);
       clearInterval(interval);
-      controller?.abort();
     },
   };
 }

@@ -4,6 +4,7 @@ import {
   type AttachmentRef,
   type CapabilityRef,
   type ConversationId,
+  type HostWrittenMessage,
   type Instant,
   type MessageBlock,
   type MessageRecord,
@@ -428,6 +429,12 @@ export interface UserMessageInput {
    */
   origin?: TurnOrigin;
   /**
+   * Set when the host writes this message itself so a turn can run — the continuation after an approved command —
+   * rather than relaying something anyone said. Stored on the message (`MessageRecord.hostWritten`) so the transcript
+   * never shows the text as the person's words; the turn itself runs exactly as it would without it.
+   */
+  hostWritten?: HostWrittenMessage;
+  /**
    * Files this message carries.
    *
    * The refs arrive already authorised — the gateway resolves each id against the conversation and the
@@ -561,6 +568,7 @@ function appendUser(
   extraBlocks: readonly MessageBlock[] = [],
   surface?: MessageSurface,
   origin?: TurnOrigin,
+  hostWritten?: HostWrittenMessage,
 ): MessageRecord {
   const message: MessageRecord = {
     messageId: deps.newId("msg") as MessageRecord["messageId"],
@@ -582,6 +590,7 @@ function appendUser(
     delivery: "accepted",
     ...(surface === undefined ? {} : { surface }),
     ...(origin === undefined ? {} : { origin }),
+    ...(hostWritten === undefined ? {} : { hostWritten }),
   };
   appendMessage(deps.db, message, nextMessageSequence(deps.db, conversationId));
   return message;
@@ -678,6 +687,7 @@ export async function handleUserMessage(
     [...attachmentBlocks(input.attachmentRefs ?? []), ...referenceBlocks(input.referenceBlocks ?? [])],
     input.surface,
     input.origin,
+    input.hostWritten,
   );
 
 

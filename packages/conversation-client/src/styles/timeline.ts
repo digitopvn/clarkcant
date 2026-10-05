@@ -156,6 +156,15 @@ export const TIMELINE_CSS = `
 .cc-notice-undo-text { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
 /*
+ * A line from the host: the turn it opened after an approval, in place of a message nobody typed.
+ *
+ * Centred and muted, with no frame, so it reads as neither side of the conversation: not a bubble, which would put
+ * the words in the person's mouth, and not a reply with the agent's mark, which would make it something Clark said.
+ */
+.cc-host-line { align-items: center; color: var(--cc-text-muted); font-size: var(--cc-text-label); line-height: 1.45; }
+.cc-host-line-text { margin: 0; max-width: 82%; text-align: center; overflow-wrap: anywhere; }
+
+/*
  * Markdown.
  *
  * Sizes are relative to the message text, so a heading in a reply is a heading in the same scale as the

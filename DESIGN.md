@@ -640,9 +640,9 @@ Shipped:
   none or several, Clark says so and records nothing. Clark cannot give the answer itself: MCP, the WebSocket relay and
   `clarkcant api` refuse the route and `control_app` cannot name it, because an agent that could say its own push landed
   could report its own success.
-- **Update notifications for the Pi SDK, installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a
-  periodic job comparing the installed version against the directory index and the npm registry (a network error does
-  not create an error notification). Content states current version → new version and risk lane, using the same
+- **Update notifications for installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a periodic
+  job comparing the installed version against the directory index. The Pi SDK is not announced: it ships pinned with
+  ClarkCant, so the inbox could offer nothing to do about it, and older Pi update notices are retired. Content states current version → new version and risk lane, using the same
   naming as the marketplace. Update, Review in Settings and Skip this version are described above; a version skipped
   there, or anything older, is not reported again.
 - **Out-of-app notifications when the window is unfocused or in minimized/orb mode** (#171): on desktop this is an OS
