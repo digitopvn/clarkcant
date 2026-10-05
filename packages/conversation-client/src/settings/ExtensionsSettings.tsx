@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 
 import type { ConnectionStatus } from "@clarkcant/contracts";
 
-import { useT } from "../i18n/locale-context.tsx";
+import { useLocale, useT } from "../i18n/locale-context.tsx";
+import { readableInstant } from "../blocks.tsx";
 import { ToolLists } from "../tool-lists.tsx";
 import type {
   GatewayClient,
@@ -163,6 +164,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
  */
 function CapabilityApprovalsSection({ client, revision }: { client: GatewayClient; revision: number }): ReactElement | null {
   const t = useT();
+  const locale = useLocale();
   const [approvals, setApprovals] = useState<PendingCapabilityApprovalView[]>([]);
   const [readFailed, setReadFailed] = useState(false);
   const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -227,7 +229,7 @@ function CapabilityApprovalsSection({ client, revision }: { client: GatewayClien
                   {approval.packageId}@{approval.version}
                 </dd>
                 <dt>{t("settings.extensions.approvals.expires")}</dt>
-                <dd>{approval.expiresAt}</dd>
+                <dd>{readableInstant(approval.expiresAt, locale)}</dd>
               </dl>
               <div className="cc-package-actions">
                 <button
@@ -467,6 +469,7 @@ function PackageConnection({
  */
 function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient; onChanged: () => void }): ReactElement {
   const t = useT();
+  const locale = useLocale();
   const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
   const [restorable, setRestorable] = useState<RestorablePackageView[]>([]);
   /*
@@ -582,7 +585,7 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                   <code data-installed-digest={entry.digest}>{entry.digest}</code>
                 </dd>
                 <dt>{t("settings.extensions.installed.installedAt")}</dt>
-                <dd>{entry.activatedAt}</dd>
+                <dd data-installed-at={entry.activatedAt}>{readableInstant(entry.activatedAt, locale)}</dd>
                 {readReach(entry.reach) !== undefined && (
                   <>
                     <dt>{t("settings.extensions.installed.reach")}</dt>
@@ -658,7 +661,7 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                     <code>{entry.digest}</code>
                   </dd>
                   <dt>{t("settings.extensions.restorable.uninstalledAt")}</dt>
-                  <dd>{entry.uninstalledAt}</dd>
+                  <dd>{readableInstant(entry.uninstalledAt, locale)}</dd>
                 </dl>
                 <div className="cc-package-actions">
                   <button

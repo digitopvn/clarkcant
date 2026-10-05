@@ -53,6 +53,11 @@ test("an uninstalled package keeps a restore control, and restoring brings it ba
   await expect(row).toBeVisible({ timeout: 20_000 });
   // Only one version was ever active here, so there is nowhere to roll back to and no control that pretends otherwise.
   await expect(row.locator("[data-package-rollback]")).toHaveCount(0);
+  // When it was installed reads as a time, not as the ISO instant the node stores.
+  const installedAt = row.locator("[data-installed-at]");
+  await expect(installedAt).not.toContainText("T");
+  await expect(installedAt).not.toContainText("Z");
+  await expect(installedAt).toContainText(/\d{1,2}:\d{2}/);
 
   // Keyboard only: the control is a real button, and the outcome is announced where focus lands.
   await row.locator("[data-package-uninstall]").focus();
