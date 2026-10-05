@@ -3,7 +3,7 @@
 > [English](DESIGN.md) (mặc định) · Tiếng Việt
 
 > Trạng thái: canonical design direction cho UI/UX.
-> Cập nhật: 2026-09-19.
+> Cập nhật: 2026-10-05.
 > Phạm vi: web, desktop, conversation client, voice, host-owned cards, built-in widgets, custom widgets và marketplace.
 
 ## 0. North Star
@@ -30,8 +30,10 @@ Nếu một tác vụ có thể được diễn đạt bằng chat hoặc voice 
 ### 1.1 Conversation is the app
 
 - Không thêm sidebar cố định chỉ để chứa navigation.
-- Không thêm session picker vào main UI.
+- Không thêm session picker vào main UI. Các phiên trước và phiên chạy nền được gọi ra khi cần (`/sessions` hoặc hỏi Clark), và hiện thành một tin nhắn của agent kèm widget danh sách.
 - Không biến widgets thành một dashboard song song.
+- Mục tiêu không phải là giấu đi, mà là gọi ra được. Mọi thứ user có thể cần — phiên, đăng nhập/đăng xuất provider, model và thinking, cài đặt, chẩn đoán — đều gọi ra được bằng chat, voice hoặc slash command, và hiện thành tin nhắn của agent kèm widget UI (một mini app). Slash command, lời nói và voice cùng quy về một typed action.
+- Câu trả lời nào cần cấu trúc thì được ghép thành mini app: khi được nhờ so sánh benchmark của hai model, Clark nghiên cứu rồi trả lời bằng bảng, biểu đồ và sơ đồ ghép nối thành một bề mặt mạch lạc, không phải một bức tường chữ.
 - Settings là surface phụ, mở trên conversation và đóng lại về đúng vị trí cũ.
 - Marketplace có thể có browser surface, nhưng phải mở từ chat/settings và không trở thành home screen thứ hai.
 - Mọi action quan trọng phải có đường chat và voice tương đương.

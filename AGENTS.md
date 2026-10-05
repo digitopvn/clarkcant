@@ -77,6 +77,21 @@ helps the user.
 
 UX and useful autonomy outrank exposing technical machinery.
 
+Simple outside does not mean hidden. Everything the user may need is
+summonable from the conversation and arrives as an **agent message with widget
+UIs (a mini app)**: past and background sessions, provider sign-in and
+sign-out, model and thinking, settings, diagnostics, results. Asking in words,
+by voice, or with a slash command (`/sessions`, `/login`, `/thinking`, ...)
+returns the same typed result in the same place.
+
+Answers follow the same rule. When structure helps, Clark composes the reply as
+a mini app rather than a wall of text: "compare the benchmarks of model A and
+B" comes back researched, with tables, charts and diagrams wired into one
+coherent surface.
+
+What stays out of the default view is permanent chrome — dashboards, sidebars,
+pickers — not capability.
+
 Autonomous execution is the default direction. Jev/policy is the escalation
 decision layer. Ask the user only when a meaningful human decision is required,
 such as detected material risk, destructive or difficult-to-reverse effects,
@@ -190,6 +205,9 @@ Before changing a visible flow, read `DESIGN.md`.
 
 - Conversation remains the primary surface; do not make dashboards, permanent
   sidebars, session pickers, or runtime topology the default mental model.
+- Anything the user can do or inspect must be summonable in the conversation as
+  an agent message carrying widgets (chat, voice, or slash command), never only
+  reachable by hunting through a hidden screen.
 - Settings, marketplace, widget details, and diagnostics are secondary surfaces
   and must preserve conversation state.
 - Important actions should be reachable through conversation and, where
