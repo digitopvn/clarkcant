@@ -69,8 +69,12 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       const normalSpace = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-space-md"));
       await page.locator('[data-theme-customization] [data-segment="compact"]').click();
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-space-md").trim())).toBe("0.5625rem");
-      await page.locator('[data-accent-scheme="dark"]').fill("#7AA2F7");
+      // The swatch beside each code is the colour itself and a picker for it: choosing there writes the code.
+      await page.locator('[data-accent-picker="dark"]').fill("#336699");
+      await expect(page.locator('[data-accent-scheme="dark"]')).toHaveValue("#336699");
+      await expect(page.locator('[data-accent-picker="dark"]')).toHaveAccessibleName(/./);      await page.locator('[data-accent-scheme="dark"]').fill("#7AA2F7");
       await page.locator('[data-accent-scheme="light"]').fill("#2453A8");
+      await expect(page.locator('[data-accent-picker="light"]')).toHaveValue("#2453a8");
       await page.locator("[data-accent-save]").click();
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase())).toBe(scheme === "dark" ? "#7AA2F7" : "#2453A8");
       await page.locator('[data-accent-scheme="dark"]').fill("#111114");

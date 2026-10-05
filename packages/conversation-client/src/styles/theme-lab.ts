@@ -28,6 +28,15 @@ export const THEME_LAB_CSS = `
   border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-button));
 }
 .cc-theme-accent input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-accent-field { display: flex; align-items: center; gap: var(--cc-space-sm); color: var(--cc-text-muted); font-size: var(--cc-text-body-sm); }
+/* The swatch is a round chip of the colour itself, not the browser's grey button with a strip of colour inside. */
+.cc-theme-accent input.cc-accent-swatch {
+  inline-size: 1.75rem; block-size: 1.75rem; min-height: 0; padding: 0; cursor: pointer;
+  border-radius: 50%; border: var(--cc-line, 1px solid) color-mix(in oklab, var(--cc-text) 24%, transparent); background: none;
+}
+.cc-accent-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.cc-accent-swatch::-webkit-color-swatch { border: none; border-radius: 50%; }
+.cc-accent-swatch::-moz-color-swatch { border: none; border-radius: 50%; }
 /*
  * The customisation block opens a new group under the theme, so it is headed like one. The theme row above already
  * ends on a hairline; a second one here drew two rules a few pixels apart.

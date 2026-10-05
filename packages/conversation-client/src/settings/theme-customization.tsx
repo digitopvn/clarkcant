@@ -13,6 +13,26 @@ const RESET_KEYS = [
 
 type FontOption = { value: string; label: string; stack: string };
 
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * One scheme's accent: its name, a swatch that is also the system colour picker, and the hex field. Both edit the same
+ * value, so the colour can be seen and chosen without knowing its code; an unfinished code leaves the swatch as it was.
+ */
+function AccentField({ scheme, name, value, onChange, pickLabel }: {
+  scheme: "dark" | "light"; name: string; value: string; onChange: (value: string) => void; pickLabel: string;
+}): ReactElement {
+  const [swatch, setSwatch] = useState(HEX_COLOR.test(value) ? value.toLowerCase() : "#000000");
+  useEffect(() => { if (HEX_COLOR.test(value)) setSwatch(value.toLowerCase()); }, [value]);
+  return <span className="cc-accent-field">
+    <span aria-hidden="true">{name}</span>
+    <input className="cc-accent-swatch" type="color" data-accent-picker={scheme} aria-label={pickLabel} value={swatch}
+      onChange={(event) => onChange(event.currentTarget.value.toUpperCase())} />
+    <input data-accent-scheme={scheme} type="text" aria-label={name} pattern="#[0-9a-fA-F]{6}"
+      maxLength={7} value={value} onChange={(event) => onChange(event.currentTarget.value)} required />
+  </span>;
+}
+
 /**
  * A choice of typeface, where every option is its own specimen: the sample and the name are set in the face they
  * describe, so the choice is made by looking rather than by knowing font names. The empty value is the theme's own.
@@ -63,10 +83,12 @@ export function ThemeCustomization({ prefs, appearance, onOrbChange }: {
         event.preventDefault();
         prefs.write("experience.accent", { dark, light }, refresh);
       }}>
-        <label>{t("settings.experience.theme.dark")} <input data-accent-scheme="dark" type="text" pattern="#[0-9a-fA-F]{6}"
-          maxLength={7} value={dark} onChange={(event) => setDark(event.currentTarget.value)} required /></label>
-        <label>{t("settings.experience.theme.light")} <input data-accent-scheme="light" type="text" pattern="#[0-9a-fA-F]{6}"
-          maxLength={7} value={light} onChange={(event) => setLight(event.currentTarget.value)} required /></label>
+        {/* A swatch that is also the system's colour picker beside each hex field: the colour can be seen, and chosen
+            without knowing its code. Both edit the same value; an unfinished code leaves the swatch where it was. */}
+        <AccentField scheme="dark" name={t("settings.experience.theme.dark")} value={dark} onChange={setDark}
+          pickLabel={t("themeLab.pickAccent").replace("{scheme}", t("settings.experience.theme.dark"))} />
+        <AccentField scheme="light" name={t("settings.experience.theme.light")} value={light} onChange={setLight}
+          pickLabel={t("themeLab.pickAccent").replace("{scheme}", t("settings.experience.theme.light"))} />
         <button className="cc-action" type="submit" disabled={prefs.pending !== undefined} data-accent-save>{t("themeLab.saveAccent")}</button>
         <button className="cc-action" type="button" disabled={prefs.pending !== undefined}
           onClick={() => prefs.reset("experience.accent", refresh)}>{t("themeLab.themeAccent")}</button>
