@@ -1295,7 +1295,8 @@ export async function createModelTurn(options: {
    */
   const evictIdleTurns = (nowMs: number): void => {
     const idle = [...turns.values()]
-      .filter((turn) => !turn.inFlight)
+      // Nor one Pi is moving to another model: its session is let go only once Pi is done with it.
+      .filter((turn) => !turn.inFlight && turn.switching === undefined)
       .sort((left, right) => left.lastUsedAtMs - right.lastUsedAtMs);
     let excess = idle.length - MAX_IDLE_TURNS;
     for (const turn of idle) {
