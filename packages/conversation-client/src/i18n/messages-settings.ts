@@ -186,7 +186,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.ai.typesafe.purpose": "Dùng cho Jev khi nó phải quyết định cách xử lý một việc.",
   "settings.ai.currentModel.heading": "Model đang dùng",
   "settings.ai.currentModel.none":
-    "Node này chưa có model. Clark vẫn chạy được các recipe và khả năng đã cài, nhưng không gọi tới nhà cung cấp nào.",
+    "Chưa có model nào. Clark vẫn làm được những việc đã cài sẵn, nhưng chưa gọi tới nhà cung cấp nào.",
   "settings.ai.provider.label": "Nhà cung cấp",
   "settings.ai.provider.description": "Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_PROVIDER.",
   "settings.ai.model.label": "Model",
@@ -703,7 +703,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.ai.typesafe.purpose": "Used by Jev when it has to decide how to handle something.",
   "settings.ai.currentModel.heading": "Current model",
   "settings.ai.currentModel.none":
-    "This node has no model configured. It answers using installed recipes and capabilities, and never calls a provider.",
+    "No model is set up yet. Clark still does what is already installed, but calls no provider.",
   "settings.ai.provider.label": "Provider",
   "settings.ai.provider.description": "Taken from the saved choice, defaulting to CC_MODEL_PROVIDER.",
   "settings.ai.model.label": "Model",

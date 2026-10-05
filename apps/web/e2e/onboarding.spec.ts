@@ -149,6 +149,8 @@ test.describe("the first run on a node that has been told nothing", () => {
     const card = page.locator("[data-needs-model='true']");
     await expect(card).toBeVisible({ timeout: 20_000 });
     await expect(card).toContainText("chưa có model");
+    // In the person's words: the machinery behind the gap (node, recipe, capability, provider) is not the point.
+    await expect(card).not.toContainText(/\b(?:Node|recipe|capability|provider)\b/);
     // Said once: the footnote that warns a chip may fail without a model would only repeat the card above it.
     await expect(page.locator(".cc-empty > p.cc-freshness")).toHaveCount(0);
 
