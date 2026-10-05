@@ -167,6 +167,11 @@ export type CompositionActionRef = z.infer<typeof compositionActionRefSchema>;
 export const compositionSelectorProvenanceSchema = z.strictObject({
   mode: z.enum(["explicit", "jev", "fallback", "rank"]),
   model: z.string().min(1).max(120).optional(),
+  /**
+   * Who answered a model decision, recorded only when it is not the default provider, so a record from a node that
+   * never chose one is unchanged.
+   */
+  provider: z.enum(["typesafe", "cloudflare"]).optional(),
   policyVersion: z.string().min(1).max(80),
   confidence: z.number().min(0).max(1).optional(),
   margin: z.number().min(0).max(1).optional(),

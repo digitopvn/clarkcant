@@ -422,6 +422,72 @@ describe("composeMiniApp", () => {
     expect(answering.telemetry.some((event) => event.event === "call")).toBe(true);
   });
 
+  it("names a non-default decision provider in the stored provenance, and leaves the default's record unchanged", async () => {
+    const probabilities = { "overview@1": 0.95, "focused@1": 0.02, "agenda@1": 0.02, none: 0.01 };
+    // Read back through the strict stored-spec schema, so a field the contract does not allow fails here.
+    const storedSelector = (messageId: string): Record<string, unknown> => {
+      const spec = findCompositionByMessage(db(), messageId, PRINCIPAL);
+      expect(spec).toBeDefined();
+      return { ...spec!.provenance.selector };
+    };
+
+    const typesafe = answeringTransport("overview@1", probabilities);
+    const byDefault = await composeMiniApp(
+      {
+        ...compose,
+        jev: {
+          deps: {
+            config: { ...compose.jev!.deps.config, enabled: true, localOnly: false, apiKey: "sk-test-not-a-real-key" },
+            transport: typesafe.transport,
+          },
+          budget: compose.jev!.budget,
+        },
+      },
+      { conversationId: CONVERSATION, messageId: "msg_provider_default", principalId: PRINCIPAL, intent: "cho tôi tổng quan" },
+    );
+    expect(byDefault.ok && byDefault.selectorMode).toBe("jev");
+    const defaultSelector = storedSelector("msg_provider_default");
+    expect(defaultSelector.mode).toBe("jev");
+    expect(Object.keys(defaultSelector).sort()).toEqual(["confidence", "margin", "mode", "model", "policyVersion"]);
+
+    // The same answer from Cloudflare, inside the Workers AI envelope, recorded with who gave it.
+    const clef: JevTransport = async (request) => {
+      const questions = (request.body as { questions: Record<string, unknown> }).questions;
+      const key = Object.keys(questions)[0] ?? "template";
+      return {
+        status: 200,
+        body: {
+          success: true,
+          errors: [],
+          messages: [],
+          result: { model: "clef", answers: { [key]: { type: "choice", choice: "overview@1", probabilities, confidence: 0.9 } } },
+        },
+      };
+    };
+    const byCloudflare = await composeMiniApp(
+      {
+        ...compose,
+        jev: {
+          deps: {
+            config: {
+              ...compose.jev!.deps.config,
+              provider: "cloudflare",
+              model: "clef",
+              enabled: true,
+              localOnly: false,
+              apiKey: "cf-test-token-not-a-real-one",
+            },
+            transport: clef,
+          },
+          budget: compose.jev!.budget,
+        },
+      },
+      { conversationId: CONVERSATION, messageId: "msg_provider_cloudflare", principalId: PRINCIPAL, intent: "cho tôi tổng quan" },
+    );
+    expect(byCloudflare.ok && byCloudflare.selectorMode).toBe("jev");
+    expect(storedSelector("msg_provider_cloudflare")).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+  });
+
   it("refuses a template id the host cannot compile rather than falling back silently", async () => {
     const outcome = await composeMiniApp(compose, {
       conversationId: CONVERSATION,

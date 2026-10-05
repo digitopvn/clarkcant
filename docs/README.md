@@ -23,7 +23,7 @@ Before changing UI/UX, read [DESIGN.md](../DESIGN.md) to stay true to the intera
 7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting and takeover.
 8. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
 9. [Research & decisions](research-and-decisions.md): upstream verification results, choices/rejected alternatives, sources.
-10. [Jev selector](mini-app/jev-configuration.md): operation and privacy of the decision layer — configuration, what is sent out, telemetry, fallback.
+10. [Jev selector](mini-app/jev-configuration.md): operation and privacy of the decision layer — choosing TypeSafe Jev or Cloudflare Clef, configuration, what is sent out, telemetry, fallback.
 11. [ADR-001 — Gemini Live for voice](research/adr-001-gemini-live-provider.md) and [P0.1 compatibility lock](research/compatibility-lock.md): the decision that replaces the blueprint, and the Pi SDK lifecycle as actually measured.
 12. [Open interfaces](open-interfaces.md) ([Tiếng Việt](open-interfaces.vi.md)): API, MCP, WebSocket, CLI for third-party applications and AI tools.
 13. [Changelog](CHANGELOG.md): old constraints that have been replaced.
@@ -54,7 +54,7 @@ A manual run of the workflow (`gh workflow run ci.yml -f e2e_specs="apps/web/e2e
 
 Changes that include code still run the full Vitest suite on both Node versions; tests are not selected per package because many safety constraints cut across packages. The journey check commands and the completion requirements for UI changes are in [AGENTS.md](../AGENTS.md); CI already has browser E2E and desktop smoke, but fixtures do not prove that a real provider works. A BLOCKED result must be read together with the missing condition.
 
-Live suites only run when opted in. Once enabled, if a credential/model is missing or no evidence is received from the provider, the smoke/calibration fails with reason `BLOCKED`; it does not turn into PASS through a fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) and [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) own the execution conditions; a generic HTTP error does not prove a correct model rejection.
+Live suites only run when opted in. Once enabled, if a credential/model is missing or no evidence is received from the provider, the smoke/calibration fails with reason `BLOCKED`; it does not turn into PASS through a fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts), [Clef live smoke](../apps/runtime/test/clef-live.spec.ts) and [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) own the execution conditions; a generic HTTP error does not prove a correct model rejection.
 
 Run `node tools/scan-secret-history.mjs` to check a fully fetched Git history; the [scan script](../tools/scan-secret-history.mjs) owns the detection patterns and output limits. The scope covers file versions still reachable in history, including documents and deleted files; this is a pattern-based check and does not prove that every kind of secret is detected. A shallow clone or an unreadable Git repository makes the check fail. Results only state the object ID and pattern type, never the secret value.
 

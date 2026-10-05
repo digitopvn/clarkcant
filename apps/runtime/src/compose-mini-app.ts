@@ -30,6 +30,7 @@ import {
   listSnapshotsForMessage,
 } from "@clarkcant/storage";
 
+import { type DecisionProviderId, recordedDecisionProvider } from "./decision-provider.ts";
 import {
   type DefinitionCandidate,
   type MiniAppCandidateSet,
@@ -477,6 +478,7 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     selector: {
       mode: template.mode,
       ...(template.model === undefined ? {} : { model: template.model }),
+      ...(template.provider === undefined ? {} : { provider: template.provider }),
       ...(template.confidence === undefined ? {} : { confidence: template.confidence }),
       ...(template.margin === undefined ? {} : { margin: template.margin }),
       ...(template.reason === undefined ? {} : { reason: template.reason }),
@@ -548,7 +550,15 @@ export interface PersistRequest {
   graph?: CompositionGraph;
   period: "week" | "month";
   timezone: string;
-  selector: { mode: "explicit" | "jev" | "fallback"; model?: string; confidence?: number; margin?: number; reason?: string };
+  selector: {
+    mode: "explicit" | "jev" | "fallback";
+    model?: string;
+    /** Set only when a provider other than the default made the decision. */
+    provider?: DecisionProviderId;
+    confidence?: number;
+    margin?: number;
+    reason?: string;
+  };
   title: string;
   textAlternative: string;
 }
@@ -577,6 +587,7 @@ export function persistComposition(
     selector: {
       mode: request.selector.mode,
       ...(request.selector.model === undefined ? {} : { model: request.selector.model }),
+      ...(request.selector.provider === undefined ? {} : { provider: request.selector.provider }),
       policyVersion: deps.jev?.deps.config.policyVersion ?? "1",
       ...(request.selector.confidence === undefined ? {} : { confidence: request.selector.confidence }),
       ...(request.selector.margin === undefined ? {} : { margin: request.selector.margin }),
@@ -708,7 +719,16 @@ async function chooseTemplate(
   deps: ComposeDeps,
   input: ComposeInput,
 ): Promise<
-  | { ok: true; template: MiniAppTemplate; mode: "explicit" | "jev" | "fallback"; reason?: string; model?: string; confidence?: number; margin?: number }
+  | {
+      ok: true;
+      template: MiniAppTemplate;
+      mode: "explicit" | "jev" | "fallback";
+      reason?: string;
+      model?: string;
+      provider?: DecisionProviderId;
+      confidence?: number;
+      margin?: number;
+    }
   | { ok: false; code: "NO_TEMPLATE"; message: string }
 > {
   if (input.explicitTemplateId !== undefined) {
@@ -745,6 +765,7 @@ async function chooseTemplate(
         template: selected,
         mode: "jev",
         model: jev.deps.config.model,
+        ...providerField(jev.deps.config),
         ...(outcome.confidence === undefined ? {} : { confidence: outcome.confidence }),
         ...(outcome.margin === undefined ? {} : { margin: outcome.margin }),
       };
@@ -909,4 +930,10 @@ function compileBindings(
 export function describeComposeOutcome(outcome: ComposeOutcome): string {
   if (!outcome.ok) return `${outcome.code}: ${outcome.message}`;
   return `${outcome.templateId} via ${outcome.selectorMode} (bundle ${outcome.bundleId})`;
+}
+
+/** The decision provider as a provenance field: present only when it is not the default. */
+function providerField(config: { provider?: DecisionProviderId | undefined }): { provider?: DecisionProviderId } {
+  const provider = recordedDecisionProvider(config);
+  return provider === undefined ? {} : { provider };
 }

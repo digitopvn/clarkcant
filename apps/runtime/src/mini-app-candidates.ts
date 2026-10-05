@@ -1,7 +1,7 @@
 import {
   type CompositionSlot,
   MAX_SELECTION_METADATA_BYTES,
-  findSecretShapes,
+  dataClassesOfText,
   redactSecrets,
   utf8Bytes,
 } from "@clarkcant/contracts";
@@ -190,13 +190,36 @@ export function checkSelectionStateSize(
 }
 
 /**
- * Whether a state still contains anything that looks like a secret.
+ * Whether a state still carries a credential.
  *
  * A defence in depth check rather than the primary control: the sanitizer runs first, and this
- * catches the case where a future field is added without going through it. It is intentionally
- * the same pattern list, applied to the serialised request.
+ * catches the case where a future field is added without going through it. It classifies the
+ * state as the send boundary classifies a model's input, so a template or widget id that only
+ * resembles a token (`key-metrics-overview`) does not stop a selection.
  */
-export function stateLooksRedacted(state: JevSelectionState): { ok: true } | { ok: false; matches: string[] } {
-  const matches = findSecretShapes(JSON.stringify(state));
-  return matches.length === 0 ? { ok: true } : { ok: false, matches };
+export function stateLooksRedacted(state: JevSelectionState): { ok: boolean } {
+  return { ok: !carriesCredential(state) };
+}
+
+/**
+ * Whether anything in a value about to leave the node is a credential, by the classifier the send boundary uses.
+ *
+ * Every string in it is classified as written, because serialising hides one: a newline becomes the letters `\n`
+ * pressed against the token after it, and a quoted value gains backslashes. The serialised form is classified too,
+ * since only there does a name sit beside its value when the two are a key and what it holds.
+ */
+export function carriesCredential(value: unknown): boolean {
+  const texts: string[] = [JSON.stringify(value) ?? ""];
+  const walk = (node: unknown): void => {
+    if (typeof node === "string") texts.push(node);
+    else if (Array.isArray(node)) node.forEach(walk);
+    else if (node !== null && typeof node === "object") {
+      for (const [key, held] of Object.entries(node)) {
+        texts.push(key);
+        walk(held);
+      }
+    }
+  };
+  walk(value);
+  return texts.some((text) => dataClassesOfText(text).includes("secret"));
 }

@@ -20,6 +20,7 @@ import {
   searchHistory,
 } from "@clarkcant/storage";
 
+import { type DecisionProviderId, recordedDecisionProvider } from "./decision-provider.ts";
 import type { EmbeddingProvider } from "./embeddings-local.ts";
 import { applySemanticFusion, type SemanticStatus } from "./hybrid-rank.ts";
 import {
@@ -143,7 +144,15 @@ export interface SessionSearchOutcome {
   /** Present when the results are ambiguous enough to ask the user. */
   clarification?: string;
   /** Why the decider did or did not decide, for telemetry and for the calibration. */
-  decider?: { mode: SearchDeciderMode; model?: string; reason?: string; confidence?: number; margin?: number };
+  decider?: {
+    mode: SearchDeciderMode;
+    model?: string;
+    /** Who was asked, present only when it is not the default decision provider. */
+    provider?: DecisionProviderId;
+    reason?: string;
+    confidence?: number;
+    margin?: number;
+  };
 }
 
 const DEFAULT_LIMIT = 10;
@@ -220,6 +229,8 @@ export async function searchSessions(
     return { ...ranked, decider: { mode: "rank" } };
   }
 
+  const recordedProvider = recordedDecisionProvider(deps.decider.jev.config);
+  const provider = recordedProvider === undefined ? {} : { provider: recordedProvider };
   const decision = await decideSearchResult(deps.decider, {
     query: request.text,
     results: ranked.results.map((hit) => ({
@@ -243,6 +254,7 @@ export async function searchSessions(
         decider: {
           mode: "jev",
           model: decision.model,
+          ...provider,
           ...(decision.confidence === undefined ? {} : { confidence: decision.confidence }),
           ...(decision.margin === undefined ? {} : { margin: decision.margin }),
         },
@@ -255,7 +267,7 @@ export async function searchSessions(
       ...ranked,
       mode: "clarify",
       clarification: decision.question,
-      decider: { mode: "jev", model: deps.decider.jev.config.model, reason: "the results are ambiguous" },
+      decider: { mode: "jev", model: deps.decider.jev.config.model, ...provider, reason: "the results are ambiguous" },
     };
   }
 
@@ -263,6 +275,7 @@ export async function searchSessions(
     ...ranked,
     decider: {
       mode: "jev",
+      ...provider,
       reason: decision.status === "rank" ? decision.reason : "the selector chose a result that was not in the ranked list",
     },
   };

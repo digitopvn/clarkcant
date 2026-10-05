@@ -10,19 +10,32 @@ effect. Everything that turns its answer into something the user sees is host co
 This document is the operator's half: what to set, what leaves the machine, what is recorded, and
 what happens when the provider is unavailable.
 
+Selector là một vai trò, và Jev là provider đảm nhận vai trò đó theo mặc định. Người vận hành có thể
+chọn Cloudflare Clef trên Workers AI thay thế (xem [Chọn decision provider](#chọn-decision-provider)).
+Chính sách của Clark — những gì được đưa ra để chọn, những gì bị che, các ngưỡng, ngân sách thời
+gian và mọi fallback — giống hệt nhau dù provider nào trả lời; chỉ endpoint, credential và model được
+ghim là khác. Trừ khi một mục nói khác, "provider" bên dưới là provider đang được chọn.
+
 ## Configuration
 
-All settings are read from the environment of the runtime process. `TYPESAFE_API_KEY` is the only
-credential, and it is never read by a renderer, written into props, stored in a snapshot, or
-logged.
+Mọi thiết lập được đọc từ môi trường của process runtime. Credential của provider đang được chọn
+(`TYPESAFE_API_KEY`, hoặc `CLOUDFLARE_API_TOKEN` khi chọn Cloudflare) là credential duy nhất được
+dùng, và nó không bao giờ được renderer đọc, ghi vào props, lưu trong snapshot hay ghi log. Các thiết
+lập `CLARKCANT_JEV_*`, trừ model và endpoint, áp dụng cho provider nào đang được chọn; giá trị `jev`
+của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "hỏi decision provider đang
+được chọn".
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TYPESAFE_API_KEY` | *(none)* | Provider credential. No key means the selector is disabled. |
+| `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev) hoặc `cloudflare` (Clef). Giá trị khác thì từ chối mọi lời gọi quyết định, chứ không quay về TypeSafe. |
+| `CLARKCANT_DECISION_MODEL` | *(xem ý nghĩa)* | Model id chính xác cho provider đang được chọn. Với TypeSafe, nó thắng `CLARKCANT_JEV_MODEL`, và khi không đặt thì thiết lập đó vẫn quyết định. Với Cloudflare, nó là bắt buộc và phải là `clef` hoặc `clef-flash`. |
+| `TYPESAFE_API_KEY` | *(none)* | Credential của TypeSafe. Khi chọn TypeSafe, không có key nghĩa là selector bị tắt. |
+| `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Chỉ cho Cloudflare. 32 ký tự thập lục phân; giá trị khác thì mọi lời gọi bị từ chối. |
+| `CLOUDFLARE_API_TOKEN` | *(none)* | Chỉ cho Cloudflare, và chỉ đọc từ môi trường. Một token được phép chạy Workers AI. Khi chọn Cloudflare, không có token nghĩa là selector bị tắt; key của TypeSafe không bao giờ được dùng thay. |
 | `CLARKCANT_JEV_ENABLED` | derived | Explicit override. Defaults to "a key is present and the node is not local-only". |
 | `CLARKCANT_JEV_LOCAL_ONLY` | off | `1`/`true` forbids sending any intent to a third party. Outranks a key being present. |
-| `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
-| `CLARKCANT_JEV_ENDPOINT` | `https://api.typesafe.ai/v1/systemone` | Must be `https`, with no embedded credentials, and must not point at a loopback or private address. |
+| `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | Chỉ cho TypeSafe. Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
+| `CLARKCANT_JEV_ENDPOINT` | `https://api.typesafe.ai/v1/systemone` | Chỉ cho TypeSafe. Must be `https`, with no embedded credentials, and must not point at a loopback or private address. |
 | `CLARKCANT_JEV_TIMEOUT_MS` | `4000` | Budget for **all** selector calls made while composing one turn. |
 | `CLARKCANT_JEV_SEARCH_TIMEOUT_MS` | `2000` | Budget for **one decision** rather than a whole composition: the selector choosing between close search results, or between usable capabilities. A value that is not a positive number falls back to the default. |
 | `CLARKCANT_JEV_POLICY_VERSION` | `2026-09-17` | Stamped into telemetry and composition provenance so a decision can be traced to a policy. |
@@ -36,7 +49,43 @@ logged.
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code.
+referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt; nó được dùng khi môi
+trường không có, và biến đặt trong môi trường luôn thắng. Token của Cloudflare chỉ được đọc từ môi
+trường: không có thẻ cài đặt cho nó, và một secret được lưu cho mục đích khác không bao giờ được dùng
+làm credential của decision provider.
+
+### Chọn decision provider
+
+TypeSafe Jev vẫn là mặc định. Cloudflare Clef chỉ được dùng khi người vận hành đặt đủ cả bốn:
+
+```bash
+CLARKCANT_DECISION_PROVIDER=cloudflare
+CLARKCANT_DECISION_MODEL=clef        # hoặc clef-flash
+CLOUDFLARE_ACCOUNT_ID=<32 ký tự thập lục phân>
+CLOUDFLARE_API_TOKEN=<một token được phép chạy Workers AI>
+```
+
+| | TypeSafe Jev | Cloudflare Clef |
+|---|---|---|
+| Nơi nhận request | `https://api.typesafe.ai/v1/systemone`, hoặc `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, dựng từ hai giá trị đã kiểm tra; không có cách ghi đè endpoint |
+| Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ |
+| Credential | `TYPESAFE_API_KEY`, nếu không có thì key từ thẻ cài đặt | Chỉ `CLOUDFLARE_API_TOKEN` |
+| Thân request | System One: `{state, model, questions}` | Cùng một thân |
+| Response | Câu trả lời System One | Cùng câu trả lời đó nằm trong envelope REST của Cloudflare; chỉ `success: true` mới được mở ra |
+
+Những gì rời khỏi node là giống hệt nhau cho cả hai: cùng một state đã che và giới hạn kích thước,
+cùng các lựa chọn được đưa ra, tất cả được dựng trước khi biết provider nào nhận. Chế độ local-only từ
+chối cả hai, và mọi lỗi đều fallback đúng như mô tả ở [Failure behaviour](#failure-behaviour). Đổi
+provider là đổi bên nhận dữ liệu quyết định, nên đó là một quyết định chia sẻ dữ liệu chứ không chỉ là
+một lựa chọn kỹ thuật.
+
+Cloudflare công bố benchmark so sánh Clef với Jev. Đó là số liệu của nhà cung cấp trên workload của
+họ, không phải bằng chứng về các quyết định của node này, và vì thế mặc định không thay đổi.
+
+Những gì chưa được kiểm chứng với dịch vụ Workers AI thật: model id chính xác trong response của Clef
+(`clef` và `@cf/cloudflare/clef` đều được đọc là `clef`; mọi giá trị khác bị từ chối như drift), và
+envelope mà Clef thực sự trả về, vốn đang theo tài liệu REST chung của Cloudflare. `clef-live.spec.ts`
+(bên dưới) là bài kiểm tra sẽ tạo ra bằng chứng đó.
 
 ### The exact-model gate
 
@@ -61,8 +110,12 @@ One request, containing:
 
 It never contains row values, private titles, file paths, message history, image bytes, the API
 key, or any host-owned card. The assembled state is capped at 16 KiB and is refused before the call
-rather than sent and rejected. A second check re-scans the serialized state for secret-shaped
-values and refuses to send it at all if one survives.
+rather than sent and rejected. A second check re-scans the serialized state for a credential
+and refuses to send it at all if one survives.
+
+Bước cuối cùng trước khi gọi bất kỳ provider nào, dù provider nào được chọn, là quét toàn bộ request
+đã tuần tự hoá (state và các câu hỏi, kể cả mô tả của từng lựa chọn) để tìm credential, bằng bộ phân loại mà ranh giới gửi dùng cho đầu vào của model. Id và tên chỉ giống token thì không tính. Nếu phát hiện, request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi
+provider khác, và lý do cùng telemetry không chứa phần nào của giá trị.
 
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
@@ -89,12 +142,17 @@ the release evidence rather than tuned to taste.
 | Condition | Outcome |
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
+| Tên provider không xác định, hoặc model hay account id của Cloudflare bị thiếu hoặc sai dạng | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
+| Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn Cloudflare hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
+| Còn sót một credential ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do không chứa phần nào của giá trị. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
 | 422 | `unavailable`; the provider's error body is read and discarded. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
-| Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. |
+| Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho cả hai provider. |
+| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Áp dụng cho cả hai provider. |
+| Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. Với Cloudflare, envelope không có `success: true` hoặc không có `result` dạng System One được coi là sai dạng. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
 An abstention is not a failure. It is the answer that says "no offered option fits", and the
@@ -105,7 +163,13 @@ clarifying question — and to record that the composition was a fallback.
 
 One line per call, printed through the injected sink and kept to the last 200 in memory. It holds:
 request id, event (`call`, `refusal`, `policy`, `model_drift`, `error`, `oversized_state`), model id,
-policy version, duration, question count, token counts, the selected enum, and a reason.
+policy version, duration, question count, token counts, the selected enum, and a reason. Khi một
+provider khác TypeSafe được chọn, mỗi dòng còn nêu tên provider đó (`provider: "cloudflare"`); dòng
+từ một node mặc định không có trường `provider`, giống hệt trước đây. Model id do provider trả về được
+cắt còn 64 ký tự trước khi được ghi lại hoặc nhắc lại trong một lý do.
+
+Quy tắc này cũng áp dụng cho những gì được lưu kèm một quyết định: provenance của bộ chọn trong một
+composition và bản ghi decider của kết quả tìm kiếm chỉ có `provider` khi provider đó không phải TypeSafe.
 
 It holds **no** request body, no prompt, no headers, no key, and no full URL with a query. The
 provider's error bodies are discarded for the same reason — they routinely echo the request.
@@ -120,8 +184,11 @@ claim.
 
 ```
 selector: jev-1.13.0 pinned, 4000 ms per turn
+selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
+
+Dạng thứ hai chỉ xuất hiện khi Cloudflare được chọn.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one
@@ -202,11 +269,15 @@ startup.
 ```bash
 # Unit and boundary tests: no credentials, no network.
 pnpm exec vitest run apps/runtime/test/jev-selector.spec.ts
+pnpm exec vitest run apps/runtime/test/cloudflare-decision-provider.spec.ts apps/runtime/test/decision-provider-parity.spec.ts
 
 # Live smoke: opt-in, needs a real key, sends only synthetic state.
 CLARKCANT_JEV_LIVE=1 pnpm exec vitest run apps/runtime/test/jev-live.spec.ts
+
+# Live smoke cho Clef: opt-in, cần các thiết lập Cloudflare ở trên, chỉ gửi state tổng hợp.
+CLARKCANT_CLEF_LIVE=1 pnpm exec vitest run apps/runtime/test/clef-live.spec.ts
 ```
 
-The live file reports `BLOCKED` with the missing variable when it cannot run. It deliberately
+Mỗi file live báo `BLOCKED` kèm biến còn thiếu khi không chạy được. It deliberately
 never passes silently: "no live evidence" and "live evidence is fine" must not look the same in a
 test report.
