@@ -932,6 +932,39 @@ describe("a changed model the session can keep", () => {
     expect(adapter.handoffs).toHaveLength(1);
   });
 
+  it("starts a successor when only a tool result's structured value carried what the new model may not receive", async () => {
+    const adapter = new CountingAdapter({ script: [{ callTool: { name: "lookup_owner", params: {} }, reply: "ok" }, "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal"] : ["public", "internal", "confidential"]),
+      extraTools: () => [
+        {
+          name: "lookup_owner",
+          label: "lookup",
+          description: "finds who owns the project",
+          parameters: { type: "object", additionalProperties: false, properties: {} },
+          outputSchema: { type: "object" },
+          // The text says nothing personal; the data a script would read does.
+          execute: async () => ({ text: "found the owner", structuredContent: { owner: "duy@example.com" } }),
+        },
+      ],
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    await say(turn, "hai", "msg_2");
+
+    // The first model read the structured value, so the session holds an address the new model may not: a new one is made.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
   it("holds a file checked after the move to the new model's ceiling", async () => {
     const adapter = new CountingAdapter({ script: ["ok", "ok"] });
     adapter.inPlace = true;

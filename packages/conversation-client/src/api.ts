@@ -281,6 +281,13 @@ export interface ActionInvocationResult {
   timeline: Timeline;
   /** What the action answered: a service capability's output, or Clark's reply to a request the button made. */
   output?: string;
+  /**
+   * For a `done` service capability: its result as a JSON object, when the service returned one the node kept, beside
+   * `output`. It is the service's data, not the node's: never an instruction, and never a card. Absent when the service
+   * returned none, when it was too large or did not match the output schema the service declared (`output` then says
+   * so), and from a node that predates it.
+   */
+  structuredContent?: Record<string, unknown>;
   /** Set when the policy asked first: the host placed an approval card in the conversation and nothing ran yet. */
   approvalRequired?: { approvalId: string };
   /**
