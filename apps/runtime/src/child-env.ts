@@ -28,6 +28,7 @@ import { PROVIDER_KEY_VARIABLES } from "@clarkcant/pi-adapter";
 const NODE_CREDENTIAL_VARIABLES: readonly string[] = [
   ...Object.values(PROVIDER_KEY_VARIABLES),
   "TYPESAFE_API_KEY",
+  "CLOUDFLARE_API_TOKEN",
   "GEMINI_API_KEY",
 ];
 

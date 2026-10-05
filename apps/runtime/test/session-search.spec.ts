@@ -574,4 +574,44 @@ describe("the search deadline", () => {
     expect(elapsed).toBeLessThan(SEARCH_TOTAL_BUDGET_MS);
     void SEARCH_TOTAL_BUDGET_MS;
   });
+
+  it("records which decision provider chose, only when it is not the default", async () => {
+    seed("sửa lỗi đăng nhập token hết hạn", "msg_login_a", "2026-09-16T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
+
+    /** Picks the first offered result decisively, as System One; `wrap` puts it in a vendor envelope. */
+    const deciding = (model: string, wrap: (answer: unknown) => unknown): JevTransport => async (request) => {
+      const questions = (request.body as { questions: Record<string, { criteria: Record<string, unknown> }> }).questions;
+      const [key, question] = Object.entries(questions)[0]!;
+      const options = Object.keys(question.criteria);
+      const first = options.find((option) => option.startsWith("result:"))!;
+      const probabilities = Object.fromEntries(options.map((option) => [option, option === first ? 0.97 : 0.03 / (options.length - 1)]));
+      const answer = { model, answers: { [key]: { type: "choice", choice: first, probabilities, confidence: 0.97 } } };
+      return { status: 200, body: wrap(answer) };
+    };
+    const budget = () => ({ deadlineAt: Date.now() + 2000, timeoutMs: 2000 });
+
+    const byDefault = await searchSessions(
+      { ...search, decider: { jev: { config: config(), transport: deciding("jev-1.13.0", (answer) => answer) }, budget }, deciderMode: "jev" },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+    expect(byDefault.mode).toBe("jev");
+    expect(byDefault.decider?.mode).toBe("jev");
+    expect(byDefault.decider).not.toHaveProperty("provider");
+
+    const cloudflare: JevConfig = { ...config(), provider: "cloudflare", model: "clef", apiKey: "cf-test-token-not-a-real-one" };
+    const byCloudflare = await searchSessions(
+      {
+        ...search,
+        decider: {
+          jev: { config: cloudflare, transport: deciding("clef", (result) => ({ success: true, errors: [], messages: [], result })) },
+          budget,
+        },
+        deciderMode: "jev",
+      },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+    expect(byCloudflare.mode).toBe("jev");
+    expect(byCloudflare.decider).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+  });
 });

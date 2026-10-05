@@ -433,7 +433,9 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const nodeId = runtime.identity.nodeId;
   // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault here
   // rather than passed in as a value, because the point of storing one is that the node is already running.
-  const jevRuntime = buildJevRuntime(options, (name) => readCredential(runtime.db, runtime.identity.ownerPrincipalId, name));
+  const jevRuntime = buildJevRuntime(options, () =>
+    readCredential(runtime.db, runtime.identity.ownerPrincipalId, "typesafe"),
+  );
   const catalog = registerCatalog(
     new CatalogRegistry(),
     CATALOG_WIDGETS.map((definition) => ({ definition, family: FAMILY_BY_DEFINITION[definition.id] ?? "unknown" })),

@@ -2,6 +2,7 @@ import {
   type CompositionSlot,
   type MiniAppSelection,
   checkSelectionAgainstCandidates,
+  findSecretShapes,
   noulVerdict,
   selectionIsDecisive,
 } from "@clarkcant/contracts";
@@ -15,7 +16,12 @@ import {
   stateLooksRedacted,
 } from "./mini-app-candidates.ts";
 import { type DecisionConfig, JEV_POLICY_VERSION, decisionCallRefusal, decisionConfigFromEnv } from "./decision-config.ts";
-import { DEFAULT_DECISION_PROVIDER, type DecisionProviderId, decisionProviderFor } from "./decision-provider.ts";
+import {
+  DEFAULT_DECISION_PROVIDER,
+  type DecisionProviderId,
+  decisionProviderFor,
+  recordedDecisionProvider,
+} from "./decision-provider.ts";
 import {
   type DecisionTransport,
   type DecisionTransportRequest,
@@ -118,6 +124,9 @@ export interface JevDeps {
   newRequestId?: () => string;
 }
 
+/** The longest provider-supplied model id this node records; a real id is far shorter. */
+const MAX_RECORDED_MODEL_LENGTH = 64;
+
 let requestCounter = 0;
 
 function defaultRequestId(): string {
@@ -131,8 +140,8 @@ function providerOf(config: JevConfig): DecisionProviderId {
 }
 
 function emit(deps: JevDeps, event: JevTelemetry): void {
-  const provider = providerOf(deps.config);
-  deps.onTelemetry?.(provider === DEFAULT_DECISION_PROVIDER ? event : { ...event, provider });
+  const provider = recordedDecisionProvider(deps.config);
+  deps.onTelemetry?.(provider === undefined ? event : { ...event, provider });
 }
 
 /* ------------------------------------------------------------------ *
@@ -229,6 +238,31 @@ async function callProvider(
     return { ok: false, status: "unavailable", reason: refused };
   }
 
+  const body = { state: input.state, model: deps.config.model, questions: input.questions };
+  /*
+   * One last look at exactly what would leave the node, whichever provider receives it.
+   *
+   * Each caller redacts its own fields first; this is the backstop for a field that did not, such as an option's
+   * description. A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the
+   * caller falls back as it would for any provider failure. Only the shape labels are recorded: the detector's match
+   * text is the beginning of the very value being withheld.
+   */
+  const secretShapes = findSecretShapes(JSON.stringify(body)).map((match) => match.split(":")[0] ?? "secret");
+  if (secretShapes.length > 0) {
+    const reason = `the decision request still carried a secret-shaped value (${[...new Set(secretShapes)].join(", ")}), so it was not sent`;
+    emit(deps, {
+      event: "refusal",
+      requestId,
+      model: deps.config.model,
+      policyVersion: deps.config.policyVersion,
+      durationMs: 0,
+      status: "unavailable",
+      questionCount,
+      reason,
+    });
+    return { ok: false, status: "unavailable", reason };
+  }
+
   const transport = deps.transport ?? createFetchTransport();
   const startedAt = now();
   const controller = new AbortController();
@@ -241,7 +275,7 @@ async function callProvider(
     const response = await transport({
       url: deps.config.endpoint,
       apiKey: deps.config.apiKey as string,
-      body: { state: input.state, model: deps.config.model, questions: input.questions },
+      body,
       signal: controller.signal,
     });
     const durationMs = now() - startedAt;
@@ -290,16 +324,18 @@ async function callProvider(
 
     const usage = answered.usage;
     const drift = answered.model !== deps.config.model;
+    // The id is the provider's text, so it is bounded before it is recorded or repeated in a reason.
+    const answeredModel = answered.model.slice(0, MAX_RECORDED_MODEL_LENGTH);
     emit(deps, {
       event: drift ? "model_drift" : "call",
       requestId,
-      model: answered.model,
+      model: answeredModel,
       policyVersion: deps.config.policyVersion,
       durationMs,
       status: "answered",
       questionCount,
       ...(usage === undefined ? {} : { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }),
-      ...(drift ? { reason: `the provider answered with ${answered.model}, not the pinned ${deps.config.model}` } : {}),
+      ...(drift ? { reason: `the provider answered with ${answeredModel}, not the pinned ${deps.config.model}` } : {}),
     });
 
     if (drift) {
@@ -308,7 +344,7 @@ async function callProvider(
       return {
         ok: false,
         status: "unavailable",
-        reason: `the provider answered with ${answered.model} but this node pinned ${deps.config.model}`,
+        reason: `the provider answered with ${answeredModel} but this node pinned ${deps.config.model}`,
       };
     }
 

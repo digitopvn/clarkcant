@@ -31,7 +31,7 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 | `CLARKCANT_DECISION_MODEL` | *(see meaning)* | Exact model id for the selected provider. With TypeSafe it wins over `CLARKCANT_JEV_MODEL`, and unset leaves that setting in charge. With Cloudflare it is required and must be `clef` or `clef-flash`. |
 | `TYPESAFE_API_KEY` | *(none)* | TypeSafe credential. With TypeSafe selected, no key means the selector is disabled. |
 | `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Cloudflare only. 32 hexadecimal characters; anything else refuses every call. |
-| `CLOUDFLARE_API_TOKEN` | *(none)* | Cloudflare only. A token allowed to run Workers AI. With Cloudflare selected, no token means the selector is disabled; the TypeSafe key is never used instead. |
+| `CLOUDFLARE_API_TOKEN` | *(none)* | Cloudflare only, and read from the environment only. A token allowed to run Workers AI. With Cloudflare selected, no token means the selector is disabled; the TypeSafe key is never used instead. |
 | `CLARKCANT_JEV_ENABLED` | derived | Explicit override. Defaults to "a key is present and the node is not local-only". |
 | `CLARKCANT_JEV_LOCAL_ONLY` | off | `1`/`true` forbids sending any intent to a third party. Outranks a key being present. |
 | `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | TypeSafe only. Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
@@ -49,9 +49,10 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. A key stored through the interface is read from the node's credential store
-under the provider's name (`typesafe` or `cloudflare`) when the environment has none; a variable set
-in the environment wins.
+referenced from code. The TypeSafe key can also be typed into the settings card; it is used when the
+environment has none, and a variable set in the environment wins. The Cloudflare token is read from
+the environment only: there is no settings card for it, and a secret stored for another purpose is
+never used as the decision provider's credential.
 
 ### Choosing a decision provider
 
@@ -68,7 +69,7 @@ CLOUDFLARE_API_TOKEN=<a token allowed to run Workers AI>
 |---|---|---|
 | Receives the request | `https://api.typesafe.ai/v1/systemone`, or `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, built from the two validated values; there is no endpoint override |
 | Model | `jev-1.13.0` unless overridden | `clef` or `clef-flash`, always named explicitly |
-| Credential | `TYPESAFE_API_KEY`, else the stored `typesafe` key | `CLOUDFLARE_API_TOKEN`, else the stored `cloudflare` key |
+| Credential | `TYPESAFE_API_KEY`, else the key from the settings card | `CLOUDFLARE_API_TOKEN` only |
 | Request body | System One: `{state, model, questions}` | The same body |
 | Response | System One answer | The same answer inside Cloudflare's REST envelope; only `success: true` is unwrapped |
 
@@ -111,6 +112,11 @@ key, or any host-owned card. The assembled state is capped at 16 KiB and is refu
 rather than sent and rejected. A second check re-scans the serialized state for secret-shaped
 values and refuses to send it at all if one survives.
 
+The last step before any provider is called, whichever one is selected, scans the whole serialized
+request (state and questions, including option descriptions) with the same secret-shape detector.
+A hit means the request is not sent at all; the call falls back as any provider failure does, and
+the reason and telemetry name only the kind of shape found, never any part of the value.
+
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
 
@@ -137,11 +143,15 @@ the release evidence rather than tuned to taste.
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
 | Unknown provider name, or a Cloudflare model or account id that is missing or malformed | `unavailable`; no network call, and the reason names the setting. |
+| TypeSafe selected with a Cloudflare model id (`clef`, `clef-flash`, or any `@cf/` id) | `unavailable`; no network call, and the reason says to select Cloudflare or unset `CLARKCANT_DECISION_MODEL`. |
+| A secret-shaped value left anywhere in the request | `unavailable`; no network call, and the reason names only the shape. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
 | 422 | `unavailable`; the provider's error body is read and discarded. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
+| A redirect | The call fails rather than follows it, so the credential never reaches a host the endpoint check did not approve. Applies to both providers. |
+| A response over 256 KiB | Not read past the limit (by its declared length, or by counting the stream), and treated as malformed. Applies to both providers. |
 | Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. For Cloudflare, an envelope without `success: true` or without a System One `result` is malformed. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
@@ -155,7 +165,11 @@ One line per call, printed through the injected sink and kept to the last 200 in
 request id, event (`call`, `refusal`, `policy`, `model_drift`, `error`, `oversized_state`), model id,
 policy version, duration, question count, token counts, the selected enum, and a reason. When a
 provider other than TypeSafe is selected, each line also names it (`provider: "cloudflare"`); a line
-from a default node has no `provider` field, exactly as before.
+from a default node has no `provider` field, exactly as before. A model id the provider returns is
+cut to 64 characters before it is recorded or repeated in a reason.
+
+The same rule applies to what is stored with a decision: a composition's selector provenance and a
+search result's decider record carry `provider` only when it is not TypeSafe.
 
 It holds **no** request body, no prompt, no headers, no key, and no full URL with a query. The
 provider's error bodies are discarded for the same reason — they routinely echo the request.

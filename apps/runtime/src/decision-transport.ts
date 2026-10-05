@@ -122,6 +122,48 @@ function callableTarget(url: string): URL {
  * about a 529 is the status and the interesting thing about an error body is that it sometimes
  * echoes the request.
  */
+/**
+ * The largest decision response this node reads. A real answer is a few kilobytes; anything near this is not one, and
+ * reading it in full would let a provider hold memory the decision never needed.
+ */
+export const MAX_DECISION_RESPONSE_BYTES = 256 * 1024;
+
+/**
+ * Reads a response body as text, or gives `undefined` once it is larger than `limit` bytes.
+ *
+ * The declared length is checked first so an honest oversized answer is refused without reading it; the stream is
+ * still counted, because a length header is the provider's claim and need not be present or true.
+ */
+async function readCappedText(response: Response, limit: number): Promise<string | undefined> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) {
+    await response.body?.cancel().catch(() => undefined);
+    return undefined;
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > limit) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const whole = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    whole.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(whole);
+}
+
 export function createFetchTransport(): DecisionTransport {
   return async (request) => {
     // A plain local name, assigned only from the allowlist above, so the call below cannot reach anything else.
@@ -135,15 +177,19 @@ export function createFetchTransport(): DecisionTransport {
       },
       body: JSON.stringify(request.body),
       signal: request.signal,
+      // A redirect would carry the bearer token to a host the allowlist never checked, so one is a failure.
+      redirect: "error",
     });
 
     if (!response.ok) {
-      // The body is read and discarded on purpose: it is never returned, logged or stored.
-      await response.text().catch(() => "");
+      // The body is discarded unread on purpose: it is never returned, logged or stored.
+      await response.body?.cancel().catch(() => undefined);
       return { status: response.status, body: undefined };
     }
 
-    const text = await response.text();
+    // An oversized answer reads as no answer, which the caller treats as malformed and falls back from.
+    const text = await readCappedText(response, MAX_DECISION_RESPONSE_BYTES);
+    if (text === undefined) return { status: response.status, body: undefined };
     try {
       return { status: response.status, body: JSON.parse(text) as unknown };
     } catch {

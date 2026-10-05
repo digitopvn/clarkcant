@@ -49,7 +49,7 @@ const envelopeSchema = z.object({
 
 export const cloudflareDecisionProvider: DecisionProvider = {
   id: "cloudflare",
-  connection(env, stored) {
+  connection(env) {
     const requested = env.CLARKCANT_DECISION_MODEL?.trim() ?? "";
     if (!isCloudflareDecisionModel(requested)) {
       return refused(
@@ -69,8 +69,9 @@ export const cloudflareDecisionProvider: DecisionProvider = {
     const endpointCheck = validateProviderEndpoint(workersAiEndpoint(accountId, requested));
     if (!endpointCheck.ok) return refused(requested, endpointCheck.reason);
 
-    // The same order as the TypeSafe key: an operator's environment wins over a value typed later into a card.
-    const apiKey = env.CLOUDFLARE_API_TOKEN?.trim() || stored?.("cloudflare")?.trim() || undefined;
+    // The environment only. There is no settings card for this token, and a generically named stored secret was
+    // stored for some other consumer: using it here would skip the vault's consumer check entirely.
+    const apiKey = env.CLOUDFLARE_API_TOKEN?.trim() || undefined;
     return { apiKey, endpoint: endpointCheck.url, endpointRefusal: undefined, model: requested };
   },
   readResponse(body) {

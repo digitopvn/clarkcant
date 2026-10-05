@@ -22,6 +22,17 @@ export const DECISION_PROVIDER_IDS: readonly DecisionProviderId[] = Object.freez
 /** Used when nothing names a provider, which is every configuration written before a second one existed. */
 export const DEFAULT_DECISION_PROVIDER: DecisionProviderId = "typesafe";
 
+/**
+ * The provider to record beside a decision, or `undefined` for the default.
+ *
+ * Telemetry and provenance name a provider only when it is not the default, so a record written by a default node is
+ * byte-for-byte what it was before a second provider existed, and a record that names one says who actually decided.
+ */
+export function recordedDecisionProvider(config: { provider?: DecisionProviderId | undefined }): DecisionProviderId | undefined {
+  const provider = config.provider ?? DEFAULT_DECISION_PROVIDER;
+  return provider === DEFAULT_DECISION_PROVIDER ? undefined : provider;
+}
+
 /** What an adapter resolves from operator configuration: where to call, with what, and which model is pinned. */
 export interface DecisionProviderConnection {
   apiKey: string | undefined;
@@ -34,17 +45,19 @@ export interface DecisionProviderConnection {
 }
 
 /**
- * A credential a person stored through the interface, looked up by name.
+ * The TypeSafe key a person typed into the settings card, when there is one.
  *
  * A function rather than a value because it is read when the selector is built, and the point of storing one is that
- * it works without restarting the node.
+ * it works without restarting the node. It reads that one named key and nothing else: a lookup by any name would let a
+ * secret stored for a different consumer become a decision provider's bearer without the vault's consumer check.
  */
-export type StoredCredential = (name: string) => string | undefined;
+export type StoredCredential = () => string | undefined;
 
 export interface DecisionProvider {
   readonly id: DecisionProviderId;
   /**
-   * Credential, endpoint and pinned model, read from the operator's environment and the credential store only.
+   * Credential, endpoint and pinned model, read from the operator's environment (and, for TypeSafe only, the key from
+   * its settings card).
    *
    * Never from conversation or project state: what a decision may be sent to is an operator choice.
    */

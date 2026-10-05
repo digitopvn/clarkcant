@@ -177,9 +177,14 @@ describe("selecting Cloudflare", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("reads a stored Cloudflare token through the credential store, and lets the environment win", () => {
-    const stored = (name: string): string | undefined => (name === "cloudflare" ? "stored-cf-token" : "stored-other");
-    expect(decisionConfigFromEnv(cloudflareEnv({ CLOUDFLARE_API_TOKEN: undefined }), stored).apiKey).toBe("stored-cf-token");
+  it("takes the Cloudflare token from the environment only, never from a stored secret", async () => {
+    // A stored value here is whatever the credential store would hand back; none of it may become the bearer.
+    const stored = (): string | undefined => "stored-secret-for-another-consumer";
+    const config = decisionConfigFromEnv(cloudflareEnv({ CLOUDFLARE_API_TOKEN: undefined }), stored);
+    expect(config.apiKey).toBeUndefined();
+    expect(config.enabled).toBe(false);
+    const { calls } = await selectWith(config, [envelope(decisiveTemplate)]);
+    expect(calls).toHaveLength(0);
     expect(decisionConfigFromEnv(cloudflareEnv(), stored).apiKey).toBe(TOKEN);
   });
 });
@@ -305,7 +310,7 @@ describe("the Workers AI wire shape", () => {
     const seen: { url: string; authorization: string | undefined; body: string }[] = [];
     globalThis.fetch = (async (url: string, init: { headers?: Record<string, string>; body?: unknown }) => {
       seen.push({ url, authorization: init.headers?.authorization, body: String(init.body) });
-      return { ok: true, status: 200, text: async () => JSON.stringify(envelope(decisiveTemplate).body) };
+      return new Response(JSON.stringify(envelope(decisiveTemplate).body), { status: 200 });
     }) as unknown as typeof fetch;
     try {
       const outcome = await selectTemplate(

@@ -31,7 +31,7 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 | `CLARKCANT_DECISION_MODEL` | *(xem ý nghĩa)* | Model id chính xác cho provider đang được chọn. Với TypeSafe, nó thắng `CLARKCANT_JEV_MODEL`, và khi không đặt thì thiết lập đó vẫn quyết định. Với Cloudflare, nó là bắt buộc và phải là `clef` hoặc `clef-flash`. |
 | `TYPESAFE_API_KEY` | *(none)* | Credential của TypeSafe. Khi chọn TypeSafe, không có key nghĩa là selector bị tắt. |
 | `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Chỉ cho Cloudflare. 32 ký tự thập lục phân; giá trị khác thì mọi lời gọi bị từ chối. |
-| `CLOUDFLARE_API_TOKEN` | *(none)* | Chỉ cho Cloudflare. Một token được phép chạy Workers AI. Khi chọn Cloudflare, không có token nghĩa là selector bị tắt; key của TypeSafe không bao giờ được dùng thay. |
+| `CLOUDFLARE_API_TOKEN` | *(none)* | Chỉ cho Cloudflare, và chỉ đọc từ môi trường. Một token được phép chạy Workers AI. Khi chọn Cloudflare, không có token nghĩa là selector bị tắt; key của TypeSafe không bao giờ được dùng thay. |
 | `CLARKCANT_JEV_ENABLED` | derived | Explicit override. Defaults to "a key is present and the node is not local-only". |
 | `CLARKCANT_JEV_LOCAL_ONLY` | off | `1`/`true` forbids sending any intent to a third party. Outranks a key being present. |
 | `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | Chỉ cho TypeSafe. Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
@@ -49,8 +49,10 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. Một key được lưu qua giao diện sẽ được đọc từ kho credential của node theo tên
-provider (`typesafe` hoặc `cloudflare`) khi môi trường không có; biến đặt trong môi trường luôn thắng.
+referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt; nó được dùng khi môi
+trường không có, và biến đặt trong môi trường luôn thắng. Token của Cloudflare chỉ được đọc từ môi
+trường: không có thẻ cài đặt cho nó, và một secret được lưu cho mục đích khác không bao giờ được dùng
+làm credential của decision provider.
 
 ### Chọn decision provider
 
@@ -67,7 +69,7 @@ CLOUDFLARE_API_TOKEN=<một token được phép chạy Workers AI>
 |---|---|---|
 | Nơi nhận request | `https://api.typesafe.ai/v1/systemone`, hoặc `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, dựng từ hai giá trị đã kiểm tra; không có cách ghi đè endpoint |
 | Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ |
-| Credential | `TYPESAFE_API_KEY`, nếu không có thì key `typesafe` đã lưu | `CLOUDFLARE_API_TOKEN`, nếu không có thì key `cloudflare` đã lưu |
+| Credential | `TYPESAFE_API_KEY`, nếu không có thì key từ thẻ cài đặt | Chỉ `CLOUDFLARE_API_TOKEN` |
 | Thân request | System One: `{state, model, questions}` | Cùng một thân |
 | Response | Câu trả lời System One | Cùng câu trả lời đó nằm trong envelope REST của Cloudflare; chỉ `success: true` mới được mở ra |
 
@@ -111,6 +113,11 @@ key, or any host-owned card. The assembled state is capped at 16 KiB and is refu
 rather than sent and rejected. A second check re-scans the serialized state for secret-shaped
 values and refuses to send it at all if one survives.
 
+Bước cuối cùng trước khi gọi bất kỳ provider nào, dù provider nào được chọn, là quét toàn bộ request
+đã tuần tự hoá (state và các câu hỏi, kể cả mô tả của từng lựa chọn) bằng cùng bộ phát hiện dạng bí
+mật. Nếu phát hiện, request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi
+provider khác, và lý do cùng telemetry chỉ nêu loại dạng bí mật, không bao giờ chứa phần nào của giá trị.
+
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
 
@@ -137,11 +144,15 @@ the release evidence rather than tuned to taste.
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
 | Tên provider không xác định, hoặc model hay account id của Cloudflare bị thiếu hoặc sai dạng | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
+| Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn Cloudflare hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
+| Còn sót một giá trị có dạng bí mật ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do chỉ nêu loại dạng bí mật. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
 | 422 | `unavailable`; the provider's error body is read and discarded. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
+| Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho cả hai provider. |
+| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Áp dụng cho cả hai provider. |
 | Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. Với Cloudflare, envelope không có `success: true` hoặc không có `result` dạng System One được coi là sai dạng. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
@@ -155,7 +166,11 @@ One line per call, printed through the injected sink and kept to the last 200 in
 request id, event (`call`, `refusal`, `policy`, `model_drift`, `error`, `oversized_state`), model id,
 policy version, duration, question count, token counts, the selected enum, and a reason. Khi một
 provider khác TypeSafe được chọn, mỗi dòng còn nêu tên provider đó (`provider: "cloudflare"`); dòng
-từ một node mặc định không có trường `provider`, giống hệt trước đây.
+từ một node mặc định không có trường `provider`, giống hệt trước đây. Model id do provider trả về được
+cắt còn 64 ký tự trước khi được ghi lại hoặc nhắc lại trong một lý do.
+
+Quy tắc này cũng áp dụng cho những gì được lưu kèm một quyết định: provenance của bộ chọn trong một
+composition và bản ghi decider của kết quả tìm kiếm chỉ có `provider` khi provider đó không phải TypeSafe.
 
 It holds **no** request body, no prompt, no headers, no key, and no full URL with a query. The
 provider's error bodies are discarded for the same reason — they routinely echo the request.
