@@ -51,9 +51,10 @@ import {
   McpRequestNotSent,
   McpRequestTimeout,
   McpServerRequestError,
-  type McpToolFile,
   type McpToolMetadata,
+  type McpToolResult,
   StdioMcpTransport,
+  acceptOutputSchema,
   type StdioMcpTransportOptions,
 } from "@clarkcant/mcp-adapters";
 
@@ -160,7 +161,7 @@ export interface ServiceConnection {
     name: string,
     args: Record<string, unknown>,
     options?: { timeoutMs?: number; signal?: AbortSignal; onProgress?: (progress: { current: number; total?: number; message?: string }) => void },
-  ): Promise<{ content: string; files?: McpToolFile[]; filesOmitted?: true }>;
+  ): Promise<McpToolResult>;
   ping(): Promise<void>;
   close(): Promise<void>;
   readonly stderrTail: string;
@@ -330,7 +331,7 @@ export interface ServiceHost {
   /** Bring the running services in line with what is installed. Serialised: a second call waits for the first. */
   reconcile(): Promise<void>;
   /** Call a registered service capability. The caller has already asked the policy; this only runs it. */
-  call(ref: CapabilityRef, args: Record<string, unknown>, options?: ServiceCallOptions): Promise<{ content: string; files?: McpToolFile[]; filesOmitted?: true }>;
+  call(ref: CapabilityRef, args: Record<string, unknown>, options?: ServiceCallOptions): Promise<McpToolResult>;
   /**
    * The active generation whose service facet declares this ref and owns its registry row, whatever state the service
    * is in.
@@ -618,6 +619,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         },
         effectCategory: row.effectCategory,
         ...(row.inputSchema === undefined ? {} : { inputSchema: row.inputSchema }),
+        ...(row.outputSchema === undefined ? {} : { outputSchema: row.outputSchema }),
       });
     }
   }
@@ -758,7 +760,12 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   function register(
     entry: ServiceEntry,
     declaration: ServiceCapabilityDeclaration,
-    state: { readiness: CapabilityReadiness; effectCategory?: EffectCategory; inputSchema?: Record<string, unknown> },
+    state: {
+      readiness: CapabilityReadiness;
+      effectCategory?: EffectCategory;
+      inputSchema?: Record<string, unknown>;
+      outputSchema?: Record<string, unknown>;
+    },
   ): void {
     if (!claim(entry, declaration.ref)) return;
     const problem = authProblem(entry, declaration);
@@ -779,6 +786,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       executionNodeId: registry.nodeId,
       summary: declaration.summary,
       ...(state.inputSchema === undefined ? {} : { inputSchema: state.inputSchema }),
+      ...(state.outputSchema === undefined ? {} : { outputSchema: state.outputSchema }),
       resourceKinds: [],
       effectCategory: state.effectCategory ?? declaration.effectCategory,
       supportsCancellation: false,
@@ -815,11 +823,15 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       return;
     }
     if (!claim(entry, declaration.ref)) return;
+    // An output schema the node cannot use is dropped and the tool still runs: its results then reach a caller as text.
+    const output = acceptOutputSchema(tool.outputSchema);
+    if (!output.ok) log(`services: ${entry.key} ${declaration.tool}: ${output.reason}`);
     entry.tools.set(declaration.ref, declaration.tool);
     register(entry, declaration, {
       readiness: readiness({ loaded: true, healthy: true }),
       effectCategory: serviceEffectCategory(declaration.effectCategory, tool),
       inputSchema: tool.inputSchema,
+      ...(output.ok && output.schema !== undefined ? { outputSchema: output.schema } : {}),
     });
   }
 

@@ -189,7 +189,11 @@ async function speak(instanceId: string, invocationId: string) {
 
 /** Every call the stand-in service received, and how it answers the next one. */
 let calls: { ref: string; args: Record<string, unknown>; options: ServiceCallOptions | undefined }[];
-let answer: (ref: string, args: Record<string, unknown>, options: ServiceCallOptions | undefined) => Promise<{ content: string }>;
+let answer: (
+  ref: string,
+  args: Record<string, unknown>,
+  options: ServiceCallOptions | undefined,
+) => Promise<{ content: string; structuredContent?: Record<string, unknown> }>;
 let notes: { id: string; text: string }[];
 /** Invocation ids a test left running on purpose, ended after it so the next test starts with none. */
 let leftRunning: string[];
@@ -743,6 +747,35 @@ describe("an invoke button", () => {
     expect(calls[0]?.options?.timeoutMs).toBe(60_000);
     expect(calls[0]?.options?.signal).toBeInstanceOf(AbortSignal);
     expect(invocationRow("inv_ok")).toEqual({ kind: "done" });
+  });
+
+  it("answers the service's structured result beside its text, and the same again to a repeated id after a restart", async () => {
+    const button = await addButton();
+    answer = () => Promise.resolve({ content: "đã thêm", structuredContent: { id: "n1", text: "mua sữa", tags: ["chợ"] } });
+    const result = await press(button, "inv_structured");
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.body).toMatchObject({
+      outcome: "done",
+      duplicate: false,
+      output: "đã thêm",
+      structuredContent: { id: "n1", text: "mua sữa", tags: ["chợ"] },
+    });
+
+    restart();
+    const replayed = await press(button, "inv_structured");
+    expect(replayed).toMatchObject({
+      ok: true,
+      body: expect.objectContaining({ duplicate: true, output: "đã thêm", structuredContent: { id: "n1", text: "mua sữa", tags: ["chợ"] } }),
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("leaves the field out of an answer whose service returned only text", async () => {
+    const button = await addButton();
+    const result = await press(button, "inv_text_only");
+    if (!result.ok) throw new Error("the press was refused");
+    expect(result.body).not.toHaveProperty("structuredContent");
   });
 
   it("refuses by policy before anything is sent, and records nothing so the same press can run once that changes", async () => {

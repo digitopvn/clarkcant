@@ -293,13 +293,13 @@ export async function runWorker(
    * The evidence keeps its digest of the real output but quotes none of it.
    */
   const allowed = envelope.allowedDataClasses;
-  const withheldClass = (text: string): DataClass | undefined => {
+  const withheldClass = (text: string, parts: readonly string[] = []): DataClass | undefined => {
     if (allowed === undefined) return undefined;
-    const check = checkSendBoundary({ allowed, texts: [text] });
+    const check = checkSendBoundary({ allowed, texts: [text, ...parts] });
     return check.ok ? undefined : check.dataClass;
   };
-  const toolResultGuard: ToolResultGuard = ({ text }) => {
-    const dataClass = withheldClass(text);
+  const toolResultGuard: ToolResultGuard = ({ text, parts }) => {
+    const dataClass = withheldClass(text, parts);
     return dataClass === undefined
       ? { withheld: false }
       : {

@@ -467,7 +467,11 @@ function replay(
   });
   switch (prior.kind) {
     case "done":
-      return body(200, { outcome: "done", output: prior.output });
+      return body(200, {
+        outcome: "done",
+        output: prior.output,
+        ...(prior.structuredContent === undefined ? {} : { structuredContent: prior.structuredContent }),
+      });
     case "approval-required":
       return body(202, { outcome: "approval-required", approvalRequired: { approvalId: prior.approvalId } });
     case "background":
@@ -655,11 +659,17 @@ async function invokeCapabilityAction(
       body: actionBody(services, checked, request.conversationId, false, jobBody(outcome.job.jobId)),
     };
   }
-  settle(services, checked, request, { kind: "done", output: outcome.output });
+  // The structured value is passed on beside `output` as data, exactly as the agent's tool is handed it; nothing in it
+  // becomes part of the host's own answer.
+  const done = {
+    output: outcome.output,
+    ...(outcome.structuredContent === undefined ? {} : { structuredContent: outcome.structuredContent }),
+  };
+  settle(services, checked, request, { kind: "done", ...done });
   return {
     ok: true,
     status: 200,
-    body: actionBody(services, checked, request.conversationId, false, { outcome: "done", output: outcome.output }),
+    body: actionBody(services, checked, request.conversationId, false, { outcome: "done", ...done }),
   };
 }
 

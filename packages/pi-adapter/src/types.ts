@@ -96,9 +96,21 @@ export interface WorkerBrief {
 
 /**
  * The host's say over a tool result on its way to the model. `withheld` replaces the whole result with `text`: nothing
- * else the call returned, an image included, is sent.
+ * else the call returned, an image or a structured value included, is sent.
+ *
+ * `text` is everything of the result a model can come to read: its text, followed by its structured value as JSON
+ * when it has one. `parts` is that structured value again, as each key and each string in it on its own and as
+ * written: JSON escapes a quote, a backslash and a line break, and a shape a guard looks for can stop being one once
+ * escaped. A guard classifies `text` and every part.
  */
-export type ToolResultGuard = (input: { tool: string; text: string }) => { withheld: false } | { withheld: true; text: string };
+export type ToolResultGuard = (input: {
+  tool: string;
+  text: string;
+  parts?: readonly string[];
+}) => { withheld: false } | { withheld: true; text: string };
+
+/** A JSON value, as a tool's structured result is made of. */
+export type ToolJsonValue = string | number | boolean | null | ToolJsonValue[] | { [key: string]: ToolJsonValue };
 
 /** What `switchModel` changes. A field left out keeps what the session has. */
 export interface ModelSwitch {
@@ -137,8 +149,23 @@ export interface ToolDefinition {
    * asked to use one.
    */
   promptSnippet?: string;
+  /**
+   * JSON Schema of the result's `structuredContent`, declared to Pi as the tool's `outputSchema`.
+   *
+   * Pi hands a structured value to a program that calls the tool (a codemode script) only when the tool declares one;
+   * the model itself always reads `text`. A tool that declares it should return `structuredContent` with every result.
+   * No session this adapter creates turns codemode on, so today the value is carried and guarded but not read.
+   */
+  outputSchema?: Record<string, unknown>;
   execute: (params: Record<string, unknown>) => Promise<{
     text: string;
+    /**
+     * The result as data, for a program that calls the tool, matching `outputSchema`.
+     *
+     * Held to the same guard as `text` and dropped with it when the result is withheld. It is data only: a block the host
+     * records goes in `hostCard`, never here, so nothing shaped into this value becomes a card.
+     */
+    structuredContent?: { [key: string]: ToolJsonValue };
     /**
      * An image the model should receive as an image rather than as a description of one.
      *
