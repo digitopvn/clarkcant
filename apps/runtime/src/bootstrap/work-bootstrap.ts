@@ -4,6 +4,7 @@ import { listSecretMetadata } from "@clarkcant/storage";
 
 import { withholdFromChildren } from "../child-env.ts";
 import { answerUncertain } from "../delegation-handlers.ts";
+import { ownerHostText } from "../host-text.ts";
 import { tryRecordNodeNotice } from "../notices.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
@@ -173,6 +174,7 @@ export function attachNodeWork(input: {
         report: (conversationId, text) => {
           appendHostReply(services, { conversationId, text, at: nowInstant() });
         },
+        text: ownerHostText(runtime),
         rerun: (run) => {
           const started = startBackgroundWork(services, owner, () => nowInstant(), run.conversationId, run.requestText, {
             workId: run.workId,

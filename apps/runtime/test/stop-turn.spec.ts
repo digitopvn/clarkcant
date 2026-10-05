@@ -275,6 +275,11 @@ class HeldSwitchAdapter extends FakePiAdapter {
   handoffs = 0;
   hold: Promise<void> | undefined;
 
+  /** The session cannot be moved in place, so the switch is a successor, which is what is being held here. */
+  override async switchModel(): Promise<void> {
+    throw new Error("No API key for the model this session was asked to move to");
+  }
+
   override async handoff(sessionId: string, brief: WorkerBrief): Promise<{ successor: WorkerSessionHandle; note: string }> {
     this.handoffs += 1;
     const held = this.hold;

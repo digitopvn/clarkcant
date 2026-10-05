@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ConversationId, Principal } from "@clarkcant/contracts";
+import type { ConversationId, DataClass, Principal } from "@clarkcant/contracts";
 import type { ModelTurnEvent } from "@clarkcant/core";
-import { FakePiAdapter, type WorkerBrief, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, ModelSwitchUnsureError, type ModelSwitch, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
 
 import { turnInstructions } from "../src/conditional-instructions.ts";
 import { SESSION_POLICY_LIMITS } from "../src/session-policy.ts";
@@ -18,11 +18,12 @@ const VIEW: ViewDescriptor = {
 const RECAP = "Mạch hội thoại trước đó";
 
 /**
- * Changing the model, in the only way Pi allows it.
+ * Changing the model, at the turn boundary.
  *
- * Pi resolves a model when a session is created, so a change cannot be applied to the session underneath a running
- * turn. What these tests hold is the answer this code gives instead: the change creates a successor generation at
- * the turn boundary, the conversation keeps its thread, and a model that has not changed costs nothing at all.
+ * A session that can simply go on is moved to the new model in place (the last two groups of tests below). One that
+ * cannot — Pi refuses the switch, or the new model may not receive what the session holds — gets a successor
+ * generation instead: the conversation keeps its thread, and a model that has not changed costs nothing at all. The
+ * adapter here refuses the in-place switch unless a test turns it on, so the successor path is what most tests hold.
  *
  * The fake adapter refuses a prompt on a session that is still answering, as Pi does, so none of this can pass on a
  * path Pi would not allow.
@@ -38,12 +39,51 @@ class CountingAdapter extends FakePiAdapter {
    */
   holdHandoff: Promise<void> | undefined;
   #holdCreation: Promise<void> | undefined;
+  /** Whether a session may be moved to another model in place. Off, a change can only be a successor. */
+  inPlace = false;
+  /** Set to fail the next move the way Pi does when it had already left the old model. */
+  failsPartWay = false;
+
+  /** Text the session's loader would put into its prompt from the machine, offered to the brief's guard as the SDK does. */
+  contextFile: string | undefined;
+
+  /** Set to hold the next move inside Pi, as a slow check of the new model's account would, until the promise settles. */
+  holdSwitch: Promise<void> | undefined;
+  /** How many moves were asked for, whether or not they have finished. */
+  switchesAsked = 0;
+  /** Set to have the provider refuse the next prompt with these words, and write nothing. */
+  refuseNextPrompt: string | undefined;
+  readonly #listeners = new Map<string, ((event: WorkerEvent) => void)[]>();
+
+  override async switchModel(sessionId: string, selection: ModelSwitch): Promise<void> {
+    this.switchesAsked += 1;
+    if (this.failsPartWay) throw new ModelSwitchUnsureError("the session file could not be written");
+    if (!this.inPlace) throw new Error("No API key for the model this session was asked to move to");
+    const held = this.holdSwitch;
+    this.holdSwitch = undefined;
+    if (held !== undefined) await held;
+    await super.switchModel(sessionId, selection);
+  }
+
+  override subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {
+    this.#listeners.set(sessionId, [...(this.#listeners.get(sessionId) ?? []), listener]);
+    return super.subscribe(sessionId, listener);
+  }
+
+  override async prompt(sessionId: string, text: string): Promise<void> {
+    const refusal = this.refuseNextPrompt;
+    if (refusal === undefined) return await super.prompt(sessionId, text);
+    this.refuseNextPrompt = undefined;
+    // Settled with nothing written, as Pi does after a refusal; the refusal arrives as an event.
+    for (const listener of this.#listeners.get(sessionId) ?? []) listener({ type: "error", sessionId, message: refusal });
+  }
 
   override async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {
     const held = this.#holdCreation;
     this.#holdCreation = undefined;
     if (held !== undefined) await held;
     this.briefs.push(brief);
+    if (this.contextFile !== undefined) brief.contextGuard?.({ source: "/work/AGENTS.md", text: this.contextFile });
     return await super.createWorkerSession(brief);
   }
 
@@ -762,5 +802,333 @@ describe("taking local paths out of a reason", () => {
     // Prose after a path is kept, including a word that holds a separator but starts in lower case or is a web address.
     expect(redactLocalPaths("C:\\x\\y was not found, see docs\\setup.md")).toBe("<path> was not found, see docs\\setup.md");
     expect(redactLocalPaths("C:\\x\\y See Https://example.com/a")).toBe("<path> See Https://example.com/a");
+  });
+});
+
+describe("a changed model the session can keep", () => {
+  it("moves the same session to the new model, briefs nothing again, and names the model that answered", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      history: async () => [{ role: "user", text: "câu hỏi trước đó" }],
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    const reply = await say(turn, "hai", "msg_2");
+
+    expect(adapter.handoffs).toHaveLength(0);
+    expect(adapter.briefs).toHaveLength(1);
+    expect(adapter.modelSwitches).toEqual([{ sessionId: "fake-session-1", selection: { model: OTHER } }]);
+    expect(`${reply.provider}/${reply.model}`).toBe("fake-other/fake-other-model");
+    // The session already holds the conversation, so the second prompt carries no recap of it.
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(2);
+    expect(adapter.promptsFor("fake-session-1")[1]).not.toContain(RECAP);
+
+    // The choice has not changed again: nothing more is switched.
+    await say(turn, "ba", "msg_3");
+    expect(adapter.modelSwitches).toHaveLength(1);
+  });
+
+  it("starts a successor instead when the new model may not receive what the session was sent", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      // The second model may be sent nothing personal; the first may.
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal"] : ["public", "internal", "confidential"]),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "gửi cho duy@example.com giúp tôi", "msg_1");
+    preferred = OTHER;
+    await say(turn, "xong chưa", "msg_2");
+
+    // The session holds an address the new model may not read, and a session cannot be narrowed: a new one is made.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2").join("\n")).not.toContain("duy@example.com");
+  });
+
+  it("starts a successor for a model with a lower ceiling, whatever the session was sent", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal"] : ["public", "internal", "confidential"]),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    await say(turn, "hai", "msg_2");
+
+    // Nothing typed is above the new ceiling, but a session holds more than what was typed and cannot be narrowed.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
+  it("does not come back in place from a model with a higher ceiling to one with a lower", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal", "confidential"] : ["public", "internal"]),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    await say(turn, "hai", "msg_2");
+    // Up is in place: the wider model may receive everything the narrower one could.
+    expect(adapter.modelSwitches).toHaveLength(1);
+    expect(adapter.handoffs).toHaveLength(0);
+
+    preferred = FIRST;
+    await say(turn, "ba", "msg_3");
+    // Down is not: the session ran a model that could be sent more than the first one may.
+    expect(adapter.modelSwitches).toHaveLength(1);
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
+  it("starts a successor for a model that may receive a file this session was made without", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    adapter.contextFile = "Maintainer: duy@example.com";
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal", "confidential"] : ["public", "internal"]),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    await say(turn, "hai", "msg_2");
+
+    // Kept in place, the session would go on without the file although its model may now read it.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
+  it("holds a file checked after the move to the new model's ceiling", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal", "confidential"] : ["public", "internal"]),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    const guard = adapter.briefs[0]?.contextGuard;
+    if (guard === undefined) throw new Error("the session was briefed without a context guard");
+    const file = { source: "/work/skills/deploy/SKILL.md", text: "Maintainer: duy@example.com" };
+
+    preferred = OTHER;
+    await say(turn, "hai", "msg_2");
+    expect(adapter.modelSwitches).toHaveLength(1);
+    // The same session's guard, asked again as a skill read again would ask it.
+    expect(guard(file)).toBe(true);
+  });
+
+  it("starts a successor when the session's own model was allowed more since the session was made", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    adapter.inPlace = true;
+    let preferred = FIRST;
+    let firstMay: readonly DataClass[] = ["public", "internal"];
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+      allowedDataClasses: (model) => (model.id === OTHER.id ? ["public", "internal"] : firstMay),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    // The person lets the first model receive more, and the same session is then sent an address.
+    firstMay = ["public", "internal", "confidential"];
+    await say(turn, "gửi cho duy@example.com giúp tôi", "msg_2");
+    expect(adapter.promptsFor("fake-session-1").join("\n")).toContain("duy@example.com");
+
+    preferred = OTHER;
+    await say(turn, "xong chưa", "msg_3");
+    // The two ceilings matched when the session was made, but not by the time it was sent the address.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2").join("\n")).not.toContain("duy@example.com");
+  });
+
+  it("lets go of a session whose move a Stop ended, and answers the next message on a new one", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    const disposed = vi.spyOn(adapter, "dispose");
+    let preferred = FIRST;
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    await say(turn, "một", "msg_1");
+
+    preferred = OTHER;
+    // A move Pi never finishes, as when the new model's account check hangs.
+    const slow = gate();
+    adapter.holdSwitch = slow.promise;
+    const stopped = say(turn, "hai", "msg_2");
+    await vi.waitFor(() => expect(adapter.switchesAsked).toBe(1));
+    expect(turn.interrupt(CONVERSATION)).toBe(true);
+    expect((await stopped).stopped).toBe(true);
+
+    // Back to the first choice while Pi is still moving the session: the conversation is not held by that move.
+    preferred = FIRST;
+    const answered = await say(turn, "ba", "msg_3");
+    expect(`${answered.provider}/${answered.model}`).toBe("fake/fake-model");
+    // Nothing more was sent to the session whose model is not settled, and it was not moved or handed off again.
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(1);
+    expect(adapter.switchesAsked).toBe(1);
+    expect(adapter.handoffs).toHaveLength(0);
+    expect(disposed).not.toHaveBeenCalledWith("fake-session-1");
+
+    // Once Pi is done with it, the session is let go.
+    slow.open();
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledWith("fake-session-1"));
+  });
+
+  it("starts a successor when the session's own model is allowed less than what the session was sent", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    let firstMay: readonly DataClass[] = ["public", "internal", "confidential"];
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => FIRST,
+      allowedDataClasses: () => firstMay,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "gửi cho duy@example.com giúp tôi", "msg_1");
+    firstMay = ["public", "internal"];
+    await say(turn, "xong chưa", "msg_2");
+
+    // The same model, but the session holds an address it may no longer be sent: the transcript is not sent again.
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.promptsFor("fake-session-2").join("\n")).not.toContain("duy@example.com");
+  });
+
+  it("starts a successor after the provider refused a run of the session", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    adapter.inPlace = true;
+    // The model the node started on, so a refusal has nowhere to fall back to and the session is kept.
+    let preferred = { provider: ENV.CC_MODEL_PROVIDER, id: ENV.CC_MODEL_ID };
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    adapter.refuseNextPrompt = "the model's provider refused the turn";
+    await expect(say(turn, "hai", "msg_2")).rejects.toThrow(/could not answer this message/);
+
+    preferred = OTHER;
+    await say(turn, "ba", "msg_3");
+    // The kept session ends on a prompt the provider refused: the message goes to a session of its own.
+    expect(adapter.modelSwitches).toEqual([]);
+    expect(adapter.handoffs).toHaveLength(1);
+  });
+
+  it("does not answer again on a session whose move failed part-way", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    let preferred = FIRST;
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    adapter.failsPartWay = true;
+    const refused = gate();
+    refused.promise.catch(() => undefined);
+    refused.fail(new Error("the provider refused the session"));
+    adapter.holdHandoff = refused.promise;
+    // The move in place fails, and so does the successor: the person hears it, and the session is kept.
+    await expect(say(turn, "hai", "msg_2")).rejects.toThrow(/Could not switch this conversation/);
+
+    // Back on the first choice, the kept session is not trusted to still run it: a successor is made.
+    preferred = FIRST;
+    adapter.failsPartWay = false;
+    // Even though Pi would now accept a move.
+    adapter.inPlace = true;
+    await say(turn, "ba", "msg_3");
+    expect(adapter.handoffs).toHaveLength(2);
+    expect(adapter.modelSwitches).toEqual([]);
+  });
+
+  it("falls back to a successor when Pi refuses the switch, and the turn is still answered", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok"] });
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    preferred = OTHER;
+    const reply = await say(turn, "hai", "msg_2");
+
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(reply.text).toBe("ok");
+  });
+});
+
+describe("a changed thinking level the session can keep", () => {
+  it("is set on the same session, and going back to the model's default starts a successor", async () => {
+    const adapter = new CountingAdapter({ script: ["ok", "ok", "ok"] });
+    adapter.inPlace = true;
+    let level: "low" | "high" | undefined = "low";
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => FIRST,
+      thinkingLevel: () => level,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    await say(turn, "một", "msg_1");
+    level = "high";
+    await say(turn, "hai", "msg_2");
+    expect(adapter.handoffs).toHaveLength(0);
+    expect(adapter.modelSwitches).toEqual([{ sessionId: "fake-session-1", selection: { thinkingLevel: "high" } }]);
+
+    // A session cannot be told "whatever your default is": the next one is created without a level.
+    level = undefined;
+    await say(turn, "ba", "msg_3");
+    expect(adapter.handoffs).toHaveLength(1);
+    expect(adapter.handoffs[0]?.brief.thinkingLevel).toBeUndefined();
   });
 });

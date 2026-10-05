@@ -326,6 +326,38 @@ describe("a tool call is reported while it runs and kept afterwards", () => {
     expect(shape).toEqual(["evidence", "tool-activity", "text"]);
   });
 
+  it("labels the call's row in the person's interface language, and in the same Vietnamese when none is named", async () => {
+    const rowOf = async (language: (() => "vi" | "en") | undefined): Promise<{ started: unknown; row: unknown }> => {
+      const adapter = new ToolCallingAdapter({ script: ["Đây là bảng."] });
+      adapter.call = { name: "show_view", params: { view: VIEW.id, caption: "bảng", props: {} } };
+      const turn = await createModelTurn({
+        env: ENV,
+        cwd: process.cwd(),
+        adapter,
+        views: () => [VIEW],
+        datasetRefs: () => [],
+        ...(language === undefined ? {} : { language }),
+      });
+      const events: ModelTurnEvent[] = [];
+      const reply = await turn!.answer({
+        conversationId: CONVERSATION,
+        principal: PRINCIPAL,
+        text: "vẽ gì đó",
+        messageId: "msg_tool_label",
+        onEvent: (event) => events.push(event),
+      });
+      const started = events.find((event) => event.type === "tool-start");
+      const row = reply.segments
+        .map((segment) => (segment.kind === "block" ? segment.block : undefined))
+        .find((block) => block?.type === "tool-activity");
+      return { started: started?.type === "tool-start" ? started.label : undefined, row: row?.type === "tool-activity" ? row.label : undefined };
+    };
+
+    expect(await rowOf(() => "en")).toEqual({ started: "Show a view", row: "Show a view" });
+    expect(await rowOf(undefined)).toEqual({ started: "Hiển thị một khung nhìn", row: "Hiển thị một khung nhìn" });
+    expect(await rowOf(() => "vi")).toEqual({ started: "Hiển thị một khung nhìn", row: "Hiển thị một khung nhìn" });
+  });
+
   it("records a tool that threw as a failure, and gives the model the reason", async () => {
     const adapter = new ToolCallingAdapter({ script: ["Không xong."] });
     adapter.call = { name: "boom", params: { path: "/tmp/x" } };

@@ -15,6 +15,7 @@ import {
   settleUndelivered,
 } from "./delegation.ts";
 import type { DeadLetter } from "./peer-transport.ts";
+import { ownerHostText } from "./host-text.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { DelegationHandlers } from "./routes/peers.ts";
@@ -67,6 +68,7 @@ export function artifactIntakeDeps(services: Pick<NodeServices, "runtime" | "con
         at: now(),
       });
     },
+    words: () => ownerHostText(runtime).files,
   };
 }
 
@@ -82,7 +84,7 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
       sourceKind: "automation",
       category: "message",
       severity: "info",
-      title: "Việc một node khác giao",
+      title: ownerHostText(runtime).delegation.handOverNoticeTitle,
       body: text,
       ...(conversationId === undefined ? {} : { conversationId }),
       dedupKey: `delegation:${about}`,
@@ -106,6 +108,7 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
               conductor.runTask?.({ taskId, capabilityRef, executionNodeId: runtime.identity.nodeId });
             },
             tell,
+            say: ownerHostText(runtime),
           },
           envelope,
         ),
@@ -117,6 +120,7 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
           nodeId: runtime.identity.nodeId,
           now,
           conductor,
+          say: ownerHostText(runtime),
           onSettled: taskDispatchReports(services).onSettled,
         },
         envelope,
@@ -141,6 +145,7 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
         {
           db: runtime.db,
           nodeId: runtime.identity.nodeId,
+          say: ownerHostText(runtime),
           tell: ({ taskId, conversationId, text, about, waiting, title }) => {
             const at = now();
             appendHostReply(services, { conversationId, text, at });
@@ -190,7 +195,7 @@ export function settleUndeliveredTasks(services: NodeServices, now: () => Instan
   return (letter) => {
     const { runtime, conductor } = services;
     const settled = settleUndelivered(
-      { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, onSettled: taskDispatchReports(services).onSettled },
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, say: ownerHostText(runtime), onSettled: taskDispatchReports(services).onSettled },
       letter,
     );
     if (settled && letter.taskId !== undefined) clearWaitingNotice(services, letter.taskId, now());
@@ -206,7 +211,7 @@ export function settleLostResults(services: NodeServices, now: () => Instant): (
   return (lost) => {
     const { runtime, conductor } = services;
     const settled = settleLostResult(
-      { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, onSettled: taskDispatchReports(services).onSettled },
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, say: ownerHostText(runtime), onSettled: taskDispatchReports(services).onSettled },
       lost,
     );
     if (settled) clearWaitingNotice(services, lost.taskId, now());

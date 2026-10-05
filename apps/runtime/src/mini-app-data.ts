@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  type AppIntentLocale,
   type CompositionPeriod,
   type CompiledSection,
   type CompositionSection,
@@ -35,6 +36,7 @@ import {
 } from "@clarkcant/storage";
 
 import { ALLOWED_IMAGE_TYPES, detectImageFormat, writeBlob } from "./blobs.ts";
+import { hostText } from "./host-text.ts";
 
 /**
  * Local data for composed surfaces.
@@ -116,8 +118,10 @@ interface TaskRow {
  */
 export function taskMetricsForRange(
   deps: MiniAppDataDeps,
-  input: { period: CompositionPeriod; timezone: string; reference?: Date },
+  /** `locale` is the language the tiles' labels and hints are written in; Vietnamese when absent. */
+  input: { period: CompositionPeriod; timezone: string; reference?: Date; locale?: AppIntentLocale },
 ): TaskMetricsResult {
+  const say = hostText(input.locale).miniApp;
   const range = periodRange(input.period, input.reference ?? new Date(deps.now()), input.timezone);
   const rows = allRows<TaskRow>(
     deps.db,
@@ -158,16 +162,10 @@ export function taskMetricsForRange(
   const cancelled = rows.filter((row) => row.state === "cancelled" && inRange(row.updated_at)).length;
 
   const metrics: TaskMetric[] = [
-    {
-      id: "completed",
-      label: "Hoàn thành",
-      value: completed,
-      unit: "task",
-      hint: "state = succeeded, tính theo updated_at trong kỳ",
-    },
-    { id: "pending", label: "Đang mở", value: pending, unit: "task", hint: "mọi trạng thái chưa kết thúc" },
-    { id: "failed", label: "Thất bại", value: failed, unit: "task", hint: "state = failed trong kỳ" },
-    { id: "created", label: "Tạo mới", value: created, unit: "task", hint: "created_at trong kỳ" },
+    { id: "completed", ...say.metrics.completed, value: completed, unit: "task" },
+    { id: "pending", ...say.metrics.pending, value: pending, unit: "task" },
+    { id: "failed", ...say.metrics.failed, value: failed, unit: "task" },
+    { id: "created", ...say.metrics.created, value: created, unit: "task" },
   ];
 
   const trendCounts = {
@@ -183,9 +181,9 @@ export function taskMetricsForRange(
   }));
 
   const outcomeEntries = [
-    { label: "Hoàn thành", value: completed },
-    { label: "Thất bại", value: failed },
-    { label: "Đã huỷ", value: cancelled },
+    { label: say.outcomes.completed, value: completed },
+    { label: say.outcomes.failed, value: failed },
+    { label: say.outcomes.cancelled, value: cancelled },
   ];
   const slices = donutSlices(outcomeEntries);
   const outcomeRows = slices.ok
@@ -211,10 +209,7 @@ export function taskMetricsForRange(
       from: range.from,
       to: range.to,
       queryRevision: digestOf(rows),
-      definitions: {
-        completedAt: "updated_at của task ở trạng thái succeeded (không có cột completed_at)",
-        pending: "state không thuộc {succeeded, failed, cancelled}",
-      },
+      definitions: say.definitions,
     },
   };
 }
@@ -671,12 +666,15 @@ export function publishMiniAppData(
     period: CompositionPeriod;
     timezone: string;
     reference?: Date;
+    /** The language the published labels are written in, the reader's; Vietnamese when absent. */
+    locale?: AppIntentLocale;
   },
 ): PublishedMiniAppData {
   const metrics = taskMetricsForRange(deps, {
     period: input.period,
     timezone: input.timezone,
     ...(input.reference === undefined ? {} : { reference: input.reference }),
+    ...(input.locale === undefined ? {} : { locale: input.locale }),
   });
   const calendarRows = calendarRowsForRange(deps, { principalId: input.principalId, range: metrics.range });
 
@@ -750,6 +748,8 @@ export function resolveLiveSections(
     principalId: Principal["principalId"];
     composition: SurfaceCompositionSpec;
     state: Record<string, unknown>;
+    /** The reader's interface language, for the labels the fresh rows carry. */
+    locale?: AppIntentLocale;
   },
 ): LiveSectionResolution {
   const period: CompositionPeriod = input.state.period === "month" ? "month" : input.composition.initialState.period;
@@ -758,7 +758,12 @@ export function resolveLiveSections(
       ? input.state.timezone
       : input.composition.initialState.timezone;
 
-  const published = publishMiniAppData(deps, { principalId: input.principalId, period, timezone });
+  const published = publishMiniAppData(deps, {
+    principalId: input.principalId,
+    period,
+    timezone,
+    ...(input.locale === undefined ? {} : { locale: input.locale }),
+  });
   const availability: Record<string, RegionAvailabilityKind> = {};
   const sections: CompiledSection[] = input.composition.sections.map((section) => {
     const { rows, state: availabilityState } = rowsForSlot(section, published, deps, input.principalId);

@@ -1,5 +1,6 @@
 import {
   type ActionBinding,
+  type AppIntentLocale,
   type CompiledSection,
   type CompositionSlot,
   type CompositionGraph,
@@ -37,6 +38,7 @@ import {
   buildMiniAppCandidateSet,
   rowScale,
 } from "./mini-app-candidates.ts";
+import { hostText } from "./host-text.ts";
 import { type MiniAppDataDeps, type PublishedMiniAppData, publishMiniAppData } from "./mini-app-data.ts";
 import {
   type JevBudget,
@@ -104,7 +106,8 @@ export const COMPOSITION_TEMPLATES: readonly MiniAppTemplate[] = [
     label: "Tổng quan công việc: chỉ số, khoảng thời gian, xu hướng, lịch, ảnh và một hành động",
     slots: ["metrics", "filter", "trend", "calendar", "image", "cta"],
     fixed: [
-      { slot: "metrics", definitionId: "canvas.metrics@1", props: { title: "Chỉ số" } },
+      // The words a fixed region shows (its title, a button's label) are the reader's language: `fixedRegionProps`.
+      { slot: "metrics", definitionId: "canvas.metrics@1" },
       { slot: "filter", definitionId: "canvas.filter@1" },
       // The calendar region is fixed *and* optional: the renderer is known, and it is shown only when
       // there are events. Leaving it out of `fixed` meant nothing ever chose one for it, so the
@@ -113,8 +116,8 @@ export const COMPOSITION_TEMPLATES: readonly MiniAppTemplate[] = [
       // The picture region is the other optional one. The sketch has it, and for a while no template
       // named it at all — so `canvas.image@1` had no path to a user, however complete its renderer
       // was. It is fixed so the renderer is known, and optional so it appears only with an image.
-      { slot: "image", definitionId: "canvas.image@1", props: { title: "Hình ảnh đã nhập" } },
-      { slot: "cta", definitionId: "canvas.cta@1", props: { label: "Lưu bản xem", description: "Lưu khoảng thời gian đang xem và ghim lại." } },
+      { slot: "image", definitionId: "canvas.image@1" },
+      { slot: "cta", definitionId: "canvas.cta@1" },
     ],
     familiesBySlot: { trend: ["trend"] },
     optionalSlots: ["calendar", "image"],
@@ -161,6 +164,8 @@ export interface CompileInput {
   imageRef?: { imageId: string; altText: string };
   /** The pictures a gallery or carousel leaf shows, already cut to what that widget holds. */
   pictureRefs?: { imageId: string; altText: string }[];
+  /** The reader's interface language, for the titles and labels the host writes; Vietnamese when absent. */
+  locale?: AppIntentLocale;
 }
 
 export type CompileResult =
@@ -209,7 +214,7 @@ export function compileTemplate(input: CompileInput): CompileResult {
 
     const props = leafProps(
       slot,
-      { ...(input.template.fixed.find((region) => region.slot === slot)?.props ?? {}), ...(input.propsBySlot?.[slot] ?? {}) },
+      { ...fixedRegionProps(input.template, slot, input.locale), ...(input.propsBySlot?.[slot] ?? {}) },
       input,
     );
     const validation = validateProps(entry.definition, props);
@@ -229,12 +234,38 @@ export function compileTemplate(input: CompileInput): CompileResult {
       props,
       dataRefs: props.datasetRef === undefined ? [] : [String(props.datasetRef)],
       ...(rows === undefined ? {} : { rows }),
-      textAlternative: describeSection(entry.definition, slot, rows),
+      textAlternative: describeSection(entry.definition, slot, rows, input.locale),
     });
   }
 
   if (sections.length === 0) problems.push("the compiled composition has no sections");
   return problems.length === 0 ? { ok: true, sections } : { ok: false, problems };
+}
+
+/**
+ * The props a template fixes for one region, with the words that region shows in the reader's language.
+ *
+ * A template decides which renderer a region uses; the title or button label on it is text a person reads, so it comes
+ * from the host's catalog rather than being written into the template once, in one language. Nothing for a region the
+ * template does not fix.
+ */
+export function fixedRegionProps(
+  template: Pick<MiniAppTemplate, "fixed"> | undefined,
+  slot: CompositionSlot,
+  locale?: AppIntentLocale,
+): Record<string, unknown> {
+  const region = template?.fixed.find((entry) => entry.slot === slot);
+  if (region === undefined) return {};
+  const say = hostText(locale).miniApp.fixed;
+  const words =
+    slot === "metrics"
+      ? { title: say.metricsTitle }
+      : slot === "image"
+        ? { title: say.imageTitle }
+        : slot === "cta"
+          ? { label: say.ctaLabel, description: say.ctaDescription }
+          : {};
+  return { ...(region.props ?? {}), ...words };
 }
 
 /**
@@ -247,7 +278,7 @@ export function compileTemplate(input: CompileInput): CompileResult {
 export function leafProps(
   slot: CompositionSlot,
   requested: Record<string, unknown>,
-  input: Pick<CompileInput, "initialState" | "imageRef" | "pictureRefs">,
+  input: Pick<CompileInput, "initialState" | "imageRef" | "pictureRefs" | "locale">,
 ): Record<string, unknown> {
   const base: Record<string, unknown> = { ...requested };
 
@@ -256,7 +287,7 @@ export function leafProps(
   }
   if (slot === "trend" || slot === "table") {
     base.datasetRef = `inline:${slot}:${input.initialState.period}`;
-    if (typeof base.title !== "string" || base.title.trim() === "") base.title = titleForSlot(slot);
+    if (typeof base.title !== "string" || base.title.trim() === "") base.title = titleForSlot(slot, input.locale);
   }
   if (slot === "filter") {
     base.period = input.initialState.period;
@@ -287,10 +318,11 @@ export function leafProps(
   return base;
 }
 
-function titleForSlot(slot: CompositionSlot): string {
-  if (slot === "trend") return "Xu hướng theo ngày";
-  if (slot === "table") return "Bảng số liệu";
-  return "Dữ liệu";
+function titleForSlot(slot: CompositionSlot, locale?: AppIntentLocale): string {
+  const say = hostText(locale).miniApp.slotTitle;
+  if (slot === "trend") return say.trend;
+  if (slot === "table") return say.table;
+  return say.other;
 }
 
 function localMonth(timezone: string): string {
@@ -309,19 +341,21 @@ export function describeSection(
   definition: WidgetDefinition,
   slot: CompositionSlot,
   rows: Record<string, unknown>[] | undefined,
+  locale?: AppIntentLocale,
 ): string {
   if (rows === undefined || rows.length === 0) return definition.textFallback;
+  const say = hostText(locale).miniApp;
   if (slot === "metrics") {
     const summary = rows
       .map((row) => `${String(row.label ?? "")} ${String(row.value ?? "")}${typeof row.unit === "string" ? ` ${row.unit}` : ""}`)
       .join(", ");
-    return `Chỉ số: ${summary}.`;
+    return say.describeMetrics(summary);
   }
   if (slot === "trend" || slot === "table") {
     const total = rows.reduce((sum, row) => sum + Number(row.completed ?? 0), 0);
-    return `Xu hướng theo ngày, tổng ${total} task hoàn thành trong kỳ.`;
+    return say.describeTrend(total);
   }
-  if (slot === "calendar") return `Lịch có ${rows.length} sự kiện trong kỳ.`;
+  if (slot === "calendar") return say.describeCalendar(rows.length);
   if (slot === "image" || slot === "pictures") {
     // The alt text is the whole accessible content of a picture, so the text alternative says the
     // user's words rather than the definition's generic sentence. A reader who cannot see the image —
@@ -331,7 +365,7 @@ export function describeSection(
       .map((row) => (typeof row.altText === "string" ? row.altText.trim() : ""))
       .filter((value) => value !== "")
       .join("; ");
-    return alt === "" ? definition.textFallback : clipWithMarker(`Hình ảnh đã nhập: ${alt}`, SECTION_TEXT_LIMIT);
+    return alt === "" ? definition.textFallback : clipWithMarker(say.describeImage(alt), SECTION_TEXT_LIMIT);
   }
   return definition.textFallback;
 }
@@ -352,6 +386,11 @@ export interface ComposeDeps {
   jev?: { deps: JevDeps; budget: () => JevBudget };
   /** The node's display timezone. */
   timezone: () => string;
+  /**
+   * The interface language of the person a surface is composed for, for the titles and labels the host writes on it.
+   * Absent means Vietnamese, the preference's own default.
+   */
+  locale?: (principalId: string) => AppIntentLocale;
 }
 
 export interface ComposeInput {
@@ -411,7 +450,8 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
 
   const timezone = deps.timezone();
   const period = input.period ?? "week";
-  const published = publishMiniAppData(dataDepsOf(deps), { principalId: input.principalId, period, timezone });
+  const locale = composeLocale(deps, input.principalId);
+  const published = publishMiniAppData(dataDepsOf(deps), { principalId: input.principalId, period, timezone, locale });
 
   const chosen = await chooseLeaves(deps, input, template.template, template.mode !== "jev");
   if (!chosen.ok) return chosen;
@@ -423,6 +463,7 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     rowsBySlot: rowsBySlotOf(published),
     initialState: { period, timezone },
     ...(published.imageRefs[0] === undefined ? {} : { imageRef: published.imageRefs[0] }),
+    locale,
   });
   if (!compiled.ok) {
     return { ok: false, code: "COMPILE_FAILED", message: "the template did not compile", problems: compiled.problems };
@@ -442,9 +483,14 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
       ...(template.margin === undefined ? {} : { margin: template.margin }),
       ...(template.reason === undefined ? {} : { reason: template.reason }),
     },
-    title: titleForTemplate(template.template.templateId),
-    textAlternative: textAlternativeFor(template.template.templateId, published),
+    title: titleForTemplate(template.template.templateId, locale),
+    textAlternative: textAlternativeFor(template.template.templateId, published, locale),
   });
+}
+
+/** The language a surface for this principal is written in: the person's interface language, Vietnamese by default. */
+export function composeLocale(deps: Pick<ComposeDeps, "locale">, principalId: string): AppIntentLocale {
+  return deps.locale?.(principalId) ?? "vi";
 }
 
 /**
@@ -532,7 +578,7 @@ export function persistComposition(
 ): ComposeOutcome {
   const registry = deps.registry;
   const instanceId = deps.newId("winst");
-  const bindings = compileBindings(deps, request.sections, instanceId, request.graph);
+  const bindings = compileBindings(deps, request.sections, instanceId, composeLocale(deps, input.principalId), request.graph);
   const compositionId = deps.newId("comp");
   const provenance = {
     createdAt: deps.now(),
@@ -640,19 +686,19 @@ const sourceRevisions: CompositionSourceRevision[] = [
   { ref: "calendar_events", revision: "node-local" },
 ];
 
-function titleForTemplate(templateId: string): string {
-  if (templateId === "focused") return "Xu hướng";
-  if (templateId === "agenda") return "Lịch";
-  return "Tổng quan";
+function titleForTemplate(templateId: string, locale: AppIntentLocale): string {
+  const say = hostText(locale).miniApp.templateTitle;
+  if (templateId === "focused") return say.focused;
+  if (templateId === "agenda") return say.agenda;
+  return say.overview;
 }
 
-function textAlternativeFor(templateId: string, published: PublishedMiniAppData): string {
+function textAlternativeFor(templateId: string, published: PublishedMiniAppData, locale: AppIntentLocale): string {
   const completed = published.metrics.metrics.find((metric) => metric.id === "completed")?.value ?? 0;
   const pending = published.metrics.metrics.find((metric) => metric.id === "pending")?.value ?? 0;
-  if (templateId === "agenda") {
-    return `Lịch tháng này có ${published.calendarRows.length} sự kiện đã nhập.`;
-  }
-  return `${titleForTemplate(templateId)}: ${completed} task hoàn thành, ${pending} đang mở trong kỳ.`;
+  const say = hostText(locale).miniApp;
+  if (templateId === "agenda") return say.agendaSummary(published.calendarRows.length);
+  return say.templateSummary(titleForTemplate(templateId, locale), completed, pending);
 }
 
 function catalogDigestOf(registry: CatalogRegistry): string {
@@ -830,8 +876,10 @@ function compileBindings(
   deps: ComposeDeps,
   sections: readonly CompiledSection[],
   instanceId: string,
+  locale: AppIntentLocale,
   graph?: CompositionGraph,
 ): { binding: ActionBinding; sectionId: string }[] {
+  const say = hostText(locale).miniApp.bindings;
   const bindings: { binding: ActionBinding; sectionId: string }[] = [];
   const knownCapabilities = new Set<string>();
 
@@ -863,16 +911,16 @@ function compileBindings(
 
   // Every section of a kind gets its own binding: a tree may hold two filters, and each of them acts.
   const OPERATIONS: Partial<Record<CompositionSlot, { operation: string; label: string }>> = {
-    filter: { operation: "period.change", label: "Đổi khoảng thời gian" },
-    calendar: { operation: "date.select", label: "Chọn ngày" },
-    cta: { operation: "view.save", label: "Lưu bản xem" },
+    filter: { operation: "period.change", label: say.periodChange },
+    calendar: { operation: "date.select", label: say.dateSelect },
+    cta: { operation: "view.save", label: say.viewSave },
   };
   for (const section of sections) {
     const bound = OPERATIONS[section.slot];
     if (bound !== undefined) add(section, bound.operation, bound.label);
     // A leaf the graph listens to reports its events through its own binding; the node applies them by the graph's rules.
     if (graph?.on.some((rule) => rule.sectionId === section.sectionId) === true) {
-      add(section, "state.event", "Cập nhật trạng thái bề mặt", `:${section.sectionId}`);
+      add(section, "state.event", say.stateEvent, `:${section.sectionId}`);
     }
   }
   return bindings;
