@@ -336,6 +336,12 @@ export const VOICE_CSS = `
  * its explanation in the middle of the label it explains.
  */
 .cc-question-options { flex-direction: column; align-items: stretch; gap: var(--cc-space-xs); }
+/* The options of a question that no longer takes an answer: a record of what was offered, quiet and not pressable. */
+ul.cc-question-options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; }
+ul.cc-question-options > li {
+  min-width: 0; padding: var(--cc-space-xxs) var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label); overflow-wrap: anywhere;
+}
 .cc-action.cc-question-option {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
   padding: var(--cc-space-sm) var(--cc-space-md); border-radius: var(--cc-radius-button);

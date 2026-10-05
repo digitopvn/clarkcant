@@ -818,7 +818,10 @@ test("a question nobody answered in time is asked again from its notice", async 
   await expect(page.getByText("Fixture: tui đã hỏi một câu và để nó hết hạn").first()).toBeVisible({ timeout: 20_000 });
   const cards = page.locator('[data-host-card="question"]').filter({ hasText: "Chọn khu vực máy chủ cho bản thử." });
   await expect(cards).toHaveCount(1);
-
+  // What was offered stays readable as a quiet record, not as a bulleted list of prose.
+  const offered = cards.locator("ul[data-question-options]");
+  await expect(offered).toContainText("Singapore");
+  expect(await offered.evaluate((el) => getComputedStyle(el).listStyleType)).toBe("none");
   let noticeId = "";
   await expect
     .poll(
