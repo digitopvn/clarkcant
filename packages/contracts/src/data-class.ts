@@ -84,6 +84,8 @@ const CREDENTIAL_SHAPES = new Set([
   "aws-access-key",
   "github-token",
   "google-api-key",
+  "sendgrid-key",
+  "basic-auth",
   "url-credentials",
   "prefixed-token",
   "named-secret",
@@ -123,7 +125,63 @@ function looksAssigned(match: string): boolean {
   const value = /[:=]\s*["']?(.+)$/.exec(match)?.[1] ?? "";
   if (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)+[;)\]]*$/.test(value)) return false;
   if (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*\(|\$\{|\{\{|^</.test(value)) return false;
+  if (isPlaceholderValue(value)) return false;
   return /\d/.test(value) || /[:=]\s*["']/.test(match) || value.length >= 16;
+}
+
+/** Words that stand in for a credential in examples and templates, compared without separators or case. */
+const PLACEHOLDER_WORDS = new Set([
+  "example",
+  "sample",
+  "dummy",
+  "fake",
+  "test",
+  "placeholder",
+  "changeme",
+  "changeit",
+  "secret",
+  "password",
+  "passwd",
+  "token",
+  "apikey",
+  "redacted",
+  "todo",
+  "tbd",
+  "none",
+  "null",
+  "empty",
+]);
+
+/**
+ * Whether a credential-shaped value is an obvious placeholder: `your_api_key`, `example`, `changeme`, `YOURTOKENHERE`,
+ * `xxxxxxxx`, `********`. Conservative on purpose — a miss here costs a refused turn, a wrong hit costs a credential — so
+ * only a value with no digit can be one, and only when it is a known stand-in word, starts by addressing the reader
+ * (`your…`, `insert…`, `replace…`), ends in `<key|token|secret|password|value>here`, or is one repeated mask character.
+ */
+function isPlaceholderValue(raw: string): boolean {
+  const value = raw.trim().replace(/^["']|["']$/g, "");
+  if (value === "") return true;
+  if (/^(.)\1*$/.test(value) && /^[x*.#-]$/i.test(value[0] ?? "")) return true;
+  if (/\d/.test(value)) return false;
+  const word = value.toLowerCase().replace(/[-_. ]/g, "");
+  if (PLACEHOLDER_WORDS.has(word)) return true;
+  return /^(?:your|insert|replace)[a-z]+$/.test(word) || /(?:key|token|secret|password|value)(?:goes)?here$/.test(word);
+}
+
+/**
+ * Whether an `Authorization: Basic …` header carries a user and password: its value decodes to `user:password`. A word
+ * that merely follows "Basic" does not decode to that, and is left alone.
+ */
+function carriesBasicCredentials(match: string): boolean {
+  const encoded = /Basic\s+(\S+)$/i.exec(match)?.[1] ?? "";
+  let decoded: string;
+  try {
+    decoded = atob(encoded);
+  } catch {
+    return false;
+  }
+  const split = decoded.indexOf(":");
+  return split > 0 && split < decoded.length - 1 && !isPlaceholderValue(decoded.slice(split + 1));
 }
 /** Shapes that identify a person or their machine: text carrying one is `confidential`. */
 const PERSONAL_SHAPES = new Set(["email", "phone", "home-path", "windows-path"]);
@@ -157,7 +215,13 @@ export function dataClassesOfText(text: string): readonly DataClass[] {
         ? matches.some(looksIssued)
         : shape.label === "named-secret"
           ? matches.some(looksAssigned)
-          : matches.length > 0;
+          : shape.label === "bearer"
+            ? matches.some((match) => !isPlaceholderValue(match.replace(/^Bearer\s+/, "")))
+            : shape.label === "url-credentials"
+              ? matches.some((match) => !isPlaceholderValue(/:([^:@]*)@$/.exec(match)?.[1] ?? ""))
+              : shape.label === "basic-auth"
+                ? matches.some(carriesBasicCredentials)
+                : matches.length > 0;
     if (hit) found.add(dataClass);
   }
   return DATA_CLASSES.filter((value) => found.has(value));
@@ -197,12 +261,20 @@ export type SendBoundaryCheck =
   | { ok: false; code: typeof MODEL_DATA_CLASS_UNAVAILABLE; dataClass: DataClass; allowed: readonly DataClass[] };
 
 /**
- * The send boundary: every class a request carries must be one the receiving model may be sent.
+ * The classes the send boundary refuses to send to a model whose list leaves them out. `public` and `internal` are what
+ * every conversation is made of: they steer routing and narrow retrieved context, and are never on their own a reason
+ * not to send, so a model limited to `public` can still hold an ordinary conversation.
+ */
+export const ENFORCED_DATA_CLASSES: readonly DataClass[] = ["confidential", "secret"];
+
+/**
+ * The send boundary: every enforced class a request carries must be one the receiving model may be sent.
  *
- * The one check every path to a provider uses — routing, a fallback, a rebuilt or handed-over session, a background run,
- * a dispatched worker and the tool results fed back into a run. Permission is an explicit list (see above), so each class
- * present is checked, not only the most sensitive: a list naming `secret` but not `confidential` does not admit a
- * request carrying both. Deterministic and cheap, so it runs again immediately before a send whatever ran before it.
+ * The one check every path to a provider uses — a turn after any fallback, a rebuilt or handed-over session, a background
+ * run, a dispatched worker and the tool results fed back into a run. Permission is an explicit list (see above), so each
+ * enforced class present is checked, not only the most sensitive: a list naming `secret` but not `confidential` does not
+ * admit a request carrying both. Deterministic and cheap, so it runs again immediately before a send whatever ran before
+ * it.
  */
 export function checkSendBoundary(input: {
   allowed: readonly DataClass[];
@@ -210,7 +282,7 @@ export function checkSendBoundary(input: {
   classes?: Iterable<DataClass>;
 }): SendBoundaryCheck {
   const present = outboundDataClasses(input);
-  const refused = present.filter((value) => !input.allowed.includes(value));
+  const refused = present.filter((value) => ENFORCED_DATA_CLASSES.includes(value) && !input.allowed.includes(value));
   if (refused.length === 0) return { ok: true, dataClass: maxDataClass(present) };
   return { ok: false, code: MODEL_DATA_CLASS_UNAVAILABLE, dataClass: maxDataClass(refused), allowed: input.allowed };
 }

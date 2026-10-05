@@ -169,11 +169,11 @@ describe("falling back to a model that may not receive the message", () => {
   it("does not send it there, and says both why the chosen model did not answer and why the fallback was not sent it", async () => {
     const { adapter, ask } = await build({
       fallbacks: [{ provider: "openai", id: "gpt-6" }],
-      // The fallback may receive only public data; anything a person writes is at least internal.
-      allowed: (model) => (model.provider === "openai" ? ["public"] : ["public", "internal", "confidential"]),
+      // The fallback may not receive confidential data, and the message carries an email address.
+      allowed: (model) => (model.provider === "openai" ? ["public", "internal"] : ["public", "internal", "confidential"]),
     });
     adapter.refusing.set("anthropic/claude-opus-5-5", REFUSAL);
-    const cause = await ask().then(
+    const cause = await ask("gửi báo cáo cho duy@example.com").then(
       () => undefined,
       (failure: unknown) => failure,
     );
@@ -181,11 +181,23 @@ describe("falling back to a model that may not receive the message", () => {
     expect(cause).toBeInstanceOf(ContractViolation);
     const contract = (cause as ContractViolation).contract;
     expect(contract.code).toBe("MODEL_DATA_CLASS_UNAVAILABLE");
-    expect(contract.detail).toMatchObject({ dataClass: "internal", model: "openai/gpt-6", sent: false });
+    expect(contract.detail).toMatchObject({ dataClass: "confidential", model: "openai/gpt-6", sent: false });
     expect((cause as Error).message).toContain("The chosen model did not answer");
     expect((cause as Error).message).toContain(REFUSAL);
-    expect((cause as Error).message).toContain("openai/gpt-6 may not receive internal data");
+    expect((cause as Error).message).toContain("openai/gpt-6 may not receive confidential data");
     // Only the chosen model was prompted; the fallback never was, and nothing fell further past the boundary.
     expect(adapter.prompted).toEqual(["anthropic/claude-opus-5-5"]);
+  });
+
+  it("answers an ordinary message on a fallback whose list names only public data", async () => {
+    const { adapter, ask } = await build({
+      fallbacks: [{ provider: "openai", id: "gpt-6" }],
+      // Routing would pass this model over for internal work; the send boundary holds back only confidential and secret.
+      allowed: (model) => (model.provider === "openai" ? ["public"] : ["public", "internal", "confidential"]),
+    });
+    adapter.refusing.set("anthropic/claude-opus-5-5", REFUSAL);
+    const reply = await ask();
+    expect(reply.fallback?.from).toBe("anthropic/claude-opus-5-5");
+    expect(adapter.prompted).toEqual(["anthropic/claude-opus-5-5", "openai/gpt-6"]);
   });
 });

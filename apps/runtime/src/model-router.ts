@@ -5,7 +5,6 @@ import {
   type UserModelProfile,
   DEFAULT_ALLOWED_DATA_CLASSES,
   allowedDataClassesFor,
-  checkSendBoundary,
   intersectDataClasses,
 } from "@clarkcant/contracts";
 
@@ -22,8 +21,8 @@ import {
  * Routing that could fail a task is worse than routing that is occasionally unambitious.
  *
  * The one exception is the data class: availability may fall back, trust may not. A profile that may not be sent the
- * work is not a candidate, and the model a fallback lands on is held to the same check before anything is sent to it
- * (`send-boundary.ts`), so work no eligible model may receive does not start rather than starting anywhere.
+ * work is not a candidate, and the model a fallback lands on is held to the send boundary before anything is sent to it
+ * (`send-boundary.ts`), so `confidential` or `secret` work no eligible model may receive does not start.
  */
 
 export interface ModelCandidate {
@@ -70,11 +69,12 @@ export interface FilterOutcome {
 }
 
 /**
- * Whether a profile may be sent work of this class: the send boundary's own check, so routing and sending can never
- * disagree about a profile. No class is work nothing has labelled, which any profile may take.
+ * Whether routing offers a profile work of this class: its list names the class. Stricter than the send boundary, which
+ * refuses only `confidential` and `secret` — routing prefers a model whose list names even `internal`, and a fallback
+ * that lands elsewhere is then held to the boundary. No class is work nothing has labelled, which any profile may take.
  */
 export function profileMayReceive(profile: UserModelProfile, dataClass: DataClass | undefined): boolean {
-  return dataClass === undefined || checkSendBoundary({ allowed: allowedDataClassesFor(profile), classes: [dataClass] }).ok;
+  return dataClass === undefined || allowedDataClassesFor(profile).includes(dataClass);
 }
 
 function candidateFor(profile: UserModelProfile): ModelCandidate {

@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import {
   type DataClass,
   type SendBoundaryCheck,
@@ -6,6 +8,7 @@ import {
   checkSendBoundary,
   contractError,
 } from "@clarkcant/contracts";
+import type { ToolResultGuard } from "@clarkcant/pi-adapter";
 
 /**
  * The send boundary as the runtime applies it: a model's data-class ceiling is a limit on what is sent to it, not a
@@ -22,7 +25,15 @@ import {
  */
 
 /** Which kind of send was checked, for the stderr line an operator reads. */
-export type SendPath = "turn" | "steer" | "tool-result" | "background" | "task" | "worker-route";
+export type SendPath =
+  | "turn"
+  | "steer"
+  | "tool-result"
+  | "background"
+  | "task"
+  | "worker-route"
+  | "personal-instructions"
+  | "context-file";
 
 /** A model as `provider/id`, which is how every record names one. */
 export function modelName(model: { provider: string; id: string }): string {
@@ -62,8 +73,10 @@ export class DataClassUnavailable extends ContractViolation {
   readonly dataClass: DataClass;
   /** The model the request was not sent to, as `provider/id`. */
   readonly model: string;
+  /** The refusal came from a ceiling that could not be read, not from one the model has. */
+  readonly unread: boolean;
 
-  constructor(input: { dataClass: DataClass; model: string; message: string }) {
+  constructor(input: { dataClass: DataClass; model: string; message: string; unread?: boolean }) {
     super(
       contractError(MODEL_DATA_CLASS_UNAVAILABLE, "policy", input.message, {
         dataClass: input.dataClass,
@@ -73,13 +86,19 @@ export class DataClassUnavailable extends ContractViolation {
     );
     this.dataClass = input.dataClass;
     this.model = input.model;
+    this.unread = input.unread === true;
     // The sentence alone, without the code in front: every surface that shows a failed turn's message — a card, speech,
     // a background reply — reads it to a person. The code stays on `contract`.
     this.message = input.message;
   }
 }
 
-export function dataClassUnavailable(input: { dataClass: DataClass; model: string; message: string }): DataClassUnavailable {
+export function dataClassUnavailable(input: {
+  dataClass: DataClass;
+  model: string;
+  message: string;
+  unread?: boolean;
+}): DataClassUnavailable {
   return new DataClassUnavailable(input);
 }
 
@@ -138,15 +157,80 @@ export function dataClassUnavailableText(
 /**
  * A dispatched task's refusal when its worker could not be sent the task, worded like the dispatcher's other refusals:
  * the code, the class, the model, that nothing was sent and no worker started, and what the person can change.
+ *
+ * `checked` says what was checked, so the sentence claims no more: `model` when only the model the worker launched on
+ * was, `every-candidate` when routing tried every model this node could start the worker on. `unread` when the refusal
+ * came from a ceiling that could not be read, which is said as that rather than as a ceiling the model has.
  */
-export function dataClassTaskRefusal(input: { dataClass: DataClass; model: string }): string {
+export function dataClassTaskRefusal(input: {
+  dataClass: DataClass;
+  model: string;
+  checked: "model" | "every-candidate";
+  unread?: boolean;
+}): string {
   const { dataClass, model } = input;
+  const what =
+    input.unread === true
+      ? input.checked === "model"
+        ? `what ${model} may receive could not be read`
+        : `what the models this node could start its worker on may receive could not be read`
+      : input.checked === "model"
+        ? `${model} may not receive ${dataClass} data`
+        : `${model} may not receive ${dataClass} data, nor may any model this node could start its worker on`;
+  const next =
+    input.unread === true
+      ? "run the task again; if this keeps happening, check the model's profile in Settings → AI & Routing"
+      : `choose a model that may receive ${dataClass} data (such as one that runs on this machine), ` +
+        `or allow ${dataClass} for that model in Settings → AI & Routing, and run the task again`;
   return (
-    `refused: ${MODEL_DATA_CLASS_UNAVAILABLE}: the task carries ${dataClass} data, and ${model} may not receive ` +
-    `${dataClass} data, nor may any model this node could start its worker on; nothing was sent to a model and the ` +
-    `worker was never started; choose a model that may receive ${dataClass} data (such as one that runs on this machine), ` +
-    `or allow ${dataClass} for that model in Settings → AI & Routing, and run the task again`
+    `refused: ${MODEL_DATA_CLASS_UNAVAILABLE}: the task carries ${dataClass} data, and ${what}; ` +
+    `nothing was sent to a model and the worker was never started; ${next}`
   );
+}
+
+/**
+ * What the SDK may load from the machine into a session's prompt — context files (`AGENTS.md`, `CLAUDE.md`), a
+ * `SYSTEM.md`/`APPEND_SYSTEM.md`, skill descriptions, prompt templates — whatever model the session runs.
+ *
+ * The loader is built once per adapter and shared by every session it creates, whichever model each runs, so this
+ * cannot be held to one model's ceiling. It is held to the ceiling every model has instead: text carrying `confidential`
+ * or `secret` data is not loaded for any session, and an operator reads which source and which class on stderr, never
+ * the text.
+ */
+export function contextFileGuard(input: { source: string; text: string }): boolean {
+  const check = checkSendBoundary({ allowed: ["public", "internal"], texts: [input.text] });
+  if (!check.ok) {
+    process.stderr.write(
+      `${JSON.stringify({
+        event: "context-file-withheld",
+        code: check.code,
+        path: "context-file" satisfies SendPath,
+        // The file's own name, not where it sits: the directories above it can name the person.
+        source: basename(input.source),
+        dataClass: check.dataClass,
+      })}\n`,
+    );
+  }
+  return check.ok;
+}
+
+/**
+ * The adapter's tool-result guard for a session: every result and failure message any of its tools hands back — the
+ * runtime's own, and the scoped filesystem tools the adapter binds — is checked here against the model and ceiling the
+ * session answers on at the moment the result returns, and replaced by `withheldToolResult` when it may not be sent.
+ * The adapter drops anything else the result carried, an image included.
+ */
+export function toolResultGuardFor(input: {
+  model: () => { provider: string; id: string };
+  allowed: () => readonly DataClass[];
+}): ToolResultGuard {
+  return ({ text }) => {
+    const model = input.model();
+    const check = enforceSendBoundary({ path: "tool-result", model, allowed: input.allowed(), texts: [text] });
+    return check.ok
+      ? { withheld: false }
+      : { withheld: true, text: withheldToolResult({ dataClass: check.dataClass, model: modelName(model) }) };
+  };
 }
 
 /**

@@ -64,13 +64,15 @@ import {
   touchOfToolCall,
 } from "./conditional-instructions.ts";
 import { legacyRecap, planRecap } from "./context-planner.ts";
+import { type PersonalInstructionsPin, createPersonalInstructionsPin } from "./personal-instructions-pin.ts";
 import {
+  contextFileGuard,
   dataClassUnavailable,
   dataClassUnavailableText,
   enforceSendBoundary,
   isDataClassUnavailable,
   modelName,
-  withheldToolResult,
+  toolResultGuardFor,
 } from "./send-boundary.ts";
 import {
   SESSION_POLICY_LIMITS,
@@ -660,14 +662,14 @@ function flushReasoning(turn: Turn): void {
  * `afterCall` adds to what the model reads back, never to the transcript's record: the conditional instructions a call
  * newly made apply, labelled with where they came from.
  *
- * `toModel` decides what of a call's answer the model is sent back, after everything else: the send boundary, which may
- * withhold a result above the answering model's ceiling. The transcript keeps the result either way — it is the person's.
+ * What of a call's answer the model is then sent is the session's tool-result guard's to decide, in the adapter, after
+ * this: the send boundary may withhold a result above the answering model's ceiling. The transcript keeps the result
+ * either way — it is the person's.
  */
 function withActivity(
   turn: Turn,
   tool: ToolDefinition,
   afterCall?: (name: string, params: Record<string, unknown>) => string,
-  toModel: (text: string) => string = (text) => text,
 ): ToolDefinition {
   return {
     ...tool,
@@ -710,12 +712,7 @@ function withActivity(
         }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
         const extra = afterCall?.(tool.name, params) ?? "";
-        const full = extra === "" ? answer.text : `${answer.text}\n\n${extra}`;
-        const sent = toModel(full);
-        if (sent === full) return { ...answer, text: sent };
-        // Withheld: nothing else of this call's answer goes to the model either, a picture included.
-        const { image: _withheld, ...rest } = answer;
-        return { ...rest, text: sent };
+        return extra === "" ? answer : { ...answer, text: `${answer.text}\n\n${extra}` };
       } catch (cause) {
         // Returned rather than re-thrown, which is what `show_view` already does by hand: the model
         // gets the reason in the same turn and can correct itself, instead of the turn failing with
@@ -723,7 +720,7 @@ function withActivity(
         const message = cause instanceof Error ? cause.message : String(cause);
         turn.onEvent?.({ type: "tool-end", toolCallId, status: "failed", result: message });
         turn.segments.push({ kind: "block", block: record("failed", message) });
-        return { text: toModel(`${tool.name} lỗi: ${message}`) };
+        return { text: `${tool.name} lỗi: ${message}` };
       }
     },
   };
@@ -1026,6 +1023,12 @@ export async function createModelTurn(options: {
    */
   personalInstructions?: () => string | undefined;
   /**
+   * Where the instructions each session is given are pinned once the send boundary checked them for its model; the
+   * adapter this module builds reads them from here, never from the preference. Injected so a test can read what each
+   * session was given; absent is a pin of this module's own.
+   */
+  personalInstructionsPin?: PersonalInstructionsPin;
+  /**
    * The thinking level the person chose (Settings or `/thinking`), read when a session is created. A change reaches the
    * conversation's next turn through a handoff, like a model change. Absent keeps the level the node started with.
    */
@@ -1186,17 +1189,23 @@ export async function createModelTurn(options: {
   const budget = modelBudgetFromEnv(options.env);
   const turnLimitMs = (): number | undefined => options.turnLimitMs?.() ?? budget.maxWallClockMs;
   const chosenThinking = (): ModelSelection["thinkingLevel"] => options.thinkingLevel?.();
+  // What each session's run is given of the person's instructions: the value checked for it (`personalFor`, below).
+  const personalPin = options.personalInstructionsPin ?? createPersonalInstructionsPin();
+  const pinPersonal = personalPin.pin;
   const adapter =
     options.adapter ??
     new RealPiAdapter({
       cwd: options.cwd,
       model: selection,
       builtinTools: [],
+      // What the SDK finds on the machine for a session's prompt is checked before it is loaded, for every model.
+      contextGuard: contextFileGuard,
       ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
       ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
+      // The value the send boundary checked for the session whose run is starting, never a fresh read.
       ...(options.personalInstructions === undefined
         ? {}
-        : { personalInstructions: options.personalInstructions }),
+        : { personalInstructions: personalPin.get }),
     });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
@@ -1389,7 +1398,23 @@ export async function createModelTurn(options: {
       return { allowed: ["public"], read: false };
     }
   };
-  const allowedFor = (model: { provider: string; id: string }): readonly DataClass[] => ceilingOf(model).allowed;
+
+  /*
+   * The person's own instructions for one send, read once and narrowed like the rest of the guidance a send carries: a
+   * model that may not receive what they contain is given none of them for this send, said on stderr by class and model
+   * like any withheld text, and the send goes ahead without them. The caller checks the value with everything else the
+   * send carries and pins it under the session it prompts (`pinPersonal`), so what the adapter appends is what was checked.
+   */
+  const personalFor = (model: { provider: string; id: string }, allowed: readonly DataClass[]): string | undefined => {
+    let text: string | undefined;
+    try {
+      text = options.personalInstructions?.();
+    } catch {
+      return undefined;
+    }
+    if (text === undefined || text.trim() === "") return undefined;
+    return enforceSendBoundary({ path: "personal-instructions", model, allowed, texts: [text] }).ok ? text : undefined;
+  };
 
   /*
    * The one routing step for background work, shared by a background run and a dispatched worker so both treat a failed
@@ -1417,18 +1442,6 @@ export async function createModelTurn(options: {
     configured: ModelSelection,
   ): ModelSelection[] =>
     routed === undefined ? [configured] : modelKey(routed) === modelKey(configured) ? [routed] : [routed, configured];
-
-  /** A background run's tool, whose results reach the model only when it may receive them. */
-  const guardedTool = (tool: ToolDefinition, model: ModelSelection, allowed: readonly DataClass[]): ToolDefinition => ({
-    ...tool,
-    execute: async (params: Record<string, unknown>) => {
-      const answer = await tool.execute(params);
-      const check = enforceSendBoundary({ path: "tool-result", model, allowed, texts: [answer.text] });
-      if (check.ok) return answer;
-      const { image: _withheld, ...rest } = answer;
-      return { ...rest, text: withheldToolResult({ dataClass: check.dataClass, model: modelName(model) }) };
-    },
-  });
 
   /**
    * The one tool.
@@ -1592,21 +1605,19 @@ export async function createModelTurn(options: {
       return stateInstructions(turn, conversationId, true);
     };
     /*
-     * What a call's result is sent back to the model as: the result itself when the model answering may receive every
-     * class it carries, else a note that it was withheld. Checked against the model the conversation runs when the call
-     * returns, so a handoff since the session was created is the model checked.
+     * What a call's result is sent back to the model as, for every tool the session holds: the result itself when the
+     * model may receive every class it carries, else a note that it was withheld. The model is the one the conversation
+     * runs when the call returns, and the ceiling is `turn.allowed` as the current turn's preparation read it for that
+     * model — correct for the whole turn, because a session's model cannot change mid-turn: a change is a new generation,
+     * made at the next turn boundary, whose preparation reads the ceiling again.
      */
-    const toModel = (text: string): string => {
-      const model = runningModel(conversationId);
-      const check = enforceSendBoundary({ path: "tool-result", model, allowed: turn.allowed, texts: [text] });
-      return check.ok ? text : withheldToolResult({ dataClass: check.dataClass, model: modelName(model) });
-    };
+    const toolResultGuard = toolResultGuardFor({ model: () => runningModel(conversationId), allowed: () => turn.allowed });
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
-    ].map((tool) => withActivity(turn, tool, afterCall, toModel));
+    ].map((tool) => withActivity(turn, tool, afterCall));
     // Recorded on the turn once a session holds these tools: a handoff that fails leaves the previous generation's.
     const registeredTools = customTools.map((tool) => tool.name);
 
@@ -1628,6 +1639,7 @@ export async function createModelTurn(options: {
       // session, and it is also the moment `services` exists to say what was chosen.
       ...(model === undefined ? {} : { model }),
       ...(customTools.length === 0 ? {} : { customTools }),
+      toolResultGuard,
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.
       ...thinkingAndLimit(),
@@ -1705,6 +1717,7 @@ export async function createModelTurn(options: {
       turn.answered = 0;
       turn.recentTexts = [];
       turn.lastBrief = "";
+      personalPin.forget(previous);
       void adapter.dispose(previous).catch(() => undefined);
     };
 
@@ -1804,7 +1817,8 @@ export async function createModelTurn(options: {
     // preparation, which is when the turn's channel is set.
     if (turn.channel === "voice") return false;
     // A sentence the running model may not receive does not join its run: it becomes a turn of its own, which refuses it
-    // with the reason rather than sending it.
+    // with the reason rather than sending it. `turn.allowed` is the ceiling this turn's preparation read for the model it
+    // runs, and it still holds: a session's model cannot change mid-turn, only at the next turn boundary.
     const model = runningModel(turn.conversationId);
     if (!enforceSendBoundary({ path: "steer", model, allowed: turn.allowed, texts: [text] }).ok) return false;
     // Recorded in the same tick as the check above, so the turn's last look for queued steers cannot miss it.
@@ -2167,11 +2181,13 @@ export async function createModelTurn(options: {
        * sent. The person's choice of model is not changed and no other model is tried for it here: a fallback is for a
        * model that refused, and one that would answer only after a send is not a reason to send.
        */
+      // The person's own instructions go in the session's system prompt, so they are part of this send too.
+      const personal = personalFor(runsOn(), allowed);
       const boundary = enforceSendBoundary({
         path: "turn",
         model: runsOn(),
         allowed,
-        texts: [input.text, note, brief, data, ui],
+        texts: [input.text, note, brief, data, ui, personal],
       });
       if (!boundary.ok) {
         turn.stated.clear();
@@ -2220,6 +2236,8 @@ export async function createModelTurn(options: {
       if (fresh && !turn.stopped) turn.fresh = false;
       // The session this turn prompts, held so that whatever ends the turn lets go of this one and never another.
       const promptedSession = turn.sessionId;
+      // What this run's system prompt is given of the person's instructions: the value checked above, for this session.
+      pinPersonal(promptedSession, personal);
       const promptText = promptForTurn({
         text: input.text,
         ...(note === undefined ? {} : { note }),
@@ -2468,10 +2486,14 @@ export async function createModelTurn(options: {
        * configured model passes the same check or the task does not start on it.
        */
       let blocked: DataClass | undefined;
+      // Whether every refusal came from a ceiling that could not be read, which is then what the refusal says.
+      let unread = true;
       for (const candidate of backgroundCandidates(routed, current)) {
-        const check = enforceSendBoundary({ path: "worker-route", model: candidate, allowed: allowedFor(candidate), classes });
+        const ceiling = ceilingOf(candidate);
+        const check = enforceSendBoundary({ path: "worker-route", model: candidate, allowed: ceiling.allowed, classes });
         if (!check.ok) {
-          blocked = check.dataClass;
+          blocked ??= check.dataClass;
+          unread &&= !ceiling.read;
           continue;
         }
         if (routed !== undefined && candidate === routed) return { provider: routed.provider, id: routed.id, via: "routed" };
@@ -2484,7 +2506,11 @@ export async function createModelTurn(options: {
       throw dataClassUnavailable({
         dataClass,
         model: modelName(current),
-        message: `no model this node could start the worker on may receive ${dataClass} data (${modelName(current)} may not), so nothing was sent`,
+        unread,
+        // Said as what was found: a ceiling that could not be read is not a ceiling that refused.
+        message: unread
+          ? `the task carries ${dataClass} data, and what the models this node could start the worker on may receive could not be read, so nothing was sent`
+          : `no model this node could start the worker on may receive ${dataClass} data (${modelName(current)} may not), so nothing was sent`,
       });
     },
 
@@ -2526,23 +2552,36 @@ export async function createModelTurn(options: {
        * eligible model is a run that does not start, never one on a model that may not receive it.
        */
       let prepared:
-        | { runsOn: ModelSelection; allowed: readonly DataClass[]; reader: ContextReader | undefined; retrieved: string }
+        | {
+            runsOn: ModelSelection;
+            allowed: readonly DataClass[];
+            reader: ContextReader | undefined;
+            retrieved: string;
+            personal: string | undefined;
+          }
         | undefined;
-      let blocked: { dataClass: DataClass; model: ModelSelection } | undefined;
+      let blocked: { dataClass: DataClass; model: ModelSelection; read: boolean } | undefined;
       for (const candidate of backgroundCandidates(routed, configured)) {
-        const allowed = allowedFor(candidate);
+        const { allowed, read } = ceilingOf(candidate);
         const narrowed = context?.readerFor(allowed);
         const reader = narrowed === undefined || narrowed.items === 0 ? undefined : narrowed;
         // The list of what was retrieved goes with the data, after the caller's own: material, not a goal. An item is read
         // in full only when the run asks for it.
         const listed = reader?.answer({});
         const retrieved = listed?.kind === "done" ? listed.text : "";
-        const check = enforceSendBoundary({ path: "background", model: candidate, allowed, texts: [input.text, input.data, retrieved] });
+        // The person's own instructions reach a background session's system prompt as they do a conversation's.
+        const personal = personalFor(candidate, allowed);
+        const check = enforceSendBoundary({
+          path: "background",
+          model: candidate,
+          allowed,
+          texts: [input.text, input.data, retrieved, personal],
+        });
         if (check.ok) {
-          prepared = { runsOn: candidate, allowed, reader, retrieved };
+          prepared = { runsOn: candidate, allowed, reader, retrieved, personal };
           break;
         }
-        blocked ??= { dataClass: check.dataClass, model: candidate };
+        blocked ??= { dataClass: check.dataClass, model: candidate, read };
       }
       if (prepared === undefined) {
         const blockedClass = blocked?.dataClass ?? "secret";
@@ -2550,10 +2589,17 @@ export async function createModelTurn(options: {
         throw dataClassUnavailable({
           dataClass: blockedClass,
           model,
-          message: dataClassUnavailableText(language(), { dataClass: blockedClass, model, subject: "background" }),
+          unread: blocked?.read === false,
+          message: dataClassUnavailableText(language(), {
+            dataClass: blockedClass,
+            model,
+            subject: "background",
+            // A ceiling that could not be read is said as that, never as a ceiling the model has.
+            ...(blocked?.read === false ? { unread: true } : {}),
+          }),
         });
       }
-      const { runsOn, allowed, reader, retrieved } = prepared;
+      const { runsOn, allowed, reader, retrieved, personal } = prepared;
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
@@ -2561,7 +2607,9 @@ export async function createModelTurn(options: {
         // retrieved from this conversation for this request, and nothing else.
         projectRoots: [],
         allowedCapabilityRefs: [],
-        ...(reader === undefined ? {} : { customTools: [guardedTool(readContextTool(reader), runsOn, allowed)] }),
+        ...(reader === undefined ? {} : { customTools: [readContextTool(reader)] }),
+        // Whatever a tool hands back reaches this model only if it may receive it, a picture included.
+        toolResultGuard: toolResultGuardFor({ model: () => runsOn, allowed: () => allowed }),
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
         // which is exactly why the model for it is a decision rather than a setting. Named even when nothing was routed,
         // so the model that runs is the one whose data classes narrowed what it reads, not the adapter's boot default.
@@ -2569,6 +2617,7 @@ export async function createModelTurn(options: {
         ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
       });
       backgroundSessions.set(workId, handle.sessionId);
+      pinPersonal(handle.sessionId, personal);
       let said = "";
       const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
         if (event.type === "text-delta") said += event.delta;
@@ -2591,6 +2640,7 @@ export async function createModelTurn(options: {
         signal?.removeEventListener("abort", onAbort);
         unsubscribe();
         backgroundSessions.delete(workId);
+        personalPin.forget(handle.sessionId);
         // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
         void adapter.dispose(handle.sessionId).catch(() => undefined);
       }

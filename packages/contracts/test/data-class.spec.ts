@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_ALLOWED_DATA_CLASSES,
+  ENFORCED_DATA_CLASSES,
   MODEL_DATA_CLASS_UNAVAILABLE,
   allowedDataClassesFor,
   checkSendBoundary,
@@ -62,6 +63,51 @@ describe("the class of a text", () => {
     expect(dataClassOfText(`token: ${GITHUB_PAT}`)).toBe("secret");
     expect(dataClassOfText(`key=${GOOGLE_KEY}`)).toBe("secret");
     expect(dataClassOfText(`DATABASE_URL=${DB_URL}`)).toBe("secret");
+  });
+
+  it("is not secret for an obvious placeholder in a credential's place", () => {
+    const placeholders = [
+      'API_KEY="your_api_key"',
+      'DB_PASSWORD="example"',
+      'password: "changeme"',
+      "Authorization: Bearer YOURTOKENHERE",
+      "client_secret = 'xxxxxxxxxxxx'",
+      'password: "********"',
+      "api_key=INSERT_KEY",
+      "token: <your-token>",
+      `${["postgres://clark", "password@db"].join(":")}`,
+    ];
+    for (const text of placeholders) expect(dataClassOfText(text), text).toBe("internal");
+  });
+
+  it("is still secret for a real-shaped value in the same places", () => {
+    const values = [
+      // Assembled, so a scanner reading this file does not take a test value for a real key.
+      `API_KEY="${["a8f3k29d", "k3l0qpz7"].join("")}"`,
+      'DB_PASSWORD="example2024!"',
+      'password: "hunter22x"',
+      // No digit, but not a stand-in either.
+      'password: "correcthorsebattery"',
+      `Authorization: Bearer ${["abcdefgh", "ijklmnop"].join("")}`,
+      `Authorization: Bearer ${["your9token", "8value7x"].join("")}`,
+      `client_secret = '${["xxxxxxxx", "1xxxx"].join("")}'`,
+      `${["postgres://clark", "s3cretPass@db"].join(":")}`,
+    ];
+    for (const text of values) expect(dataClassOfText(text), text).toBe("secret");
+  });
+
+  it("is secret for an HTTP Basic header and a SendGrid key", () => {
+    // "aladdin:opensesame"
+    expect(dataClassOfText(`Authorization: Basic ${["YWxhZGRpbjpv", "cGVuc2VzYW1l"].join("")}`)).toBe("secret");
+    expect(dataClassOfText(`curl -H "authorization: basic ${["dXNlcjpzM2Ny", "ZXQ="].join("")}"`)).toBe("secret");
+    const sendgrid = ["SG", "aB3dE5gH7jK9mN1pQ3sT5v", "x7Z9b1D3f5H7j9L1n3P5r7T9v1X3z5B7d9F1h3J5l7N"].join(".");
+    expect(dataClassOfText(`SENDGRID=${sendgrid}`)).toBe("secret");
+    expect(redactSecrets(`key ${sendgrid} end`)).toBe("key [redacted] end");
+    // "Basic" as a word, a header with no credential in it, or a SendGrid-like name of the wrong length is not.
+    expect(dataClassOfText("Basic information about the project")).toBe("internal");
+    expect(dataClassOfText("Authorization: Basic realm")).toBe("internal");
+    expect(dataClassOfText(`Authorization: Basic ${["bm90IGEgcGFp", "cg=="].join("")}`)).toBe("internal");
+    expect(dataClassOfText("SG.short.value")).toBe("internal");
   });
 
   it("is not secret for ordinary code", () => {
@@ -191,7 +237,14 @@ describe("the send boundary", () => {
     // A list that names secret but not confidential does not admit a request carrying confidential data.
     const check = checkSendBoundary({ allowed: ["public", "internal", "secret"], texts: ["duy@example.com", "password: hunter22x"] });
     expect(check).toMatchObject({ ok: false, dataClass: "confidential" });
-    expect(checkSendBoundary({ allowed: ["public"], classes: ["internal"] })).toMatchObject({ ok: false, dataClass: "internal" });
+    expect(checkSendBoundary({ allowed: ["public"], classes: ["confidential"] })).toMatchObject({ ok: false, dataClass: "confidential" });
+  });
+
+  it("never refuses a send for public or internal data, which only steer routing and narrowing", () => {
+    expect(ENFORCED_DATA_CLASSES).toEqual(["confidential", "secret"]);
+    expect(checkSendBoundary({ allowed: ["public"], texts: ["hi"] })).toEqual({ ok: true, dataClass: "internal" });
+    expect(checkSendBoundary({ allowed: [], classes: ["public", "internal"] }).ok).toBe(true);
+    expect(checkSendBoundary({ allowed: ["public"], texts: ["hi", "duy@example.com"] })).toMatchObject({ ok: false, dataClass: "confidential" });
   });
 
   it("is a policy refusal a person can act on", () => {

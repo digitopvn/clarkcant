@@ -7,6 +7,8 @@ import {
   type WorkerBrief,
 } from "@clarkcant/pi-adapter";
 
+import { contextFileGuard } from "./send-boundary.ts";
+
 /**
  * Starting a worker session in a directory the finder chose.
  *
@@ -86,6 +88,8 @@ export function createProjectSessionStarter(options: ProjectSessionOptions): Pro
           // boundary travels on the brief as `projectRoots` and the tools resolve every path against it.
           cwd,
           sessionDir: options.sessionDir,
+          // The same check every conversation's session gets on what the SDK loads from the machine into a prompt.
+          contextGuard: contextFileGuard,
           ...(options.model === undefined ? {} : { model: options.model }),
           ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
           ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),

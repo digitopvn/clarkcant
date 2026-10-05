@@ -20,6 +20,10 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   { label: "aws-access-key", pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { label: "github-token", pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g },
   { label: "google-api-key", pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
+  { label: "sendgrid-key", pattern: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
+  // An HTTP Basic header's value, which is a user and password in base64. Only after the header name: "Basic" alone is a
+  // word in ordinary prose.
+  { label: "basic-auth", pattern: /\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi },
   // A password in a URL (`postgres://user:pass@host`), before the email shape reads `pass@host` as an address. A
   // template placeholder (`${password}`, `<password>`, `{{password}}`) or a masked `***` is not a password.
   { label: "url-credentials", pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi },

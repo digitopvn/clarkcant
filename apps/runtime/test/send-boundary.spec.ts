@@ -12,6 +12,8 @@ import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 
 import type { ContextSource } from "../src/context-bundle.ts";
 import { type HistoryMessage, createModelTurn } from "../src/model-turn.ts";
+import { createPersonalInstructionsPin } from "../src/personal-instructions-pin.ts";
+import { contextFileGuard, dataClassTaskRefusal } from "../src/send-boundary.ts";
 
 /**
  * A model's data-class ceiling is a limit on what is sent to it, not a routing preference.
@@ -408,7 +410,9 @@ describe("a background run", () => {
     expect(cause.contract.detail).toMatchObject({ dataClass: "secret" });
     expect(refused.briefs).toEqual([]);
 
-    const adapter = new RecordingAdapter({ script: ["xong"] });
+    // The run's model reads the item through the adapter, the path a live session's call takes.
+    const tool = "read_context";
+    const adapter = new RecordingAdapter({ script: [{ callTool: { name: tool, params: { item: "c1" } }, reply: "xong" }] });
     const run = await createModelTurn({
       env: ENV,
       cwd: process.cwd(),
@@ -416,9 +420,130 @@ describe("a background run", () => {
       backgroundContext: async () => leaky("c1 · ghi chú về cấu hình", SECRET),
     });
     await run!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "tổng hợp ghi chú" });
-    const tool = adapter.briefs[0]?.customTools?.[0];
-    const read = await tool!.execute({ item: "c1" });
-    expect(read.text).not.toContain(SECRET_VALUE);
-    expect(read.text).toContain("carries secret data");
+    expect(adapter.briefs[0]?.customTools?.[0]?.name).toBe(tool);
+    expect(adapter.results).toHaveLength(1);
+    expect(adapter.results[0]).not.toContain(SECRET_VALUE);
+    expect(adapter.results[0]).toContain("carries secret data");
+  });
+
+  it("gives the run's tools the same guard, an image dropped with a withheld result", async () => {
+    const adapter = new RecordingAdapter({ script: ["xong"] });
+    const run = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    await run!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "tổng hợp ghi chú" });
+    const guard = adapter.briefs[0]?.toolResultGuard;
+    expect(guard?.({ tool: "clarkcant_read", text: SECRET })).toMatchObject({ withheld: true });
+    expect(guard?.({ tool: "clarkcant_read", text: "ghi chú về cấu hình" })).toEqual({ withheld: false });
+  });
+});
+
+describe("what the SDK loads from the machine into a prompt", () => {
+  it("leaves out a context file carrying confidential or secret data, for every model, and names only the file", async () => {
+    const lines: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      if (typeof chunk === "string") lines.push(chunk);
+      return true;
+    });
+    expect(contextFileGuard({ source: "/home/someone/project/AGENTS.md", text: "Use pnpm. Run the tests." })).toBe(true);
+    expect(contextFileGuard({ source: "/home/someone/project/AGENTS.md", text: `Deploy with ${SECRET}` })).toBe(false);
+    expect(contextFileGuard({ source: "/home/someone/CLAUDE.md", text: "Mail reports to duy@example.com" })).toBe(false);
+    const said = lines.join("");
+    expect(said).toContain('"source":"AGENTS.md"');
+    expect(said).toContain('"dataClass":"secret"');
+    expect(said).not.toContain("someone");
+    expect(said).not.toContain(SECRET_VALUE);
+  });
+});
+
+describe("the person's own instructions", () => {
+  it("are given to the session only as checked for its model, and not at all to one that may not receive them", async () => {
+    const pin = createPersonalInstructionsPin();
+    // What each run's system prompt would be given, read the moment it is prompted, as the real adapter's hook reads it.
+    const given: (string | undefined)[] = [];
+    class PinReading extends RecordingAdapter {
+      override async prompt(sessionId: string, text: string): Promise<void> {
+        given.push(pin.get(sessionId));
+        await super.prompt(sessionId, text);
+      }
+    }
+    const adapter = new PinReading({ script: ["xong", "xong", "xong"] });
+    let personal = "Trả lời ngắn gọn.";
+    let reads = 0;
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      allowedDataClasses: () => ["public", "internal"],
+      personalInstructions: () => {
+        reads += 1;
+        return personal;
+      },
+      personalInstructionsPin: pin,
+    });
+    await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào", messageId: "m1" });
+    // Read once for the send, so the value checked is the value given.
+    expect(reads).toBe(1);
+
+    // A preference that now carries what this model may not receive is not given to it; the turn still goes ahead.
+    personal = "Gửi báo cáo cho duy@example.com";
+    await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào lần nữa", messageId: "m2" });
+    expect(adapter.prompts).toHaveLength(2);
+    expectBlockedSaid("confidential", "test-provider/test-model");
+
+    // A background session gets the same: checked for the model it runs, pinned under its own session.
+    personal = "Trả lời bằng tiếng Việt.";
+    await turn!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "tổng hợp ghi chú" });
+    expect(given).toEqual(["Trả lời ngắn gọn.", undefined, "Trả lời bằng tiếng Việt."]);
+  });
+});
+
+describe("a dispatched task's refusal", () => {
+  it("names only the model that was checked, and an unread ceiling as unread", () => {
+    const one = dataClassTaskRefusal({ dataClass: "secret", model: "acme/narrow", checked: "model" });
+    expect(one).toContain("acme/narrow may not receive secret data;");
+    expect(one).not.toContain("nor may any model");
+    const every = dataClassTaskRefusal({ dataClass: "secret", model: "acme/narrow", checked: "every-candidate" });
+    expect(every).toContain("nor may any model this node could start its worker on");
+    const unread = dataClassTaskRefusal({ dataClass: "secret", model: "acme/narrow", checked: "model", unread: true });
+    expect(unread).toContain("what acme/narrow may receive could not be read");
+    expect(unread).not.toContain("may not receive");
+    for (const text of [one, every, unread]) expect(text).toMatch(/^refused: MODEL_DATA_CLASS_UNAVAILABLE: /);
+  });
+});
+
+describe("the pin the adapter reads personal instructions from", () => {
+  it("gives a session only what was pinned for it, and forgets the oldest first", () => {
+    const pin = createPersonalInstructionsPin(2);
+    pin.pin("a", "one");
+    pin.pin("b", "two");
+    pin.pin("c", "three");
+    expect(pin.get("a")).toBeUndefined();
+    expect(pin.get("b")).toBe("two");
+    expect(pin.get(undefined)).toBeUndefined();
+    pin.forget("b");
+    expect(pin.get("b")).toBeUndefined();
+    expect(pin.get("c")).toBe("three");
+  });
+});
+
+describe("a background run's refusal", () => {
+  it("says the ceiling could not be read rather than naming one the model has", async () => {
+    const adapter = new RecordingAdapter({ script: ["xong"] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      language: () => "en",
+      allowedDataClasses: () => {
+        throw new Error("pool unreadable");
+      },
+    });
+    const cause = await notSent(turn!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: `dùng ${SECRET}` }));
+    expect(cause.message).toContain("could not be read");
+    expect(cause.message).not.toContain("may not receive");
+    const worker = await notSent(turn!.workerModel({ dataClass: "secret" }));
+    expect(worker.message).toContain("could not be read");
+
+    // An ordinary request is not refused for an unread ceiling: only confidential and secret are held back.
+    await expect(turn!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "tổng hợp ghi chú" })).resolves.toBe("xong");
   });
 });

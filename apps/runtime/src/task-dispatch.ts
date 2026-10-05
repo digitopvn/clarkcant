@@ -507,16 +507,18 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   };
   /**
    * What the model a worker launched on may be sent: its profiles' ceiling, else the default for an unlabelled profile.
-   * A pool that cannot be read narrows to `public`, the same answer a conversation's turn gives.
+   * A pool that cannot be read narrows to `public`, the same answer a conversation's turn gives, and says so (`read:
+   * false`), so a refusal names the unread ceiling rather than one the model has.
    */
-  const allowedFor = (launch: WorkerModelLaunch | undefined): readonly DataClass[] => {
-    if (launch === undefined || deps.allowedDataClasses === undefined) return DEFAULT_ALLOWED_DATA_CLASSES;
+  const ceilingFor = (launch: WorkerModelLaunch | undefined): { allowed: readonly DataClass[]; read: boolean } => {
+    if (launch === undefined || deps.allowedDataClasses === undefined) return { allowed: DEFAULT_ALLOWED_DATA_CLASSES, read: true };
     try {
-      return deps.allowedDataClasses(launch.model);
+      return { allowed: deps.allowedDataClasses(launch.model), read: true };
     } catch {
-      return ["public"];
+      return { allowed: ["public"], read: false };
     }
   };
+  const allowedFor = (launch: WorkerModelLaunch | undefined): readonly DataClass[] => ceilingFor(launch).allowed;
   /**
    * The retrieved context a task's worker may read, or undefined when there is none to give it.
    *
@@ -705,7 +707,10 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         if (isDataClassUnavailable(cause)) {
           releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
           recordModelRefusal(job, cause.model, cause.dataClass);
-          await refuse(job, dataClassTaskRefusal({ dataClass: cause.dataClass, model: cause.model }));
+          await refuse(
+            job,
+            dataClassTaskRefusal({ dataClass: cause.dataClass, model: cause.model, checked: "every-candidate", unread: cause.unread }),
+          );
           return;
         }
         reason = `the model for it could not be chosen (${cause instanceof Error ? cause.message : String(cause)})`;
@@ -988,11 +993,15 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
        * by the worker before the model reads it. A worker its model may not be sent is never started.
        */
       if (launch !== undefined) {
-        const allowed = allowedFor(launch);
+        const { allowed, read } = ceilingFor(launch);
         const check = enforceSendBoundary({ path: "task", model: launch.model, allowed, texts: [task.goal, instructions] });
         if (!check.ok) {
           recordModelRefusal(job, modelName(launch.model), check.dataClass);
-          await refuse(job, dataClassTaskRefusal({ dataClass: check.dataClass, model: modelName(launch.model) }));
+          // Only the model the worker launched on is checked here, so only it is named.
+          await refuse(
+            job,
+            dataClassTaskRefusal({ dataClass: check.dataClass, model: modelName(launch.model), checked: "model", unread: !read }),
+          );
           return;
         }
       }

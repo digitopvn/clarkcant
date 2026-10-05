@@ -76,7 +76,19 @@ export interface WorkerBrief {
   model?: { provider: string; id: string };
   /** The thinking level the person chose, for the same reason; absent keeps the adapter's configured level. */
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * What the model reads of a tool result, decided by the host: applied by the adapter to every tool it hands the
+   * session — the scoped filesystem tools it binds itself included — and to a failed call's message, after the tool ran
+   * and before the model reads anything of it. Absent sends results as they are.
+   */
+  toolResultGuard?: ToolResultGuard;
 }
+
+/**
+ * The host's say over a tool result on its way to the model. `withheld` replaces the whole result with `text`: nothing
+ * else the call returned, an image included, is sent.
+ */
+export type ToolResultGuard = (input: { tool: string; text: string }) => { withheld: false } | { withheld: true; text: string };
 
 export interface WorkerSessionHandle {
   sessionId: string;

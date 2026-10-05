@@ -90,7 +90,10 @@ function stubSdk() {
   return { module: module_, registered, loaderOptions };
 }
 
-function adapterWith(sdk: ReturnType<typeof stubSdk>, personalInstructions?: () => string | undefined): RealPiAdapter {
+function adapterWith(
+  sdk: ReturnType<typeof stubSdk>,
+  personalInstructions?: (sessionId: string | undefined) => string | undefined,
+): RealPiAdapter {
   // SAFETY: the stub implements exactly the SDK surface this adapter touches. TypeScript cannot verify a
   // deliberate partial stand-in against the SDK's whole module type, and loading the real SDK here would
   // turn a wiring assertion into a provider call.
@@ -153,6 +156,52 @@ describe("an isolated session loads nothing from the machine", () => {
     const options = sdk.loaderOptions.at(0) ?? {};
     for (const flag of DISCOVERY) expect(options[flag], flag).toBe(true);
     expect(options.extensionFactories).toHaveLength(1);
+  });
+
+  it("holds what the SDK discovers to the host's guard before a prompt is built from it", async () => {
+    const sdk = stubSdk();
+    const refused: string[] = [];
+    await new RealPiAdapter({
+      cwd: process.cwd(),
+      contextGuard: ({ source, text }) => {
+        const ok = !text.includes("NOT-FOR-THE-MODEL");
+        if (!ok) refused.push(source);
+        return ok;
+      },
+      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    }).createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+
+    const options = sdk.loaderOptions.at(0) as Record<string, (base: never) => unknown>;
+    expect(
+      options.agentsFilesOverride?.({
+        agentsFiles: [
+          { path: "/repo/AGENTS.md", content: "Use pnpm." },
+          { path: "/repo/CLAUDE.md", content: "token NOT-FOR-THE-MODEL" },
+        ],
+      } as never),
+    ).toEqual({ agentsFiles: [{ path: "/repo/AGENTS.md", content: "Use pnpm." }] });
+    expect(options.systemPromptOverride?.("NOT-FOR-THE-MODEL" as never)).toBeUndefined();
+    expect(options.systemPromptOverride?.("You are helpful." as never)).toBe("You are helpful.");
+    expect(options.appendSystemPromptOverride?.(["keep", "NOT-FOR-THE-MODEL"] as never)).toEqual(["keep"]);
+    expect(
+      options.skillsOverride?.({
+        skills: [
+          { name: "ok", description: "fine" },
+          { name: "bad", description: "NOT-FOR-THE-MODEL" },
+        ],
+        diagnostics: [],
+      } as never),
+    ).toEqual({ skills: [{ name: "ok", description: "fine" }], diagnostics: [] });
+    expect(
+      options.promptsOverride?.({
+        prompts: [
+          { name: "ok", description: "d", content: "fine" },
+          { name: "bad", description: "d", content: "NOT-FOR-THE-MODEL" },
+        ],
+        diagnostics: [],
+      } as never),
+    ).toEqual({ prompts: [{ name: "ok", description: "d", content: "fine" }], diagnostics: [] });
+    expect(refused).toEqual(["/repo/CLAUDE.md", "system-prompt", "append-system-prompt", "skill:bad", "prompt:bad"]);
   });
 
   it("leaves discovery as the SDK has it for a session that is not isolated", async () => {
@@ -219,6 +268,24 @@ describe("the handler appends to the prompt the SDK composed", () => {
     // And exactly one section, because the handler composes from the base it is given rather than from
     // its own previous output.
     expect(next.split("## Personal instructions").length - 1).toBe(1);
+  });
+
+  it("asks the host for the session whose run is starting, so it can give exactly what it checked for that session", async () => {
+    const sdk = stubSdk();
+    const asked: (string | undefined)[] = [];
+    await adapterWith(sdk, (sessionId) => {
+      asked.push(sessionId);
+      return sessionId === "pi-session-stub" ? "Checked for this session." : undefined;
+    }).createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+
+    const handler = sdk.registered.get("before_agent_start") as
+      | ((event: { systemPrompt: string }, ctx?: unknown) => { systemPrompt: string })
+      | undefined;
+    const ctx = { sessionManager: { getSessionId: () => "pi-session-stub" } };
+    expect(handler?.({ systemPrompt: BASE_PROMPT }, ctx).systemPrompt).toContain("Checked for this session.");
+    // A run the SDK does not name a session for is given nothing rather than a guess.
+    expect(handler?.({ systemPrompt: BASE_PROMPT }).systemPrompt).toBe(BASE_PROMPT);
+    expect(asked).toEqual(["pi-session-stub", undefined]);
   });
 
   it("does not put the user's text into the turn's prompt", async () => {

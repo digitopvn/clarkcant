@@ -31,7 +31,14 @@ import {
   runRecordSchema,
   type RunRecord,
 } from "@clarkcant/contracts";
-import type { PiAdapter, ToolDefinition, WorkerBrief, WorkerEvent, WorkerUsage } from "@clarkcant/pi-adapter";
+import type {
+  PiAdapter,
+  ToolDefinition,
+  ToolResultGuard,
+  WorkerBrief,
+  WorkerEvent,
+  WorkerUsage,
+} from "@clarkcant/pi-adapter";
 import { z } from "zod";
 
 /** Evidence is capped by the contract; one slot is reserved for a truncation note. */
@@ -280,8 +287,10 @@ export async function runWorker(
   /*
    * The send boundary, held here as well as by the host: the host checked the goal and guidance before it started this
    * process, and checks them again below before the first prompt; only this process sees what a tool returns, so a result
-   * the model may not receive is replaced, before the model reads it, by a note that it was withheld. The evidence keeps
-   * its digest of the real output but quotes none of it.
+   * the model may not receive is replaced, before the model reads it, by a note that it was withheld. The replacing is
+   * the adapter's, through the brief's `toolResultGuard`, so it covers every tool the session holds — these, the context
+   * readers and the scoped filesystem tools the adapter binds to the roots — on one path, an image dropped with the text.
+   * The evidence keeps its digest of the real output but quotes none of it.
    */
   const allowed = envelope.allowedDataClasses;
   const withheldClass = (text: string): DataClass | undefined => {
@@ -289,12 +298,16 @@ export async function runWorker(
     const check = checkSendBoundary({ allowed, texts: [text] });
     return check.ok ? undefined : check.dataClass;
   };
-  const toModel = (text: string): string => {
+  const toolResultGuard: ToolResultGuard = ({ text }) => {
     const dataClass = withheldClass(text);
     return dataClass === undefined
-      ? text
-      : `[The result of this call carries ${dataClass} data, which this run's model may not receive, so it was withheld ` +
-          "from you. The call itself ran. Report that the result was withheld for its data class and continue without it.]";
+      ? { withheld: false }
+      : {
+          withheld: true,
+          text:
+            `[The result of this call carries ${dataClass} data, which this run's model may not receive, so it was withheld ` +
+            "from you. The call itself ran. Report that the result was withheld for its data class and continue without it.]",
+        };
   };
 
   /*
@@ -329,24 +342,15 @@ export async function runWorker(
           verdict: "verified",
           observedAt: now(),
         });
-        return withheld === undefined ? result : { ...result, text: toModel(result.text) };
+        return result;
       } catch (cause) {
         recordFailure(tool.name, ref, describe(cause));
-        // A failure's message reaches the model too, so it is held to the same boundary as a result.
-        throw withheldClass(describe(cause)) === undefined ? cause : new Error(toModel(describe(cause)));
+        throw cause;
       }
     },
   }));
-  // The host narrows what these read to the model's ceiling; held to the boundary here too, like every other result.
-  const contextTools = (deps.contextTools ?? [])
-    .filter((tool) => !permittedNames.has(tool.name))
-    .map((tool) => ({
-      ...tool,
-      execute: async (params: Record<string, unknown>) => {
-        const result = await tool.execute(params);
-        return { ...result, text: toModel(result.text) };
-      },
-    }));
+  // The host narrows what these read to the model's ceiling; the brief's guard holds them to the boundary as well.
+  const contextTools = (deps.contextTools ?? []).filter((tool) => !permittedNames.has(tool.name));
   customTools.push(...contextTools);
 
   // The goal and the guidance, checked before a session exists: a brief its model may not be sent is not run at all.
@@ -365,6 +369,7 @@ export async function runWorker(
     projectRoots: envelope.projectRoots,
     allowedCapabilityRefs: envelope.allowedCapabilityRefs,
     customTools,
+    ...(allowed === undefined ? {} : { toolResultGuard }),
     ...(envelope.maxWallClockMs === undefined ? {} : { maxWallClockMs: envelope.maxWallClockMs }),
     ...(envelope.maxTokens === undefined ? {} : { maxTokens: envelope.maxTokens }),
   };

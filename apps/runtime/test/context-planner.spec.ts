@@ -568,14 +568,14 @@ describe("the model turn hands the turn's text to the planner", () => {
         );
     };
     expect(await run(() => ["public", "internal"])).toBeUndefined();
-    // A ceiling that cannot be read is the narrowest for what is gathered, and the person's own words (`internal`) are
-    // above it: the turn is not sent rather than sent on a guess.
+    // A ceiling that cannot be read is the narrowest for what is gathered. The send boundary holds back only
+    // confidential and secret data, so an ordinary message (`internal`) is still sent with what was gathered for it.
     expect(
       await run(() => {
         throw new Error("pool unreadable");
       }),
-    ).toBe("MODEL_DATA_CLASS_UNAVAILABLE");
-    expect(sent).toHaveLength(1);
+    ).toBeUndefined();
+    expect(sent).toHaveLength(2);
     // Read side by side, so in either order within a turn.
     expect(asked.slice(0, 2)).toEqual(expect.arrayContaining([{ recap: ["public", "internal"] }, { memory: ["public", "internal"] }]));
     expect(asked.slice(2)).toEqual(expect.arrayContaining([{ recap: ["public"] }, { memory: ["public"] }]));

@@ -10,6 +10,8 @@ import { NotImplementedError, type ModelCatalogue,
   type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ProviderAuthEntry, type ProviderSignInInteraction,
   type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
+import { guardToolResult } from "./tool-result-guard.ts";
+import { type ContextGuard, contextGuardOverrides } from "./context-guard-overrides.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -155,8 +157,12 @@ export interface RealPiAdapterOptions {
    *
    * The text is appended as a section inside the system prompt the SDK composed, never substituted for
    * it — see `personal-instructions.ts`.
+   *
+   * Called with the id of the session whose run is starting (`undefined` when the SDK does not say), so a host
+   * that checks the text against that session's model before it prompts can hand back exactly the value it
+   * checked, rather than whatever the preference holds a moment later.
    */
-  personalInstructions?: () => string | undefined;
+  personalInstructions?: (sessionId: string | undefined) => string | undefined;
   /**
    * Load nothing from the machine into a session: no extension, skill, prompt template, theme or instructions file
    * (`AGENTS.md`/`CLAUDE.md`) the SDK would otherwise discover under `cwd` or `agentDir`.
@@ -166,6 +172,13 @@ export interface RealPiAdapterOptions {
    * adapter registers itself (`personalInstructions`) are still applied.
    */
   isolated?: boolean;
+  /**
+   * What the loader may take from the machine into a session's prompt: context files, a `SYSTEM.md`/`APPEND_SYSTEM.md`,
+   * skill descriptions and prompt templates each pass through it, and what it refuses is not loaded
+   * (`context-guard-overrides.ts`). Absent loads everything the SDK finds, as before. An isolated adapter loads none of
+   * these in the first place.
+   */
+  contextGuard?: ContextGuard;
   /** Injected so tests can exercise the adapter without loading the real SDK. */
   sdk?: SdkModule;
 }
@@ -593,6 +606,7 @@ export class RealPiAdapter implements PiAdapter {
         ...(this.#options.isolated === true
           ? { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true }
           : {}),
+        ...(this.#options.contextGuard === undefined ? {} : contextGuardOverrides(this.#options.contextGuard)),
         /*
          * The personal-instructions section, registered as a trusted inline extension.
          *
@@ -616,12 +630,19 @@ export class RealPiAdapter implements PiAdapter {
                   name: "clark-personal-instructions",
                   hidden: true,
                   factory: (api: {
-                    on: (event: string, handler: (event: { systemPrompt: string }) => { systemPrompt: string }) => void;
+                    on: (
+                      event: string,
+                      handler: (
+                        event: { systemPrompt: string },
+                        ctx?: { sessionManager?: { getSessionId?: () => string } },
+                      ) => { systemPrompt: string },
+                    ) => void;
                   }) => {
-                    api.on("before_agent_start", (event) => ({
+                    api.on("before_agent_start", (event, ctx) => ({
                       systemPrompt: composePersonalInstructions({
                         base: event.systemPrompt,
-                        text: this.#options.personalInstructions?.(),
+                        // The SDK's session id is the one `createWorkerSession` returned for this session.
+                        text: this.#options.personalInstructions?.(ctx?.sessionManager?.getSessionId?.()),
                       }),
                     }));
                   },
@@ -714,7 +735,7 @@ export class RealPiAdapter implements PiAdapter {
        * Only this line keeps the four `clarkcant_*` tools reachable while the built-ins stay out.
        */
       tools: [...builtinTools, ...customTools.map((tool) => tool.name)],
-      customTools: customTools.map((tool) => toSdkTool(sdk, tool)),
+      customTools: customTools.map((tool) => toSdkTool(sdk, guardToolResult(tool, brief.toolResultGuard))),
     });
 
     this.#counter += 1;

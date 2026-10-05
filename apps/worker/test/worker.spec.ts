@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { FakePiAdapter } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import type { Evidence } from "@clarkcant/contracts";
 
 import {
@@ -185,6 +185,47 @@ describe("what the worker's model may be sent", () => {
     expect(evidence?.summary).toBe("read_report reported secret data, withheld from the model");
     expect(evidence?.digest).toBeDefined();
     expect(JSON.stringify(result.record)).not.toContain(SECRET_VALUE);
+  });
+
+  it("hands the adapter one guard for every tool, which drops a withheld result's image and holds a failure's message", async () => {
+    const adapter = new FakePiAdapter();
+    let briefSeen: WorkerBrief | undefined;
+    const original = adapter.createWorkerSession.bind(adapter);
+    adapter.createWorkerSession = async (workerBrief) => {
+      briefSeen = workerBrief;
+      return await original(workerBrief);
+    };
+    const seen: { text: string; image?: unknown }[] = [];
+    const failures: string[] = [];
+    await runWorker(
+      brief({ allowedDataClasses: [...CEILING] }),
+      deps(
+        adapter,
+        [
+          stubTool({ execute: async () => ({ text: `ảnh chụp: ${SECRET}`, image: { mimeType: "image/png", dataBase64: "AAAA" } }) }),
+          stubTool({
+            name: "read_other",
+            execute: async () => {
+              throw new Error(`không đọc được: ${SECRET}`);
+            },
+          }),
+        ],
+        {
+          drive: async (sessionId) => {
+            seen.push(await adapter.callToolResult(sessionId, "read_report", {}));
+            await adapter.callToolResult(sessionId, "read_other", {}).catch((cause: unknown) => {
+              failures.push(cause instanceof Error ? cause.message : String(cause));
+            });
+          },
+        },
+      ),
+    );
+    expect(briefSeen?.toolResultGuard).toBeDefined();
+    expect(seen[0]?.text).toContain("carries secret data");
+    expect(seen[0]?.image).toBeUndefined();
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("carries secret data");
+    expect(failures[0]).not.toContain(SECRET_VALUE);
   });
 
   it("passes a result the model may receive, and checks nothing for a host that sent no ceiling", async () => {
