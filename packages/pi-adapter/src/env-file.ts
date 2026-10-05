@@ -113,14 +113,16 @@ export interface ModelSelection {
  * needs a ceiling: every message is a provider call the user pays for, and a model that decides
  * to loop would otherwise do so until someone noticed the bill. The defaults are generous enough
  * that a normal answer never reaches them, because a limit that fires on ordinary use teaches the
- * user to raise it rather than to trust it.
+ * user to raise it rather than to trust it. Two minutes was not that: a turn that reads a few files or pages on a
+ * slower provider passed it on ordinary use, so the wall clock is five minutes. Work longer than that belongs to a
+ * worker, whose own budget is longer still.
  */
 export interface ModelBudget {
   maxWallClockMs: number;
   maxTokens: number;
 }
 
-export const DEFAULT_MODEL_BUDGET: ModelBudget = { maxWallClockMs: 120_000, maxTokens: 32_000 };
+export const DEFAULT_MODEL_BUDGET: ModelBudget = { maxWallClockMs: 300_000, maxTokens: 32_000 };
 
 /**
  * The turn budget, from the environment.

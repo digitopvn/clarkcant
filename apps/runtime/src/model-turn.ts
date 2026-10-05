@@ -740,6 +740,21 @@ function showViewParameters(
 }
 
 /**
+ * A turn limit in the unit a person says it in: "5 phút" or "1 s", never "300000 ms".
+ *
+ * Whole minutes read as minutes; anything shorter or uneven reads as seconds, rounded up so a limit is never stated as
+ * shorter than it was.
+ */
+export function readableLimit(ms: number, language: "vi" | "en"): string {
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds >= 60 && seconds % 60 === 0) {
+    const minutes = seconds / 60;
+    return language === "vi" ? `${minutes} phút` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  return language === "vi" ? `${seconds} giây` : `${seconds} s`;
+}
+
+/**
  * Build the turn handler, or nothing when this node has no model configured.
  *
  * A model that is configured but unusable does not return nothing. The difference matters:
@@ -1237,11 +1252,11 @@ export async function createModelTurn(options: {
       : `Could not start this conversation on ${model}: ${reason}. ` +
         "Your message is saved. Retry, or choose another model.";
   const setupTimedOut = (limitMs: number): string => {
-    const seconds = Math.ceil(limitMs / 1000);
+    const limit = readableLimit(limitMs, language());
     return language() === "vi"
-      ? `Không chuẩn bị xong để trả lời trong ${seconds} giây, nên lượt này đã dừng. ` +
+      ? `Không chuẩn bị xong để trả lời trong ${limit}, nên lượt này đã dừng. ` +
           "Tin nhắn của bạn đã được lưu. Hãy thử lại, hoặc chọn model khác nếu lỗi này lặp lại."
-      : `Could not get ready to answer within ${seconds} s, so this turn was stopped. ` +
+      : `Could not get ready to answer within ${limit}, so this turn was stopped. ` +
           "Your message is saved. Retry, or choose another model if this keeps happening.";
   };
 
@@ -2045,8 +2060,8 @@ export async function createModelTurn(options: {
               turnFailed(
                 describe(input.conversationId),
                 language() === "vi"
-                  ? `chưa xong sau ${budget.maxWallClockMs} ms nên lượt này đã được dừng`
-                  : `it did not finish within ${budget.maxWallClockMs} ms, so the turn was stopped`,
+                  ? `chưa xong sau ${readableLimit(budget.maxWallClockMs, "vi")} nên lượt này đã được dừng`
+                  : `it did not finish within ${readableLimit(budget.maxWallClockMs, "en")}, so the turn was stopped`,
               ),
             ),
           );
