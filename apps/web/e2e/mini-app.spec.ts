@@ -249,6 +249,12 @@ test("the expanded view is operable and dismissible from the keyboard alone", as
 
   // Focus lands on the close control, so Escape is discoverable rather than something to be guessed.
   await expect(page.locator("[data-close-live]")).toBeFocused();
+  // The open view says which widget it is, with its window controls to the right of its name.
+  const liveTitle = live.locator(".cc-live-head .cc-live-title");
+  await expect(liveTitle).not.toHaveText("");
+  const titleBox = await liveTitle.boundingBox();
+  const closeBox = await page.locator("[data-close-live]").boundingBox();
+  expect(closeBox!.x).toBeGreaterThan(titleBox!.x + titleBox!.width - 1);
   // The region is announced with a name, not as an unlabelled div. The label sits on the surface
   // itself; the wrapper is the host's slot for it.
   const surface = live.locator("[data-display-mode='expanded']");

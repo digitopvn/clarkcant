@@ -538,6 +538,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 
 /* The live view of a pinned instance, and the notice when another surface holds it. */
 .cc-live-surface { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+/* An open widget's head: its name on the left, its window controls on the right. */
+.cc-live-head { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--cc-space-xs); }
+.cc-live-title { flex: 1 1 12ch; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-live-surface[data-ownership="elsewhere"] { opacity: 0.9; }
 .cc-live-surface[data-ownership="owner"] .cc-surface-region { border-left: 2px solid transparent; }
 

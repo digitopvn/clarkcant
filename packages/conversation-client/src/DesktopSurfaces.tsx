@@ -523,6 +523,8 @@ export function PinnedLiveSurface({
   const head =
     onClose === undefined ? undefined : (
       <div className="cc-live-head">
+        {/* Named, so the open view says which widget it is rather than starting with a bare Close. */}
+        {title !== undefined && <span className="cc-live-title">{title}</span>}
         {/*
           Offered only to the surface holding the lease, and only where a second window exists to detach into. A
           button that could not hand the instance over would be a control whose action does not exist.
@@ -530,8 +532,7 @@ export function PinnedLiveSurface({
         {detachAvailable && ownership === "owner" && (
           <button
             type="button"
-            className="cc-icon-btn"
-            style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+            className="cc-action"
             data-detach-widget="true"
             aria-label={t("shell.live.detachAria")}
             onClick={() => void detach()}
@@ -542,8 +543,7 @@ export function PinnedLiveSurface({
         <button
           ref={closeButton}
           type="button"
-          className="cc-icon-btn"
-          style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+          className="cc-action"
           data-close-live="true"
           aria-label={t("shell.live.closeAria")}
           onClick={onClose}
