@@ -143,6 +143,37 @@ describe("calling a tool", () => {
   });
 });
 
+describe("a server that speaks the 2025-06-18 tool shape", () => {
+  it("lists tools that declare an output schema and fields this node does not read, and trusts none of them", async () => {
+    const transport = await connect("structured");
+    const tools = await transport.listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["count", "echo", "forecast", "send_report", "write_note"]);
+
+    const forecast = normalizeMcpTool("reference", tools.find((tool) => tool.name === "forecast")!);
+    expect(forecast.outputSchema).toMatchObject({ type: "object", required: ["city", "celsius"] });
+    expect(forecast.effectCategory).toBe("read");
+    // A title, a description and extra fields that all claim safety lower nothing.
+    const report = normalizeMcpTool("reference", tools.find((tool) => tool.name === "send_report")!);
+    expect(report.effectCategory).toBe("external-write");
+    expect(report.safeWithoutApproval).toBe(false);
+    // An output schema the protocol does not allow is dropped; the tool is still there.
+    expect(normalizeMcpTool("reference", tools.find((tool) => tool.name === "count")!).outputSchema).toBeUndefined();
+  });
+
+  it("returns a structured result beside the text, and leaves out a hostile one with the reason", async () => {
+    const transport = await connect("structured");
+    await expect(transport.callTool("forecast", { city: "Hà Nội" })).resolves.toEqual({
+      content: "Forecast for Hà Nội: 31 °C",
+      structuredContent: { city: "Hà Nội", celsius: 31 },
+    });
+    const hostile = await transport.callTool("forecast", { city: "Hà Nội", shape: "proto" });
+    expect(hostile.structuredContent).toBeUndefined();
+    expect(hostile.structuredOmitted).toBe(true);
+    expect(hostile.content).toContain('was not kept because it uses the key "__proto__"');
+    expect(Object.prototype).not.toHaveProperty("polluted");
+  });
+});
+
 describe("failure modes each settle", () => {
   it("times out a server that stops answering, instead of hanging", async () => {
     // The budget has to cover spawning the process and completing the handshake before it can

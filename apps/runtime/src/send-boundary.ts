@@ -276,9 +276,11 @@ export function toolResultGuardFor(input: {
   model: () => { provider: string; id: string };
   allowed: () => readonly DataClass[];
 }): ToolResultGuard {
-  return ({ text }) => {
+  return ({ text, parts }) => {
     const model = input.model();
-    const check = enforceSendBoundary({ path: "tool-result", model, allowed: input.allowed(), texts: [text] });
+    // Each part on its own as well as the text: a string inside a structured value is escaped in the text's JSON, and
+    // a quoted or multi-line secret no longer reads as one there.
+    const check = enforceSendBoundary({ path: "tool-result", model, allowed: input.allowed(), texts: [text, ...(parts ?? [])] });
     return check.ok
       ? { withheld: false }
       : { withheld: true, text: withheldToolResult({ dataClass: check.dataClass, model: modelName(model) }) };

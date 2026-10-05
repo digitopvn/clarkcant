@@ -1,5 +1,6 @@
 import { getCapability } from "@clarkcant/core";
 import type { TurnOrigin } from "@clarkcant/contracts";
+import type { McpJsonObject } from "@clarkcant/mcp-adapters";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import {
@@ -39,6 +40,42 @@ export interface InvokeCapabilityToolDeps {
 }
 
 const ACTIONS = ["list", "invoke"] as const;
+
+/**
+ * What a program calling `invoke_capability` is handed, declared in the shape of an MCP `CallToolResult` so Pi's
+ * codemode reads it as one: the same text the model reads in `content`, the capability's structured result in
+ * `structuredContent` when its service returned one this node kept, and `isError` when nothing useful came back.
+ * No session turns codemode on yet, so nothing reads this value today; it is declared so that the day one does, the
+ * shape is already the standard one.
+ *
+ * The structured result is any JSON object here because this one tool calls every capability; each capability's own
+ * output schema stays on its descriptor, where a tool declared for that one capability can name it.
+ */
+const INVOKE_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    content: { type: "array", items: { type: "object" } },
+    structuredContent: { type: "object" },
+    isError: { type: "boolean" },
+    _meta: { type: "object" },
+  },
+  required: ["content"],
+};
+
+type InvokeToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
+
+/** A result carrying its text both for the model and, in the declared envelope, for a program calling the tool. */
+function answer(text: string, extra: { structuredContent?: McpJsonObject; isError?: true; hostCard?: Record<string, unknown> } = {}): InvokeToolResult {
+  return {
+    text,
+    structuredContent: {
+      content: [{ type: "text", text }],
+      ...(extra.structuredContent === undefined ? {} : { structuredContent: extra.structuredContent }),
+      ...(extra.isError === undefined ? {} : { isError: true }),
+    },
+    ...(extra.hostCard === undefined ? {} : { hostCard: extra.hostCard }),
+  };
+}
 
 /**
  * Start a job capability by pressing a widget binding to it in this conversation.
@@ -198,15 +235,16 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
       },
     },
     promptSnippet: "invoke_capability — list or call capabilities that installed packages' services provide",
-    execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
+    outputSchema: INVOKE_OUTPUT_SCHEMA,
+    execute: async (params: Record<string, unknown>): Promise<InvokeToolResult> => {
       const action = typeof params.action === "string" ? params.action : "";
       if (!(ACTIONS as readonly string[]).includes(action)) {
-        return { text: `"${action}" không phải hành động hợp lệ; dùng list hoặc invoke.` };
+        return answer(`"${action}" không phải hành động hợp lệ; dùng list hoặc invoke.`, { isError: true });
       }
       const deps = input.deps();
-      if (action === "list") return { text: describeList(deps) };
+      if (action === "list") return answer(describeList(deps));
       const ref = typeof params.ref === "string" ? params.ref.trim() : "";
-      if (ref === "") return { text: "Cần ref; gọi action list để lấy đúng ref." };
+      if (ref === "") return answer("Cần ref; gọi action list để lấy đúng ref.", { isError: true });
       const args =
         params.args !== null && typeof params.args === "object" && !Array.isArray(params.args)
           ? (params.args as Record<string, unknown>)
@@ -218,8 +256,8 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
         const named = (value: unknown): string | undefined => (typeof value === "string" && value.trim() !== "" ? value.trim() : undefined);
         const instanceId = named(params.instanceId);
         const actionBindingId = named(params.actionBindingId);
-        return {
-          text: await startJobThroughWidget(widgets, {
+        return answer(
+          await startJobThroughWidget(widgets, {
             conversationId: input.conversationId,
             ref,
             args,
@@ -228,7 +266,7 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
             ...(instanceId === undefined ? {} : { instanceId }),
             ...(actionBindingId === undefined ? {} : { actionBindingId }),
           }),
-        };
+        );
       }
       const outcome = await invokeCapability(deps, {
         ref,
@@ -237,10 +275,13 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(origin === undefined ? {} : { origin }),
       });
-      return {
-        text: describeCapabilityOutcome(outcome),
+      // The approval card is the host's own record of what was asked, so it is the only block this returns; nothing in a
+      // service's structured result is ever made into one.
+      return answer(describeCapabilityOutcome(outcome), {
+        ...(outcome.kind === "done" && outcome.structuredContent !== undefined ? { structuredContent: outcome.structuredContent } : {}),
+        ...(outcome.kind === "refused" ? { isError: true as const } : {}),
         ...(outcome.kind === "approval-required" ? { hostCard: outcome.card as unknown as Record<string, unknown> } : {}),
-      };
+      });
     },
   };
 }

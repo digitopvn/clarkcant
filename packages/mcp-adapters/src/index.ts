@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ARTIFACT_LIMITS } from "@clarkcant/contracts";
 
+import { acceptOutputSchema, boundedJsonObject, type McpJsonObject } from "./structured-content.ts";
+
 /**
  * MCP tool and auth adapter seam.
  *
@@ -17,12 +19,23 @@ import { ARTIFACT_LIMITS } from "@clarkcant/contracts";
  * server cannot widen its own permissions by describing itself generously.
  */
 
-export const mcpToolMetadataSchema = z.strictObject({
+/**
+ * A tool as a server lists it.
+ *
+ * Fields the protocol defines and this node does not use — `title`, `_meta`, an annotation's `title`, and whatever a
+ * later protocol version adds — are dropped rather than refused, so a server that speaks a newer version still lists
+ * its tools. Dropped means never read: nothing a server adds here reaches a decision.
+ *
+ * `outputSchema` is kept exactly as the server sent it, typed `unknown`, because it is untrusted until
+ * `acceptOutputSchema` has checked it; a schema that fails that check is dropped and the tool stays usable.
+ */
+export const mcpToolMetadataSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(4000).optional(),
   inputSchema: z.record(z.string(), z.unknown()),
+  outputSchema: z.unknown().optional(),
   annotations: z
-    .strictObject({
+    .object({
       readOnlyHint: z.boolean().optional(),
       destructiveHint: z.boolean().optional(),
       idempotentHint: z.boolean().optional(),
@@ -42,6 +55,13 @@ export interface McpToolResult {
   content: string;
   files?: McpToolFile[];
   filesOmitted?: true;
+  /**
+   * The server's `structuredContent`, copied by `boundedJsonObject`. Untrusted data for a program to read, never
+   * instructions and never host UI: nothing a server shapes here becomes a card or a widget.
+   */
+  structuredContent?: McpJsonObject;
+  /** The server sent `structuredContent` that was not kept; `content` says so. */
+  structuredOmitted?: true;
 }
 
 const MAX_TOOL_RESULT_FILES = 32;
@@ -104,10 +124,15 @@ export function normalizeMcpToolResult(value: unknown): McpToolResult {
     }
   }
   if (filesOmitted) text.push("Some service file results were omitted because they were malformed or exceeded the bounded artifact limits.");
+  // Structured data is copied, not trusted: one that is not bounded JSON is left out whole, and the text says why in
+  // the node's own words, never the server's.
+  const structured = result["structuredContent"] === undefined ? undefined : boundedJsonObject(result["structuredContent"]);
+  if (structured?.ok === false) text.push(`The service's structured result was not kept because ${structured.reason}.`);
   return {
     content: text.join("\n"),
     ...(files.length === 0 ? {} : { files }),
     ...(filesOmitted ? { filesOmitted: true as const } : {}),
+    ...(structured === undefined ? {} : structured.ok ? { structuredContent: structured.value } : { structuredOmitted: true as const }),
   };
 }
 
@@ -118,6 +143,8 @@ export interface NormalizedMcpTool {
   toolName: string;
   summary: string;
   inputSchema: Record<string, unknown>;
+  /** The declared shape of the tool's structured result, when `acceptOutputSchema` kept it. Describes, never decides. */
+  outputSchema?: McpJsonObject;
   effectCategory: "read" | "local-write" | "external-write" | "destructive";
   /** Whether the tool may be called without fresh approval. */
   safeWithoutApproval: boolean;
@@ -145,12 +172,14 @@ export function normalizeMcpTool(
   } else if (claimsReadOnly) effectCategory = "read";
   else effectCategory = "external-write";
 
+  const output = acceptOutputSchema(tool.outputSchema);
   return {
     capabilityRef: `mcp.${sanitize(serverId)}.${sanitize(tool.name)}@1`,
     serverId,
     toolName: tool.name,
     summary: tool.description?.slice(0, 400) ?? `MCP tool ${tool.name} on ${serverId}`,
     inputSchema: tool.inputSchema,
+    ...(output.ok && output.schema !== undefined ? { outputSchema: output.schema } : {}),
     effectCategory,
     // Only a read-only, closed-world, idempotent tool skips approval. Everything else
     // asks, because being wrong in that direction is cheap and the other is not.
@@ -243,6 +272,14 @@ export interface McpTransport {
   callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult>;
 }
 
+export {
+  MAX_OUTPUT_SCHEMA_CHARS,
+  STRUCTURED_JSON_LIMITS,
+  acceptOutputSchema,
+  boundedJsonObject,
+  type McpJsonObject,
+  type McpJsonValue,
+} from "./structured-content.ts";
 export {
   StdioMcpTransport,
   connectStdio,

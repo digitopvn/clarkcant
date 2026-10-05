@@ -22,6 +22,7 @@ import {
   recordEffectExecution,
   requestApproval,
 } from "@clarkcant/core";
+import type { McpJsonObject, McpToolResult } from "@clarkcant/mcp-adapters";
 import { asJsonValue, type Database, oneRow, payloadDigest } from "@clarkcant/storage";
 import { z } from "zod";
 
@@ -75,7 +76,18 @@ export type CapabilityInvokeRefusal =
   | "ARTIFACT_INPUT_TOO_LARGE";
 
 export type CapabilityInvokeOutcome =
-  | { kind: "done"; ref: CapabilityRef; effectCategory: EffectCategory; output: string; description: string }
+  | {
+      kind: "done";
+      ref: CapabilityRef;
+      effectCategory: EffectCategory;
+      output: string;
+      /**
+       * The service's result as data, when it returned one this node kept (`serviceOutput`). Untrusted like `output`:
+       * plain JSON for a program to read, never an instruction and never a block the host shows.
+       */
+      structuredContent?: McpJsonObject;
+      description: string;
+    }
   | { kind: "job"; ref: CapabilityRef; effectCategory: EffectCategory; job: JobRecord; description: string }
   | {
       kind: "approval-required";
@@ -220,6 +232,45 @@ const APPROVAL_TTL_MS = 15 * 60_000;
 /** The card's payload field has a ceiling; arguments too large to show are too large to ask about. */
 const PAYLOAD_LIMIT = 4000;
 const OUTPUT_LIMIT = 16_000;
+/**
+ * The most JSON, in characters, of a service's structured result that is passed on. It is read by a program rather than
+ * by the model, so it may be larger than the text; anything bigger belongs in a file, which a service returns as an
+ * artifact instead.
+ */
+export const STRUCTURED_OUTPUT_LIMIT = 64 * 1024;
+
+/**
+ * What a call returned, as every caller is handed it: the text, and the structured value when this node keeps it.
+ *
+ * A structured value larger than `STRUCTURED_OUTPUT_LIMIT`, or one that does not match the output schema the service
+ * declared, is left out and the text says so; the text the service returned is kept either way. A result with a
+ * structured value and no text is given its JSON as text, so the model reading it is not handed nothing.
+ */
+export function serviceOutput(
+  result: Pick<McpToolResult, "content" | "structuredContent">,
+  outputSchema: Record<string, unknown> | undefined,
+): { output: string; structuredContent?: McpJsonObject } {
+  let structured = result.structuredContent;
+  let json: string | undefined;
+  let note: string | undefined;
+  if (structured !== undefined) {
+    json = JSON.stringify(structured);
+    const matched = json.length > STRUCTURED_OUTPUT_LIMIT ? undefined : validateArgs(outputSchema, structured, "output");
+    if (matched === undefined) {
+      note = `The service's structured result was not kept because it is longer than ${String(STRUCTURED_OUTPUT_LIMIT)} characters of JSON.`;
+    } else if (!matched.ok) {
+      note = `The service's structured result was not kept because it does not match the output schema the service declared (${matched.message}).`;
+    }
+    if (note !== undefined) {
+      structured = undefined;
+      json = undefined;
+    }
+  }
+  const text = result.content === "" && json !== undefined ? json : result.content;
+  // The note is added after the cut, so a long text cannot push out the reason its structured value is missing.
+  const output = [text.slice(0, OUTPUT_LIMIT), ...(note === undefined ? [] : [note])].filter((part) => part !== "").join("\n");
+  return { output, ...(structured === undefined ? {} : { structuredContent: structured }) };
+}
 
 /** A refusal decided on this node, before anything was sent. */
 function refused(status: number, code: CapabilityInvokeRefusal, message: string): CapabilityInvokeOutcome {
@@ -237,6 +288,8 @@ function schemaProblem(error: z.ZodError): string {
 export function validateArgs(
   schema: Record<string, unknown> | undefined,
   args: Record<string, unknown>,
+  /** Which of the capability's schemas this is, so a refusal names the right one. */
+  subject: "input" | "output" = "input",
 ): { ok: true } | { ok: false; message: string } {
   // A service that listed no schema accepts an object; that is all MCP promises about arguments.
   if (schema === undefined) return { ok: true };
@@ -244,7 +297,7 @@ export function validateArgs(
   // or a binding compiled against it, reaches here too, and a backtracking pattern would stall the node's main thread.
   const unsafe = unsafeSchemaPattern(schema);
   if (unsafe !== undefined) {
-    return { ok: false, message: `the capability's input schema was refused: ${describeUnsafePattern(unsafe)}` };
+    return { ok: false, message: `the capability's ${subject} schema was refused: ${describeUnsafePattern(unsafe)}` };
   }
   const overlong = overlongPatternInput(schema, args);
   if (overlong !== undefined) {
@@ -258,7 +311,13 @@ export function validateArgs(
     parser = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
   } catch {
     // A schema this node cannot read is not a reason to trust any input: the call is refused rather than unchecked.
-    return { ok: false, message: "the capability's input schema could not be read, so no input can be checked against it" };
+    return {
+      ok: false,
+      message:
+        subject === "input"
+          ? "the capability's input schema could not be read, so no input can be checked against it"
+          : "the capability's output schema could not be read, so no result can be checked against it",
+    };
   }
   const parsed = parser.safeParse(args);
   return parsed.success ? { ok: true } : { ok: false, message: schemaProblem(parsed.error) };
@@ -523,7 +582,7 @@ export async function invokeCapability(
       kind: "done",
       ref,
       effectCategory: descriptor.effectCategory,
-      output: result.content.slice(0, OUTPUT_LIMIT),
+      ...serviceOutput(result, descriptor.outputSchema),
       description,
     };
   } catch (cause) {

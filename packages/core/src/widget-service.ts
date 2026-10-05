@@ -1879,7 +1879,8 @@ export function composeInvokeArgs(
 interface InvokeRecord {
   digest: string;
   result:
-    | { kind: "done"; output: string }
+    /** `structuredContent` is the service's result as data when it returned one the node kept, answered again on a replay. */
+    | { kind: "done"; output: string; structuredContent?: Record<string, unknown> }
     | { kind: "approval-required"; approvalId: string }
     /** A long-running capability the node accepted as a durable job; its state is read through the job, not here. */
     | { kind: "job"; jobId: string }
