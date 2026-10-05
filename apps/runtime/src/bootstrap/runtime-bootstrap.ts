@@ -431,11 +431,10 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   }
 
   /*
-   * The periodic update-check job: installed packages/widgets against the directory index, and the Pi SDK
-   * against the npm registry when there is network.
+   * The periodic update-check job: installed packages/widgets against the directory index.
    *
-   * Not on a fixture node, for the same reason the task dispatcher skips it above: a browser suite must never
-   * depend on a real npm registry answering, and a scripted node has nothing installed worth checking. The timer
+   * Not on a fixture node, for the same reason the task dispatcher skips it above: a scripted node has nothing
+   * installed worth checking, and a journey that needs a check runs one itself (`fixture-update-check.ts`). The timer
    * is unref'd (see `update-checks.ts`) so it never holds the process open on its own; `stopUpdateChecks` below is
    * what the entry point calls when the node closes, the same as every other resource this function starts.
    */

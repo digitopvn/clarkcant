@@ -1,5 +1,5 @@
 import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind, NoticeSubject, RiskLane } from "@clarkcant/contracts";
-import { type Database, recordNotification } from "@clarkcant/storage";
+import { type Database, dismissNotificationsByKeyPrefix, recordNotification } from "@clarkcant/storage";
 
 /**
  * Writing a notice into the person's inbox, from anywhere on this node.
@@ -44,6 +44,41 @@ export function recordNodeNotice(services: NoticeServices, notice: NodeNotice): 
     principalId: services.runtime.identity.ownerPrincipalId,
     ...notice,
   });
+}
+
+/**
+ * Record an update notice and retire the ones it supersedes: every earlier undismissed update notice for the same
+ * package, whichever version it offered. An inbox that says "0.85.1 → 0.87.1" beside "0.85.1 → 1.0.2" tells the
+ * person two things where only the newer is still worth doing.
+ *
+ * Retired, not deleted: the same dismissal a person makes (`dismissNotificationsByKeyPrefix`), so the rows stay for the
+ * retention window, keep their audit trail, and keep the producer deduplicated — an older version checked again does
+ * not come back. Matched on the dedup key rather than the stored subject, so a row written before subjects existed is
+ * retired too. Recorded first and retired after, so a write that fails never leaves the person with no notice at all;
+ * like `tryRecordNodeNotice`, a storage failure is reported on stderr and never fails the check that found the update.
+ *
+ * Only a notice this call actually wrote supersedes anything. A check that finds a version it already announced — the
+ * directory withdrew the newer one, say — changes nothing: retiring then would take down the newer notice while the
+ * older one, dismissed earlier, stays down, and leave the inbox saying nothing at all.
+ */
+export function tryRecordUpdateNotice(services: NoticeServices, notice: NodeNotice, supersedes: readonly string[]): void {
+  try {
+    if (!recordNodeNotice(services, notice).created) return;
+    for (const dedupKeyPrefix of supersedes) {
+      dismissNotificationsByKeyPrefix(services.runtime.db, {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        dedupKeyPrefix,
+        at: notice.at,
+        except: notice.dedupKey,
+        // A version never contains `@`; another package whose id merely starts with this one's does.
+        restWithout: "@",
+      });
+    }
+  } catch (cause) {
+    process.stderr.write(
+      `inbox: could not record a ${notice.sourceKind} update notice (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
 }
 
 /**
@@ -127,6 +162,41 @@ const LANE_LABEL: Record<RiskLane, string> = {
   "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
 };
 
+/** Every package update notice for `packageId` from `sourceKind`, whatever version it offers, starts with this. */
+export function packageUpdateKeyPrefix(sourceKind: "npm" | "git" | "local", packageId: string): string {
+  return `update:${sourceKind}:${packageId}@`;
+}
+
+/**
+ * The key prefixes of every update notice about `packageId`, from any source: one installed package has one update
+ * worth offering, so a newer version from git supersedes an older one announced from npm as well.
+ */
+export function packageUpdateKeyPrefixes(packageId: string): string[] {
+  return (["npm", "git", "local"] as const).map((sourceKind) => packageUpdateKeyPrefix(sourceKind, packageId));
+}
+
+/** Every Pi SDK update notice this node ever wrote starts with this. */
+const PI_UPDATE_KEY_PREFIX = "update:pi:";
+
+/**
+ * Retire the Pi SDK update notices a node wrote before the SDK stopped being checked: it ships pinned with ClarkCant,
+ * so nothing in the inbox could act on one. The ordinary dismissal, as for any notice that stopped being true, so the
+ * rows age out with the retention window; a storage failure is reported on stderr and never fails the check.
+ */
+export function tryRetirePiUpdateNotices(services: NoticeServices, at: Instant): void {
+  try {
+    dismissNotificationsByKeyPrefix(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      dedupKeyPrefix: PI_UPDATE_KEY_PREFIX,
+      at,
+    });
+  } catch (cause) {
+    process.stderr.write(
+      `inbox: could not retire Pi update notices (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
+}
+
 /**
  * The notice that a directory-listed package or widget has a newer version than the one installed on this node.
  *
@@ -153,31 +223,7 @@ export function packageUpdateNotice(input: {
     title: `Có bản cập nhật: ${input.packageId}`,
     body: `${input.currentVersion} → ${input.newVersion} · nguồn ${input.sourceKind} · ${LANE_LABEL[input.lane]}`,
     subject: { kind: "package", packageId: input.packageId, version: input.newVersion, source: input.sourceKind },
-    dedupKey: `update:${input.sourceKind}:${input.packageId}@${input.newVersion}`,
-    at: input.at,
-  };
-}
-
-/**
- * The notice that a newer Pi SDK is published than the one `packages/pi-adapter` runs.
- *
- * The Pi SDK is host-owned, in-process code — the same `trusted-native` lane a native Pi extension runs in — so the
- * body says that explicitly rather than leaving the reader to guess how trusted an SDK bump is.
- */
-export function piUpdateNotice(input: {
-  packageName: string;
-  currentVersion: string;
-  newVersion: string;
-  at: Instant;
-}): NodeNotice {
-  return {
-    sourceKind: "pi",
-    category: "update",
-    severity: "info",
-    title: "Có bản cập nhật cho Pi SDK",
-    body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]}`,
-    subject: { kind: "pi-update", packageName: input.packageName, version: input.newVersion },
-    dedupKey: `update:pi:${input.packageName}@${input.newVersion}`,
+    dedupKey: `${packageUpdateKeyPrefix(input.sourceKind, input.packageId)}${input.newVersion}`,
     at: input.at,
   };
 }

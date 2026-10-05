@@ -11,15 +11,12 @@ import { runUpdateCheckOnce } from "../update-checks.ts";
  * runs the production check once — the same installed packages, the same directory index, the same notices — at the
  * moment the journey asks.
  *
- * Only the package half is real. The Pi SDK half reads an npm registry, and a browser suite must not depend on one
- * answering, so it is given a registry that has nothing: the check reports it as offline, which writes no notice.
- *
  * Loaded only through `bootstrap/fixtures.ts`, and only when `CC_UPDATE_CHECK_FIXTURE=1`.
  */
 export function createUpdateCheckFixture(services: NodeServices): NonNullable<NodeServices["updateCheckFixture"]> {
   return {
     run: async () => {
-      const report = await runUpdateCheckOnce({
+      const report = runUpdateCheckOnce({
         services,
         installDeps: {
           db: services.runtime.db,
@@ -27,8 +24,6 @@ export function createUpdateCheckFixture(services: NodeServices): NonNullable<No
           now: nowInstant,
           newId: services.conductor.newId,
         },
-        fetchImpl: () => Promise.resolve(new Response(null, { status: 404 })),
-        piInstalledVersion: () => Promise.resolve("0.0.0"),
       });
       return { packageUpdates: report.packageUpdates };
     },
