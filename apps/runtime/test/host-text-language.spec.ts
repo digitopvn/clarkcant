@@ -3,10 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTask } from "@clarkcant/core";
+import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
+import { applyTaskEvent, createTask } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
+import { artifactIntakeDeps, peerDelegationHandlers } from "../src/delegation-handlers.ts";
 import { hostText } from "../src/host-text.ts";
+import { QUESTION_TTL_MS, createQuestion, expireQuestions } from "../src/interactions.ts";
+import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -140,7 +144,93 @@ async function stopReceipt(): Promise<{ taskId: string; said: string }> {
   return { taskId: task.taskId, said };
 }
 
+/** The blocks the node wrote into a conversation, read back over the wire. */
+async function writtenBlocks(conversationId: string): Promise<Record<string, unknown>[]> {
+  const timeline = await request("GET", `/conversations/${conversationId}/timeline`);
+  const messages = (timeline.body as { messages: { role: string; blocks: Record<string, unknown>[] }[] }).messages;
+  return messages.filter((message) => message.role === "assistant").flatMap((message) => message.blocks);
+}
+
+async function newConversation(): Promise<string> {
+  const created = await request("POST", "/conversations", { title: "Language" });
+  return (created.body as { conversationId: string }).conversationId;
+}
+
+/** A question asked in a fresh conversation and closed by the node's own expiry, through the node's wiring. */
+async function expiredQuestionRow(): Promise<Record<string, unknown> | undefined> {
+  const conversationId = await newConversation();
+  const asked = createQuestion(interactionDepsFor(services, conversationId), { question: "Which branch?", kind: "text" });
+  expect(asked.ok).toBe(true);
+  const later = new Date(Date.now() + QUESTION_TTL_MS + 60_000).toISOString() as Instant;
+  expect(expireQuestions({ ...interactionDepsFor(services, conversationId), now: () => later })).toHaveLength(1);
+  return (await writtenBlocks(conversationId)).find(
+    (block) => block.type === "tool-activity" && (block.args as { decision?: string }).decision === "expired",
+  );
+}
+
+/** A task this node handed to a peer, and that peer's word that it is now running there, through the node's handlers. */
+async function handOffStatusLine(): Promise<{ taskId: string; said: string }> {
+  const conversationId = await newConversation();
+  const { runtime } = services;
+  const coordination = { db: runtime.db, nodeId: runtime.identity.nodeId, now: () => AT as never, newId: services.conductor.newId };
+  const owner = { principalId: runtime.identity.ownerPrincipalId, kind: "user" as const, nodeId: runtime.identity.nodeId as never };
+  const task = createTask(coordination, { conversationId: conversationId as never, goal: "write the weekly report", principal: owner });
+  expect(applyTaskEvent(coordination, task.taskId, "resolve.start").ok).toBe(true);
+  expect(applyTaskEvent(coordination, task.taskId, "resolve.ready", { executionNodeId: "node_peer" }).ok).toBe(true);
+  const envelope: PeerEnvelope = {
+    protocol: "agent.nodelink",
+    version: 1,
+    messageId: "msg_status_1",
+    correlationId: task.taskId,
+    senderNodeId: "node_peer",
+    recipientNodeId: runtime.identity.nodeId,
+    kind: "status",
+    taskId: task.taskId,
+    sourceSequence: 1,
+    sentAt: AT as Instant,
+    payload: { taskState: "running", taskRevision: 2 },
+  };
+  const answered = peerDelegationHandlers(services, () => AT as Instant).status(envelope);
+  expect(answered).toMatchObject({ accepted: true, told: true });
+  const said = (await writtenBlocks(conversationId))
+    .map((block) => (block.type === "text" ? String(block.content) : ""))
+    .join("\n");
+  return { taskId: task.taskId, said };
+}
+
 describe("what the node writes outside any turn follows its owner's interface language", () => {
+  it("labels a question its expiry closed in English when the interface is English", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+
+    const row = await expiredQuestionRow();
+    expect(row).toMatchObject({ label: "The question expired", result: "The question expired without an answer." });
+  });
+
+  it("labels it in the same Vietnamese as before when no language was ever chosen", async () => {
+    const row = await expiredQuestionRow();
+    expect(row).toMatchObject({ label: "Câu hỏi đã hết hạn", result: "Câu hỏi hết hạn mà không có câu trả lời." });
+  });
+
+  it("writes a peer's word on a handed-over task in English when the interface is English", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+
+    const { taskId, said } = await handOffStatusLine();
+    expect(said).toContain(`The owner of node_peer approved it; task ${taskId} is running on node_peer again.`);
+    expect(said).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("words the files a peer brings back in the owner's language, read when they are said", async () => {
+    const intake = artifactIntakeDeps(services, () => AT as Instant);
+    expect(intake.words().receivedLater("notes.md", "node_peer", "task_1")).toBe("Đã nhận tệp notes.md từ node_peer cho task task_1.");
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    expect(intake.words().receivedLater("notes.md", "node_peer", "task_1")).toBe("Received the file notes.md from node_peer for task task_1.");
+  });
+
+  it("writes it in the same Vietnamese as before when no language was ever chosen", async () => {
+    const { taskId, said } = await handOffStatusLine();
+    expect(said).toContain(`Chủ của node_peer đã duyệt; task ${taskId} tiếp tục chạy trên node_peer.`);
+  });
+
   it("says a stopped task in English when the interface is English", async () => {
     expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
 

@@ -324,7 +324,7 @@ export function answerQuestion(
  * with `decision: "cancelled"` so that `pendingForConversation` stops returning it while the transcript keeps
  * the fact that it was asked and dropped.
  */
-export function cancelQuestion(deps: InteractionDeps, questionId: string, reason = "Người dùng đã bỏ qua câu hỏi này."): boolean {
+export function cancelQuestion(deps: InteractionDeps, questionId: string, reason?: string): boolean {
   const interaction = interactionFor(deps, questionId);
   if (interaction === undefined) return false;
   if (answeredIds(deps.blocks()).has(questionId)) return false;
@@ -339,7 +339,7 @@ export function cancelQuestion(deps: InteractionDeps, questionId: string, reason
         label: fitHead(questionWords(deps).skipped(interaction.prompt), RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "cancelled" },
-        result: reason,
+        result: reason ?? questionWords(deps).skippedResult,
         startedAt: interaction.createdAt,
         endedAt: at,
       },
@@ -442,7 +442,7 @@ export function askQuestionAgain(deps: InteractionDeps, questionId: string): Ask
         label: fitHead(questionWords(deps).askedAgain(previous.prompt), RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "asked-again", askedAs: created.interaction.questionId },
-        result: "Câu hỏi đã hết hạn được hỏi lại.",
+        result: questionWords(deps).askedAgainResult,
         startedAt: at,
         endedAt: at,
       },
@@ -470,7 +470,8 @@ export function expireQuestions(deps: InteractionDeps): string[] {
     if (answered.has(interaction.questionId)) continue;
     if (interaction.expiresAt !== undefined && interaction.expiresAt <= at) expired.push(interaction.questionId);
   }
-  const label = expired.length === 0 ? "" : questionWords(deps).expired;
+  if (expired.length === 0) return expired;
+  const words = questionWords(deps);
   for (const questionId of expired) {
     deps.append({
       at,
@@ -479,10 +480,10 @@ export function expireQuestions(deps: InteractionDeps): string[] {
           type: "tool-activity",
           toolCallId: deps.newId("call"),
           name: "ask_user_question",
-          label,
+          label: words.expired,
           status: "failed",
           args: { questionId, decision: "expired" },
-          result: "Câu hỏi hết hạn mà không có câu trả lời.",
+          result: words.expiredResult,
           startedAt: at,
           endedAt: at,
         },

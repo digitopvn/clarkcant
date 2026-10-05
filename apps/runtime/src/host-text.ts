@@ -101,12 +101,19 @@ export interface HostText {
    * Vietnamese and is what a tool this catalog does not name keeps.
    */
   toolLabel: (name: string, label: string) => string;
-  /** The rows that record what became of a question: answered, skipped, asked again, or expired. */
+  /**
+   * The rows that record what became of a question: answered, skipped, asked again, or expired. The `…Result` words are
+   * what such a row shows when opened; no model reads them. An answered row's result is the note the model is given, so
+   * it is not here.
+   */
   questions: {
     answered: (prompt: string) => string;
     skipped: (prompt: string) => string;
+    skippedResult: string;
     askedAgain: (prompt: string) => string;
+    askedAgainResult: string;
     expired: string;
+    expiredResult: string;
   };
   /** Work handed to a peer or by one, as this node's owner is told about it. A peer's own words arrive already quoted. */
   delegation: {
@@ -310,8 +317,11 @@ const VI: HostText = {
   questions: {
     answered: (prompt) => `Trả lời: ${prompt}`,
     skipped: (prompt) => `Bỏ qua: ${prompt}`,
+    skippedResult: "Người dùng đã bỏ qua câu hỏi này.",
     askedAgain: (prompt) => `Hỏi lại: ${prompt}`,
+    askedAgainResult: "Câu hỏi đã hết hạn được hỏi lại.",
     expired: "Câu hỏi đã hết hạn",
+    expiredResult: "Câu hỏi hết hạn mà không có câu trả lời.",
   },
   delegation: {
     waitingApproval: (taskId, peer, why) =>
@@ -487,8 +497,11 @@ const EN: HostText = {
   questions: {
     answered: (prompt) => `Answer: ${prompt}`,
     skipped: (prompt) => `Skipped: ${prompt}`,
+    skippedResult: "The question was skipped.",
     askedAgain: (prompt) => `Asked again: ${prompt}`,
+    askedAgainResult: "The expired question was asked again.",
     expired: "The question expired",
+    expiredResult: "The question expired without an answer.",
   },
   delegation: {
     waitingApproval: (taskId, peer, why) =>
