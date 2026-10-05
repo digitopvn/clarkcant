@@ -26,6 +26,7 @@ import singleExecutionPolicyReader from "./invariants/single-execution-policy-re
 import implementationStatusRegistry from "./invariants/implementation-status-registry.mjs";
 import tsxFilesAreTypechecked from "./invariants/tsx-files-are-typechecked.mjs";
 import prBodiesCloseNothing from "./invariants/pr-bodies-close-nothing.mjs";
+import requiredChecksMatchWorkflow from "./invariants/required-checks-match-workflow.mjs";
 
 const CHECKS = [
   docsManifestIntegrity,
@@ -40,6 +41,7 @@ const CHECKS = [
   implementationStatusRegistry,
   tsxFilesAreTypechecked,
   prBodiesCloseNothing,
+  requiredChecksMatchWorkflow,
 ];
 
 const ctx = await buildContext();

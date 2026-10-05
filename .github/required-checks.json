@@ -1,0 +1,32 @@
+{
+  "$comment": "The merge gate for main. pnpm invariants checks this file against .github/workflows/ci.yml; tools/check-ruleset-drift.mjs checks it against the live ruleset and prints the body that applies it. Change the ruleset only from this file.",
+  "repository": "digitopvn/clarkcant",
+  "ruleset": {
+    "id": 24128511,
+    "name": "main: required CI"
+  },
+  "strict": true,
+  "integrationId": 15368,
+  "workflow": ".github/workflows/ci.yml",
+  "requiredJobs": [
+    "verify (ubuntu-latest, node 22.19)",
+    "verify (ubuntu-latest, node 24)",
+    "verify (macos-latest, node 24)",
+    "verify (windows-latest, node 24)",
+    "secret scan",
+    "e2e (browser suite)",
+    "reference theme browser (ubuntu-latest)",
+    "reference theme browser (macos-latest)",
+    "reference theme browser (windows-latest)",
+    "widget tooling smoke (ubuntu-latest)",
+    "widget tooling smoke (macos-latest)",
+    "widget tooling smoke (windows-latest)",
+    "service container (rootless docker)",
+    "service container (rootless podman)",
+    "desktop smoke (xvfb)"
+  ],
+  "requiredStatuses": {
+    "review attestation": ".github/workflows/review-attestation.yml"
+  },
+  "nonGatingJobs": {}
+}
