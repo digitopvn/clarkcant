@@ -1,4 +1,5 @@
 import {
+  type AppIntentLocale,
   type CompiledSection,
   type CompositionGraph,
   type CompositionSlot,
@@ -31,14 +32,17 @@ import {
   type ComposeInput,
   type ComposeOutcome,
   type CompileInput,
+  composeLocale,
   dataDepsOf,
   describeSection,
   findTemplate,
+  fixedRegionProps,
   leafProps,
   persistComposition,
   replayComposition,
   rowsBySlotOf,
 } from "./compose-mini-app.ts";
+import { hostText } from "./host-text.ts";
 import { publishMiniAppData } from "./mini-app-data.ts";
 
 /**
@@ -261,6 +265,8 @@ export interface CompileLayoutInput {
   pictureRefs?: { imageId: string; altText: string }[];
   /** The state the model declared for the surface, as it wrote it: `{ key: { type, initial } }`. Checked with the graph. */
   state?: unknown;
+  /** The reader's interface language, for the titles, labels and text alternatives the host writes; Vietnamese when absent. */
+  locale?: AppIntentLocale;
 }
 
 export type CompileLayoutResult =
@@ -328,7 +334,7 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
 
     // A set is cut once, to what this widget holds, so its props, its stored rows and its text all name the same pictures.
     const limit = slot === "pictures" ? pictureLimit(entry.definition) : undefined;
-    const props = leafProps(slot, { ...(recipe?.fixed.find((region) => region.slot === slot)?.props ?? {}), ...node.props }, {
+    const props = leafProps(slot, { ...fixedRegionProps(recipe, slot, input.locale), ...node.props }, {
       ...input,
       ...(limit === undefined ? {} : { pictureRefs: (input.pictureRefs ?? []).slice(0, limit) }),
     });
@@ -362,7 +368,7 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
       props,
       dataRefs: props.datasetRef === undefined ? [] : [String(props.datasetRef)],
       ...(rows === undefined ? {} : { rows }),
-      textAlternative: sectionText(entry.definition, slot, props, rows),
+      textAlternative: sectionText(entry.definition, slot, props, rows, input.locale),
     });
     return { kind: "widget", sectionId, ...(node.label === undefined ? {} : { label: node.label }) };
   };
@@ -425,6 +431,7 @@ function sectionText(
   slot: CompositionSlot,
   props: Record<string, unknown>,
   rows: Record<string, unknown>[] | undefined,
+  locale: AppIntentLocale | undefined,
 ): string {
   if (slot === "timeline") {
     const timeline = readTimeline(props);
@@ -432,7 +439,7 @@ function sectionText(
   }
   const kind = STATUS_CARD_KIND[definition.id];
   const card = kind === undefined ? undefined : readStatusCard(kind, props);
-  return card === undefined ? describeSection(definition, slot, rows) : statusCardText(card, SECTION_TEXT_LIMIT);
+  return card === undefined ? describeSection(definition, slot, rows, locale) : statusCardText(card, SECTION_TEXT_LIMIT);
 }
 
 function slotFor(definitionId: string, family: string, wired: boolean, where: string, problems: string[]): CompositionSlot | undefined {
@@ -496,7 +503,8 @@ export function composeLayout(deps: ComposeDeps, input: ComposeLayoutInput): Com
 
   const timezone = deps.timezone();
   const period = input.period ?? "week";
-  const published = publishMiniAppData(dataDepsOf(deps), { principalId: input.principalId, period, timezone });
+  const locale = composeLocale(deps, input.principalId);
+  const published = publishMiniAppData(dataDepsOf(deps), { principalId: input.principalId, period, timezone, locale });
 
   const compiled = compileLayout({
     proposal: input.layout,
@@ -506,6 +514,7 @@ export function composeLayout(deps: ComposeDeps, input: ComposeLayoutInput): Com
     ...(published.imageRefs[0] === undefined ? {} : { imageRef: published.imageRefs[0] }),
     pictureRefs: published.pictureRefs,
     ...(input.state === undefined ? {} : { state: input.state }),
+    locale,
   });
   if (!compiled.ok) {
     return { ok: false, code: "COMPILE_FAILED", message: "the layout did not compile", problems: compiled.problems };
@@ -520,7 +529,7 @@ export function composeLayout(deps: ComposeDeps, input: ComposeLayoutInput): Com
     period,
     timezone,
     selector: { mode: "explicit" },
-    title: input.title === undefined || input.title.trim() === "" ? "Bảng điều khiển" : input.title.trim().slice(0, 200),
+    title: input.title === undefined || input.title.trim() === "" ? hostText(locale).miniApp.layoutTitle : input.title.trim().slice(0, 200),
     textAlternative: compiled.textAlternative,
   });
 }

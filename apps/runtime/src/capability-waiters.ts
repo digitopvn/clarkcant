@@ -2,6 +2,7 @@ import type { Instant } from "@clarkcant/contracts";
 import { resumeCapabilityWaiters, type ResumedTask } from "@clarkcant/core";
 
 import { reportDelegatedStatus } from "./delegation.ts";
+import { ownerHostText } from "./host-text.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -24,7 +25,7 @@ export function resumeTasksWaitingOnCapability(
     try {
       appendHostReply(services, {
         conversationId: task.conversationId,
-        text: `${task.capabilityRef} đã dùng được, nên task ${task.taskId} đang chờ nó giờ chạy tiếp trên ${task.executionNodeId}.`,
+        text: ownerHostText(runtime).tasks.capabilityReady(task.capabilityRef, task.taskId, task.executionNodeId),
         at: now(),
       });
     } catch (cause) {

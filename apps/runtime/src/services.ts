@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { type Instant, type TurnOrigin, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
+import { type AppIntentLocale, type Instant, type TurnOrigin, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   type WidgetDeps,
@@ -57,6 +57,7 @@ import { homedir } from "node:os";
 import { parse } from "node:path";
 
 import { getPreference } from "@clarkcant/core";
+import { preferredAppIntentLocale } from "./app-intents.ts";
 
 import { type ComposeDeps } from "./compose-mini-app.ts";
 import { type ProjectFinderDeps } from "./project-finder.ts";
@@ -495,9 +496,14 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     newId,
   } satisfies WidgetDeps & { db: Runtime["db"]; nodeId: string };
 
+  // Where a turn and a composed surface learn the person's interface language: Settings' `experience.language`, read
+  // when they are written, so the words the host puts in a conversation are in the language the person reads.
+  const localeOf = (principalId: string): AppIntentLocale => preferredAppIntentLocale({ db: runtime.db, now: base.now }, principalId);
+
   const conductor: ConductorDeps = {
     ...base,
     sampleRecipes: QUICK_PLAY_RECIPES,
+    locale: localeOf,
     ...(options.respondWithModel === undefined ? {} : { respondWithModel: options.respondWithModel }),
     // Forwarded explicitly: accepting an option in the API and not wiring it into the conductor is
     // how a test seam silently does nothing.
@@ -702,6 +708,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     // The node's own display timezone, falling back to UTC so a value is always returned rather
     // than a guess dressed up as a fact.
     timezone: () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    locale: localeOf,
   };
 
   return {

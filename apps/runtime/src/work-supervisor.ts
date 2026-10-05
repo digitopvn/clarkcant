@@ -64,10 +64,13 @@ export interface WorkSource {
  */
 export class WorkAbort extends Error {
   readonly cause_: "stopped" | "deadline" | "shutdown";
-  constructor(cause: "stopped" | "deadline" | "shutdown", message: string) {
+  /** For a deadline, the limit that was passed, so the conversation can say it in the person's own language. */
+  readonly limitMs: number | undefined;
+  constructor(cause: "stopped" | "deadline" | "shutdown", message: string, limitMs?: number) {
     super(message);
     this.name = "WorkAbort";
     this.cause_ = cause;
+    this.limitMs = limitMs;
   }
 }
 
@@ -108,7 +111,14 @@ export interface BackgroundSubmission {
 
 export type SubmitOutcome =
   | { accepted: true; workId: string; state: "running" | "queued"; position?: number }
-  | { accepted: false; reason: "queue-full" | "closing"; message: string; running: readonly WorkView[] };
+  | {
+      accepted: false;
+      reason: "queue-full" | "closing";
+      message: string;
+      running: readonly WorkView[];
+      /** How many requests were waiting when this one was refused, so a caller can word the refusal itself. */
+      queued: number;
+    };
 
 export type CancelOutcome = "stopped" | "dequeued" | "already-ended" | "unknown";
 
@@ -215,7 +225,7 @@ export function createWorkSupervisor(
     const { signal } = open.controller;
     const timer = setTimeout(() => {
       open.controller.abort(
-        new WorkAbort("deadline", `việc nền chạy quá ${describeDuration(deadlineMs)} nên đã bị dừng`),
+        new WorkAbort("deadline", `việc nền chạy quá ${describeDuration(deadlineMs)} nên đã bị dừng`, deadlineMs),
       );
     }, deadlineMs);
     timer.unref?.();
@@ -310,6 +320,7 @@ export function createWorkSupervisor(
           reason: "closing",
           message: "Node đang tắt nên việc này chưa được bắt đầu. Nhắn lại sau khi node chạy lại.",
           running: [],
+          queued: queue.length,
         };
       }
       // A limit raised since the last admission frees places for what is already waiting, ahead of this request.
@@ -322,6 +333,7 @@ export function createWorkSupervisor(
           reason: "queue-full",
           message: `Node đang bận: ${String(running.size)} việc nền đang chạy và ${String(queue.length)} việc đang chờ, là mức tối đa. Việc này chưa được bắt đầu; hãy dừng bớt một việc hoặc thử lại sau.`,
           running: busy,
+          queued: queue.length,
         };
       }
       const open: OpenRun = { submission: input, workId, controller: new AbortController() };

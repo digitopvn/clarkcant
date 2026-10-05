@@ -1,6 +1,7 @@
 import { type Principal, nowInstant } from "@clarkcant/contracts";
 
 import { performEmergencyStop } from "../application/emergency-stop.ts";
+import { ownerHostText } from "../host-text.ts";
 import { buildTimeline, type NodeServices } from "../services.ts";
 import { answerApprovalDecision } from "../delegation-handlers.ts";
 import { decideTaskApprovalForNode, stopTask } from "../task-dispatch.ts";
@@ -185,8 +186,8 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       conversationId: outcome.task.conversationId,
       at: nowInstant(),
       text: outcome.confirmed
-        ? `Đã dừng task ${taskId}. Không có việc nào đang chạy nên không còn gì đang chờ.`
-        : `Đã ghi nhận yêu cầu dừng task ${taskId}. Việc đang chạy vẫn có thể đang hoàn tất, nên task chưa được coi là đã dừng cho tới khi nơi chạy xác nhận.`,
+        ? ownerHostText(runtime).tasks.stopped(taskId)
+        : ownerHostText(runtime).tasks.stopRequested(taskId),
     });
     return json(200, { taskId: outcome.task.taskId, state: outcome.task.state, confirmed: outcome.confirmed });
   }
@@ -244,7 +245,7 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
         appendHostReply(services, {
           conversationId: decided.conversationId,
           at,
-          text: "Yêu cầu duyệt đã hết hạn trước khi được quyết định, nên việc này đã dừng và không chạy gì. Bạn có thể yêu cầu lại.",
+          text: ownerHostText(runtime).tasks.approvalExpired,
         });
       }
       return fail(decided.code === "TASK_NOT_FOUND" ? 404 : 409, decided.code, decided.message);
@@ -252,12 +253,9 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
 
     if (decision === "denied") answerPeer(taskId, "denied");
     else if (decided.redispatched) answerPeer(taskId, "granted");
+    const say = ownerHostText(runtime).tasks;
     const text =
-      decision === "denied"
-        ? "Đã từ chối. Việc này đã dừng và không chạy gì."
-        : decided.redispatched
-          ? "Đã duyệt. Việc này đang được chạy lại với quyền vừa cấp."
-          : "Đã duyệt, nhưng node chưa nhận chạy lại việc này (đang tắt, hàng đợi đã đầy, hoặc việc chưa được gán nơi chạy), nên chưa có gì được chạy. Bạn có thể yêu cầu lại.";
+      decision === "denied" ? say.approvalDenied : decided.redispatched ? say.approvalRerunning : say.approvalNotRerun;
     appendHostReply(services, { conversationId: decided.conversationId, at, text });
 
     return json(200, {

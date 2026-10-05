@@ -109,6 +109,7 @@ import { resolveLiveSections } from "../mini-app-data.ts";
 import { packageResourceGrant } from "../package-resources.ts";
 import { resourceProfilePolicy } from "../service-host.ts";
 import { WorkAbort, nodeWork } from "../work-supervisor.ts";
+import { type HostText, hostText, ownerHostText } from "../host-text.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "../jev-decider.ts";
 import { type OwnedResources, ownedResources } from "../preflight.ts";
 import { markProjectUsed, projectContext, resolveProject } from "../project-finder.ts";
@@ -545,7 +546,12 @@ function resolveLiveWidget(
       now: () => nowInstant() as never,
       newId: services.conductor.newId,
     },
-    { principalId: principalId as never, composition, state: state?.body ?? {} },
+    {
+      principalId: principalId as never,
+      composition,
+      state: state?.body ?? {},
+      locale: services.conductor.locale?.(principalId) ?? "vi",
+    },
   );
 
   // Bindings are re-read here rather than taken from the stored spec, because a stored document
@@ -756,8 +762,10 @@ export function startBackgroundWork(
 ):
   | { sessionId: string; state: "running" | "queued"; position?: number }
   | { refusal: string; busy?: true } {
+  // Read when each line is written, so a report that lands after the person switched language reads in the new one.
+  const say = (): HostText["background"] => ownerHostText(services.runtime).background;
   const control = services.turnControl;
-  if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
+  if (control === undefined) return { refusal: say().noModel };
 
   const title = (options.title ?? text).replace(/\s+/g, " ").trim().slice(0, 120);
   const maxTokens = options.maxTokens;
@@ -771,7 +779,7 @@ export function startBackgroundWork(
     onDequeued: () => {
       appendHostReply(services, {
         conversationId,
-        text: `Đã bỏ việc nền “${title}” khỏi hàng chờ trước khi nó bắt đầu; không có gì được chạy.`,
+        text: say().dequeued(title),
         at: at(),
       });
     },
@@ -794,7 +802,7 @@ export function startBackgroundWork(
           sourceKind: "background",
           category: "result",
           severity: "success",
-          title: `Việc nền đã xong: ${title}`,
+          title: say().doneNotice(title),
           ...(said === "" ? {} : { body: said }),
           conversationId,
           subject: { kind: "background-work", workId, conversationId },
@@ -802,7 +810,7 @@ export function startBackgroundWork(
           at: at(),
         });
       } catch (cause) {
-        const reply = backgroundEndingReply(signal, cause, title);
+        const reply = backgroundEndingReply(signal, cause, title, ownerHostText(services.runtime));
         if (reply !== undefined) {
           appendHostReply(services, { conversationId, text: reply, at: at() });
           // A stop the person asked for is information, not a failure; a shutdown is reported by the next boot.
@@ -811,7 +819,7 @@ export function startBackgroundWork(
             sourceKind: "background",
             category: "result",
             severity: stopped ? "info" : "error",
-            title: stopped ? `Việc nền đã dừng: ${title}` : `Việc nền không xong: ${title}`,
+            title: stopped ? say().stoppedNotice(title) : say().failedNotice(title),
             body: reply,
             conversationId,
             subject: { kind: "background-work", workId, conversationId },
@@ -825,7 +833,8 @@ export function startBackgroundWork(
   });
   if (!submitted.accepted) {
     const busy = submitted.running.map((view) => `“${view.title}”`).join("; ");
-    return { refusal: busy === "" ? submitted.message : `${submitted.message} Đang chạy: ${busy}.`, busy: true };
+    const refusal = submitted.reason === "closing" ? say().closing : say().queueFull(submitted.running.length, submitted.queued);
+    return { refusal: busy === "" ? refusal : say().alsoRunning(refusal, busy), busy: true };
   }
   return {
     sessionId: submitted.workId,
@@ -861,29 +870,25 @@ export function retryBackgroundWork(
   workId: string,
 ): RetryBackgroundOutcome {
   const { db } = services.runtime;
+  const say = ownerHostText(services.runtime).background;
   const run = getWorkRun(db, workId);
   if (run === undefined) {
-    return { ok: false, status: 404, code: "WORK_NOT_FOUND", message: "Không còn bản ghi của việc này trên node, nên không chạy lại được." };
+    return { ok: false, status: 404, code: "WORK_NOT_FOUND", message: say.retryMissing };
   }
   if (!retryableBackgroundRun(run) || run.requestText === undefined || run.conversationId === undefined) {
-    return {
-      ok: false,
-      status: 409,
-      code: "WORK_NOT_RETRYABLE",
-      message: "Chỉ chạy lại được việc nền đã dừng hoặc không xong; việc này đã xong, còn đang chạy, hoặc không phải việc nền.",
-    };
+    return { ok: false, status: 409, code: "WORK_NOT_RETRYABLE", message: say.retryNotRetryable };
   }
   if (run.retriedAs !== undefined) {
-    return { ok: false, status: 409, code: "ALREADY_RETRIED", message: "Việc này đã được chạy lại rồi." };
+    return { ok: false, status: 409, code: "ALREADY_RETRIED", message: say.retryAlreadyDone };
   }
   const conversationId = run.conversationId;
   if (getConversation(db, conversationId) === undefined) {
-    return { ok: false, status: 409, code: "CONVERSATION_GONE", message: "Hội thoại của việc này đã bị xoá, nên không chạy lại được." };
+    return { ok: false, status: 409, code: "CONVERSATION_GONE", message: say.retryConversationGone };
   }
   // The same shape the supervisor gives a new run.
   const retryWorkId = `bg-${randomBytes(6).toString("hex")}`;
   if (!claimWorkRunRetry(db, workId, retryWorkId)) {
-    return { ok: false, status: 409, code: "ALREADY_RETRIED", message: "Việc này đã được chạy lại rồi." };
+    return { ok: false, status: 409, code: "ALREADY_RETRIED", message: say.retryAlreadyDone };
   }
   const started = startBackgroundWork(services, principal, at, conversationId, run.requestText, { workId: retryWorkId });
   if ("refusal" in started) {
@@ -894,7 +899,7 @@ export function retryBackgroundWork(
   }
   appendHostReply(services, {
     conversationId,
-    text: `Đang chạy lại việc nền “${run.title}”; kết quả sẽ báo ở đây.`,
+    text: say.retrying(run.title),
     at: at(),
   });
   dismissNotificationByKey(db, { principalId: services.runtime.identity.ownerPrincipalId, dedupKey: `background:${workId}`, at: at() });
@@ -937,14 +942,22 @@ export function askExpiredQuestionAgain(
 }
 
 /** What the conversation is told when a background run ends without an answer, or nothing when the next boot says it. */
-function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: string): string | undefined {
+function backgroundEndingReply(
+  signal: AbortSignal,
+  cause: unknown,
+  title: string,
+  text: HostText,
+): string | undefined {
+  const say = text.background;
   const reason: unknown = signal.aborted ? signal.reason : undefined;
   if (reason instanceof WorkAbort) {
     if (reason.cause_ === "shutdown") return undefined;
-    if (reason.cause_ === "stopped") return `Đã dừng việc nền “${title}” theo yêu cầu. Kết quả dở dang không được giữ lại.`;
-    return `Việc nền không xong: ${reason.message}. Bạn có thể yêu cầu lại, hoặc chia nhỏ việc này.`;
+    if (reason.cause_ === "stopped") return say.stoppedReply(title);
+    // A deadline is worded here, from the limit it carries; anything else keeps the reason it was given.
+    const why = reason.cause_ === "deadline" && reason.limitMs !== undefined ? say.deadline(text.duration(reason.limitMs)) : reason.message;
+    return say.failedReply(why);
   }
-  return `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`;
+  return say.failed(cause instanceof Error ? cause.message : String(cause));
 }
 
 /**
@@ -1634,7 +1647,13 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
 
     const message = appendHostReply(services, {
       conversationId,
-      text: `Đã mở phiên làm việc trong ${resolution.project.name} (${resolution.relPath}). ${context}`,
+      // The same facts `projectContext` gives the session, worded for the person in their language.
+      text: ownerHostText(services.runtime).tasks.projectSessionOpened(
+        resolution.project.name,
+        resolution.relPath,
+        resolution.project.kind,
+        resolution.project.markers.slice(0, 6).join(", "),
+      ),
       at: startedAt,
     });
 
@@ -2087,8 +2106,9 @@ export async function decideApprovalForNode(
     if (artifactWrite) recordDeniedWidgetArtifactWrite(services, { payload, approvalId: input.approvalId, at: input.at });
     // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
     // only as text left the card offering Approve and Deny again after it had been denied.
+    const say = hostText(locale).tasks;
     const refused = tilePolicyChange
-      ? "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi."
+      ? say.refusedTilePolicy
       : artifactWrite
         ? deniedWidgetArtifactWriteLabel(services, input.at)
         : widgetPerform
@@ -2096,8 +2116,8 @@ export async function decideApprovalForNode(
             ? "Refused: the widget was not asked to do it. Nothing was sent."
             : "Đã từ chối: widget không được yêu cầu làm việc đó. Không có gì được gửi."
           : capabilityCall
-            ? "Đã từ chối gọi capability đó. Không có gì được chạy."
-            : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
+            ? say.refusedCapability
+            : say.refusedCommand;
     appendHostReply(services, {
       conversationId: input.conversationId,
       blocks: [

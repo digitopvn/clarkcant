@@ -1,6 +1,7 @@
 import {
   type ActionProposal,
   type AppIntentDecision,
+  type AppIntentLocale,
   type AttachmentRef,
   type CapabilityRef,
   type ConversationId,
@@ -32,6 +33,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type CapabilitySummary, type RegistryDeps, listCapabilitySummaries } from "./capability-registry.ts";
+import { conductorText } from "./conductor-text.ts";
 import { settleReconciledTask } from "./effect-reconciliation.ts";
 import {
   type TaskServiceDeps,
@@ -73,7 +75,11 @@ export interface SampleRecipe {
    * rather than relying on recipe ordering to be lucky.
    */
   catchAll?: boolean;
-  build: (context: { nodeId: string; principalId: string }) => {
+  /**
+   * `locale` is the language the person reads the interface in: a recipe's titles, labels and sentence are shown to
+   * them, so they are written in it.
+   */
+  build: (context: { nodeId: string; principalId: string; locale: AppIntentLocale }) => {
     definition: WidgetDefinition;
     packageDigest: string;
     props: Record<string, unknown>;
@@ -91,6 +97,13 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
   newId: (prefix: string) => string;
   /** Scripted paths that need no provider account. Empty means model-only. */
   sampleRecipes: readonly SampleRecipe[];
+  /**
+   * The interface language of the person a turn answers, for the words the host writes into it itself.
+   *
+   * Read once per turn and handed to every host-written block and recipe that turn produces, so one reply never mixes
+   * languages. Absent means Vietnamese, the preference's own default.
+   */
+  locale?: (principalId: string) => AppIntentLocale;
   /**
    * Optional worker bridge. Absent means an install is proposed instead of a run.
    *
@@ -143,6 +156,8 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     note?: string;
     /** See `UserMessageInput.data`, carried through unchanged for the same reason. */
     data?: string;
+    /** The turn's interface language (`ConductorDeps.locale`), for the words a composed surface shows the person. */
+    locale: AppIntentLocale;
   }) => Promise<{ block: MessageBlock; text: string } | undefined>;
   /**
    * Choose between several usable capabilities, when there is a real choice.
@@ -679,6 +694,8 @@ export async function handleUserMessage(
   input: UserMessageInput,
 ): Promise<ConductorOutcome> {
   const at = input.at ?? nowInstant();
+  const locale = deps.locale?.(input.principal.principalId) ?? "vi";
+  const say = conductorText(locale);
   const userMessage = appendUser(
     deps,
     input.conversationId,
@@ -710,6 +727,7 @@ export async function handleUserMessage(
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.note === undefined ? {} : { note: input.note }),
       ...(input.data === undefined ? {} : { data: input.data }),
+      locale,
     });
     if (composed !== undefined) {
       // A reply that is only its sentence is said once: leading with the same text again would print it twice.
@@ -745,7 +763,7 @@ export async function handleUserMessage(
     // conversation must never be answered with it by accident.
     const recipe = input.demo === true ? candidates.find((candidate) => candidate.matches(input.text)) : undefined;
     if (recipe) {
-      return runSampleRecipe(deps, { ...input, at }, recipe);
+      return runSampleRecipe(deps, { ...input, at }, recipe, locale);
     }
   }
 
@@ -754,7 +772,7 @@ export async function handleUserMessage(
   // demo, then the model's own words.
   const answer = deps.respondWithModel;
   if (!executionNode && answer !== undefined) {
-    return runModelTurn(deps, { ...input, at }, userMessage.messageId, answer);
+    return runModelTurn(deps, { ...input, at }, userMessage.messageId, answer, locale);
   }
 
   const task = createTask(deps, {
@@ -780,17 +798,16 @@ export async function handleUserMessage(
       input.conversationId,
       [
         // Said in the person's terms: what is missing is a model to answer with, not an abstract "capability".
-        { type: "text", format: "plain", content: "Tui chưa trả lời được: máy này chưa có model nào để tui dùng.", streaming: false },
+        { type: "text", format: "plain", content: say.noModel.text, streaming: false },
         {
           type: "system-card",
           owner: "host",
           cardId: deps.newId("card"),
           subject: "capability",
-          title: "Chưa có model để trả lời",
+          title: say.noModel.title,
           status: "blocked",
-          detail:
-            // Reached only with no model to fall back on, so the next step is the one that unblocks a conversation.
-            "Tin nhắn của bạn vẫn còn đây và việc này đang chờ. Thêm một model trong Cài đặt → AI & Định tuyến rồi gửi lại; tui sẽ không tự làm bằng một công cụ tui không có.",
+          // Reached only with no model to fall back on, so the next step is the one that unblocks a conversation.
+          detail: say.noModel.detail,
           fields: [
             { label: "Task", value: task.taskId },
             { label: "Node", value: deps.nodeId },
@@ -824,7 +841,7 @@ export async function handleUserMessage(
       {
         type: "text",
         format: "plain",
-        content: `Đang chạy trên ${executionNode.executionNodeId}.`,
+        content: say.runningOn(executionNode.executionNodeId),
         streaming: false,
       },
     ],
@@ -860,20 +877,21 @@ export async function handleUserMessage(
  * Absent numbers produce no field at all rather than a field saying "không rõ": the card exists to say what
  * is known, and a row of unknowns would bury what is.
  */
-function turnMetricFields(metrics: TurnMetrics | undefined): { label: string; value: string }[] {
+function turnMetricFields(metrics: TurnMetrics | undefined, locale: AppIntentLocale): { label: string; value: string }[] {
   if (metrics === undefined) return [];
+  const say = conductorText(locale).metrics;
   const fields: { label: string; value: string }[] = [];
   if (metrics.contextTokens !== undefined && metrics.contextWindow !== undefined && metrics.contextWindow > 0) {
     const share = Math.round((metrics.contextTokens / metrics.contextWindow) * 100);
     fields.push({
-      label: "Ngữ cảnh",
+      label: say.contextLabel,
       value: `${formatTokens(metrics.contextTokens)} / ${formatTokens(metrics.contextWindow)} (${share}%)`,
     });
   }
   if (metrics.inputTokens !== undefined || metrics.outputTokens !== undefined) {
     fields.push({
-      label: "Token",
-      value: `${formatTokens(metrics.inputTokens ?? 0)} vào · ${formatTokens(metrics.outputTokens ?? 0)} ra`,
+      label: say.tokensLabel,
+      value: say.tokens(formatTokens(metrics.inputTokens ?? 0), formatTokens(metrics.outputTokens ?? 0)),
     });
   }
   const cacheRead = metrics.cacheReadTokens;
@@ -883,19 +901,17 @@ function turnMetricFields(metrics: TurnMetrics | undefined): { label: string; va
     const rate = reusable === 0 ? undefined : Math.round(((cacheRead ?? 0) / reusable) * 100);
     fields.push({
       label: "Cache",
-      value:
-        `${rate === undefined ? "chưa đo được" : `${rate}% đọc lại`}` +
-        ` · ${formatTokens(cacheRead ?? 0)} đọc · ${formatTokens(cacheWrite ?? 0)} ghi`,
+      value: say.cache(rate, formatTokens(cacheRead ?? 0), formatTokens(cacheWrite ?? 0)),
     });
   }
   if (metrics.tokensPerSecond !== undefined) {
-    fields.push({ label: "Tốc độ", value: `${metrics.tokensPerSecond.toFixed(1)} tok/s` });
+    fields.push({ label: say.speedLabel, value: `${metrics.tokensPerSecond.toFixed(1)} tok/s` });
   }
   if (metrics.costUsd !== undefined) {
-    fields.push({ label: "Chi phí", value: `$${metrics.costUsd.toFixed(4)}` });
+    fields.push({ label: say.costLabel, value: `$${metrics.costUsd.toFixed(4)}` });
   }
   if (metrics.cwd !== undefined) {
-    fields.push({ label: "Thư mục làm việc", value: metrics.cwd });
+    fields.push({ label: say.cwdLabel, value: metrics.cwd });
   }
   return fields;
 }
@@ -912,7 +928,9 @@ async function runModelTurn(
   input: UserMessageInput & { at: Instant },
   userMessageId: string,
   answer: NonNullable<ConductorDeps["respondWithModel"]>,
+  locale: AppIntentLocale,
 ): Promise<ConductorOutcome> {
+  const say = conductorText(locale);
   let reply: Awaited<ReturnType<typeof answer>>;
   // Allocated here so a view captured during the turn can name the message it will live in.
   const messageId = deps.newId("msg");
@@ -945,10 +963,10 @@ async function runModelTurn(
           owner: "host",
           cardId: deps.newId("card"),
           subject: "connection",
-          title: "Không gọi được model",
+          title: say.modelFailed.title,
           status: "blocked",
           detail: cause instanceof Error ? cause.message : String(cause),
-          fields: [{ label: "Loại lỗi", value: "model-turn-failed" }],
+          fields: [{ label: say.modelFailed.kindLabel, value: "model-turn-failed" }],
           cancellable: false,
           updatedAt: input.at,
         },
@@ -971,7 +989,7 @@ async function runModelTurn(
       // It is bookkeeping: which model, how long it took. At the top of a reply it is the first thing
       // read and it is not the answer — the interface then leads with provenance and buries the text.
       // The renderer draws it as one muted line that expands (see `SystemCardBlock`).
-      ...modelSegmentsToBlocks(reply, (block, issues) => {
+      ...modelSegmentsToBlocks(reply, locale, (block, issues) => {
         // The report is a side channel: the card is dropped either way, and a reporter that throws must not
         // cost the person the reply it was reporting on.
         try {
@@ -982,7 +1000,7 @@ async function runModelTurn(
           // Nothing to fall back to: reporting is what failed.
         }
       }),
-      modelReplyCard(deps, reply, input.at),
+      modelReplyCard(deps, reply, input.at, locale),
     ],
     { at: input.at, messageId },
   );
@@ -994,10 +1012,17 @@ async function runModelTurn(
  * The card that records which model answered a turn, or that a person stopped it.
  *
  * Exported so every path that ends a model turn labels it the same way: a stopped reply reads as stopped wherever it
- * was produced, rather than as a finished answer on one path and a stopped one on another.
+ * was produced, rather than as a finished answer on one path and a stopped one on another. Its words follow `locale`,
+ * Vietnamese when none is named.
  */
-export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelTurnReply, at: Instant): MessageBlock {
+export function modelReplyCard(
+  deps: Pick<ConductorDeps, "newId">,
+  reply: ModelTurnReply,
+  at: Instant,
+  locale: AppIntentLocale = "vi",
+): MessageBlock {
   const fallback = reply.stopped === true ? undefined : reply.fallback;
+  const say = conductorText(locale).reply;
   return {
     type: "system-card",
     owner: "host",
@@ -1005,19 +1030,17 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
     subject: "connection",
     // A stopped turn says so on the one line that is always visible, so the partial reply above it is not read
     // as the whole answer.
-    title: reply.stopped === true ? "Đã dừng theo yêu cầu" : fallback !== undefined ? "Trả lời bằng model dự phòng" : "Trả lời bằng model",
+    title: reply.stopped === true ? say.stoppedTitle : fallback !== undefined ? say.fallbackTitle : say.answeredTitle,
     status: "done",
     detail:
       reply.stopped === true
-        ? (reply.stoppedDetail ??
-          "Bạn đã dừng lượt trả lời này. Phần ở trên là những gì model đã viết trước khi dừng; sau đó không có thêm chữ hay công cụ nào chạy.")
+        ? (reply.stoppedDetail ?? say.stoppedDetail)
         : fallback !== undefined
-          ? `${fallback.from} không trả lời được (${fallback.reason}), nên ${reply.provider}/${reply.model} đã trả lời thay. ` +
-            "Lựa chọn của bạn trong Cài đặt vẫn giữ nguyên; Clark sẽ thử lại model đó sau ít phút."
-          : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
+          ? say.fallbackDetail(fallback.from, fallback.reason, `${reply.provider}/${reply.model}`)
+          : say.answeredDetail,
     fields: [
-      ...(reply.stopped === true ? [{ label: "Kết thúc", value: "dừng theo yêu cầu" }] : []),
-      ...(fallback === undefined ? [] : [{ label: "Model đã chọn", value: fallback.from }]),
+      ...(reply.stopped === true ? [{ label: say.endedLabel, value: say.endedValue }] : []),
+      ...(fallback === undefined ? [] : [{ label: say.chosenModelLabel, value: fallback.from }]),
       { label: "Provider", value: reply.provider },
       {
         label: "Model",
@@ -1025,8 +1048,8 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
         // at a different effort is a different answer to the same question.
         value: reply.metrics?.thinkingLevel === undefined ? reply.model : `${reply.model} · ${reply.metrics.thinkingLevel}`,
       },
-      { label: "Thời gian", value: `${reply.elapsedMs} ms` },
-      ...turnMetricFields(reply.metrics),
+      { label: say.elapsedLabel, value: `${reply.elapsedMs} ms` },
+      ...turnMetricFields(reply.metrics, locale),
     ],
     // The typed copy, for the statusline: the rows above are written to be read, these to be drawn.
     ...(reply.metrics === undefined ? {} : { metrics: reply.metrics }),
@@ -1050,6 +1073,7 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
  */
 function modelSegmentsToBlocks(
   reply: ModelTurnReply,
+  locale: AppIntentLocale,
   onRejectedHostCard: (block: Record<string, unknown>, issues: readonly ZodIssueLike[]) => void,
 ): MessageBlock[] {
   const blocks: MessageBlock[] = [];
@@ -1081,7 +1105,7 @@ function modelSegmentsToBlocks(
       blocks.push({
         type: "text",
         format: "plain",
-        content: `Một khối nội dung đã bị từ chối: ${verdict.message}`,
+        content: conductorText(locale).rejectedBlock(verdict.message),
         streaming: false,
       });
       continue;
@@ -1096,10 +1120,13 @@ function runSampleRecipe(
   deps: ConductorDeps,
   input: UserMessageInput & { at: Instant },
   recipe: SampleRecipe,
+  locale: AppIntentLocale,
 ): ConductorOutcome {
+  const say = conductorText(locale).sample;
   const built = recipe.build({
     nodeId: deps.nodeId,
     principalId: input.principal.principalId,
+    locale,
   });
 
   const instance = createInstance(deps, {
@@ -1126,12 +1153,12 @@ function runSampleRecipe(
         owner: "host",
         cardId: deps.newId("card"),
         subject: "onboarding",
-        title: "Dữ liệu mẫu / demo tương tác",
+        title: say.title,
         status: "done",
-        detail: `Chạy recipe "${recipe.id}" trên dữ liệu mẫu. Đây không phải dữ liệu thật của bạn và không có model nào được gọi.`,
+        detail: say.detail(recipe.id),
         fields: [
           { label: "Recipe", value: recipe.id },
-          { label: "Nguồn dữ liệu", value: "sample", freshness: "sample" },
+          { label: say.sourceLabel, value: "sample", freshness: "sample" },
         ],
         cancellable: false,
         updatedAt: input.at,

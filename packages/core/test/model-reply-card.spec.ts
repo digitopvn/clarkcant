@@ -39,3 +39,36 @@ describe("the model reply card", () => {
     expect(JSON.stringify(card)).not.toContain("Model đã chọn");
   });
 });
+
+/** Any letter only Vietnamese writes: a host-written English card must contain none of them. */
+const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;
+
+describe("the model reply card in the person's interface language", () => {
+  it("is written in English when the interface is English", () => {
+    const card = modelReplyCard(deps, { ...reply, fallback: { from: "anthropic/claude-opus-5-5", reason: "HTTP 400" } }, AT, "en");
+
+    expect(card).toMatchObject({ title: "Answered by a fallback model" });
+    expect(String((card as { detail?: string }).detail)).toContain(
+      "anthropic/claude-opus-5-5 could not answer (HTTP 400), so deepseek/deepseek-v4-flash answered instead",
+    );
+    const fields = (card as { fields?: { label: string; value: string }[] }).fields ?? [];
+    expect(fields).toContainEqual({ label: "Chosen model", value: "anthropic/claude-opus-5-5" });
+    expect(fields).toContainEqual({ label: "Time", value: "900 ms" });
+    expect(JSON.stringify(card)).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("says a stopped reply was stopped, in English", () => {
+    const card = modelReplyCard(deps, { ...reply, stopped: true }, AT, "en");
+
+    expect(card).toMatchObject({ title: "Stopped on request" });
+    expect((card as { fields?: unknown[] }).fields).toContainEqual({ label: "Ended", value: "stopped on request" });
+    expect(JSON.stringify(card)).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("stays Vietnamese when the interface is Vietnamese", () => {
+    const card = modelReplyCard(deps, reply, AT, "vi");
+
+    expect(card).toMatchObject({ title: "Trả lời bằng model" });
+    expect((card as { fields?: unknown[] }).fields).toContainEqual({ label: "Thời gian", value: "900 ms" });
+  });
+});
