@@ -275,7 +275,7 @@ can only raise it (`serviceEffectCategory` in `apps/runtime/src/service-host.ts`
 A result's `structuredContent` is kept as a copy only when it is a plain JSON object at most 32 levels deep with at
 most 16,384 values and no `__proto__`, `constructor` or `prototype` key, its JSON is at most 65,536 characters, and it matches the
 `outputSchema` the tool declared. Otherwise it is dropped, the service's text is kept, and the text says why. The
-service's text is still what the model reads. A kept value goes to a widget's `invoke` binding as `structuredContent`
+service's text is still what the model reads; a service that returns no text has the value's JSON as its text. A kept value goes to a widget's `invoke` binding as `structuredContent`
 ([open interfaces](open-interfaces.md)). The agent's `invoke_capability` tool also carries it, in a result shaped as an
 MCP `CallToolResult`, for a program that calls the tool; ClarkCant does not run such programs yet, so today no model
 or script reads it there. It is classified with the text, as JSON and string by string, and is withheld with the text. It is data: it never becomes an instruction, an approval card or a widget. A

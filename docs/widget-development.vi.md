@@ -280,7 +280,7 @@ category của capability là loại mà manifest khai báo, và những gì ser
 `structuredContent` của một kết quả chỉ được giữ, dưới dạng bản sao, khi nó là object JSON thuần sâu tối đa 32 tầng,
 có tối đa 16.384 giá trị, không có khoá `__proto__`, `constructor` hay `prototype`, JSON của nó dài tối đa 65.536 ký tự, và
 nó khớp `outputSchema` mà tool khai báo. Nếu không, nó bị bỏ, phần chữ của service được giữ, và phần chữ ghi lý do.
-Model vẫn đọc phần chữ của service. Giá trị được giữ đi tới binding `invoke` của widget dưới tên `structuredContent`
+Model vẫn đọc phần chữ của service; service không trả phần chữ thì JSON của giá trị là phần chữ. Giá trị được giữ đi tới binding `invoke` của widget dưới tên `structuredContent`
 ([giao diện mở](open-interfaces.vi.md)). Tool `invoke_capability` của agent cũng mang nó, trong một kết quả có dạng
 `CallToolResult` của MCP, cho chương trình gọi tool; ClarkCant chưa chạy chương trình như vậy, nên hiện chưa có model
 hay script nào đọc nó ở đó. Nó được phân loại cùng phần chữ, ở dạng JSON và theo từng chuỗi, và bị giữ lại cùng phần chữ. Nó là dữ liệu: không bao giờ thành chỉ dẫn, approval card hay widget. Tệp vẫn được
