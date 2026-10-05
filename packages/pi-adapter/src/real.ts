@@ -11,7 +11,7 @@ import { NotImplementedError, type ModelCatalogue,
   type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
 import { guardToolResult } from "./tool-result-guard.ts";
-import { contextGuardOverrides, readSkillBody } from "./context-guard-overrides.ts";
+import { contextGuardOverrides, readSkillBody, skillCheckedText } from "./context-guard-overrides.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -863,14 +863,18 @@ export class RealPiAdapter implements PiAdapter {
    * file read from disk at that moment.
    *
    * The loader checked every skill's file when the session was created, but the file can change after that. So for a
-   * session with a context guard, the file is read and checked again now; a skill whose file fails, or can no longer be
-   * read, is not expanded: the message goes as typed, with a space in front so the SDK does not take it for a command.
+   * session with a context guard, the file is read and checked again now, and the expansion is written here from the
+   * bytes that were checked, in the SDK's own form: the SDK is handed the finished text and reads nothing itself, so a
+   * file swapped after the check is never what is sent. A skill whose file fails, or can no longer be read, is not
+   * expanded: the message goes as typed, with a space in front so the SDK does not take it for a command.
    * A message that names no skill the session knows is passed through by the SDK as typed already.
    */
   #skillCommandChecked(
     entry: {
       brief: WorkerBrief;
-      loader: { getSkills(): { skills: readonly { name: string; description: string; filePath: string }[] } };
+      loader: {
+        getSkills(): { skills: readonly { name: string; description: string; filePath: string; baseDir: string }[] };
+      };
     },
     text: string,
   ): string {
@@ -878,19 +882,23 @@ export class RealPiAdapter implements PiAdapter {
     if (guard === undefined || !text.startsWith("/skill:")) return text;
     const end = text.indexOf(" ");
     const name = end === -1 ? text.slice("/skill:".length) : text.slice("/skill:".length, end);
+    const args = end === -1 ? "" : text.slice(end + 1).trim();
     const skill = entry.loader.getSkills().skills.find((candidate) => candidate.name === name);
     if (skill === undefined) return text;
-    const body = readSkillBody(skill.filePath);
+    const file = readSkillBody(skill.filePath);
     let allowed: boolean;
     try {
-      // The same text the loader checked: what a listing says of the skill, and its whole file as it is now.
-      allowed =
-        body !== undefined && guard({ source: `skill:${skill.name}`, text: `${skill.name}\n${skill.description}\n${body}` });
+      // The same text the loader checked, as the file is now.
+      allowed = file !== undefined && guard({ source: `skill:${skill.name}`, text: skillCheckedText(skill, file) });
     } catch {
       // A guard that cannot decide does not let the file through.
       allowed = false;
     }
-    return allowed ? text : ` ${text}`;
+    if (!allowed || file === undefined) return ` ${text}`;
+    // Without the SDK's own reader of a skill's heading the file goes whole: all of it was checked.
+    const body = (this.#sdk?.stripFrontmatter?.(file) ?? file).trim();
+    const block = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
+    return args === "" ? block : `${block}\n\n${args}`;
   }
 
   async abort(sessionId: string, reason: string): Promise<void> {

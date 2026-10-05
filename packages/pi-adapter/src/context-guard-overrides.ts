@@ -13,7 +13,7 @@ export interface ContextGuardOverrides {
   };
   systemPromptOverride: (base: string | undefined) => string | undefined;
   appendSystemPromptOverride: (base: string[]) => string[];
-  skillsOverride: <T extends { skills: { name: string; description: string; filePath: string }[] }>(base: T) => T;
+  skillsOverride: <T extends { skills: { name: string; description: string; filePath: string; baseDir: string }[] }>(base: T) => T;
   promptsOverride: <T extends { prompts: { name: string; description: string; content: string }[] }>(base: T) => T;
 }
 
@@ -48,7 +48,7 @@ export function contextGuardOverrides(guard: ContextGuard): ContextGuardOverride
       skills: base.skills.filter((skill) => {
         const body = readSkillBody(skill.filePath);
         // A skill whose file cannot be read now cannot be checked, so it is not offered.
-        return body !== undefined && allowed(`skill:${skill.name}`, `${skill.name}\n${skill.description}\n${body}`);
+        return body !== undefined && allowed(`skill:${skill.name}`, skillCheckedText(skill, body));
       }),
     }),
     promptsOverride: (base) => ({
@@ -67,4 +67,15 @@ export function readSkillBody(filePath: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Everything of a skill that reaches a model: what a listing says of it, where it is on the machine (an expansion names
+ * its file and folder), and its whole file.
+ */
+export function skillCheckedText(
+  skill: { name: string; description: string; filePath: string; baseDir: string },
+  body: string,
+): string {
+  return `${skill.name}\n${skill.description}\n${skill.filePath}\n${skill.baseDir}\n${body}`;
 }

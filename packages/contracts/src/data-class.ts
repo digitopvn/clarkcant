@@ -182,11 +182,12 @@ function carriesBasicCredentials(match: string): boolean {
   const encoded = /Basic\s+(\S+)$/i.exec(match)?.[1] ?? "";
   let decoded: string;
   try {
-    decoded = atob(encoded);
+    // Read as UTF-8, so a user name or password written with accents is still text; bytes that are not are no credential.
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0)));
   } catch {
     return false;
   }
-  if (!/^[\x20-\x7e]+$/.test(decoded)) return false;
+  if (decoded === "" || [...decoded].some((char) => char < " " || char === "\u007f")) return false;
   const split = decoded.indexOf(":");
   if (split < 0) return false;
   return !isPlaceholderValue(decoded.slice(0, split)) || !isPlaceholderValue(decoded.slice(split + 1));

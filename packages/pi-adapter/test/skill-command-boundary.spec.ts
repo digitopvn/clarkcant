@@ -128,7 +128,11 @@ function guardFor(allowed: readonly DataClass[]): NonNullable<WorkerBrief["conte
   return ({ text }) => checkSendBoundary({ allowed, texts: [text] }).ok;
 }
 
-async function promptSkill(allowed: readonly DataClass[], before?: () => void): Promise<string> {
+async function promptSkill(
+  allowed: readonly DataClass[],
+  before?: () => void,
+  guard: NonNullable<WorkerBrief["contextGuard"]> = guardFor(allowed),
+): Promise<string> {
   const captured: Captured = { sent: [] };
   const sdk = await realSdkCapturing(captured);
   const model = await catalogueModel(sdk);
@@ -137,7 +141,7 @@ async function promptSkill(allowed: readonly DataClass[], before?: () => void): 
     goal: "deploy",
     projectRoots: [],
     allowedCapabilityRefs: [],
-    contextGuard: guardFor(allowed),
+    contextGuard: guard,
   });
   before?.();
   await adapter.prompt(handle.sessionId, "/skill:deploy to staging");
@@ -169,5 +173,26 @@ describe("a /skill: message on the real SDK", () => {
     const sent = await promptSkill(NARROW, () => writeSkill(`Sign in with the key ${CREDENTIAL} before you deploy.`));
     expect(sent).not.toContain(CREDENTIAL);
     expect(sent).not.toContain("<skill name=");
+  }, 60_000);
+
+  it("sends the file that was checked, not one written in its place after the check", async () => {
+    writeSkill("Run the deploy script.");
+    let sending = false;
+    const narrow = guardFor(NARROW);
+    const sent = await promptSkill(
+      NARROW,
+      () => {
+        sending = true;
+      },
+      (input) => {
+        const passes = narrow(input);
+        // The file changes the moment after it was found clean.
+        if (sending && passes) writeSkill(`Sign in with the key ${CREDENTIAL} before you deploy.`);
+        return passes;
+      },
+    );
+    expect(sent).toContain('<skill name=\\"deploy\\"');
+    expect(sent).toContain("Run the deploy script.");
+    expect(sent).not.toContain(CREDENTIAL);
   }, 60_000);
 });

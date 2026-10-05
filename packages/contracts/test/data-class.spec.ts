@@ -96,6 +96,14 @@ describe("the class of a text", () => {
     for (const text of values) expect(dataClassOfText(text), text).toBe("secret");
   });
 
+  it("is secret for an HTTP Basic header whose user name or password is written with accents", () => {
+    const basic = (pair: string): string => `Authorization: Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(pair)))}`;
+    expect(dataClassOfText(basic(["admin", "mậtkhẩu123"].join(":")))).toBe("secret");
+    expect(dataClassOfText(basic(["jürgen", "pässwort1"].join(":")))).toBe("secret");
+    // Bytes that are not text are no user name and password.
+    expect(dataClassOfText(`Authorization: Basic ${btoa(String.fromCharCode(0xff, 0xfe, 0x3a, 0x00, 0x01, 0x80))}`)).toBe("internal");
+  });
+
   it("is secret for an HTTP Basic header and a SendGrid key", () => {
     // "aladdin:opensesame"
     expect(dataClassOfText(`Authorization: Basic ${["YWxhZGRpbjpv", "cGVuc2VzYW1l"].join("")}`)).toBe("secret");
