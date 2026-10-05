@@ -337,6 +337,11 @@ export interface TimelineMessage {
   role: "user" | "assistant" | "system" | "tool";
   blocks: Record<string, unknown>[];
   createdAt: string;
+  /**
+   * Present when the host wrote this message itself so a turn could run (`MessageRecord.hostWritten`). Its text is
+   * for the model; the transcript draws a quiet line from the host instead of the person's bubble.
+   */
+  hostWritten?: { kind: string; version: number };
 }
 
 export interface TimelineInstance {

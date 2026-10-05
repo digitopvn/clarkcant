@@ -130,23 +130,23 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 128830,
-      "sha256": "88877bc49e43ddb602b0e149828f0f53e34e5b06c030127e3d51be2bc25a7a94"
+      "bytes": 128914,
+      "sha256": "f0c3a18fb96fabc0c439de5b616ead130640cb70db1ec72af51657eb48dcbf92"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 147523,
-      "sha256": "c3eb0992e04e20c95ba321ba3ee0054b93309212f84b660a375220e331d38a15"
+      "bytes": 147847,
+      "sha256": "c6eb9dd4a0dfaee51d10c0473277a75499ffbd5d78b6cd1d1fdb40087cda3740"
     },
     {
       "path": "widget-development.md",
-      "bytes": 275538,
-      "sha256": "04aa92872ee581a05a7cace97e9b5dffff49b7da043714ac89987902862426ae"
+      "bytes": 287666,
+      "sha256": "98807c61ebd4f6718fd0ad5f5747e922e7959340a55f049f3977d05bf3e8f0d4"
     },
     {
       "path": "widget-development.vi.md",
-      "bytes": 332760,
-      "sha256": "472cedecbc82d47db1587ba047d036ecb5b9136c513be93505a8ee2b62c5eb24"
+      "bytes": 346418,
+      "sha256": "169f38ac3ae325aba706928eb61f82b53dab7f5b85ed2d520c8df28d390de211"
     },
     {
       "path": "widgets-and-extensions.md",

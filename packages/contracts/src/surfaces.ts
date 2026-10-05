@@ -889,6 +889,29 @@ export function assertBlockProvenance(
   return { ok: true };
 }
 
+/**
+ * What kind of user-role message the host wrote itself, rather than the person (`MessageRecord.hostWritten`).
+ *
+ * - `host-continuation`: after a person approves a command on a card, the node runs it and opens a new turn so the
+ *   model reads the outcome and carries on. That turn needs a user message to exist, but nobody typed it, so a client
+ *   draws it as a quiet line from the host — in its own words and language — and never as the person's bubble.
+ *
+ * Versioned: a record written now says `version: 1`. A reader that meets a version or kind it does not know still
+ * treats the message as host-written, so a newer node's marker never turns back into words put in the person's mouth.
+ */
+export const HOST_WRITTEN_MESSAGE_VERSION = 1;
+export const HOST_WRITTEN_MESSAGE_KINDS = ["host-continuation"] as const;
+export const hostWrittenMessageSchema = z.strictObject({
+  kind: z.enum(HOST_WRITTEN_MESSAGE_KINDS),
+  version: z.literal(HOST_WRITTEN_MESSAGE_VERSION),
+});
+export type HostWrittenMessage = z.infer<typeof hostWrittenMessageSchema>;
+
+/** Whether a stored message was written by the host rather than said by anyone in the conversation. */
+export function isHostWrittenMessage(message: { hostWritten?: unknown }): boolean {
+  return message.hostWritten !== undefined && message.hostWritten !== null;
+}
+
 export const messageRecordSchema = z.strictObject({
   messageId: z.string().min(1).max(128),
   conversationId: z.string().min(1).max(128),
@@ -916,6 +939,12 @@ export const messageRecordSchema = z.strictObject({
    * recorded.
    */
   origin: turnOriginSchema.optional(),
+  /**
+   * Set when the host wrote this user message itself so a turn could run, and absent on everything a person, a
+   * program, a peer or an automation said. The text stays what the model reads; a client renders the marker instead
+   * (`HostWrittenMessage`). Set only by the node's own code path, never from a body.
+   */
+  hostWritten: hostWrittenMessageSchema.optional(),
 });
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 

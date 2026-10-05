@@ -28,7 +28,7 @@ const MIN_NODE = [22, 19, 0];
 
 /** Providers the onboarding offers, and the variable that holds each one's key. */
 export const PROVIDERS = [
-  { id: "deepseek", label: "DeepSeek", keyVar: "DEEPSEEK_API_KEY", defaultModel: "deepseek-v4-flash" },
+  { id: "deepseek", label: "DeepSeek", keyVar: "DEEPSEEK_API_KEY", defaultModel: "deepseek-flash" },
   { id: "google", label: "Google Gemini", keyVar: "GEMINI_API_KEY", defaultModel: "" },
   { id: "openai", label: "OpenAI", keyVar: "OPENAI_API_KEY", defaultModel: "" },
   { id: "openrouter", label: "OpenRouter", keyVar: "OPENROUTER_API_KEY", defaultModel: "" },

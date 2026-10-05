@@ -2670,6 +2670,84 @@ cùng state như **Khôi phục**, và khi đó không còn gì để khôi ph�
     clark widget pack
     clark widget publish
 
+### Bắt đầu nhanh bên ngoài repository này
+
+`@clarkcant/widget-cli` (lệnh `clark`) và `@clarkcant/widget-sdk` được build từ repository này thành các package npm
+không cần bản checkout ClarkCant. **Trạng thái: chưa có phiên bản nào trên npm.** Workflow phát hành bên dưới đã có,
+nhưng cho tới khi nó chạy, cài từ registry sẽ thất bại; hãy cài các archive build từ bản checkout
+(xem [Trước khi phát hành](#trước-khi-phát-hành)).
+
+Trên một máy sạch có Node 22.19 trở lên và pnpm (`corepack enable pnpm`), trên macOS, Windows hoặc Linux:
+
+    mkdir my-widgets && cd my-widgets
+    pnpm init
+    pnpm add -D @clarkcant/widget-cli
+    pnpm exec clark widget init quick-notes --template pure-ui
+    pnpm exec clark widget test quick-notes
+    pnpm exec clark widget dev quick-notes      # in URL của dev host; Ctrl-C để dừng
+    pnpm exec clark widget pack quick-notes
+    npm publish quick-notes/dist/quick-notes-0.1.0.tgz
+
+- **Template.** `blank`, `form` và `dashboard` là một widget isolated tối giản. `pure-ui` (trình soạn thảo văn bản),
+  `media-tool`, `ai-generator`, `ui-with-service` và `connected-app` sao chép một ứng dụng tham chiếu mà chính các kiểm
+  thử của repository này giữ cho chạy được ([init](#init)). Tên thư mục trở thành đoạn cuối của package id
+  (`com.example.quick-notes`) và tên npm (`quick-notes`); hãy đổi tên, hoặc dùng scope của bạn, trước khi publish.
+- **SDK.** `pnpm add -D @clarkcant/widget-sdk` cung cấp các mô-đun ES an toàn cho trình duyệt kèm khai báo kiểu: `.`
+  chứa các hợp đồng và runtime cầu nối (`createWidgetRuntime`, `MessageEndpoint`, …), còn `./dom` gắn appearance của
+  host vào một phần tử (`bindAppearance`):
+
+      import { createWidgetRuntime } from "@clarkcant/widget-sdk";
+      import { bindAppearance } from "@clarkcant/widget-sdk/dom";
+
+  Dev host và node đã đưa runtime cho frame của package dưới dạng `window.clarkcantWidget`, nên các template không
+  cần import. Một package widget không được khai báo `dependencies` npm ([pack](#pack)): frame nào import SDK thì bundle
+  nó vào các file được phát hành, và giữ SDK là development dependency của project build ra frame đó.
+- **Test, dev, pack.** `test` chạy bộ conformance; `dev` phục vụ package trong host isolated cục bộ trên `127.0.0.1`;
+  `pack` ghi `dist/<name>-<version>.tgz` bằng `pnpm pack` và từ chối archive nào tự nó không qua được bộ kiểm tra.
+- **Publish lên npm không phải là được Marketplace index.** `npm publish` chỉ đưa archive lên registry npm. Marketplace
+  index các package npm mang keyword `clarkcant`, hoặc nhận một bản submit; `clark widget publish` chỉ chuẩn bị
+  directory entry đó ([publish](#publish)). Phát triển hay dùng một widget riêng tư không cần cả hai: một đường dẫn
+  local không cần tài khoản.
+
+#### Trước khi phát hành
+
+Từ một bản checkout, chạy `pnpm install` rồi `pnpm build:widget-tooling` sẽ ghi
+`dist/widget-tooling/archives/clarkcant-widget-cli-<version>.tgz` và `clarkcant-widget-sdk-<version>.tgz`. Cài chúng
+vào project thay cho các phiên bản trên registry:
+
+    pnpm add -D /path/to/clarkcant-widget-cli-<version>.tgz /path/to/clarkcant-widget-sdk-<version>.tgz
+
+`pnpm smoke:widget-tooling` làm toàn bộ việc này trên hệ điều hành hiện tại: nó pack cả hai package, cài vào một
+project trống bên ngoài repository, chạy `init` (blank và `pure-ui`), `test`, `pack`, các dev host cho widget, catalog
+và theme qua HTTP, rồi import và kiểm tra kiểu SDK.
+
+#### Cách build và phát hành các package
+
+Trong repository này cả hai package vẫn `private` và resolve tới mã nguồn TypeScript, như mọi workspace package khác.
+`tools/build-widget-tooling.mjs` sinh một thư mục package riêng cho từng package trong `dist/widget-tooling/`: mã được
+bundle bằng esbuild, các workspace package được nhúng vào và mọi import bên thứ ba được khai báo đúng phiên bản chính
+xác mà repository pin; các khai báo kiểu của SDK; các template của CLI (`templates/`) và các mô-đun trình duyệt của dev
+host dưới dạng bundle tự đủ (`runtime/`), được dev host đã cài phục vụ thẳng từ đĩa. `THIRD_PARTY_NOTICES.md` của CLI
+liệt kê mã bên thứ ba mà các bundle đó nhúng vào, kèm giấy phép của từng gói. `package.json` được sinh ra không chứa
+specifier `workspace:` nào và không có lifecycle script. `clark --version` in ra version của CLI đã cài.
+
+`.github/workflows/release-widget-tooling.yml` phát hành chúng. Mỗi lần chạy đều pack các archive một lần và chạy smoke
+với chính các archive đó trên Ubuntu, Windows và macOS với Node 22.19 và 24. Chỉ lần chạy từ tag
+`widget-tooling-v<version>` nêu version của `@clarkcant/widget-cli` mới publish: chính lần push tag đó, hoặc lần chạy
+thủ công từ tag đó có chọn `publish`. Mọi lần chạy khác, kể cả lần chạy thủ công từ một branch có chọn `publish`, đều
+dừng ở `npm publish --dry-run`.
+
+Trước khi publish bất cứ thứ gì, workflow so version của từng package với npm. Version mà npm chưa có sẽ được publish
+bằng `npm publish --provenance --access public`. Version npm đã có với cùng integrity của archive sẽ được bỏ qua, nên
+chạy lại chỉ publish phần còn thiếu. Version npm đã có nhưng nội dung khác sẽ làm workflow thất bại trước khi publish
+bất kỳ package nào, nên package đã thay đổi luôn cần version mới.
+
+Job publish chạy trong GitHub environment `npm-release`. Người bảo trì phải giới hạn deployment của environment đó vào
+các tag `widget-tooling-v*` và bắt buộc có người duyệt. Thông tin xác thực dự kiến là npm trusted publishing (OIDC): khi
+trusted publisher của từng package trên npmjs.com đã nêu repository và workflow này thì không cần secret npm nào. Version
+đầu tiên của một package, được publish trước khi có thể đặt trusted publisher cho nó, cần secret `NPM_TOKEN` của
+environment, và secret này chỉ được đưa cho bước publish.
+
 ### init
 
 Templates:
@@ -2693,6 +2771,10 @@ Templates:
 Hiện tại `clark widget init --template` nhận `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator`,
 `ui-with-service`, `media-tool` và `connected-app`. `editor`, `media` và MCP App
 adapter chưa được triển khai.
+
+Template tham chiếu không sao chép `package.json`, `LICENSE` và các README của chính ứng dụng, vì chúng mang danh tính npm
+của ứng dụng tham chiếu (ví dụ `@clarkcant/quick-notes`, §24.1): bản sao nhận một `package.json` đặt theo id của chính
+nó, một `LICENSE` MIT và README riêng.
 
 ### dev
 
@@ -2777,11 +2859,57 @@ Chạy conformance suite.
 
 ### pack
 
-Validate manifest, build immutable artifact, generate digest + metadata.
+Chạy conformance suite rồi build artifact cùng các digest. Khi package có `package.json`, pack còn build archive npm
+bằng `pnpm pack` vào `dist/<name>-<version>.tgz`, giải nén bằng chính bộ đọc của runtime, và từ chối nếu archive đã
+giải nén không tự pass conformance suite, không giữ cùng `clarkcant.json`, hoặc chứa file có dạng credential
+(`.npmrc`, `.env*`, `.dev.vars`, `.git-credentials`, `.pypirc`, private key, `node_modules`, `.git`). Vì vậy một danh sách `files` bỏ sót asset
+runtime bị pack chặn lại, chứ không phải trên máy người khác. Không có `package.json` thì package vẫn là package
+local/git và pack không ghi archive.
+
+`dist/artifact.json` (`schemaVersion: 2`) ghi ba digest, mỗi cái trả lời một câu hỏi khác nhau:
+
+| Field | Bao phủ | Ai kiểm tra |
+| --- | --- | --- |
+| `npm.integrity` | sha512 SRI của byte `.tgz` | npm registry và bước fetch của node |
+| `npm.contentDigest` | digest runtime của các file trong archive đã giải nén | node, sau khi giải nén đúng version npm; đây là `digest` của directory entry npm |
+| `authorDigest` | danh tính, version, definition, theme document và hash file của source | pack, để một version đã pack mà đổi byte bị từ chối; đây là `digest` của entry local |
+
+`pnpm pack` có tính tái lập: pack lại các file không đổi cho ra archive giống hệt từng byte. Pack lại một version
+mà author digest hoặc content digest của archive đã đổi sẽ bị từ chối; hãy tăng version.
+
+Quy tắc cho `package.json`, kiểm tra trước khi pack và nêu tên từng lỗi khi vi phạm:
+
+- `name` là tên package npm hợp lệ, và `version` bằng `version` trong `clarkcant.json`;
+- `license`, khi manifest có `publisher`, bằng `publisher.license`;
+- `keywords` gồm `clarkcant` và một keyword cho mỗi loại facet (`clarkcant-widget`, `clarkcant-service`,
+  `clarkcant-skill`, `clarkcant-prompt`, `clarkcant-theme`, `clarkcant-setup`, `clarkcant-driver`,
+  `clarkcant-voice`), là cách Marketplace tìm ra package;
+- một danh sách `files` tường minh, không rỗng;
+- không có `dependencies`, `optionalDependencies` hay `bundle(d)Dependencies`: package mang theo đúng thứ nó chạy;
+- không có script `preinstall`, `install` hay `postinstall`, và không có script `prepack`, `prepare` hay `postpack`:
+  pack không chạy code của package, và một archive do script sinh ra thì không ai dựng lại được từ source. Hãy đưa
+  sẵn các file được sinh ra vào package.
+
+`clark widget init` ghi một `package.json` đáp ứng các quy tắc này cho mọi template, đặt tên theo đoạn cuối của
+package id. Tên đó có thể đã có người dùng trên npm: hãy đổi tên, hoặc dùng scope của bạn (`@you/quick-notes`),
+trước khi publish. Pack cần `pnpm` (`corepack enable pnpm`). Thêm `package.json` vào một package đã pack sẽ đổi
+author digest của nó, vì file này trở thành một phần của package; hãy tăng version khi thêm.
 
 ### publish
 
-Publish package source/artifact rồi submit directory metadata. Directory không phải nơi duy nhất package có thể chạy: local/git source vẫn là first-class development path.
+Chuẩn bị directory entry; lệnh này không bao giờ upload gì. `dist/directory-entry.json` trỏ tới đúng version npm
+(`source: { kind: "npm", name, version }`) và `contentDigest` của archive khi pack đã build archive, hoặc tới thư mục
+của chính package cùng `authorDigest` trong trường hợp còn lại. `--source npm|local` chọn tường minh. Output nêu
+riêng ba kết quả — prepared: yes; published to npm: no; Marketplace submission: no — và in lệnh publish đúng archive
+đã được kiểm tra:
+
+    npm publish dist/<name>-<version>.tgz
+
+Hãy publish file đó thay vì chạy `npm publish` trong thư mục package, để registry phục vụ đúng các byte có integrity
+và content digest mà entry đã nêu. npm mặc định để package có scope (`@scope/name`) ở chế độ hạn chế, nên một package có
+scope muốn công khai phải khai báo `"publishConfig": { "access": "public" }` trong `package.json`, như các ứng dụng tham
+chiếu (§24); `npm publish <tarball>` đọc giá trị này từ archive. Sau đó Marketplace index các package npm mang keyword
+`clarkcant`, hoặc nhận một bản submit. Source local/git vẫn là development path first-class.
 
 Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
 từ chối version vi phạm quy tắc ở §20. File này là mốc so sánh nên cần được commit cùng source; nếu đã có
@@ -2907,11 +3035,13 @@ Developer:
       ↓
     clark widget pack
       ↓
-    artifact + digest
+    npm archive + integrity + content digest
       ↓
-    publish npm/git/release
+    clark widget publish        (chuẩn bị entry; không upload gì)
       ↓
-    clark widget publish
+    npm publish dist/<name>-<version>.tgz
+      ↓
+    Marketplace index keyword "clarkcant", hoặc nhận submit
       ↓
     directory validation
       ↓
@@ -3002,8 +3132,10 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   pin, state migration, text fallback, effect action. Các check cần frame đã render (keyboard, touch size,
   narrow/compact/expanded, reduced motion, voice/click parity) được báo `requires-dev-host` — **không** được
   báo pass chỉ vì có fixture.
-- `clark widget pack` — validate manifest, tính digest trên danh tính + nội dung, và từ chối pack lại một
-  version đã pack với digest khác (một version đổi byte là một package khác mang cùng số).
+- `clark widget pack` — validate manifest, tính author digest trên danh tính + nội dung, build archive npm khi
+  package có `package.json` (§16), ghi integrity và content digest runtime của nó, và từ chối pack lại một version
+  đã pack với digest khác (một version đổi byte là một package khác mang cùng số). Node fetch đúng version npm đó
+  tính ra cùng content digest.
 - `clark widget dev` — dev host ở §16: hot reload qua SSE, fixtures, viewport switcher (320px là lựa chọn
   thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
@@ -3019,6 +3151,8 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   với đủ field mà §18 yêu cầu và digest của artifact đã pack (đọc từ `dist/artifact.json`, không tính lại —
   hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
   người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.
+  Khi có archive npm, entry nêu đúng version npm và content digest của archive, và output in lệnh `npm publish`
+  cho archive đó; việc publish lên npm là bước của tác giả.
   Đường local/git/npm vẫn là first-class nên không cần account để chạy widget của mình.
 - **Directory search** — đã có ở mức đọc một index: `CC_DIRECTORY_INDEX` trỏ tới một file JSON các entry theo
   §18, và `search_directory` trả về card `marketplace-results` hiển thị **source, version, digest và risk lane**,
@@ -3304,6 +3438,14 @@ nào. Người dùng mở một tệp văn bản, sửa, lưu và nhờ Clark vi
 nằm ở đâu. `clark widget init --template pure-ui` tạo một package mới từ bản sao của nó
 ([§16](#16-developer-cli-target)).
 
+**Gói npm.** Ứng dụng được đóng gói thành **Quick Notes**, `@clarkcant/quick-notes` 1.0.0, có `package.json`, `LICENSE`
+Apache-2.0 và README riêng. `clark widget pack` tạo `dist/clarkcant-quick-notes-1.0.0.tgz`, và `publish` chuẩn bị
+directory entry npm ([§16](#16-developer-cli-target)). Gói **chưa được phát hành lên npm**: tài khoản phát hành phải sở
+hữu scope `@clarkcant` trước.
+[reference-packages-npm-install.spec.ts](../apps/runtime/test/reference-packages-npm-install.spec.ts) đóng gói một bản
+sao bằng CLI, cài đúng archive đó qua `POST /packages/install` từ một registry cục bộ trả lời như npm, và từ chối một
+archive bị sửa.
+
 **Package.** `clarkcant.json` là manifest schema phiên bản 2 cho mọi nền tảng và cho web. `widget.json` nhận hai
 prop: `title`, và `rewriteBinding` là id của binding `agent` mà trình soạn thảo được phép bấm. `stateSchema` chỉ nhận
 `file`, `base` (hai `ArtifactRef`), `draft` và `draftTooLarge`, với `additionalProperties: false`. Các quy tắc là hàm
@@ -3426,6 +3568,13 @@ trên đĩa hay file handle nào đi qua bridge.
 `examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), thuộc [#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet
 giao diện cách ly và không có service. Package cho thấy một widget làm việc với tệp, giữ một tài liệu lớn trong giới
 hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
+
+**Gói npm.** Ứng dụng được đóng gói thành **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, có `package.json`
+và các README riêng; package id vẫn là `com.example.spreadsheet`. `clark widget pack` tạo
+`dist/clarkcant-csv-explorer-1.0.0.tgz`, và `publish` chuẩn bị directory entry npm. Gói **chưa được phát hành lên
+npm**: tài khoản phát hành phải sở hữu scope `@clarkcant` trước, và giấy phép đang chờ người bảo trì quyết định (các
+manifest khai báo Apache-2.0 trong khi tệp `LICENSE` chứa văn bản MIT). Cùng
+[bài test cài đặt](../apps/runtime/test/reference-packages-npm-install.spec.ts) như §24.1 kiểm tra gói này.
 
 - **Tệp.** CSV và TSV được nhập qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và đọc theo
   từng đoạn 256 KiB; widget không bao giờ thấy đường dẫn. Xuất ghi một tệp mới qua `create`, `write`, `finalize` và
@@ -3585,6 +3734,13 @@ chuyển động. Sau mỗi hành trình, key được tìm trong trang, bridge,
 [#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet giao diện cách ly
 và một service. Package dựng lại một tệp WAV người dùng chọn, với mức âm lượng mới và phần cắt, thành một job mà widget
 theo dõi được và dừng được. `clark widget init --template media-tool` tạo package mới từ package này.
+
+**Gói npm.** Ứng dụng được đóng gói thành **Media Converter**, `@clarkcant/media-converter` 1.0.0, có `package.json`,
+`LICENSE` Apache-2.0 và các README riêng. `clark widget pack` tạo `dist/clarkcant-media-converter-1.0.0.tgz`, và
+`publish` chuẩn bị directory entry npm. Gói **chưa được phát hành lên npm**: tài khoản phát hành phải sở hữu scope
+`@clarkcant` trước. Cài gói không cần container engine, và cùng
+[bài test cài đặt](../apps/runtime/test/reference-packages-npm-install.spec.ts) như §24.1 cài gói này; muốn dựng âm
+thanh thì cần một container engine chạy được container Linux.
 
 - **Tệp theo tham chiếu.** Widget chọn tệp qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và
   chỉ giữ `ArtifactRef` của nó. Binding `render` của widget gửi cho service mã artifact của tệp, và service đọc dữ liệu

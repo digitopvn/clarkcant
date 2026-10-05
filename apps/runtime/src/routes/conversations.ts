@@ -16,6 +16,7 @@ import {
   type ResourceProfile,
   type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
+  HOST_WRITTEN_MESSAGE_VERSION,
   type TurnOrigin,
   VIEW_STATE_WRITE_VARIANT,
   WIDGET_PERFORM_HEADER,
@@ -2351,6 +2352,9 @@ export async function decideApprovalForNode(
     // The turn carries on with the plan of whoever asked for the command, so it keeps their origin: approving one
     // effect is not approving the rest. A card without an origin was raised by the person's own turn.
     origin: askedBy ?? "person",
+    // Nobody typed the sentence above: it exists so the turn has a message to answer. Marked, so the transcript draws
+    // a quiet line from the host instead of a bubble of words the person never said.
+    hostWritten: { kind: "host-continuation", version: HOST_WRITTEN_MESSAGE_VERSION },
   });
   // Indexed where the messages were written, so a continuation is findable like anything else said.
   indexMessages(services.search, {

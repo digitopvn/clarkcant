@@ -1,4 +1,12 @@
-import { type DataClass, type Instant, type MessageBlock, type MessageRecord, dataClassOfText, redactSecrets } from "@clarkcant/contracts";
+import {
+  type DataClass,
+  type Instant,
+  type MessageBlock,
+  type MessageRecord,
+  dataClassOfText,
+  isHostWrittenMessage,
+  redactSecrets,
+} from "@clarkcant/contracts";
 import { readTranscriptFrom, type ToolDefinition } from "@clarkcant/pi-adapter";
 import {
   type Database,
@@ -408,7 +416,7 @@ export function indexMessages(
   let indexed = 0;
   for (const message of input.messages) {
     const text = textOfMessage(message);
-    if (text === "") continue;
+    if (text === "" || isHostWrittenMessage(message)) continue;
     indexMessage(deps, { message, conversationId: input.conversationId, createdAt: input.at });
     indexed += 1;
   }
@@ -419,6 +427,8 @@ export function indexMessage(
   deps: SessionSearchDeps,
   input: { message: MessageRecord; conversationId: string; createdAt: Instant },
 ): void {
+  // A sentence the host wrote so a turn could run was said by nobody, so search never offers it as something said.
+  if (isHostWrittenMessage(input.message)) return;
   const text = textOfMessage(input.message);
   if (text === "") return;
   indexHistory(deps.db, {

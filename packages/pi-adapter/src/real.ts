@@ -174,6 +174,16 @@ export interface RealPiAdapterOptions {
 type SdkModelRuntime = Awaited<ReturnType<SdkModule["ModelRuntime"]["create"]>>;
 type SdkModel = ReturnType<SdkModelRuntime["getModels"]>[number];
 
+/**
+ * Model ids a provider retired, mapped to the catalogue id that replaced them.
+ *
+ * A saved pick or an `.env` written before the rename keeps working instead of failing every turn: Pi 1.0 dropped
+ * DeepSeek's retired `deepseek-v4-flash` alias in favour of `deepseek-flash` (V4.1 Flash).
+ */
+const RETIRED_MODEL_IDS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  deepseek: { "deepseek-v4-flash": "deepseek-flash" },
+};
+
 /** One key per provider and model id; the separator cannot appear in either. */
 function modelKey(provider: string, id: string): string {
   return `${provider}\u0000${id}`;
@@ -286,7 +296,9 @@ export class RealPiAdapter implements PiAdapter {
         `no models are available for provider "${wanted.provider}"; available providers: ${providers.join(", ")}`,
       );
     }
-    const model = available.find((candidate) => candidate.id === wanted.id);
+    const model =
+      available.find((candidate) => candidate.id === wanted.id) ??
+      available.find((candidate) => candidate.id === RETIRED_MODEL_IDS[wanted.provider]?.[wanted.id]);
     if (model === undefined) {
       const ids = available.map((candidate) => candidate.id).join(", ");
       throw new Error(

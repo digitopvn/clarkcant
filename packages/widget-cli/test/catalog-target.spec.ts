@@ -49,6 +49,13 @@ describe("the catalog frame's page", () => {
     expect(html).toContain('id="cc-catalog-root"');
   });
 
+  it("loads the bundled runtime an installed CLI ships when the dev host names it", () => {
+    const html = catalogFrameHtml({ definitionId: "canvas.note@1", fixtureId: "default" }, "/runtime/catalog-runtime.js");
+
+    expect(html).toContain('<script type="module" src="/runtime/catalog-runtime.js"></script>');
+    expect(html).not.toContain("/src/catalog-runtime.tsx");
+  });
+
   it("cannot be closed early by a value that contains a tag", () => {
     const html = catalogFrameHtml({ definitionId: "canvas.note@1", fixtureId: "</script><script>alert(1)</script>" });
 

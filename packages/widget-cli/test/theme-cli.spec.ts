@@ -43,7 +43,7 @@ describe("theme authoring through the shared clark CLI", () => {
     const artifact = JSON.parse(readFileSync(file, "utf8"));
     const manifest = JSON.parse(readFileSync(join(path, "clarkcant.json"), "utf8"));
     expect(Object.keys(artifact.themeDigests)).toEqual([manifest.facets[0].id]);
-    expect(artifact.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(artifact.authorDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(artifact).not.toHaveProperty("definitionDigest");
     expect(artifact.unverifiedChecks).toContain("theme-browser");
     expect(await runCli(["theme", "pack", path])).toBe(0);

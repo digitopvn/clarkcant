@@ -33,7 +33,7 @@
   ],
   "publisher": {
     "id": "clarkcant",
-    "sourceUrl": "https://github.com/digitopvn/clarkcant",
+    "sourceUrl": "https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/text-editor",
     "license": "Apache-2.0"
   },
   "dependencies": []

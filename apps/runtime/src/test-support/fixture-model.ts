@@ -573,8 +573,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The browser suite's directory lists one version of each package, so nothing installed ever has an update and the
      * update notice could never be drawn. This runs the node's own check once, against a directory that offers the
      * next patch of every installed package from npm. The versions are not in the real directory, which is the point:
-     * "Update" then reaches the install route and is refused by name, and nothing installed changes. The Pi half is
-     * answered with a version that is not newer, so it says nothing.
+     * "Update" then reaches the install route and is refused by name, and nothing installed changes.
      */
     if (/kiểm tra bản cập nhật thử/i.test(input.text)) {
       const services = deps.services();
@@ -586,7 +585,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         now,
         newId: services.conductor.newId,
       });
-      const report = await checkForUpdates({
+      const report = checkForUpdates({
         services,
         installedPackages: installed,
         directory: installed.map((view) => ({
@@ -598,8 +597,6 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           hostApi: { min: HOST_API_VERSION, max: HOST_API_VERSION },
           platforms: platform === undefined ? [] : [platform],
         })),
-        piInstalledVersion: "1.0.0",
-        fetchImpl: async () => new Response(JSON.stringify({ version: "1.0.0" }), { status: 200 }),
         now,
       });
       const reply = `Fixture: đã kiểm tra bản cập nhật thử, ${String(report.packageUpdates)} gói có bản mới.`;

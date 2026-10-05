@@ -641,8 +641,9 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   đó, nên lần bấm cạnh lời cảnh báo chính là bước xác nhận. Khi không có hoặc có nhiều hơn một, Clark nói rõ và không
   ghi gì. Clark không tự trả lời được: MCP, relay WebSocket và `clarkcant api` từ chối route này, còn `control_app`
   không gọi được nó, vì một agent tự nói được lần push của chính nó đã thành công thì có thể tự báo là mình đã xong.
-- **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
-  so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
+- **Thông báo cập nhật cho gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ so
+  version đã cài với directory index. Pi SDK không được báo: nó được pin và đóng gói cùng ClarkCant, nên hộp thư không
+  có gì để làm với nó, và các thông báo cập nhật Pi cũ được rút đi. Nội dung nói version
   hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Cập nhật, Xem trong Cài đặt và Bỏ qua phiên bản
   này được mô tả ở trên; bản đã bỏ qua ở đó, hoặc bản cũ hơn, sẽ không được báo lại.
 - **Thông báo ngoài ứng dụng khi cửa sổ không có focus hoặc ở chế độ thu nhỏ/orb** (#171): trên desktop là OS
