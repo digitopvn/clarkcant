@@ -274,7 +274,7 @@ export function ArtifactBlock({
             {state.message}
           </p>
         ) : (
-          <div data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
+          <div className="cc-card-stack" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
             {/*
               An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
               file and a retention window passed, which calls for asking for it again rather than for looking for

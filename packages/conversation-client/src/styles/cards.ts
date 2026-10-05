@@ -459,6 +459,8 @@ textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-m
 .cc-form-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--cc-space-sm); }
 .cc-form-foot > p { flex: 1 1 200px; margin: 0; }
 /* A closed form's answer is what was said, so it reads as text rather than as a chip that looks pressable. */
+/* A group inside a card body that keeps the body's rhythm between its own parts. */
+.cc-card-stack { display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; }
 .cc-form-answer { font-size: var(--cc-text-body-md); color: var(--cc-text); overflow-wrap: anywhere; white-space: pre-wrap; }
 .cc-form-foot [data-form-result="refused"], .cc-form-foot [data-form-result="invalid"] { color: var(--cc-danger); }
 .cc-search-row { display: flex; gap: var(--cc-space-sm); align-items: center; }
