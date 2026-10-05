@@ -87,6 +87,33 @@ test("the library opens from Extensions and the conversation stays mounted", asy
   await expect(line).toHaveAccessibleName(/dataset/);
 });
 
+test("on a phone every catalog card fits inside the library", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openLibraryFromExtensions(page);
+  const grid = page.locator("[data-widget-grid]");
+  await expect(grid.locator("[data-widget-card]").first()).toBeVisible({ timeout: 20_000 });
+  // A chart drawn at its own width used to size the one column, so every card ran past the right edge of the screen.
+  // Polled: the surface rises into place and the charts measure themselves once it has.
+  await expect
+    .poll(() =>
+      grid.evaluate((element) =>
+        Math.max(
+          element.scrollWidth - element.clientWidth,
+          ...[...element.querySelectorAll("[data-widget-card]")].map((card) => card.getBoundingClientRect().right - window.innerWidth),
+        ),
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  // The families are one row that scrolls, not seven lines of chips above the first widget.
+  const facetTops = await page.locator("[data-widget-library-facet]").evaluateAll((facets) => new Set(facets.map((facet) => Math.round(facet.getBoundingClientRect().top))).size);
+  expect(facetTops).toBe(1);
+  // The last family is still reachable by scrolling the row.
+  const last = page.locator("[data-widget-library-facet]").last();
+  await last.scrollIntoViewIfNeeded();
+  await last.click();
+  await expect(last).toHaveAttribute("aria-pressed", "true");
+});
+
 test("the terminal is listed as a host card, described and never opened from the library", async ({ page }) => {
   await openLibraryFromExtensions(page);
   const host = page.locator("[data-widget-provenance='host']");

@@ -849,6 +849,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-library-facets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); padding: var(--cc-space-sm) var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-widget-library-facet { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-button); border: var(--cc-line, 1px solid) var(--cc-border); background: transparent; color: inherit; }
 .cc-widget-library-facet[data-selected="true"] { border-color: var(--cc-accent); }
+.cc-widget-library-facet:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
 .cc-widget-library-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--cc-space-lg); }
 /* Close stays in the corner whether the search field or a widget's name fills the row beside it. */
 .cc-widget-library-head > [data-widget-library-close] { margin-left: auto; }
@@ -886,6 +887,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cc-space-md); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 /* Cards in one row share its height, so the row reads as a row and every source line sits on the same baseline. */
 .cc-widget-card { margin: 0; display: flex; }
+/* A card is as wide as its column: a chart's own width must not size the column, or one wide preview pushes the
+   single phone column past the screen edge. */
+.cc-widget-card, .cc-widget-card-btn { min-width: 0; }
 .cc-widget-card-btn { flex: 1; display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; transition: border-color var(--cc-motion-micro) var(--cc-motion-easing); }
 .cc-widget-card-btn:hover { border-color: color-mix(in oklab, var(--cc-text) 24%, var(--cc-border)); }
 .cc-widget-card-btn:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
@@ -906,8 +910,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 /* A 320 px viewport is a supported width, not a degraded one: one column, and the surface still fits. */
 @media (max-width: 520px) {
   .cc-widget-library { width: calc(100vw - 12px); max-height: calc(100vh - 16px); }
-  .cc-widget-grid { grid-template-columns: 1fr; }
+  .cc-widget-grid { grid-template-columns: minmax(0, 1fr); }
   .cc-widget-library-head { flex-wrap: wrap; }
+  /*
+   * The families are one row that scrolls sideways, fading at its end to say there is more. Wrapped, twenty-odd of
+   * them took seven lines, and the first widget started below the fold of a phone.
+   */
+  .cc-widget-library-facets {
+    flex: none; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--cc-space-xl)), transparent);
+    padding-inline-end: var(--cc-space-xl);
+  }
+  .cc-widget-library-facets::-webkit-scrollbar { display: none; }
+  .cc-widget-library-facet { flex: none; white-space: nowrap; }
 }
 
 /* ------------------------------------------------------------------ *
