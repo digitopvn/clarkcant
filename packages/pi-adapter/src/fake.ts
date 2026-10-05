@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { Instant } from "@clarkcant/contracts";
 
+import { guardToolResult } from "./tool-result-guard.ts";
+
 import type {
   ModelCatalogue,
   PiExtension,
@@ -253,7 +255,8 @@ export class FakePiAdapter implements PiAdapter {
       brief,
       // The tools a session is created with are registered with it and active, as the real adapter's are; a script can
       // call one until `setActiveTools` narrows it away.
-      tools: new Map((brief.customTools ?? []).map((tool) => [tool.name, tool])),
+      // Each wrapped in the brief's result guard exactly as the real adapter wraps them, so a test drives the one path.
+      tools: new Map((brief.customTools ?? []).map((tool) => [tool.name, guardToolResult(tool, brief.toolResultGuard)])),
       activeTools: [...new Set((brief.customTools ?? []).map((tool) => tool.name))],
       listeners: new Set(),
       script: this.#options.script ?? [],

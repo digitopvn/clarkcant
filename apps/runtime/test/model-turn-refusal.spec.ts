@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ConversationId, Principal } from "@clarkcant/contracts";
+import { type ConversationId, type DataClass, type Principal, ContractViolation } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
 
 import { createModelTurn } from "../src/model-turn.ts";
@@ -56,6 +56,7 @@ async function build(options: {
   language?: "vi" | "en";
   fallbacks?: readonly { provider: string; id: string }[];
   chooseAfterBoot?: boolean;
+  allowed?: (model: { provider: string; id: string }) => readonly DataClass[];
 }) {
   const adapter = new RefusingAdapter({ script: ["ok"] });
   let preferred: typeof CHOSEN | undefined = options.chooseAfterBoot === true ? undefined : CHOSEN;
@@ -66,6 +67,7 @@ async function build(options: {
     model: () => preferred,
     ...(options.fallbacks === undefined ? {} : { fallbackModels: async () => options.fallbacks ?? [] }),
     ...(options.language === undefined ? {} : { language: () => options.language ?? "en" }),
+    ...(options.allowed === undefined ? {} : { allowedDataClasses: options.allowed }),
   });
   if (turn === undefined) throw new Error("the model turn was not built");
   // Chosen after the node started: what the person sees must follow the choice, not the boot configuration.
@@ -160,5 +162,42 @@ describe("falling back when the chosen model refuses", () => {
     expect(message).toContain("openai/gpt-6: quota exceeded (HTTP 429)");
     expect(message).toContain("deepseek/deepseek-v4-flash: insufficient balance (HTTP 402)");
     expect(message).toContain("Your message is saved");
+  });
+});
+
+describe("falling back to a model that may not receive the message", () => {
+  it("does not send it there, and says both why the chosen model did not answer and why the fallback was not sent it", async () => {
+    const { adapter, ask } = await build({
+      fallbacks: [{ provider: "openai", id: "gpt-6" }],
+      // The fallback may not receive confidential data, and the message carries an email address.
+      allowed: (model) => (model.provider === "openai" ? ["public", "internal"] : ["public", "internal", "confidential"]),
+    });
+    adapter.refusing.set("anthropic/claude-opus-5-5", REFUSAL);
+    const cause = await ask("gửi báo cáo cho duy@example.com").then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+
+    expect(cause).toBeInstanceOf(ContractViolation);
+    const contract = (cause as ContractViolation).contract;
+    expect(contract.code).toBe("MODEL_DATA_CLASS_UNAVAILABLE");
+    expect(contract.detail).toMatchObject({ dataClass: "confidential", model: "openai/gpt-6", sent: false });
+    expect((cause as Error).message).toContain("The chosen model did not answer");
+    expect((cause as Error).message).toContain(REFUSAL);
+    expect((cause as Error).message).toContain("openai/gpt-6 may not receive confidential data");
+    // Only the chosen model was prompted; the fallback never was, and nothing fell further past the boundary.
+    expect(adapter.prompted).toEqual(["anthropic/claude-opus-5-5"]);
+  });
+
+  it("answers an ordinary message on a fallback whose list names only public data", async () => {
+    const { adapter, ask } = await build({
+      fallbacks: [{ provider: "openai", id: "gpt-6" }],
+      // Routing would pass this model over for internal work; the send boundary holds back only confidential and secret.
+      allowed: (model) => (model.provider === "openai" ? ["public"] : ["public", "internal", "confidential"]),
+    });
+    adapter.refusing.set("anthropic/claude-opus-5-5", REFUSAL);
+    const reply = await ask();
+    expect(reply.fallback?.from).toBe("anthropic/claude-opus-5-5");
+    expect(adapter.prompted).toEqual(["anthropic/claude-opus-5-5", "openai/gpt-6"]);
   });
 });

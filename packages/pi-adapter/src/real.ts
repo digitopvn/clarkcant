@@ -10,6 +10,8 @@ import { NotImplementedError, type ModelCatalogue,
   type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ProviderAuthEntry, type ProviderSignInInteraction,
   type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
+import { guardToolResult } from "./tool-result-guard.ts";
+import { contextGuardOverrides, readSkillBody, skillCheckedText } from "./context-guard-overrides.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -155,8 +157,12 @@ export interface RealPiAdapterOptions {
    *
    * The text is appended as a section inside the system prompt the SDK composed, never substituted for
    * it — see `personal-instructions.ts`.
+   *
+   * Called with the id of the session whose run is starting (`undefined` when the SDK does not say), so a host
+   * that checks the text against that session's model before it prompts can hand back exactly the value it
+   * checked, rather than whatever the preference holds a moment later.
    */
-  personalInstructions?: () => string | undefined;
+  personalInstructions?: (sessionId: string | undefined) => string | undefined;
   /**
    * Load nothing from the machine into a session: no extension, skill, prompt template, theme or instructions file
    * (`AGENTS.md`/`CLAUDE.md`) the SDK would otherwise discover under `cwd` or `agentDir`.
@@ -585,14 +591,20 @@ export class RealPiAdapter implements PiAdapter {
     // Both `cwd` and `agentDir` are required by the SDK's option type, and omitting
     // `agentDir` makes `reload()` throw deep inside the loader — which the P0.1 probe
     // caught rather than a user.
+    //
+    // A brief with a context guard gets a loader of its own, built with that guard: what it may load is decided for
+    // this session's model, and a loader shared with a session on another model would hold every session to whichever
+    // guard built it. The loader is reloaded for every session anyway, so a new one costs no extra read.
+    const guard = brief.contextGuard;
     const loader =
-      this.#loader ??
+      (guard === undefined ? this.#loader : undefined) ??
       new sdk.DefaultResourceLoader({
         cwd: this.#options.cwd,
         agentDir: this.#options.agentDir ?? sdk.getAgentDir(),
         ...(this.#options.isolated === true
           ? { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true }
           : {}),
+        ...(guard === undefined ? {} : contextGuardOverrides(guard)),
         /*
          * The personal-instructions section, registered as a trusted inline extension.
          *
@@ -616,12 +628,19 @@ export class RealPiAdapter implements PiAdapter {
                   name: "clark-personal-instructions",
                   hidden: true,
                   factory: (api: {
-                    on: (event: string, handler: (event: { systemPrompt: string }) => { systemPrompt: string }) => void;
+                    on: (
+                      event: string,
+                      handler: (
+                        event: { systemPrompt: string },
+                        ctx?: { sessionManager?: { getSessionId?: () => string } },
+                      ) => { systemPrompt: string },
+                    ) => void;
                   }) => {
-                    api.on("before_agent_start", (event) => ({
+                    api.on("before_agent_start", (event, ctx) => ({
                       systemPrompt: composePersonalInstructions({
                         base: event.systemPrompt,
-                        text: this.#options.personalInstructions?.(),
+                        // The SDK's session id is the one `createWorkerSession` returned for this session.
+                        text: this.#options.personalInstructions?.(ctx?.sessionManager?.getSessionId?.()),
                       }),
                     }));
                   },
@@ -629,7 +648,7 @@ export class RealPiAdapter implements PiAdapter {
               ],
             }),
       } as never);
-    this.#loader = loader;
+    if (guard === undefined) this.#loader = loader;
     await loader.reload();
 
     const selection = await this.#resolveModel(sdk, brief.model ?? this.#options.model);
@@ -684,6 +703,15 @@ export class RealPiAdapter implements PiAdapter {
      * filesystem surface it has, and they re-check containment in `scoped-fs.ts` before they touch anything.
      */
     const builtinTools = scopedToRoots ? [] : [...(this.#options.builtinTools ?? [])];
+    /*
+     * The SDK's own tools hand their results to the model directly, past the wrapper every tool here goes through, so a
+     * session whose results are guarded cannot have them: refused by name rather than run with a hole in its guard.
+     */
+    if (brief.toolResultGuard !== undefined && builtinTools.length > 0) {
+      throw new Error(
+        `a session whose tool results are guarded cannot run the SDK's own tools (${builtinTools.join(", ")}): their results would reach the model unchecked`,
+      );
+    }
 
     const thinkingLevel = brief.thinkingLevel ?? this.#options.model?.thinkingLevel;
     const { session } = await sdk.createAgentSession({
@@ -714,7 +742,7 @@ export class RealPiAdapter implements PiAdapter {
        * Only this line keeps the four `clarkcant_*` tools reachable while the built-ins stay out.
        */
       tools: [...builtinTools, ...customTools.map((tool) => tool.name)],
-      customTools: customTools.map((tool) => toSdkTool(sdk, tool)),
+      customTools: customTools.map((tool) => toSdkTool(sdk, guardToolResult(tool, brief.toolResultGuard))),
     });
 
     this.#counter += 1;
@@ -826,7 +854,51 @@ export class RealPiAdapter implements PiAdapter {
   }
 
   async steer(sessionId: string, text: string): Promise<void> {
-    await this.#require(sessionId).session.steer(text);
+    const entry = this.#require(sessionId);
+    await entry.session.steer(this.#skillCommandChecked(entry, text));
+  }
+
+  /**
+   * A message as it may be handed to the SDK's prompt or steer, which expand a leading `/skill:<name>` into the skill's
+   * file read from disk at that moment.
+   *
+   * The loader checked every skill's file when the session was created, but the file can change after that. So for a
+   * session with a context guard, the file is read and checked again now, and the expansion is written here from the
+   * bytes that were checked, in the SDK's own form: the SDK is handed the finished text and reads nothing itself, so a
+   * file swapped after the check is never what is sent. A skill whose file fails, or can no longer be read, is not
+   * expanded: the message goes as typed, with a space in front so the SDK does not take it for a command.
+   * A message that names no skill the session knows is passed through by the SDK as typed already.
+   */
+  #skillCommandChecked(
+    entry: {
+      brief: WorkerBrief;
+      loader: {
+        getSkills(): { skills: readonly { name: string; description: string; filePath: string; baseDir: string }[] };
+      };
+    },
+    text: string,
+  ): string {
+    const guard = entry.brief.contextGuard;
+    if (guard === undefined || !text.startsWith("/skill:")) return text;
+    const end = text.indexOf(" ");
+    const name = end === -1 ? text.slice("/skill:".length) : text.slice("/skill:".length, end);
+    const args = end === -1 ? "" : text.slice(end + 1).trim();
+    const skill = entry.loader.getSkills().skills.find((candidate) => candidate.name === name);
+    if (skill === undefined) return text;
+    const file = readSkillBody(skill.filePath);
+    let allowed: boolean;
+    try {
+      // The same text the loader checked, as the file is now.
+      allowed = file !== undefined && guard({ source: `skill:${skill.name}`, text: skillCheckedText(skill, file) });
+    } catch {
+      // A guard that cannot decide does not let the file through.
+      allowed = false;
+    }
+    if (!allowed || file === undefined) return ` ${text}`;
+    // Without the SDK's own reader of a skill's heading the file goes whole: all of it was checked.
+    const body = (this.#sdk?.stripFrontmatter?.(file) ?? file).trim();
+    const block = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
+    return args === "" ? block : `${block}\n\n${args}`;
   }
 
   async abort(sessionId: string, reason: string): Promise<void> {
@@ -880,7 +952,8 @@ export class RealPiAdapter implements PiAdapter {
    */
   async prompt(sessionId: string, text: string): Promise<void> {
     const entry = this.#require(sessionId);
-    await this.#bounded(sessionId, () => entry.session.prompt(text));
+    const checked = this.#skillCommandChecked(entry, text);
+    await this.#bounded(sessionId, () => entry.session.prompt(checked));
   }
 
   hasQueuedMessages(sessionId: string): boolean {

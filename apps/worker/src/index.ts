@@ -22,8 +22,23 @@
 
 import { createHash } from "node:crypto";
 
-import { type Evidence, type Instant, runRecordSchema, type RunRecord } from "@clarkcant/contracts";
-import type { PiAdapter, ToolDefinition, WorkerBrief, WorkerEvent, WorkerUsage } from "@clarkcant/pi-adapter";
+import {
+  type DataClass,
+  type Evidence,
+  type Instant,
+  checkSendBoundary,
+  dataClassSchema,
+  runRecordSchema,
+  type RunRecord,
+} from "@clarkcant/contracts";
+import type {
+  PiAdapter,
+  ToolDefinition,
+  ToolResultGuard,
+  WorkerBrief,
+  WorkerEvent,
+  WorkerUsage,
+} from "@clarkcant/pi-adapter";
 import { z } from "zod";
 
 /** Evidence is capped by the contract; one slot is reserved for a truncation note. */
@@ -68,6 +83,12 @@ export const workerBriefEnvelopeSchema = z.strictObject({
       thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
     })
     .optional(),
+  /**
+   * The data classes the brief's model may be sent, as the host read them from its profiles. The worker holds its own
+   * sends to them: the goal and guidance before the first prompt, and every tool result before the model reads it.
+   * Absent means a host that predates the boundary, and nothing is checked here.
+   */
+  allowedDataClasses: z.array(dataClassSchema).max(4).optional(),
   /** Set when this run retries an earlier one, so lineage is never lost. */
   replacesRunId: z.string().min(1).max(128).optional(),
   /**
@@ -264,6 +285,32 @@ export async function runWorker(
   let sessionId = "";
 
   /*
+   * The send boundary, held here as well as by the host: the host checked the goal and guidance before it started this
+   * process, and checks them again below before the first prompt; only this process sees what a tool returns, so a result
+   * the model may not receive is replaced, before the model reads it, by a note that it was withheld. The replacing is
+   * the adapter's, through the brief's `toolResultGuard`, so it covers every tool the session holds — these, the context
+   * readers and the scoped filesystem tools the adapter binds to the roots — on one path, an image dropped with the text.
+   * The evidence keeps its digest of the real output but quotes none of it.
+   */
+  const allowed = envelope.allowedDataClasses;
+  const withheldClass = (text: string): DataClass | undefined => {
+    if (allowed === undefined) return undefined;
+    const check = checkSendBoundary({ allowed, texts: [text] });
+    return check.ok ? undefined : check.dataClass;
+  };
+  const toolResultGuard: ToolResultGuard = ({ text }) => {
+    const dataClass = withheldClass(text);
+    return dataClass === undefined
+      ? { withheld: false }
+      : {
+          withheld: true,
+          text:
+            `[The result of this call carries ${dataClass} data, which this run's model may not receive, so it was withheld ` +
+            "from you. The call itself ran. Report that the result was withheld for its data class and continue without it.]",
+        };
+  };
+
+  /*
    * The permitted tools, wrapped so each call leaves evidence, and handed over when the session is created.
    *
    * At creation rather than added afterwards: a real session fixes its tool registry when it is created, and a tool
@@ -283,11 +330,15 @@ export async function runWorker(
         if (wrote !== undefined && (outputs.has(wrote.path) || outputs.size < MAX_OUTPUTS)) {
           outputs.set(wrote.path, wrote.sha256);
         }
+        const withheld = withheldClass(result.text);
         observed.push({
           kind: tool.proves,
           ref,
           digest: digestOf([tool.name, stableJson(params), result.text]),
-          summary: `${tool.name} reported: ${truncate(redactSecrets(result.text, deps.secrets), SUMMARY_OUTPUT_CHARS)}`,
+          summary:
+            withheld === undefined
+              ? `${tool.name} reported: ${truncate(redactSecrets(result.text, deps.secrets), SUMMARY_OUTPUT_CHARS)}`
+              : `${tool.name} reported ${withheld} data, withheld from the model`,
           verdict: "verified",
           observedAt: now(),
         });
@@ -298,14 +349,27 @@ export async function runWorker(
       }
     },
   }));
+  // The host narrows what these read to the model's ceiling; the brief's guard holds them to the boundary as well.
   const contextTools = (deps.contextTools ?? []).filter((tool) => !permittedNames.has(tool.name));
   customTools.push(...contextTools);
+
+  // The goal and the guidance, checked before a session exists: a brief its model may not be sent is not run at all.
+  const prompt = envelope.instructions === undefined ? envelope.goal : `${envelope.goal}\n\n${envelope.instructions}`;
+  if (allowed !== undefined) {
+    const check = checkSendBoundary({ allowed, texts: [envelope.goal, envelope.instructions] });
+    if (!check.ok) {
+      throw new Error(
+        `${check.code}: the brief carries ${check.dataClass} data, which its model may not receive; nothing was sent to the model`,
+      );
+    }
+  }
 
   const brief: WorkerBrief = {
     goal: envelope.goal,
     projectRoots: envelope.projectRoots,
     allowedCapabilityRefs: envelope.allowedCapabilityRefs,
     customTools,
+    ...(allowed === undefined ? {} : { toolResultGuard }),
     ...(envelope.maxWallClockMs === undefined ? {} : { maxWallClockMs: envelope.maxWallClockMs }),
     ...(envelope.maxTokens === undefined ? {} : { maxTokens: envelope.maxTokens }),
   };
@@ -351,9 +415,8 @@ export async function runWorker(
     }
   });
 
+  // The goal first, then the project's guidance for it (`prompt`, above), so the request is what the run reads first.
   const drive = deps.drive ?? ((id: string, goal: string) => deps.adapter.prompt(id, goal));
-  // The goal first, then the project's guidance for it, so the request is what the run reads before anything else.
-  const prompt = envelope.instructions === undefined ? envelope.goal : `${envelope.goal}\n\n${envelope.instructions}`;
 
   let stopReason: WorkerStopReason = "settled";
   try {

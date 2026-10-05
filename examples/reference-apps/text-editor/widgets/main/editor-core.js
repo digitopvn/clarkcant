@@ -313,6 +313,8 @@ export const HOST_SECRET_PATTERNS = Object.freeze([
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g,
   /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g,
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
+  /\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g,
   /\b(?:sk|pk|rk|ghp|gho|npm|xox[baprs]|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi,

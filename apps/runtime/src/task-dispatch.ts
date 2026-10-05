@@ -11,7 +11,13 @@ import type {
   Principal,
   TaskId,
 } from "@clarkcant/contracts";
-import { DEFAULT_ALLOWED_DATA_CLASSES, type DataClass, dataClassOfText, isTerminal } from "@clarkcant/contracts";
+import {
+  DEFAULT_ALLOWED_DATA_CLASSES,
+  type DataClass,
+  MODEL_DATA_CLASS_UNAVAILABLE,
+  dataClassOfText,
+  isTerminal,
+} from "@clarkcant/contracts";
 import {
   acquireLease,
   applyTaskEvent,
@@ -47,6 +53,7 @@ import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { signalTree, stopTree } from "./process-tree.ts";
 import { stopCommandsForTask } from "./run-command.ts";
+import { dataClassTaskRefusal, enforceSendBoundary, isDataClassUnavailable, modelName } from "./send-boundary.ts";
 import {
   BROWSER_CAPABILITY,
   type TaskBrowserAdmission,
@@ -499,6 +506,20 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     browsers.get(taskId)?.stop();
   };
   /**
+   * What the model a worker launched on may be sent: its profiles' ceiling, else the default for an unlabelled profile.
+   * A pool that cannot be read narrows to `public`, the same answer a conversation's turn gives, and says so (`read:
+   * false`), so a refusal names the unread ceiling rather than one the model has.
+   */
+  const ceilingFor = (launch: WorkerModelLaunch | undefined): { allowed: readonly DataClass[]; read: boolean } => {
+    if (launch === undefined || deps.allowedDataClasses === undefined) return { allowed: DEFAULT_ALLOWED_DATA_CLASSES, read: true };
+    try {
+      return { allowed: deps.allowedDataClasses(launch.model), read: true };
+    } catch {
+      return { allowed: ["public"], read: false };
+    }
+  };
+  const allowedFor = (launch: WorkerModelLaunch | undefined): readonly DataClass[] => ceilingFor(launch).allowed;
+  /**
    * The retrieved context a task's worker may read, or undefined when there is none to give it.
    *
    * Only work a person asked for in the conversation gets it — the same line `planRoots` draws for folders. A task a
@@ -517,11 +538,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (bundles === undefined || principalId === undefined) return undefined;
       const bundle = await bundles.bundleFor({ principalId, conversationId, query: goal });
       reportContextBundle({ conversationId, purpose: "task", bundle, stats: bundles.stats() });
-      const allowed =
-        launch === undefined || deps.allowedDataClasses === undefined
-          ? DEFAULT_ALLOWED_DATA_CLASSES
-          : deps.allowedDataClasses(launch.model);
-      const reader = bundles.reader(bundle, principalId, allowed);
+      const reader = bundles.reader(bundle, principalId, allowedFor(launch));
       return reader.items > 0 ? reader : undefined;
     } catch {
       return undefined;
@@ -545,10 +562,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         read: [...plan.read, ...plan.repositories],
         write,
         capability,
-        allowed:
-          launch === undefined || deps.allowedDataClasses === undefined
-            ? DEFAULT_ALLOWED_DATA_CLASSES
-            : deps.allowedDataClasses(launch.model),
+        allowed: allowedFor(launch),
       });
     } catch {
       return "";
@@ -689,6 +703,16 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       try {
         launch = await deps.workerModel.launch({ dataClass: dataClassOfText(task.goal) });
       } catch (cause) {
+        // No model the worker could start on may receive the task: refused with what to change, and nothing is sent.
+        if (isDataClassUnavailable(cause)) {
+          releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+          recordModelRefusal(job, cause.model, cause.dataClass);
+          await refuse(
+            job,
+            dataClassTaskRefusal({ dataClass: cause.dataClass, model: cause.model, checked: "every-candidate", unread: cause.unread }),
+          );
+          return;
+        }
         reason = `the model for it could not be chosen (${cause instanceof Error ? cause.message : String(cause)})`;
       }
       if (launch === undefined) {
@@ -963,6 +987,24 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     try {
       const context = await taskContext(task, launch);
       const instructions = browsing ? "" : instructionsFor(plan, job.capabilityRef, launch);
+      /*
+       * The send boundary, on everything the worker is handed to send: the goal and the project guidance. Its retrieved
+       * context is read on demand through a reader already narrowed to this model, and what its tools return is checked
+       * by the worker before the model reads it. A worker its model may not be sent is never started.
+       */
+      if (launch !== undefined) {
+        const { allowed, read } = ceilingFor(launch);
+        const check = enforceSendBoundary({ path: "task", model: launch.model, allowed, texts: [task.goal, instructions] });
+        if (!check.ok) {
+          recordModelRefusal(job, modelName(launch.model), check.dataClass);
+          // Only the model the worker launched on is checked here, so only it is named.
+          await refuse(
+            job,
+            dataClassTaskRefusal({ dataClass: check.dataClass, model: modelName(launch.model), checked: "model", unread: !read }),
+          );
+          return;
+        }
+      }
       const result = await runWorker({
         nodeId: job.executionNodeId,
         brief: {
@@ -975,7 +1017,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           projectRoots: browsing ? [] : read,
           ...(plan.scoped ? { writableRoots: browsing ? [] : write } : {}),
           allowedCapabilityRefs: [...workerCapabilitiesFor(job.capabilityRef)],
-          ...(launch === undefined ? {} : { model: launch.model }),
+          ...(launch === undefined ? {} : { model: launch.model, allowedDataClasses: [...allowedFor(launch)] }),
           ...(maxTokens === undefined ? {} : { maxTokens }),
           ...(context === undefined ? {} : { contextItems: context.items }),
           ...(instructions === "" ? {} : { instructions }),
@@ -1099,6 +1141,29 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
       await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
+    }
+  }
+
+  /**
+   * That a task's worker was not started because its model may not be sent the task, written to the node's audit trail:
+   * the model and the class, never the text that carries it.
+   */
+  function recordModelRefusal(job: QueuedRun, model: string, dataClass: DataClass): void {
+    const principalId = deps.ownerPrincipalId?.();
+    if (principalId === undefined) return;
+    try {
+      appendAuditEvent(deps.conductor.db, {
+        auditId: deps.conductor.newId("audit"),
+        principalId,
+        nodeId: deps.conductor.nodeId,
+        kind: "model",
+        summary: `task ${job.taskId}: not sent to ${model} (${MODEL_DATA_CLASS_UNAVAILABLE}: ${dataClass} data above its ceiling); no worker was started`,
+        outcome: "refused",
+        ref: job.taskId,
+        at: at(),
+      });
+    } catch {
+      // A trail that cannot be written does not change the refusal; the task's own record still says why.
     }
   }
 
