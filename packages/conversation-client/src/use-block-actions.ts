@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import type { CommandCardAction, ProviderSignInView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import type {
   ArtifactOpenState,
   BlockActions,
+  CommandActionState,
   ControlSessionActionState,
   PackageInstallState,
   QuestionOutcome,
@@ -27,6 +30,10 @@ export interface BlockActionsDeps {
   t: (key: MessageKey) => string;
   /** Opens the inbox on one waiting item: where an install the execution policy asked about is decided. */
   openInbox?: (target: string) => void;
+  /** Opens another conversation, as the inbox does: a command card's `Open`. */
+  openConversation?: (conversationId: string) => void;
+  /** Starts a new conversation and keeps this one, as `/new` does. */
+  newConversation?: () => void;
 }
 
 /**
@@ -58,6 +65,9 @@ export function installRefusalState(
  * with one handler each. `blocks.tsx` renders the transcript; this hook is what the buttons in it
  * actually do.
  */
+/** Often enough that a finished browser sign-in shows within a moment, rarely enough to stay quiet. */
+const SIGN_IN_POLL_MS = 1500;
+
 export function useBlockActions({
   client,
   conversationId,
@@ -67,6 +77,8 @@ export function useBlockActions({
   send,
   t,
   openInbox,
+  openConversation,
+  newConversation,
 }: BlockActionsDeps): BlockActions {
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
 
@@ -382,6 +394,112 @@ export function useBlockActions({
     [client, t],
   );
 
+  /**
+   * What a press on a command card came to, keyed `cardId/rowId/actionId`, and the sign-ins a card started, keyed
+   * `cardId/rowId`. A sign-in is followed by reading it again while it runs: the provider decides when it moves on — a
+   * browser page finishing, a code arriving — so the card asks rather than guesses.
+   */
+  const [commandAction, setCommandAction] = useState<Record<string, CommandActionState>>({});
+  const [signIns, setSignIns] = useState<Record<string, ProviderSignInView>>({});
+  const signInTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const timers = signInTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  const followSignIn = useCallback(
+    (key: string, view: ProviderSignInView) => {
+      setSignIns((current) => ({ ...current, [key]: view }));
+      const previous = signInTimers.current.get(key);
+      if (previous !== undefined) clearTimeout(previous);
+      signInTimers.current.delete(key);
+      if (view.state !== "running" && view.state !== "waiting") {
+        // A provider that is now signed in changes what the model picker can offer.
+        if (view.state === "done") client.notifyModelChange();
+        return;
+      }
+      signInTimers.current.set(
+        key,
+        setTimeout(() => {
+          void client.providerSignIn(view.signInId).then(
+            (next) => followSignIn(key, next),
+            (error: unknown) =>
+              setSignIns((current) => ({
+                ...current,
+                [key]: { ...view, state: "failed", prompt: undefined, error: error instanceof Error ? error.message : String(error) },
+              })),
+          );
+        }, SIGN_IN_POLL_MS),
+      );
+    },
+    [client],
+  );
+
+  const runCommandAction = useCallback(
+    ({ cardId, rowId, actionId, action }: { cardId: string; rowId: string; actionId: string; action: CommandCardAction }) => {
+      const key = `${cardId}/${rowId}/${actionId}`;
+      const settle = (state: CommandActionState) => setCommandAction((current) => ({ ...current, [key]: state }));
+      const fail = (error: unknown) =>
+        settle({ status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") });
+      switch (action.kind) {
+        case "open-conversation":
+          openConversation?.(action.conversationId);
+          return;
+        case "new-conversation":
+          newConversation?.();
+          return;
+        case "set-thinking":
+          settle({ status: "pending" });
+          void client.writePreference("ai.thinkingLevel", action.level).then(
+            () => settle({ status: "done", message: t("commandCard.thinking.set") }),
+            fail,
+          );
+          return;
+        case "provider-sign-in":
+          settle({ status: "pending" });
+          void client.startProviderSignIn(action.providerId, action.method).then((view) => {
+            setCommandAction((current) => {
+              const { [key]: _started, ...rest } = current;
+              return rest;
+            });
+            followSignIn(`${cardId}/${rowId}`, view);
+          }, fail);
+          return;
+        case "provider-sign-out":
+          settle({ status: "pending" });
+          void client.signOutProvider(action.providerId).then(() => {
+            settle({ status: "done", message: t("commandCard.signOut.done") });
+            client.notifyModelChange();
+          }, fail);
+          return;
+      }
+    },
+    [client, followSignIn, newConversation, openConversation, t],
+  );
+
+  const answerSignIn = useCallback(
+    ({ key, signInId, value }: { key: string; signInId: string; value: string }) => {
+      void client.answerProviderSignIn(signInId, value).then(
+        (view) => followSignIn(key, view),
+        (error: unknown) => setError(error instanceof Error ? error.message : String(error)),
+      );
+    },
+    [client, followSignIn, setError],
+  );
+
+  const cancelSignIn = useCallback(
+    ({ key, signInId }: { key: string; signInId: string }) => {
+      void client.cancelProviderSignIn(signInId).then(
+        (view) => followSignIn(key, view),
+        (error: unknown) => setError(error instanceof Error ? error.message : String(error)),
+      );
+    },
+    [client, followSignIn, setError],
+  );
+
   return useMemo<BlockActions>(
     () => ({
       onApprovalDecide: decideApproval,
@@ -425,8 +543,18 @@ export function useBlockActions({
       controlSession,
       // A terminal's result goes back the way a typed reply does, for the reason forms do.
       onTerminalShare: ({ text }) => void send(text),
+      onCommandAction: runCommandAction,
+      commandAction,
+      signIns,
+      onSignInAnswer: answerSignIn,
+      onSignInCancel: cancelSignIn,
     }),
     [
+      answerSignIn,
+      cancelSignIn,
+      commandAction,
+      runCommandAction,
+      signIns,
       artifactOpen,
       controlSession,
       changeBrowserSession,

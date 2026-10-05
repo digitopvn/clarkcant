@@ -21,6 +21,7 @@ const KIND_LABEL: Record<ComposerSuggestion["kind"], MessageKey> = {
   conversation: "composer.references.kind.conversation",
   "background-work": "composer.references.kind.work",
   notice: "composer.references.kind.notice",
+  command: "composer.references.kind.command",
 };
 
 /**
@@ -55,7 +56,8 @@ export function ComposerSuggestions({ state }: { state: ComposerReferencesState 
       >
         {suggestions.map((row, index) => {
           const opens = row.kind === "project" || row.kind === "folder";
-          const disabled = row.disabledReason !== undefined;
+          const disabledReason = row.kind === "command" ? undefined : row.disabledReason;
+          const disabled = disabledReason !== undefined;
           return (
             <li
               key={row.key}
@@ -79,7 +81,7 @@ export function ComposerSuggestions({ state }: { state: ComposerReferencesState 
               <span className="cc-reference-label">{row.trigger === "/" ? `/${row.label}` : row.label}</span>
               {disabled ? (
                 <span className="cc-reference-note" data-reference-disabled="true">
-                  {row.disabledReason}
+                  {disabledReason}
                 </span>
               ) : row.note === undefined ? null : (
                 <span className="cc-reference-note">{row.note}</span>

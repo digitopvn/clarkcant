@@ -214,7 +214,59 @@ export type PiSkillBody =
   | { readonly ok: true; readonly name: string; readonly body: string }
   | { readonly ok: false; readonly reason: "missing" | "changed" };
 
+/** How a provider is signed in to: its own browser or device sign-in, or a key pasted in. */
+export type ProviderSignInMethod = "oauth" | "api_key";
+
+/**
+ * One provider pi can sign in to, and whether it is signed in now.
+ *
+ * `source` says where a configured credential comes from, because only some of them can be signed out of here: a key
+ * in the environment belongs to whoever set it, and removing it is theirs to do. Never the credential itself.
+ */
+export interface ProviderAuthEntry {
+  readonly providerId: string;
+  readonly name: string;
+  /** Present when the provider has a sign-in of its own; `subscription` when it signs in to a plan rather than an API. */
+  readonly oauth?: { readonly label: string; readonly subscription: boolean };
+  readonly apiKey: boolean;
+  readonly configured: boolean;
+  readonly source?: "stored" | "runtime" | "environment" | "models_json" | "fallback";
+}
+
+/** What a sign-in asks the person, in the provider's words. A `secret` answer is never echoed or kept. */
+export type ProviderSignInPrompt =
+  | { readonly type: "text" | "secret" | "manual_code"; readonly message: string; readonly placeholder?: string }
+  | {
+      readonly type: "select";
+      readonly message: string;
+      readonly options: readonly { readonly id: string; readonly label: string; readonly description?: string }[];
+    };
+
+/** What a sign-in tells the person while it runs: a page to open, a code to type there, or progress. */
+export type ProviderSignInEvent =
+  | { readonly type: "info" | "progress"; readonly message: string }
+  | { readonly type: "auth_url"; readonly url: string; readonly instructions?: string }
+  | { readonly type: "device_code"; readonly userCode: string; readonly verificationUri: string };
+
+export interface ProviderSignInInteraction {
+  readonly signal: AbortSignal;
+  prompt(prompt: ProviderSignInPrompt): Promise<string>;
+  notify(event: ProviderSignInEvent): void;
+}
+
 export interface PiAdapter {
+  /**
+   * The providers pi can sign in to, with whether each is signed in. Optional: an adapter without accounts (a test's)
+   * has nothing to list, and the caller says so rather than inventing providers.
+   */
+  providerAuth?(): Promise<readonly ProviderAuthEntry[]>;
+
+  /** Runs the provider's own sign-in and stores the credential where pi keeps it; rejects with what went wrong. */
+  signIn?(providerId: string, method: ProviderSignInMethod, interaction: ProviderSignInInteraction): Promise<void>;
+
+  /** Removes the credential pi stored for the provider. A key from the environment is not pi's to remove. */
+  signOut?(providerId: string): Promise<void>;
+
   /** Whether the SDK is actually usable in this process. */
   availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }>;
 

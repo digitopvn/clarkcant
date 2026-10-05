@@ -360,6 +360,9 @@ export function textOfBlock(block: MessageBlock): string {
       return `${block.prompt} — ${block.options.map((option) => option.label).join(" / ")}`;
     case "form-card":
       return `${block.title} — ${block.fields.map((field) => field.label).join(", ")}`;
+    case "command-card":
+      // What the command listed, so a search for a conversation's name finds the /sessions answer that offered it.
+      return [block.title, ...block.rows.map((row) => row.label)].join(" — ");
     case "browser-session-card":
     case "computer-session-card":
       return `${block.label} — ${block.driver === "user" ? "bạn" : "agent"} đang điều khiển`;

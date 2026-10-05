@@ -71,6 +71,7 @@ const MATRIX: Record<(typeof HOST_OWNED_BLOCK_TYPES)[number], { applicable: read
   "browser-session-card": { applicable: ["live", "error", "read-only"], reason: "cached/offline: the lease decides what is current, and a cached view would be a view of a session somebody else may be driving" },
   "computer-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: the preview permission is never cached, because a cached yes is a claim nobody granted" },
   "terminal-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: a terminal is a live process on the node; once the node forgets it the card says so instead of showing an old screen as current" },
+  "command-card": { applicable: ["empty", "read-only", "live", "error"], reason: "loading/cached/offline: a command card is what the node held when the command ran; what a press then did is drawn beside the row, never written into the card" },
   "marketplace-results": { applicable: ["empty", "error", "read-only", "unavailable"], reason: "live/cached: a result is what a directory said when it was asked, and the card names that directory instead of presenting a listing as current" },
 };
 

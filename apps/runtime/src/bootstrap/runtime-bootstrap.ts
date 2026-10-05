@@ -2,7 +2,10 @@ import { join } from "node:path";
 
 import { type Instant } from "@clarkcant/contracts";
 import { type CoordinationDeps, directoryIndexPath, readDirectoryIndex, readExecutionPolicy } from "@clarkcant/core";
+import { RealPiAdapter } from "@clarkcant/pi-adapter";
 import { appendAuditEvent, readCredential } from "@clarkcant/storage";
+
+import { providerAuthPort } from "../application/provider-sign-in.ts";
 
 import { DEFAULT_NARROWING } from "../autonomy-settings.ts";
 import { contextBundlesFor } from "../context-bundle.ts";
@@ -169,12 +172,17 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    */
   if (modelTurn !== undefined) {
     deps.services.modelCatalogue = modelTurn.catalogue;
+    if (modelTurn.providerAuth !== undefined) deps.services.providerAuth = modelTurn.providerAuth;
     deps.services.currentModel = () => {
       const limitMs = modelTurn.turnLimitMs();
       return { ...modelTurn.configuredModel(), ...(limitMs === undefined ? {} : { maxWallClockMs: limitMs }) };
     };
   } else if (!modelFixture) {
-    deps.services.modelCatalogue = createModelCatalogue({ cwd: process.cwd() });
+    // One adapter for both, so a sign-in made before any model is chosen is visible to the catalogue that follows it.
+    const adapter = new RealPiAdapter({ cwd: process.cwd(), builtinTools: [] });
+    deps.services.modelCatalogue = createModelCatalogue({ cwd: process.cwd(), adapter });
+    const providerAuth = providerAuthPort(adapter);
+    if (providerAuth !== undefined) deps.services.providerAuth = providerAuth;
   }
   wiring.project.deps = deps.services.projects;
   wiring.approval.deps = {

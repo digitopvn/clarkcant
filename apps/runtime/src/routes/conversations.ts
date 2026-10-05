@@ -29,6 +29,7 @@ import {
   commandEnvelopeSchema,
   graphSemanticState,
   nowInstant,
+  parseSlashCommand,
   semanticProposalSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
@@ -127,6 +128,7 @@ import {
   runApprovedWidgetArtifactWrite,
 } from "../application/machine-artifact-writes.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
+import { answerSlashCommand, slashCommandBlocks } from "../application/slash-commands.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 import { exportTableCsv } from "./table-export.ts";
@@ -156,7 +158,7 @@ import { exportTableCsv } from "./table-export.ts";
  */
 export type ConversationServices = Pick<
   NodeServices,
-  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl" | "widgetPerforms"
+  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl" | "widgetPerforms" | "providerAuth"
 >;
 
 /** What the conversation routes need. */
@@ -1161,6 +1163,14 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
      * anything else falls through untouched and reaches the agent exactly as before.
      */
+    // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
+    const slash = parseSlashCommand(text);
+    if (slash !== undefined) {
+      const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
+      const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
+      return json(200, { accepted: true, messageId: appended.messageId, ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }) });
+    }
+
     const asked = typedAppIntent(services, conversationId, text, at);
     if (asked.kind !== "none") {
       const said = answerTypedIntent(services, conversationId, asked);
@@ -1337,6 +1347,35 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * decision travels, because this answer is a stream. A command is not a turn, so nothing is sent to the model
      * and the frame carries the decision the page acts on.
      */
+    /*
+     * A slash command, answered by the host as a message with a card (`slash-commands.ts`). The same frames as a typed
+     * intent: its sentence as a delta, then the record, plus the decision when the page has something to do.
+     */
+    const slash = parseSlashCommand(text);
+    if (slash !== undefined) {
+      const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
+      const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
+      return {
+        status: 200,
+        body: null,
+        stream: {
+          contentType: "text/event-stream",
+          run: async (send) => {
+            send(sse("delta", { text: answer.text }));
+            send(
+              sse("done", {
+                resolution: "app-intent",
+                taskId: null,
+                messageIds: [appended.messageId],
+                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }),
+              }),
+            );
+          },
+        },
+      };
+    }
+
     const askedIntent = typedAppIntent(services, conversationId, text, at);
     if (askedIntent.kind !== "none") {
       const said = answerTypedIntent(services, conversationId, askedIntent);

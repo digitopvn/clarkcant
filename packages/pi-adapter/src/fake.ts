@@ -9,6 +9,9 @@ import type {
   PiSkill,
   PiSkillBody,
   PiAdapter,
+  ProviderAuthEntry,
+  ProviderSignInInteraction,
+  ProviderSignInMethod,
   ResourceRefreshRequest,
   ToolDefinition,
   WorkerBrief,
@@ -161,6 +164,48 @@ export class FakePiAdapter implements PiAdapter {
         models: [{ provider: "fake-other", id: "fake-other-model", current: false }],
       },
     ];
+  }
+
+  /**
+   * Who is signed in, per provider. `fake` is signed in from the environment, so it cannot be signed out of here;
+   * `fake-other` starts signed out and offers both ways in, so a sign-in card has each kind of row to draw.
+   */
+  readonly #signedIn = new Map<string, ProviderAuthEntry["source"]>([["fake", "environment"]]);
+
+  async providerAuth(): Promise<readonly ProviderAuthEntry[]> {
+    const entry = (providerId: string, name: string, oauth: boolean): ProviderAuthEntry => {
+      const source = this.#signedIn.get(providerId);
+      return {
+        providerId,
+        name,
+        ...(oauth ? { oauth: { label: `${name} account`, subscription: true } } : {}),
+        apiKey: true,
+        configured: source !== undefined,
+        ...(source === undefined ? {} : { source }),
+      };
+    };
+    return [entry("fake", "Fake", false), entry("fake-other", "Fake Other", true)];
+  }
+
+  /**
+   * A sign-in that asks what the real ones ask: a page to open and the code it shows, or a key. Any non-empty answer
+   * signs in, because there is no provider to check it against; it is never kept.
+   */
+  async signIn(providerId: string, method: ProviderSignInMethod, interaction: ProviderSignInInteraction): Promise<void> {
+    if (providerId !== "fake" && providerId !== "fake-other") throw new Error(`no provider "${providerId}"`);
+    if (method === "oauth") {
+      interaction.notify({ type: "auth_url", url: "https://example.invalid/fake-sign-in", instructions: "Open the page and copy the code it shows." });
+    }
+    const answer = await interaction.prompt(
+      method === "oauth" ? { type: "manual_code", message: "Paste the code from the sign-in page" } : { type: "secret", message: "API key" },
+    );
+    interaction.signal.throwIfAborted();
+    if (answer.trim() === "") throw new Error("nothing was entered");
+    this.#signedIn.set(providerId, "stored");
+  }
+
+  async signOut(providerId: string): Promise<void> {
+    if (this.#signedIn.get(providerId) === "stored") this.#signedIn.delete(providerId);
   }
 
   /** A scripted list, including both kinds, so a section rendering them has both to render. */

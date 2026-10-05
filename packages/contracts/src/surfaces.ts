@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
+import { commandCardSchema } from "./slash-commands.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
 import {
   DIRECTORY_VERSION_MAX,
@@ -830,6 +831,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   projectPickerCardSchema,
   reconnectCardSchema,
   formCardSchema,
+  commandCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
@@ -856,6 +858,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "project-picker-card",
   "reconnect-card",
   "form-card",
+  "command-card",
   "browser-session-card",
   "computer-session-card",
   "terminal-session-card",

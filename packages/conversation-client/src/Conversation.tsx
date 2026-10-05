@@ -429,6 +429,8 @@ export function Conversation({
     t: localeState.t,
     // An install the execution policy asked about waits in the inbox; the marketplace card leads there.
     openInbox: (target) => appIntents.clickIntent("inbox.open", { inboxTarget: target }),
+    ...(onOpenConversation === undefined ? {} : { openConversation: onOpenConversation }),
+    newConversation: restartSession,
   });
 
   const renderSurface = useSurfaceRenderer({

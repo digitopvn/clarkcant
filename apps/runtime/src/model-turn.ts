@@ -15,6 +15,7 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
+import { type ProviderAuthPort, providerAuthPort } from "./application/provider-sign-in.ts";
 import { randomBytes } from "node:crypto";
 
 import {
@@ -232,6 +233,9 @@ export interface ModelTurn {
    * SDK and this is only a way to ask it.
    */
   catalogue: () => Promise<ModelCatalogue>;
+
+  /** Signing in to and out of providers through this turn's own runtime, so a sign-in is the one the next turn finds. */
+  providerAuth: ProviderAuthPort | undefined;
 
   /**
    * What pi loads from its own agent directory.
@@ -2281,6 +2285,7 @@ export async function createModelTurn(options: {
     budget,
     viewCatalogSize: () => readViews().length,
     catalogue: (): Promise<ModelCatalogue> => adapter.catalogue(),
+    providerAuth: providerAuthPort(adapter),
     extensions: (): Promise<readonly PiExtension[]> => adapter.extensions(),
     piSettings: (): Promise<readonly PiSetting[]> => adapter.piSettings(),
     skills: (): Promise<readonly PiSkill[]> => adapter.skills(),

@@ -7,7 +7,8 @@ import { nowInstant } from "@clarkcant/contracts";
 
 import { NotImplementedError, type ModelCatalogue,
   type PiExtension,
-  type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
+  type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ProviderAuthEntry, type ProviderSignInInteraction,
+  type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
 
 /**
@@ -393,6 +394,67 @@ export class RealPiAdapter implements PiAdapter {
         };
       }),
     }));
+  }
+
+  /**
+   * The providers pi can sign in to, read from the same runtime the turns use, so a sign-in made here is the one the
+   * next turn finds. Only providers with a way in — their own sign-in or a key — are listed.
+   */
+  async providerAuth(): Promise<readonly ProviderAuthEntry[]> {
+    const sdk = await this.#load();
+    const runtime = await this.#runtime(sdk);
+    return runtime
+      .getProviders()
+      .filter((provider) => provider.auth.oauth !== undefined || provider.auth.apiKey !== undefined)
+      .map((provider) => {
+        const status = runtime.getProviderAuthStatus(provider.id);
+        const oauth = provider.auth.oauth;
+        const source = providerAuthSource(status.source);
+        return {
+          providerId: provider.id,
+          name: provider.name,
+          ...(oauth === undefined
+            ? {}
+            : { oauth: { label: oauth.loginLabel ?? oauth.name, subscription: oauth.isSubscription === true } }),
+          apiKey: provider.auth.apiKey !== undefined,
+          configured: status.configured,
+          ...(status.configured && source !== undefined ? { source } : {}),
+        };
+      })
+      .sort((left, right) => Number(right.configured) - Number(left.configured) || left.name.localeCompare(right.name));
+  }
+
+  /**
+   * The provider's own sign-in, through pi: pi opens the page or asks for the code or key, and stores what it gets
+   * where it keeps credentials. What the person types passes straight through `interaction` and is never held here.
+   */
+  async signIn(providerId: string, method: ProviderSignInMethod, interaction: ProviderSignInInteraction): Promise<void> {
+    const sdk = await this.#load();
+    const runtime = await this.#runtime(sdk);
+    await runtime.login(providerId, method, {
+      signal: interaction.signal,
+      prompt: (prompt) =>
+        interaction.prompt(
+          prompt.type === "select"
+            ? { type: "select", message: prompt.message, options: prompt.options }
+            : { type: prompt.type, message: prompt.message, ...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder }) },
+        ),
+      notify: (event) => {
+        if (event.type === "auth_url") {
+          interaction.notify({ type: "auth_url", url: event.url, ...(event.instructions === undefined ? {} : { instructions: event.instructions }) });
+        } else if (event.type === "device_code") {
+          interaction.notify({ type: "device_code", userCode: event.userCode, verificationUri: event.verificationUri });
+        } else {
+          interaction.notify({ type: event.type, message: event.message });
+        }
+      },
+    });
+  }
+
+  async signOut(providerId: string): Promise<void> {
+    const sdk = await this.#load();
+    const runtime = await this.#runtime(sdk);
+    await runtime.logout(providerId);
   }
 
   /**
@@ -1046,4 +1108,11 @@ export async function sdkVersion(): Promise<string> {
   } catch {
     return "unknown";
   }
+}
+
+/** Where pi says a configured credential comes from, in the adapter's smaller vocabulary. */
+function providerAuthSource(source: string | undefined): ProviderAuthEntry["source"] {
+  if (source === "stored" || source === "runtime" || source === "environment" || source === "fallback") return source;
+  if (source === "models_json_key" || source === "models_json_command") return "models_json";
+  return undefined;
 }
