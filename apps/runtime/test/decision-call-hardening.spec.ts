@@ -96,13 +96,36 @@ describe("the secret-shape check on the request body", () => {
     expect(bodies).toHaveLength(0);
     expect(outcome.status).toBe("unavailable");
     if (outcome.status === "unavailable") {
-      expect(outcome.reason).toContain("bearer");
       expect(outcome.reason).toContain("was not sent");
     }
-    // Only the shape's label is recorded, never any part of the value it matched.
+    // No part of the value is recorded.
     const recorded = JSON.stringify({ outcome, telemetry });
     expect(recorded).not.toContain("example-not");
     expect(telemetry.map((event) => event.event)).toEqual(["refusal"]);
+  });
+
+  // Each is a credential to the classifier the send boundary uses, and none is one the narrower shapes above name.
+  it.each([
+    ["an issued prefixed token", ["sk", "-live-", "4f9a8b7c6d5e4f3a2b1c"].join("")],
+    ["HTTP Basic credentials", ["Authorization: ", "Basic ", Buffer.from(["admin", "hunter22x"].join(":")).toString("base64")].join("")],
+  ])("refuses to send %s left in the instructions", async (_name, value) => {
+    const config = typesafeConfig();
+    const { transport, bodies } = recording({ model: config.model, answers: { noul: { type: "noul", noul: 0.9 } } });
+    const outcome = await askNoul(
+      { config, transport },
+      { state: { intent: "thêm lịch" }, instructions: `Is ${value} still valid?`, budget: createJevBudget(config) },
+    );
+    expect(bodies).toHaveLength(0);
+    expect(outcome.status).toBe("unavailable");
+  });
+
+  it("selects a template whose id only resembles a token", async () => {
+    const config = typesafeConfig();
+    const set = candidates();
+    const renamed = { ...set, templates: [{ ...set.templates[0]!, templateId: "key-metrics-overview" }, set.templates[1]!] };
+    const { transport, bodies } = recording({ model: config.model, answers: {} });
+    await selectTemplate({ config, transport }, { intent: "cho tôi tổng quan", candidateSet: renamed, budget: createJevBudget(config) });
+    expect(bodies).toHaveLength(1);
   });
 
   it("sends a request whose ids and model names only resemble a secret", async () => {

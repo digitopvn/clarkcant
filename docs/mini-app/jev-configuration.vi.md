@@ -110,13 +110,12 @@ One request, containing:
 
 It never contains row values, private titles, file paths, message history, image bytes, the API
 key, or any host-owned card. The assembled state is capped at 16 KiB and is refused before the call
-rather than sent and rejected. A second check re-scans the serialized state for secret-shaped
-values and refuses to send it at all if one survives.
+rather than sent and rejected. A second check re-scans the serialized state for a credential
+and refuses to send it at all if one survives.
 
 Bước cuối cùng trước khi gọi bất kỳ provider nào, dù provider nào được chọn, là quét toàn bộ request
-đã tuần tự hoá (state và các câu hỏi, kể cả mô tả của từng lựa chọn) bằng cùng bộ phát hiện dạng bí
-mật. Nếu phát hiện, request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi
-provider khác, và lý do cùng telemetry chỉ nêu loại dạng bí mật, không bao giờ chứa phần nào của giá trị.
+đã tuần tự hoá (state và các câu hỏi, kể cả mô tả của từng lựa chọn) để tìm credential, bằng bộ phân loại mà ranh giới gửi dùng cho đầu vào của model. Id và tên chỉ giống token thì không tính. Nếu phát hiện, request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi
+provider khác, và lý do cùng telemetry không chứa phần nào của giá trị.
 
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
@@ -145,7 +144,7 @@ the release evidence rather than tuned to taste.
 | No key, disabled, or local-only | `unavailable`; no network call. |
 | Tên provider không xác định, hoặc model hay account id của Cloudflare bị thiếu hoặc sai dạng | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
 | Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn Cloudflare hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
-| Còn sót một giá trị có dạng bí mật ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do chỉ nêu loại dạng bí mật. |
+| Còn sót một credential ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do không chứa phần nào của giá trị. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
 | 422 | `unavailable`; the provider's error body is read and discarded. |

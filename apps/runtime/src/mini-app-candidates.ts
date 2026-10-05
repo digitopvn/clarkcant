@@ -1,7 +1,7 @@
 import {
   type CompositionSlot,
   MAX_SELECTION_METADATA_BYTES,
-  findSecretShapes,
+  dataClassesOfText,
   redactSecrets,
   utf8Bytes,
 } from "@clarkcant/contracts";
@@ -190,13 +190,13 @@ export function checkSelectionStateSize(
 }
 
 /**
- * Whether a state still contains anything that looks like a secret.
+ * Whether a state still carries a credential.
  *
  * A defence in depth check rather than the primary control: the sanitizer runs first, and this
- * catches the case where a future field is added without going through it. It is intentionally
- * the same pattern list, applied to the serialised request.
+ * catches the case where a future field is added without going through it. It classifies the
+ * serialised state as the send boundary classifies a model's input, so a template or widget id
+ * that only resembles a token (`key-metrics-overview`) does not stop a selection.
  */
-export function stateLooksRedacted(state: JevSelectionState): { ok: true } | { ok: false; matches: string[] } {
-  const matches = findSecretShapes(JSON.stringify(state));
-  return matches.length === 0 ? { ok: true } : { ok: false, matches };
+export function stateLooksRedacted(state: JevSelectionState): { ok: boolean } {
+  return { ok: !dataClassesOfText(JSON.stringify(state)).includes("secret") };
 }

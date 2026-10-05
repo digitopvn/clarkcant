@@ -109,13 +109,13 @@ One request, containing:
 
 It never contains row values, private titles, file paths, message history, image bytes, the API
 key, or any host-owned card. The assembled state is capped at 16 KiB and is refused before the call
-rather than sent and rejected. A second check re-scans the serialized state for secret-shaped
-values and refuses to send it at all if one survives.
+rather than sent and rejected. A second check re-scans the serialized state for a credential
+and refuses to send it at all if one survives.
 
 The last step before any provider is called, whichever one is selected, scans the whole serialized
-request (state and questions, including option descriptions) with the same secret-shape detector.
-A hit means the request is not sent at all; the call falls back as any provider failure does, and
-the reason and telemetry name only the kind of shape found, never any part of the value.
+request (state and questions, including option descriptions) for a credential, with the classifier
+the send boundary uses for a model's input. Ids and names that only resemble a token do not count. A hit means the request is not sent at all; the call falls back as any provider failure does, and
+the reason and telemetry carry no part of the value.
 
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
@@ -144,7 +144,7 @@ the release evidence rather than tuned to taste.
 | No key, disabled, or local-only | `unavailable`; no network call. |
 | Unknown provider name, or a Cloudflare model or account id that is missing or malformed | `unavailable`; no network call, and the reason names the setting. |
 | TypeSafe selected with a Cloudflare model id (`clef`, `clef-flash`, or any `@cf/` id) | `unavailable`; no network call, and the reason says to select Cloudflare or unset `CLARKCANT_DECISION_MODEL`. |
-| A secret-shaped value left anywhere in the request | `unavailable`; no network call, and the reason names only the shape. |
+| A credential left anywhere in the request | `unavailable`; no network call, and the reason carries no part of the value. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
 | 422 | `unavailable`; the provider's error body is read and discarded. |
