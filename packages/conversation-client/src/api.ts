@@ -968,7 +968,7 @@ export class GatewayClient {
     nodeId: string;
     label: string;
     createdAt: string;
-    model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number; thinkingLevel?: string } | null;
+    model: { provider: string; id: string; maxWallClockMs?: number; maxTokens: number; thinkingLevel?: string } | null;
   }> {
     return this.#call("GET", "/node");
   }

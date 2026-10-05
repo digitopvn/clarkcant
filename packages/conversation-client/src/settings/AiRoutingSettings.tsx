@@ -2,9 +2,9 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
-import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool, type ModelRole } from "@clarkcant/contracts";
+import { PERSONAL_INSTRUCTIONS_MAX_CHARS, THINKING_LEVELS, type ModelPool, type ModelRole } from "@clarkcant/contracts";
 import type { MessageKey } from "../i18n/messages.ts";
-import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
+import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
@@ -44,7 +44,7 @@ const CREDENTIAL_ENTRIES: readonly CredentialEntry[] = [
  */
 
 interface NodeFacts {
-  model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number } | null;
+  model: { provider: string; id: string; maxWallClockMs?: number; maxTokens: number } | null;
 }
 
 export interface AiRoutingSettingsProps {
@@ -57,9 +57,11 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
   const t = useT();
   const locale = useLocale();
   // In the units a person reads a limit in: "2 phút · 32.000 token" rather than "120000 ms · 32000 token".
-  const turnCap = (ms: number, tokens: number): string => {
+  const turnCap = (ms: number | undefined, tokens: number): string => {
     const time =
-      ms >= 60_000 && ms % 60_000 === 0
+      ms === undefined
+        ? t("settings.ai.turnCap.unlimited")
+        : ms >= 60_000 && ms % 60_000 === 0
         ? `${String(ms / 60_000)} ${t("settings.ai.turnCap.minutes")}`
         : `${String(Math.round(ms / 1000))} ${t("settings.ai.turnCap.seconds")}`;
     return `${time} · ${tokens.toLocaleString(locale)} token`;
@@ -207,6 +209,8 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
       </section>
 
       <CredentialsSection client={client} entries={CREDENTIAL_ENTRIES} />
+
+      <ThinkingAndTime prefs={prefs} />
 
       <PersonalInstructions prefs={prefs} />
 
@@ -445,6 +449,56 @@ function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactEle
       </div>
 
       <InlineStatus status={prefs.status} forKey="ai.personalInstructions" />
+    </section>
+  );
+}
+
+/**
+ * How hard the model thinks, and how long one turn may run.
+ *
+ * Both are read by the node when the next turn starts, so a change here reaches the next message; `/thinking` in the
+ * conversation writes the same preference. No limit is the default: Stop always ends a turn, and a ceiling that fires
+ * on ordinary use teaches the person to raise it rather than to trust it.
+ */
+function ThinkingAndTime({ prefs }: { prefs: PreferencesHandle }): ReactElement {
+  const t = useT();
+  const thinking = prefs.preference("ai.thinkingLevel")?.value;
+  const limit = prefs.preference("ai.turnTimeLimit")?.value;
+  return (
+    <section className="cc-panel-section" data-thinking-and-time="true">
+      <h3>{t("settings.ai.thinking.heading")}</h3>
+      <p className="cc-panel-note">{t("settings.ai.thinking.intro")}</p>
+      <SettingsRow label={t("settings.ai.thinking.label")}>
+        <SegmentedControl
+          name="thinking-level"
+          label={t("settings.ai.thinking.label")}
+          options={[
+            { value: "default", label: t("settings.ai.thinking.default") },
+            ...THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+          ]}
+          value={typeof thinking === "string" ? thinking : "default"}
+          pending={prefs.pending === "ai.thinkingLevel"}
+          onChange={(value) => prefs.write("ai.thinkingLevel", value === "default" ? null : value)}
+        />
+      </SettingsRow>
+      <InlineStatus status={prefs.status} forKey="ai.thinkingLevel" />
+      <SettingsRow label={t("settings.ai.turnLimit.label")}>
+        <SegmentedControl
+          name="turn-time-limit"
+          label={t("settings.ai.turnLimit.label")}
+          options={[
+            { value: "none", label: t("settings.ai.turnLimit.none"), note: t("settings.ai.turnLimit.noneNote") },
+            ...[5, 15, 30, 60].map((minutes) => ({
+              value: String(minutes),
+              label: `${String(minutes)} ${t("settings.ai.turnCap.minutes")}`,
+            })),
+          ]}
+          value={typeof limit === "number" ? String(limit) : "none"}
+          pending={prefs.pending === "ai.turnTimeLimit"}
+          onChange={(value) => prefs.write("ai.turnTimeLimit", value === "none" ? null : Number(value))}
+        />
+      </SettingsRow>
+      <InlineStatus status={prefs.status} forKey="ai.turnTimeLimit" />
     </section>
   );
 }

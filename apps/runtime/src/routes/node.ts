@@ -305,13 +305,22 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
 }
 
 /**
- * The model as it stands now: the boot configuration with the provider and model a Settings pick has since chosen.
+ * The model as it stands now: the boot configuration with the model, thinking level and turn limit the person has
+ * since chosen.
  *
- * The boot snapshot alone would keep reporting the model the node started with after a pick, so Settings and the
- * composer's statusline would name a model the next turn no longer runs.
+ * The boot snapshot alone would keep reporting what the node started with after a pick, so Settings and the
+ * composer's statusline would name a model or a level the next turn no longer runs.
  */
 function liveModel(services: Pick<NodeServices, "model" | "currentModel">): NodeServices["model"] {
   if (services.model === null) return null;
   const current = services.currentModel?.();
-  return current === undefined ? services.model : { ...services.model, provider: current.provider, id: current.id };
+  if (current === undefined) return services.model;
+  const { thinkingLevel: _bootThinking, maxWallClockMs: _bootLimit, ...boot } = services.model;
+  return {
+    ...boot,
+    provider: current.provider,
+    id: current.id,
+    ...(current.thinkingLevel === undefined ? {} : { thinkingLevel: current.thinkingLevel }),
+    ...(current.maxWallClockMs === undefined ? {} : { maxWallClockMs: current.maxWallClockMs }),
+  };
 }

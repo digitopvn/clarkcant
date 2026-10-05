@@ -614,14 +614,14 @@ export class RealPiAdapter implements PiAdapter {
      */
     const builtinTools = scopedToRoots ? [] : [...(this.#options.builtinTools ?? [])];
 
+    const thinkingLevel = brief.thinkingLevel ?? this.#options.model?.thinkingLevel;
     const { session } = await sdk.createAgentSession({
       cwd: this.#options.cwd,
       ...(this.#options.agentDir === undefined ? {} : { agentDir: this.#options.agentDir }),
       ...(selection.runtime === undefined ? {} : { modelRuntime: selection.runtime }),
       ...(selection.model === undefined ? {} : { model: selection.model }),
-      ...(this.#options.model?.thinkingLevel === undefined
-        ? {}
-        : { thinkingLevel: this.#options.model.thinkingLevel }),
+      // The person's choice for this session, else the level the adapter was configured with.
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
       // Persistent when a directory is configured, in memory otherwise. The distinction is
       // deliberate: an in-memory session leaves nothing to resume and nothing to search, which is
       // fine for a probe and wrong for a node.

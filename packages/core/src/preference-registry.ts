@@ -24,6 +24,7 @@ import {
   PREFERENCE_KEYS,
   PREFERENCE_REGISTRY,
   preferenceDefinition,
+  THINKING_LEVELS,
   type PreferenceDefinition,
   type RegisteredPreference,
 } from "@clarkcant/contracts";
@@ -271,4 +272,21 @@ export function readPersonalInstructions(
   if (record.enabled !== true || typeof record.text !== "string") return undefined;
   const text = record.text.trim();
   return text === "" ? undefined : text;
+}
+
+/** The thinking level the person chose, or nothing for the model's default. Read through the schema, so a stale row is the default. */
+export function readThinkingLevel(
+  deps: PreferenceDeps,
+  principalId: string,
+): (typeof THINKING_LEVELS)[number] | undefined {
+  const value = readRegisteredPreference(deps, { principalId, key: "ai.thinkingLevel" })?.value;
+  return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value)
+    ? (value as (typeof THINKING_LEVELS)[number])
+    : undefined;
+}
+
+/** The wall clock the person set on a turn, in milliseconds, or nothing for none. */
+export function readTurnTimeLimitMs(deps: PreferenceDeps, principalId: string): number | undefined {
+  const value = readRegisteredPreference(deps, { principalId, key: "ai.turnTimeLimit" })?.value;
+  return typeof value === "number" && value > 0 ? value * 60_000 : undefined;
 }

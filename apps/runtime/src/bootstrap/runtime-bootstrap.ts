@@ -169,7 +169,10 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    */
   if (modelTurn !== undefined) {
     deps.services.modelCatalogue = modelTurn.catalogue;
-    deps.services.currentModel = modelTurn.configuredModel;
+    deps.services.currentModel = () => {
+      const limitMs = modelTurn.turnLimitMs();
+      return { ...modelTurn.configuredModel(), ...(limitMs === undefined ? {} : { maxWallClockMs: limitMs }) };
+    };
   } else if (!modelFixture) {
     deps.services.modelCatalogue = createModelCatalogue({ cwd: process.cwd() });
   }

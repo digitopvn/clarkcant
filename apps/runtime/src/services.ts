@@ -148,7 +148,7 @@ export interface NodeServices {
    * The provider and model the next session runs: a pick made in Settings while the node is running, else the one it
    * booted with. Assigned after boot beside the catalogue; `model` alone is the boot snapshot and goes stale on a pick.
    */
-  currentModel?: () => { provider: string; id: string };
+  currentModel?: () => { provider: string; id: string; thinkingLevel?: string; maxWallClockMs?: number };
 
   /**
    * What the configured voice provider can do, as it reports it.

@@ -210,6 +210,9 @@ export interface ModelTurn {
   /** The model this node runs now, the person's pick else the environment's: what a worker falls back to when routing chooses nothing. */
   configuredModel: () => ModelSelection;
 
+  /** The wall clock the next turn runs under, in milliseconds: the person's setting, else the operator's, else none. */
+  turnLimitMs: () => number | undefined;
+
   /** How long the conversation's current turn has been running, or undefined when none is. */
   runningMs: (conversationId: string) => number | undefined;
 
@@ -990,6 +993,16 @@ export async function createModelTurn(options: {
    */
   personalInstructions?: () => string | undefined;
   /**
+   * The thinking level the person chose (Settings or `/thinking`), read when a session is created. A change reaches the
+   * conversation's next turn through a handoff, like a model change. Absent keeps the level the node started with.
+   */
+  thinkingLevel?: () => ModelSelection["thinkingLevel"];
+  /**
+   * The wall clock the person set on a turn, in milliseconds, read when a turn starts. Absent falls back to the
+   * operator's `CC_MODEL_MAX_WALL_CLOCK_MS`, and neither means no wall clock: tokens and Stop still bound the turn.
+   */
+  turnLimitMs?: () => number | undefined;
+  /**
    * Conditional instructions (#433): project guidance whose condition the conversation's work now meets. Asked when a
    * turn starts and after each tool call; absent states none, which is what the off switch does.
    */
@@ -1138,6 +1151,8 @@ export async function createModelTurn(options: {
     turn.activeTools = [...active];
   };
   const budget = modelBudgetFromEnv(options.env);
+  const turnLimitMs = (): number | undefined => options.turnLimitMs?.() ?? budget.maxWallClockMs;
+  const chosenThinking = (): ModelSelection["thinkingLevel"] => options.thinkingLevel?.();
   const adapter =
     options.adapter ??
     new RealPiAdapter({
@@ -1176,6 +1191,7 @@ export async function createModelTurn(options: {
       excess -= 1;
       turns.delete(turn.conversationId);
       generationModels.delete(turn.conversationId);
+      generationThinking.delete(turn.conversationId);
       turn.unsubscribe();
       void adapter.dispose(turn.sessionId).catch(() => undefined);
     }
@@ -1188,6 +1204,8 @@ export async function createModelTurn(options: {
    * conversation is running and what the person has asked for.
    */
   const generationModels = new Map<string, string>();
+  /** The thinking level each conversation's session was created with, compared like the model on every turn. */
+  const generationThinking = new Map<string, string>();
 
   /**
    * The model a conversation's turn runs on: its current generation's, else the one the person chose, else the one this
@@ -1439,7 +1457,8 @@ export async function createModelTurn(options: {
      */
     if (
       existing !== undefined &&
-      modelChangeNeedsGeneration({ currentModel: generationModels.get(conversationId), preferredModel }) === "none"
+      modelChangeNeedsGeneration({ currentModel: generationModels.get(conversationId), preferredModel }) === "none" &&
+      (generationThinking.get(conversationId) ?? "") === (chosenThinking() ?? "")
     ) {
       return existing;
     }
@@ -1542,9 +1561,18 @@ export async function createModelTurn(options: {
       ...(customTools.length === 0 ? {} : { customTools }),
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.
-      maxWallClockMs: budget.maxWallClockMs,
+      ...thinkingAndLimit(),
       maxTokens: budget.maxTokens,
     });
+    /** The person's thinking level and turn limit as they stand now; absent ones are left off the brief. */
+    const thinkingAndLimit = (): Pick<WorkerBrief, "thinkingLevel" | "maxWallClockMs"> => {
+      const thinkingLevel = chosenThinking();
+      const maxWallClockMs = turnLimitMs();
+      return {
+        ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+        ...(maxWallClockMs === undefined ? {} : { maxWallClockMs }),
+      };
+    };
 
     /**
      * The one listener, so a session created by a handoff is watched exactly like the first one.
@@ -1624,6 +1652,7 @@ export async function createModelTurn(options: {
       adopt(handle.sessionId);
       // The model the new session runs, so a change made meanwhile is not mistaken for one still to make.
       generationModels.set(conversationId, modelKey(model));
+      generationThinking.set(conversationId, chosenThinking() ?? "");
       return true;
     };
 
@@ -1659,6 +1688,7 @@ export async function createModelTurn(options: {
       turn.registeredTools = registeredTools;
       turn.rebuild = rebuild;
       generationModels.set(conversationId, modelKey(preferred));
+      generationThinking.set(conversationId, chosenThinking() ?? "");
       return turn;
     }
 
@@ -1683,6 +1713,7 @@ export async function createModelTurn(options: {
     turn.sessionId = handle.sessionId;
     turn.unsubscribe = listen(turn, handle.sessionId);
     generationModels.set(conversationId, preferredModel ?? "");
+    generationThinking.set(conversationId, chosenThinking() ?? "");
 
     turns.set(conversationId, turn);
     return turn;
@@ -1825,19 +1856,24 @@ export async function createModelTurn(options: {
     // Out of time is an abort too, so a setup finishing in the same moment lets its session go rather than claiming a
     // turn nobody will run; the flag tells the caller which of the two it was.
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, budget.maxWallClockMs);
+    // No limit set means no deadline on the setup either; Stop still ends it.
+    const limitMs = turnLimitMs();
+    const timer =
+      limitMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, limitMs);
     const outcome = Promise.race([work, untilAborted(controller.signal, settled)]);
     preparing.set(conversationId, outcome);
     try {
       const result = await outcome;
-      if (timedOut && result === "stopped") throw new Error(setupTimedOut(budget.maxWallClockMs));
+      if (timedOut && limitMs !== undefined && result === "stopped") throw new Error(setupTimedOut(limitMs));
       return result === "stopped" ? { kind: "stopped" } : result;
     } catch (cause) {
       if (cause instanceof SetupStopped) {
-        if (timedOut) throw new Error(setupTimedOut(budget.maxWallClockMs), { cause });
+        if (timedOut && limitMs !== undefined) throw new Error(setupTimedOut(limitMs), { cause });
         return { kind: "stopped" };
       }
       throw cause;
@@ -2049,23 +2085,26 @@ export async function createModelTurn(options: {
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
       // that never settles would hold the request until the client gives up, and the user would
       // see a hung page rather than a limit being reached.
+      // Read when the turn starts, so a limit set in Settings applies to the next message. No limit, no deadline.
+      const limitMs = turnLimitMs();
       const deadline = new Promise<never>((_, reject) => {
+        if (limitMs === undefined) return;
         timer = setTimeout(() => {
           // The build is told as well as the adapter: a composition in flight would otherwise
           // finish its own work after the turn it belongs to has already been stopped.
           turn.abort.abort();
-          void adapter.abort(turn.sessionId, `turn exceeded ${budget.maxWallClockMs} ms`);
+          void adapter.abort(turn.sessionId, `turn exceeded ${limitMs} ms`);
           reject(
             new Error(
               turnFailed(
                 describe(input.conversationId),
                 language() === "vi"
-                  ? `chưa xong sau ${readableLimit(budget.maxWallClockMs, "vi")} nên lượt này đã được dừng`
-                  : `it did not finish within ${readableLimit(budget.maxWallClockMs, "en")}, so the turn was stopped`,
+                  ? `chưa xong sau ${readableLimit(limitMs, "vi")} nên lượt này đã được dừng`
+                  : `it did not finish within ${readableLimit(limitMs, "en")}, so the turn was stopped`,
               ),
             ),
           );
-        }, budget.maxWallClockMs);
+        }, limitMs);
       });
 
       // Marked only when the prompt that carries it is sent: a stopped turn leaves it for the next one.
@@ -2317,7 +2356,13 @@ export async function createModelTurn(options: {
       return { ...current, via: "configured", ...(fallback === undefined ? {} : { fallback }) };
     },
 
-    configuredModel: (): ModelSelection => options.model?.() ?? selection,
+    configuredModel: (): ModelSelection => {
+      const { provider, id } = options.model?.() ?? selection;
+      const thinkingLevel = chosenThinking() ?? selection.thinkingLevel;
+      return thinkingLevel === undefined ? { provider, id } : { provider, id, thinkingLevel };
+    },
+
+    turnLimitMs,
 
     runInBackground: async (input: BackgroundRunInput): Promise<string> => {
       const signal = input.signal;

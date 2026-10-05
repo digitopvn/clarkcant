@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { allowedDataClassesFor, type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
-import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
+import { directoryIndexPath, readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
 import { keyVariableFor } from "@clarkcant/pi-adapter";
@@ -356,6 +356,17 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         { db: deps.runtime.db, now: () => new Date().toISOString() as never },
         deps.runtime.identity.ownerPrincipalId,
       ),
+    // Read per turn like the instructions above, so a choice in Settings or a `/thinking` reaches the next message.
+    thinkingLevel: () =>
+      readThinkingLevel(
+        { db: deps.runtime.db, now: () => new Date().toISOString() as never },
+        deps.runtime.identity.ownerPrincipalId,
+      ),
+    turnLimitMs: () =>
+      readTurnTimeLimitMs(
+        { db: deps.runtime.db, now: () => new Date().toISOString() as never },
+        deps.runtime.identity.ownerPrincipalId,
+      ),
     sessionDir: join(deps.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
       const index = deps.wiring.sessionIndex();
@@ -610,7 +621,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     modelTurn === undefined
       ? "no model configured; the node will answer with scripts and capabilities only\n"
       : `model: ${modelTurn.selection.provider}/${modelTurn.selection.id}` +
-          ` (turn limit ${modelTurn.budget.maxWallClockMs} ms, ${modelTurn.budget.maxTokens} tokens)\n`,
+          ` (turn limit ${modelTurn.budget.maxWallClockMs === undefined ? "none unless set in Settings" : `${modelTurn.budget.maxWallClockMs} ms`}, ${modelTurn.budget.maxTokens} tokens)\n`,
   );
 
   return modelTurn;

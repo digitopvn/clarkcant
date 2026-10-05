@@ -74,6 +74,8 @@ export interface WorkerBrief {
    * yet, and the adapter is constructed once, long before anybody chooses anything.
    */
   model?: { provider: string; id: string };
+  /** The thinking level the person chose, for the same reason; absent keeps the adapter's configured level. */
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface WorkerSessionHandle {

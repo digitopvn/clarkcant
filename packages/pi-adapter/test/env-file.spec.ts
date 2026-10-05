@@ -92,11 +92,12 @@ describe("choosing a model from the environment", () => {
 });
 
 describe("the ceiling on one conversation turn", () => {
-  it("uses a generous default when nothing is configured", () => {
-    // Generous on purpose: a limit that fires on ordinary use teaches the user to raise it
-    // rather than to trust it.
+  it("sets no wall clock when nothing is configured, and keeps the token ceiling", () => {
+    // Two minutes and then five were reached on ordinary use; a limit that fires on ordinary use teaches the user to
+    // raise it rather than to trust it. The token ceiling still bounds a model that loops.
     expect(modelBudgetFromEnv({})).toEqual(DEFAULT_MODEL_BUDGET);
-    expect(DEFAULT_MODEL_BUDGET.maxWallClockMs).toBeGreaterThanOrEqual(60_000);
+    expect(DEFAULT_MODEL_BUDGET.maxWallClockMs).toBeUndefined();
+    expect(DEFAULT_MODEL_BUDGET.maxTokens).toBeGreaterThan(0);
   });
 
   it("takes a configured limit", () => {
@@ -128,7 +129,6 @@ describe("the ceiling on a dispatched task's worker", () => {
     // A worker's count is every call's whole context summed, so a turn-sized ceiling stops ordinary browser tasks.
     expect(workerBudgetFromEnv({})).toEqual(DEFAULT_WORKER_BUDGET);
     expect(DEFAULT_WORKER_BUDGET.maxTokens).toBeGreaterThanOrEqual(10 * DEFAULT_MODEL_BUDGET.maxTokens);
-    expect(DEFAULT_WORKER_BUDGET.maxWallClockMs).toBeGreaterThan(DEFAULT_MODEL_BUDGET.maxWallClockMs);
   });
 
   it("takes its own configured limits, and not the turn's", () => {
