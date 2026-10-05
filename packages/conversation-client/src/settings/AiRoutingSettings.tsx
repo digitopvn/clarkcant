@@ -2,12 +2,23 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
-import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool } from "@clarkcant/contracts";
+import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool, type ModelRole } from "@clarkcant/contracts";
+import type { MessageKey } from "../i18n/messages.ts";
 import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
 import { modelSwitchShortcut } from "../use-model-alias.ts";
+
+/** A model's roles in the interface language: the ids are the contract's, and read as English words in a Vietnamese panel. */
+const MODEL_ROLE_LABEL: Record<ModelRole, MessageKey> = {
+  foreground: "settings.modelPool.role.foreground",
+  background: "settings.modelPool.role.background",
+  coding: "settings.modelPool.role.coding",
+  research: "settings.modelPool.role.research",
+  fast: "settings.modelPool.role.fast",
+  "long-context": "settings.modelPool.role.long-context",
+};
 
 /**
  * Every credential the node holds, listed once. DESIGN.md 11.6 keeps a key's row in the domain that explains
@@ -293,10 +304,11 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
                         </span>
                       )}
                     </td>
-                    <td>{profile.roles.join(", ")}</td>
+                    <td>{profile.roles.map((role) => t(MODEL_ROLE_LABEL[role])).join(", ")}</td>
                     <td>
                       <input
                         type="number"
+                        className="cc-model-priority"
                         min={0}
                         value={profile.priority}
                         data-model-priority={profile.alias}

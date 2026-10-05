@@ -998,6 +998,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-model-pool { width: 100%; border-collapse: collapse; font-size: var(--cc-text-label); font-variant-numeric: tabular-nums; }
 .cc-model-pool th, .cc-model-pool td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: var(--cc-line, 1px solid) var(--cc-border); white-space: nowrap; }
 .cc-model-pool th { color: var(--cc-text-muted); font-weight: 500; }
+.cc-model-pool td { vertical-align: middle; }
+.cc-model-pool td > .cc-badge { margin-inline-start: var(--cc-space-xs); }
+/* The order is a short number, so its field is a short field drawn like the panel's other inputs. */
+.cc-model-priority {
+  inline-size: 8ch; min-height: 32px; padding: 0 var(--cc-space-xs); font: inherit; font-variant-numeric: tabular-nums;
+  color: var(--cc-text); background: var(--cc-card); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+}
+.cc-model-priority:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-model-pool input[type="checkbox"] { accent-color: var(--cc-accent); margin: 0; }
 
 /* The guarded categories are a list of checkboxes; they wrap as a group instead of pushing past the edge. */
 .cc-guard-classes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--cc-space-xs) var(--cc-space-md); }

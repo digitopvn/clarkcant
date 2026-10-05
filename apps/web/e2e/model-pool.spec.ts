@@ -55,7 +55,15 @@ test("the hotkey moves to the next profile and the label follows", async ({ page
   await expect(table).toBeVisible({ timeout: 15_000 });
   await expect(table).toContainText("fast");
   await expect(table).toContainText("smart");
-});
+  // The roles read in the interface language, and the order field fits inside the table rather than off its edge.
+  const smart = table.locator('[data-model-profile="smart"]');
+  await expect(smart).toContainText("trò chuyện, viết code");
+  await expect(smart).not.toContainText("foreground");
+  const priority = smart.locator("[data-model-priority]");
+  const fieldBox = await priority.boundingBox();
+  const tableBox = await table.boundingBox();
+  expect(fieldBox!.x + fieldBox!.width).toBeLessThanOrEqual(tableBox!.x + tableBox!.width);
+  expect(fieldBox!.width).toBeLessThan(140);});
 
 test("a touch phone is told which model it is on, without a key chord it has no keys for", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
