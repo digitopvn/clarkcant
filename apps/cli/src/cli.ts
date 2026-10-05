@@ -8,6 +8,7 @@ import {
   type MessageBlock,
   messageBlocksAsText,
   instructionNameSchema,
+  isHostWrittenMessage,
   PERSON_ONLY_REFUSAL,
   PROJECT_INSTRUCTION_LIMITS,
   PROJECT_INSTRUCTIONS_PATH,
@@ -256,11 +257,16 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         const conversationId = rest[0];
         if (conversationId === undefined) throw new CliError("read needs a conversation id: clarkcant read <conversationId>");
         const timeline = expectOk(await call("GET", `/conversations/${encodeURIComponent(conversationId)}/timeline`)) as {
-          messages?: { role?: string; blocks?: MessageBlock[] }[];
+          messages?: { role?: string; blocks?: MessageBlock[]; hostWritten?: unknown }[];
         };
         print(timeline, () =>
           (timeline.messages ?? [])
-            .map((message) => `${message.role === "user" ? "you" : "clark"}: ${messageBlocksAsText(message.blocks ?? [])}`)
+            // A message the host wrote so a turn could run is nobody's words, so it is never printed as "you".
+            .map((message) =>
+              isHostWrittenMessage(message)
+                ? "(approved, Clark carries on)"
+                : `${message.role === "user" ? "you" : "clark"}: ${messageBlocksAsText(message.blocks ?? [])}`,
+            )
             .join("\n\n"),
         );
         return 0;

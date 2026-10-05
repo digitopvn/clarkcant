@@ -137,6 +137,10 @@ The origin stays with the work it started:
 - When the person approves a card a program's turn raised, the turn that carries on after the approval keeps the
   program's origin. The person approved that one effect, not the rest of the program's plan, so the next risky step
   is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
+  Nobody typed the user message that turn answers, so the node stores it with
+  `hostWritten: { "kind": "host-continuation", "version": 1 }`. A client draws such a message as a quiet line from the
+  host in its own language ("Approved — Clark carries on") rather than as the person's words, and treats any kind or
+  version it does not know the same way; search and a new session's recap leave it out.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the
   running turn (a steer), interrupts it, or runs in the background. A message whose origin differs from the running
   turn's, a typed message during a spoken turn, or a message that carries attachments, is never steered into it. When

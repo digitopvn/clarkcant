@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type DataClass, type Instant, type MessageRecord } from "@clarkcant/contracts";
+import { type DataClass, HOST_WRITTEN_MESSAGE_VERSION, type Instant, type MessageRecord } from "@clarkcant/contracts";
 import { appendMessage, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
@@ -213,6 +213,18 @@ describe("indexing and search", () => {
     seed(`dùng [redacted] để gọi API`, "msg_redacted", "2026-09-16T02:00:00.000Z");
     expect((await searchSessions(search, { text: token })).results).toHaveLength(0);
     expect((await searchSessions(search, { text: "gọi API" })).results).toHaveLength(1);
+  });
+
+  it("never offers the sentence the host wrote to carry on after an approval as something said", async () => {
+    const host = {
+      ...userMessage("Lệnh đã được duyệt và đã chạy xong.", "msg_host", "2026-09-16T02:00:00.000Z"),
+      hostWritten: { kind: "host-continuation", version: HOST_WRITTEN_MESSAGE_VERSION },
+    } satisfies MessageRecord;
+    appendMessage(db, host, 0);
+    expect(indexMessages(search, { conversationId: "conv_1", messages: [host], at: AT })).toBe(0);
+    const found = await searchSessions(search, { text: "lệnh đã được duyệt" });
+    expect(found.indexSize).toBe(0);
+    expect(found.results).toHaveLength(0);
   });
 
   it("distinguishes an empty index from no matches", async () => {

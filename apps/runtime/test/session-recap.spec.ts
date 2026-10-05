@@ -35,7 +35,7 @@ const ENV = { CC_MODEL_PROVIDER: "test-provider", CC_MODEL_ID: "test-model" } sa
 
 const history = async (): Promise<readonly { role: "user" | "assistant"; text: string }[]> => [
   { role: "user", text: "cho tui chạy git log" },
-  { role: "assistant", text: "Lệnh đã được duyệt và đã chạy xong." },
+  { role: "assistant", text: "Đã chạy git log xong, đây là ba commit mới nhất." },
 ];
 
 describe("a session created for a conversation that already has one", () => {

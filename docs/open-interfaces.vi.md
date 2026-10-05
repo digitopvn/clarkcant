@@ -140,6 +140,10 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 - Khi người dùng duyệt một thẻ do lượt của một chương trình tạo ra, lượt tiếp tục sau khi duyệt vẫn giữ nguồn gốc của
   chương trình đó. Người dùng chỉ duyệt đúng một tác động, không duyệt phần còn lại trong kế hoạch của chương trình, nên
   với `"ask"` bước rủi ro tiếp theo vẫn được hỏi lại. Dòng audit và hoạt động của tác động đã duyệt cũng giữ nguồn gốc.
+  Không ai gõ tin nhắn người dùng mà lượt đó trả lời, nên node lưu nó kèm
+  `hostWritten: { "kind": "host-continuation", "version": 1 }`. Client vẽ tin nhắn như vậy thành một dòng lặng lẽ của
+  host bằng ngôn ngữ của chính client ("Đã duyệt — Clark tiếp tục") thay vì lời của người dùng, và xử lý y như vậy với
+  mọi kind hoặc version nó không biết; tìm kiếm và phần tóm tắt cho phiên mới đều bỏ qua nó.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào
   lượt đang chạy, ngắt lượt đó, hoặc chạy nền. Một tin nhắn có nguồn gốc khác với lượt đang chạy, một tin nhắn gõ
   trong lúc đang có lượt nói bằng giọng, hoặc một tin nhắn có tệp đính kèm, không bao giờ được nhập (steer) vào lượt đó. Khi steer được chọn cho một tin

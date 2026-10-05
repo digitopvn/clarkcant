@@ -13,6 +13,7 @@ import {
   type Instant,
   type MapTileProvider,
   type TurnOrigin,
+  messageRecordSchema,
 } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, readExecutionPolicy, registerCapability, writeRegisteredPreference } from "@clarkcant/core";
 import { allRows, appendAuditEvent, latestMessages, listAuditEvents } from "@clarkcant/storage";
@@ -238,6 +239,12 @@ describe("an approval of a program's command", () => {
     // The turn that carries on is still the program's, not the person's.
     const continued = originOf("Lệnh đã được duyệt và đã chạy xong.");
     expect(continued).toBe("mcp");
+    // And it is marked as the host's own sentence, so no transcript shows it as the person's words.
+    const hostLine = latestMessages(services.runtime.db, conversationId, 50).find(
+      (message) => message.role === "user" && message.hostWritten !== undefined,
+    );
+    expect(hostLine?.hostWritten).toEqual({ kind: "host-continuation", version: 1 });
+    expect(messageRecordSchema.safeParse(hostLine).success).toBe(true);
     // So the next risky step that turn takes is asked about again, rather than run on the strength of one approval.
     setPolicy({ machineTurns: "ask" });
     const next = await toolFor(continued as TurnOrigin).execute({ command: "git push origin main", cwd: dir });
