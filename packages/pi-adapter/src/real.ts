@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type ModelCatalogue,
+import { ModelSwitchUnsureError, NotImplementedError, type ModelCatalogue, type ModelSwitch,
   type PiExtension,
   type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ProviderAuthEntry, type ProviderSignInInteraction,
   type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
@@ -838,6 +838,36 @@ export class RealPiAdapter implements PiAdapter {
       successor,
       note: `successor worker created after ${previousTurns} turn(s); the previous session stays subscribed until the caller disposes it so no event is dropped during the swap`,
     };
+  }
+
+  async switchModel(sessionId: string, selection: ModelSwitch): Promise<void> {
+    const { session } = this.#require(sessionId);
+    // Pi applies a model change to the agent's state at once; mid-run that would send the rest of one answer to a
+    // different model, and a queued steer would be answered by a model the person did not address it to.
+    const between = (): void => {
+      if (session.isStreaming || session.agent.hasQueuedMessages()) {
+        throw new Error("a session's model can only change between runs; this one is still running or holds a queued message");
+      }
+    };
+    between();
+    const resolved =
+      selection.model === undefined ? undefined : (await this.#resolveModel(await this.#load(), selection.model)).model;
+    // Again after the wait: a run may have started while the model was being looked up. Pi still checks the model's
+    // account before it changes the session, and across that wait it is the caller that keeps runs and steers away.
+    between();
+    const before = session.model;
+    try {
+      // Session-only: Pi's `persist` would rewrite the default model of the person's own pi installation.
+      if (resolved !== undefined) await session.setModel(resolved);
+      // After the model, which resets the level to that model's own default; Pi clamps to what the model supports.
+      if (selection.thinkingLevel !== undefined) session.setThinkingLevel(selection.thinkingLevel);
+    } catch (cause) {
+      // Pi sets the model before it records the change, so a failure there leaves the session already moved.
+      if (session.model !== before) {
+        throw new ModelSwitchUnsureError(cause instanceof Error ? cause.message : String(cause), { cause });
+      }
+      throw cause;
+    }
   }
 
   subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {
