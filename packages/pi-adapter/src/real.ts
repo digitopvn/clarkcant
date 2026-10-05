@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type ModelCatalogue,
+import { NotImplementedError, type ModelCatalogue, type ModelSwitch,
   type PiExtension,
   type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ProviderAuthEntry, type ProviderSignInInteraction,
   type ProviderSignInMethod, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
@@ -838,6 +838,22 @@ export class RealPiAdapter implements PiAdapter {
       successor,
       note: `successor worker created after ${previousTurns} turn(s); the previous session stays subscribed until the caller disposes it so no event is dropped during the swap`,
     };
+  }
+
+  async switchModel(sessionId: string, selection: ModelSwitch): Promise<void> {
+    const { session } = this.#require(sessionId);
+    // Pi applies a model change to the agent's state at once; mid-run that would send the rest of one answer to a
+    // different model, and a queued steer would be answered by a model the person did not address it to.
+    if (session.isStreaming || session.agent.hasQueuedMessages()) {
+      throw new Error("a session's model can only change between runs; this one is still running or holds a queued message");
+    }
+    if (selection.model !== undefined) {
+      const { model } = await this.#resolveModel(await this.#load(), selection.model);
+      // Session-only: Pi's `persist` would rewrite the default model of the person's own pi installation.
+      if (model !== undefined) await session.setModel(model);
+    }
+    // After the model, which resets the level to that model's own default; Pi clamps to what the model supports.
+    if (selection.thinkingLevel !== undefined) session.setThinkingLevel(selection.thinkingLevel);
   }
 
   subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {

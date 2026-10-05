@@ -265,7 +265,7 @@ describe("SDK event mapping", () => {
  * measured from the run or from the session's creation. That cannot be asserted against a real provider
  * without spending minutes of wall clock, and the assertion would then be about the provider.
  */
-function stubSdk(options: { idleDelayMs?: number } = {}) {
+function stubSdk(options: { idleDelayMs?: number; models?: { provider: string; id: string }[]; unsignedProviders?: string[] } = {}) {
   const prompts: string[] = [];
   /**
    * The options each session was created with, which is where the tool allowlist travels.
@@ -306,7 +306,19 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
     /** What the SDK declares to the model; the adapter reads it through `getActiveToolNames` and never writes it. */
     activeTools: [] as string[],
     getActiveToolNames: (): string[] => [...session.activeTools],
+    isStreaming: false,
+    /** What the session was moved to through Pi's own `setModel` and `setThinkingLevel`, in call order. */
+    modelChanges: [] as string[],
+    setModel: async (model: { provider: string; id: string }) => {
+      // Pi's own refusal for a provider nobody signed in to.
+      if (options.unsignedProviders?.includes(model.provider)) throw new Error(`No API key for ${model.provider}/${model.id}`);
+      session.modelChanges.push(`model:${model.provider}/${model.id}`);
+    },
+    setThinkingLevel: (level: string) => {
+      session.modelChanges.push(`thinking:${level}`);
+    },
     agent: {
+      hasQueuedMessages: () => false,
       waitForIdle: () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -333,7 +345,12 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
       sessions.push(options);
       return { session };
     },
-    ModelRuntime: { create: async () => ({ getModels: () => [], getProviders: () => [] }) },
+    ModelRuntime: {
+      create: async () => ({
+        getModels: (provider: string) => (options.models ?? []).filter((model) => model.provider === provider),
+        getProviders: () => [...new Set((options.models ?? []).map((model) => model.provider))].map((id) => ({ id })),
+      }),
+    },
   };
 
   return { module: module_, prompts, aborts: () => aborts, sessions, session };
@@ -896,6 +913,80 @@ describe("the real adapter narrows and widens a session's tools from the set it 
     await adapter.setActiveTools(handle.sessionId, ["b", "read", "bash"]);
     expect(state()).toEqual(["b"]);
     expect(rebuilt).toEqual([["a"], ["a", "b", "c"], ["b"]]);
+  });
+});
+
+describe("changing a session's model between runs", () => {
+  const brief = { goal: "answer the user", projectRoots: [], allowedCapabilityRefs: [], maxWallClockMs: 40 };
+  const small = { provider: "one", id: "small" };
+  const large = { provider: "two", id: "large" };
+  const models = [small, large];
+
+  it("moves the same session through Pi's own setModel, model first and thinking level after", async () => {
+    const sdk = stubSdk({ models });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ ...brief, model: small });
+
+    await adapter.switchModel(handle.sessionId, { model: large, thinkingLevel: "high" });
+
+    // Pi resets the level to the new model's default when the model changes, so the person's level has to follow it.
+    expect(sdk.session.modelChanges).toEqual(["model:two/large", "thinking:high"]);
+    expect(sdk.sessions).toHaveLength(1);
+  });
+
+  it("changes only the thinking level when no model is named", async () => {
+    const sdk = stubSdk({ models });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ ...brief, model: small });
+
+    await adapter.switchModel(handle.sessionId, { thinkingLevel: "low" });
+
+    expect(sdk.session.modelChanges).toEqual(["thinking:low"]);
+  });
+
+  it("refuses a model the provider does not have, by name, and changes nothing", async () => {
+    const sdk = stubSdk({ models });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ ...brief, model: small });
+
+    await expect(adapter.switchModel(handle.sessionId, { model: { provider: "two", id: "missing" }, thinkingLevel: "high" })).rejects.toThrow(
+      /two.*missing.*large/s,
+    );
+    expect(sdk.session.modelChanges).toEqual([]);
+  });
+
+  it("passes on Pi's refusal for a provider nobody signed in to, without touching the thinking level", async () => {
+    const sdk = stubSdk({ models, unsignedProviders: ["two"] });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ ...brief, model: small });
+
+    await expect(adapter.switchModel(handle.sessionId, { model: large, thinkingLevel: "high" })).rejects.toThrow(/No API key for two\/large/);
+    expect(sdk.session.modelChanges).toEqual([]);
+  });
+
+  it("refuses while the session is running or holds a queued message", async () => {
+    const sdk = stubSdk({ models });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({ ...brief, model: small });
+
+    sdk.session.isStreaming = true;
+    await expect(adapter.switchModel(handle.sessionId, { model: large })).rejects.toThrow(/between runs/);
+    sdk.session.isStreaming = false;
+    sdk.session.agent.hasQueuedMessages = () => true;
+    await expect(adapter.switchModel(handle.sessionId, { model: large })).rejects.toThrow(/between runs/);
+    expect(sdk.session.modelChanges).toEqual([]);
+  });
+
+  it("the fake keeps the session and records the switch, and refuses one with a message still queued", async () => {
+    const adapter = new FakePiAdapter();
+    const handle = await adapter.createWorkerSession({ ...brief, model: { provider: "fake", id: "fake-model" } });
+
+    await adapter.switchModel(handle.sessionId, { model: { provider: "fake", id: "fake-model-large" } });
+    expect(adapter.modelSwitches).toEqual([{ sessionId: handle.sessionId, selection: { model: { provider: "fake", id: "fake-model-large" } } }]);
+
+    await adapter.steer(handle.sessionId, "one more thing");
+    await expect(adapter.switchModel(handle.sessionId, { thinkingLevel: "high" })).rejects.toThrow(/between runs/);
+    expect(adapter.modelSwitches).toHaveLength(1);
   });
 });
 

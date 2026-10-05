@@ -224,6 +224,10 @@ describe("the public tool surface the adapter relies on instead of the session's
       setActiveToolsByName(names: string[]): void;
       readonly systemPrompt: string;
       readonly messages: unknown[];
+      readonly isStreaming: boolean;
+      readonly thinkingLevel: string;
+      setModel(model: unknown, options?: { persist?: boolean }): Promise<void>;
+      setThinkingLevel(level: string, options?: { persist?: boolean }): void;
       dispose(): void;
     };
     const create = sdk.createAgentSession as (options: Record<string, unknown>) => Promise<{ session: Session }>;
@@ -260,6 +264,20 @@ describe("the public tool surface the adapter relies on instead of the session's
       expect(Array.isArray(live.messages)).toBe(true);
     } finally {
       live.dispose();
+    }
+  });
+
+  it("has the in-place model and thinking-level setters, and a fresh session is not mid-run", async () => {
+    const created = await session(["a"], [{ name: "a" }]);
+    try {
+      expect(typeof created.setModel).toBe("function");
+      expect(typeof created.setThinkingLevel).toBe("function");
+      expect(created.isStreaming).toBe(false);
+      // Session-only by default: no `persist`, so nothing is written to the agent directory's defaults.
+      created.setThinkingLevel("off");
+      expect(created.thinkingLevel).toBe("off");
+    } finally {
+      created.dispose();
     }
   });
 

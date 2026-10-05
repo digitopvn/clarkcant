@@ -5,6 +5,7 @@ import type { Instant } from "@clarkcant/contracts";
 import { guardToolResult } from "./tool-result-guard.ts";
 
 import type {
+  ModelSwitch,
   ModelCatalogue,
   PiExtension,
   PiSetting,
@@ -298,6 +299,23 @@ export class FakePiAdapter implements PiAdapter {
       successor,
       note: `successor session created after ${previous.brief.goal.length} characters of prior brief; task identity is preserved by the caller`,
     };
+  }
+
+  /** Every in-place model change a session accepted, in order, so a test can tell a switch from a successor. */
+  readonly modelSwitches: { sessionId: string; selection: ModelSwitch }[] = [];
+
+  async switchModel(sessionId: string, selection: ModelSwitch): Promise<void> {
+    const session = this.#require(sessionId);
+    if (this.#processing.has(sessionId) || this.hasQueuedMessages(sessionId)) {
+      throw new Error("a session's model can only change between runs; this one is still running or holds a queued message");
+    }
+    const { model, thinkingLevel } = selection;
+    session.brief = {
+      ...session.brief,
+      ...(model === undefined ? {} : { model: { ...model } }),
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+    };
+    this.modelSwitches.push({ sessionId, selection: { ...selection } });
   }
 
   subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {

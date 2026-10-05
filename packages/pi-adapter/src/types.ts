@@ -100,6 +100,12 @@ export interface WorkerBrief {
  */
 export type ToolResultGuard = (input: { tool: string; text: string }) => { withheld: false } | { withheld: true; text: string };
 
+/** What `switchModel` changes. A field left out keeps what the session has. */
+export interface ModelSwitch {
+  model?: { provider: string; id: string };
+  thinkingLevel?: WorkerBrief["thinkingLevel"];
+}
+
 export interface WorkerSessionHandle {
   sessionId: string;
   /** Resume target, if the session is backed by a file. */
@@ -342,6 +348,17 @@ export interface PiAdapter {
     sessionId: string,
     brief: WorkerBrief,
   ): Promise<{ successor: WorkerSessionHandle; note: string }>;
+
+  /**
+   * Move a session onto another model or thinking level in place, between runs.
+   *
+   * The session keeps its transcript, tools and subscriptions, and its next run is sent to the new model with
+   * everything the session already holds. Whether the new model may read all of that is the caller's decision: when
+   * it may not, the caller creates a successor with `handoff()` and a narrower brief instead. Refused while a run is
+   * in progress or a steered message is still queued, and when the model is unknown or its provider has no
+   * credential; a refused switch leaves the session on the model it had.
+   */
+  switchModel(sessionId: string, selection: ModelSwitch): Promise<void>;
 
   /**
    * Send a prompt and resolve when the run settles.
