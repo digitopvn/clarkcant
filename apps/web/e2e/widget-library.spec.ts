@@ -78,6 +78,13 @@ test("the library opens from Extensions and the conversation stays mounted", asy
    * model only allows the former.
    */
   await expect(page.locator("[data-composer='true']")).toHaveCount(1);
+
+  // Browsing shows each widget's picture, name and family; the description written for the model stays in the
+  // card's accessible name and its detail view rather than printed under every card.
+  const line = page.locator("[data-widget-card='canvas.line@1']");
+  await expect(line).toBeVisible({ timeout: 20_000 });
+  await expect(line.locator(".cc-widget-card-desc")).toHaveCount(0);
+  await expect(line).toHaveAccessibleName(/dataset/);
 });
 
 test("the terminal is listed as a host card, described and never opened from the library", async ({ page }) => {
@@ -204,6 +211,8 @@ test("the Lab shows developer controls that actually change the preview", async 
    * The controls belong to a selected widget, so a card is chosen first. A Lab that showed fixture and
    * viewport controls for nothing would be a control that looks usable before its subject exists.
    */
+  // The Lab is for the people who write those descriptions, so its cards print them.
+  await expect(page.locator("[data-widget-card='canvas.table@1'] .cc-widget-card-desc")).toHaveCount(1);
   await page.locator("[data-widget-card='canvas.table@1']").click();
   await expect(page.locator("[data-widget-detail='canvas.table@1']")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-widget-lab-controls='true']")).toBeVisible({ timeout: 20_000 });

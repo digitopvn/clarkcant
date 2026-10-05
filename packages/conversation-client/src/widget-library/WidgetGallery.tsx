@@ -38,9 +38,15 @@ export function isEmbeddedPreview(definitionId: string): boolean {
 export interface WidgetGalleryProps {
   entries: readonly WidgetCatalogEntry[];
   onSelect: (cardId: string) => void;
+  /**
+   * Whether each card prints its semantic description. That text is written for the model and for assistive
+   * technology ("Line chart over a dataset reference"), so browsing shows the picture, the name and the family, and
+   * the description stays in the card's accessible name, the detail view and the Lab.
+   */
+  showDescription?: boolean;
 }
 
-export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactElement {
+export function WidgetGallery({ entries, onSelect, showDescription = false }: WidgetGalleryProps): ReactElement {
   const t = useT();
   if (entries.length === 0) {
     return (
@@ -87,7 +93,7 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
               <span className="cc-widget-card-meta">
                 <span className="cc-widget-card-name">{entry.displayName}</span>
                 <span className="cc-widget-card-family">{familyLabel(entry.family, t)}</span>
-                <span className="cc-widget-card-desc">{entry.description}</span>
+                {showDescription && <span className="cc-widget-card-desc">{entry.description}</span>}
                 {entry.definition.appearanceMode === "fixed" && <span data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</span>}
                 <span className="cc-widget-card-source">
                   {entry.source === "builtin"

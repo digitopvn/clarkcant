@@ -279,6 +279,7 @@ export function WidgetLibrarySurface({
                 <h3>{builtInLabel(t)}</h3>
                 <WidgetGallery
                   entries={visible}
+                  showDescription={develop}
                   onSelect={(cardId) => onAction({ kind: "select", cardId })}
                 />
               </section>
