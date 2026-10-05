@@ -80,6 +80,9 @@ export default defineConfig({
       "packages/widget-cli/test/dev-host.spec.ts",
     ],
     environment: "node",
+    // Corepack's first resolution of pnpm outside this repository can download a release; do it once, before the
+    // workers, rather than inside whichever test happens to pack an npm archive first.
+    globalSetup: ["packages/widget-cli/test/resolve-pnpm.global-setup.ts"],
     reporters: ["default"],
     testTimeout: 20_000,
     // Setup and teardown do the same real disk work as the tests — open a WAL database and migrate it, checkpoint it
