@@ -19,7 +19,8 @@ export const typesafeDecisionProvider: DecisionProvider = {
     // The environment wins when both exist: an operator who set it deliberately should not be overridden by a value
     // typed later into a card.
     const apiKey = env.TYPESAFE_API_KEY?.trim() || stored?.("typesafe")?.trim() || undefined;
-    const model = env.CLARKCANT_JEV_MODEL?.trim() || JEV_EXACT_MODEL;
+    // The provider-neutral name wins; the Jev-specific one keeps working for configurations written before it.
+    const model = env.CLARKCANT_DECISION_MODEL?.trim() || env.CLARKCANT_JEV_MODEL?.trim() || JEV_EXACT_MODEL;
     const endpointCheck = validateProviderEndpoint(env.CLARKCANT_JEV_ENDPOINT?.trim() || JEV_DEFAULT_ENDPOINT);
     return {
       apiKey,

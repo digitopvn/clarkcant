@@ -1,3 +1,4 @@
+import { cloudflareDecisionProvider } from "./cloudflare-decision-provider.ts";
 import type { SystemOneResponse } from "./system-one-wire.ts";
 import { typesafeDecisionProvider } from "./typesafe-decision-provider.ts";
 
@@ -13,7 +14,13 @@ import { typesafeDecisionProvider } from "./typesafe-decision-provider.ts";
  * change a floor and cannot turn a refusal into a choice; it can only return a System One response or nothing.
  */
 
-export type DecisionProviderId = "typesafe";
+export type DecisionProviderId = "typesafe" | "cloudflare";
+
+/** Every provider id this node knows. TypeSafe is first because it is the default. */
+export const DECISION_PROVIDER_IDS: readonly DecisionProviderId[] = Object.freeze(["typesafe", "cloudflare"]);
+
+/** Used when nothing names a provider, which is every configuration written before a second one existed. */
+export const DEFAULT_DECISION_PROVIDER: DecisionProviderId = "typesafe";
 
 /** What an adapter resolves from operator configuration: where to call, with what, and which model is pinned. */
 export interface DecisionProviderConnection {
@@ -56,5 +63,7 @@ export function decisionProviderFor(id: DecisionProviderId): DecisionProvider {
   switch (id) {
     case "typesafe":
       return typesafeDecisionProvider;
+    case "cloudflare":
+      return cloudflareDecisionProvider;
   }
 }

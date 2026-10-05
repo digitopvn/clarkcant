@@ -1,4 +1,11 @@
-import { type StoredCredential, decisionProviderFor } from "./decision-provider.ts";
+import {
+  DECISION_PROVIDER_IDS,
+  DEFAULT_DECISION_PROVIDER,
+  type DecisionProviderConnection,
+  type DecisionProviderId,
+  type StoredCredential,
+  decisionProviderFor,
+} from "./decision-provider.ts";
 
 /**
  * The decision layer's configuration.
@@ -8,6 +15,11 @@ import { type StoredCredential, decisionProviderFor } from "./decision-provider.
  * part - credential, endpoint, pinned model - is resolved by its adapter and carried here so a refusal can name it.
  */
 export interface DecisionConfig {
+  /**
+   * Which provider answers. Absent means TypeSafe, which is what every configuration written before a second provider
+   * existed meant; only `CLARKCANT_DECISION_PROVIDER` selects another.
+   */
+  provider?: DecisionProviderId;
   /** False when the provider is switched off or has no key. No call is attempted. */
   enabled: boolean;
   /** True when the operator forbids third-party processing of any intent. */
@@ -31,6 +43,23 @@ export interface DecisionConfig {
 }
 
 export const JEV_POLICY_VERSION = "2026-09-17";
+
+/**
+ * The provider an operator selected, or a refusal.
+ *
+ * An unrecognised name is refused rather than read as the default: an operator who wrote `cloudfare` meant to move
+ * decisions away from TypeSafe, and quietly sending them there anyway would be the one outcome they did not choose.
+ */
+function selectedProvider(env: NodeJS.ProcessEnv): { ok: true; id: DecisionProviderId } | { ok: false; reason: string } {
+  const raw = env.CLARKCANT_DECISION_PROVIDER?.trim().toLowerCase() ?? "";
+  if (raw === "") return { ok: true, id: DEFAULT_DECISION_PROVIDER };
+  const known = DECISION_PROVIDER_IDS.find((id) => id === raw);
+  if (known !== undefined) return { ok: true, id: known };
+  return {
+    ok: false,
+    reason: `CLARKCANT_DECISION_PROVIDER names no provider this node knows (${DECISION_PROVIDER_IDS.join(", ")}), so no decision is sent anywhere`,
+  };
+}
 
 function flag(raw: string | undefined): boolean {
   if (raw === undefined) return false;
@@ -57,12 +86,18 @@ export function decisionConfigFromEnv(
    */
   stored?: StoredCredential,
 ): DecisionConfig {
-  const connection = decisionProviderFor("typesafe").connection(env, stored);
+  const selected = selectedProvider(env);
+  const provider = selected.ok ? selected.id : DEFAULT_DECISION_PROVIDER;
+  const resolved = decisionProviderFor(provider).connection(env, stored);
+  const connection: DecisionProviderConnection = selected.ok
+    ? resolved
+    : { ...resolved, apiKey: undefined, endpointRefusal: selected.reason };
   const localOnly = flag(env.CLARKCANT_JEV_LOCAL_ONLY);
   const explicit = env.CLARKCANT_JEV_ENABLED === undefined ? undefined : flag(env.CLARKCANT_JEV_ENABLED);
   const timeoutMs = Number.parseInt(env.CLARKCANT_JEV_TIMEOUT_MS ?? "4000", 10);
 
   return {
+    provider,
     enabled: explicit ?? (connection.apiKey !== undefined && !localOnly),
     localOnly,
     apiKey: connection.apiKey,

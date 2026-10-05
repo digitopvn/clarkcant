@@ -15,7 +15,7 @@ import {
   stateLooksRedacted,
 } from "./mini-app-candidates.ts";
 import { type DecisionConfig, JEV_POLICY_VERSION, decisionCallRefusal, decisionConfigFromEnv } from "./decision-config.ts";
-import { decisionProviderFor } from "./decision-provider.ts";
+import { DEFAULT_DECISION_PROVIDER, type DecisionProviderId, decisionProviderFor } from "./decision-provider.ts";
 import {
   type DecisionTransport,
   type DecisionTransportRequest,
@@ -105,6 +105,8 @@ export interface JevTelemetry {
   /** The enum that was selected, when there was one. Never free text from a model. */
   selection?: string;
   reason?: string;
+  /** Which provider was asked. Absent means TypeSafe, so a line from a default node reads exactly as it always has. */
+  provider?: DecisionProviderId;
 }
 
 export interface JevDeps {
@@ -123,8 +125,14 @@ function defaultRequestId(): string {
   return `jevreq_${Date.now().toString(36)}${requestCounter.toString(36)}`;
 }
 
+/** The provider a configuration selects; a configuration that names none means TypeSafe. */
+function providerOf(config: JevConfig): DecisionProviderId {
+  return config.provider ?? DEFAULT_DECISION_PROVIDER;
+}
+
 function emit(deps: JevDeps, event: JevTelemetry): void {
-  deps.onTelemetry?.(event);
+  const provider = providerOf(deps.config);
+  deps.onTelemetry?.(provider === DEFAULT_DECISION_PROVIDER ? event : { ...event, provider });
 }
 
 /* ------------------------------------------------------------------ *
@@ -264,7 +272,7 @@ async function callProvider(
     }
 
     // The adapter unwraps its provider's envelope; what comes back is System One or nothing.
-    const answered = decisionProviderFor("typesafe").readResponse(response.body);
+    const answered = decisionProviderFor(providerOf(deps.config)).readResponse(response.body);
     if (answered === undefined) {
       const reason = "the provider response did not match the documented answer shape";
       emit(deps, {

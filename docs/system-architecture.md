@@ -228,6 +228,8 @@ The three paths A/B/C share one adapter, one confidence policy and one fallback 
 
 A, B, C, E, F and G live in `apps/runtime/src/jev-decider.ts`; D in `apps/runtime/src/jev-selector.ts`, with the same adapter and the same policy. E is a decision rather than a rule because the three answers cannot stand in for each other: steer changes the work in progress, interrupt throws it away, background spends an extra call on work the user may not have meant to split off. When not confident enough, E leans toward `interrupt` — the recoverable direction, rather than the silent one. Configuration and operation: [mini-app/jev-configuration.md](mini-app/jev-configuration.md).
 
+Jev is the default provider of this decision role, not the role itself. Provider specifics — endpoint, credential, pinned model and how the vendor's response envelope is unwrapped — sit behind one small adapter interface (`DecisionProvider` in `apps/runtime/src/decision-provider.ts`), with TypeSafe Jev and Cloudflare Clef on Workers AI as the two adapters. Every call site above builds its options, redaction and fallback before an adapter is involved, and reads the same System One answer back, so selecting Clef (only by explicit operator configuration) changes who receives the payload and never what is offered or what a refusal falls back to.
+
 **Measured status (2026-09-17).** The structure above is in the repo, and the three numbers that drive the configuration were measured rather than guessed:
 
 | Layer | Status | Measurement / reason |

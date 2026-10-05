@@ -25,7 +25,9 @@ import type { MiniAppCandidateSet } from "../src/mini-app-candidates.ts";
  */
 
 const LIVE = process.env.CLARKCANT_JEV_LIVE === "1";
-const config = jevConfigFromEnv(process.env).apiKey === undefined ? undefined : jevConfigFromEnv(process.env);
+// Pinned to TypeSafe so a node that selects another decision provider still produces Jev evidence here, not Clef's.
+const JEV_ENV = { ...process.env, CLARKCANT_DECISION_PROVIDER: "typesafe" };
+const config = jevConfigFromEnv(JEV_ENV).apiKey === undefined ? undefined : jevConfigFromEnv(JEV_ENV);
 
 const SLOTS: CompositionSlot[] = ["metrics", "trend", "calendar"];
 
