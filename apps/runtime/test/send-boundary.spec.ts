@@ -13,7 +13,7 @@ import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import type { ContextSource } from "../src/context-bundle.ts";
 import { type HistoryMessage, createModelTurn } from "../src/model-turn.ts";
 import { createPersonalInstructionsPin } from "../src/personal-instructions-pin.ts";
-import { contextFileGuard, dataClassTaskRefusal } from "../src/send-boundary.ts";
+import { contextGuardFor, dataClassTaskRefusal, withheldContextText } from "../src/send-boundary.ts";
 
 /**
  * A model's data-class ceiling is a limit on what is sent to it, not a routing preference.
@@ -434,23 +434,139 @@ describe("a background run", () => {
     expect(guard?.({ tool: "clarkcant_read", text: SECRET })).toMatchObject({ withheld: true });
     expect(guard?.({ tool: "clarkcant_read", text: "ghi chú về cấu hình" })).toEqual({ withheld: false });
   });
+
+  it("withholds a tool's result, image and all, when the run's model calls it", async () => {
+    // Every tool the session holds goes through the guard the run's brief carries: one that read a picture is added
+    // beside the run's own, and the run's model calls it the way a live session's call goes through the adapter.
+    const image = { mimeType: "image/png", dataBase64: "iVBORw0KGgo=" };
+    const whole: { text: string; image?: unknown }[] = [];
+    class WithPicture extends RecordingAdapter {
+      override async createWorkerSession(brief: WorkerBrief): ReturnType<FakePiAdapter["createWorkerSession"]> {
+        const picture = {
+          name: "read_picture",
+          label: "Read a picture",
+          description: "Reads a picture and what is written beside it.",
+          parameters: { type: "object", properties: {} },
+          execute: async () => ({ text: SECRET, image }),
+        };
+        return await super.createWorkerSession({ ...brief, customTools: [...(brief.customTools ?? []), picture] });
+      }
+      override async callToolResult(
+        sessionId: string,
+        toolName: string,
+        params: Record<string, unknown>,
+      ): ReturnType<FakePiAdapter["callToolResult"]> {
+        const result = await super.callToolResult(sessionId, toolName, params);
+        whole.push(result);
+        return result;
+      }
+    }
+    const adapter = new WithPicture({ script: [{ callTool: { name: "read_picture", params: {} }, reply: "xong" }] });
+    const run = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    await expect(run!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "đọc ảnh" })).resolves.toBe("xong");
+    expect(whole).toHaveLength(1);
+    expect(whole[0]?.text).toContain("carries secret data");
+    expect(whole[0]?.text).not.toContain(SECRET_VALUE);
+    expect(whole[0]?.image).toBeUndefined();
+    expectBlockedSaid("secret", "test-provider/test-model");
+  });
 });
 
 describe("what the SDK loads from the machine into a prompt", () => {
-  it("leaves out a context file carrying confidential or secret data, for every model, and names only the file", async () => {
+  const NARROW_CEILING: readonly DataClass[] = ["public", "internal"];
+  const MODEL = { provider: "acme", id: "narrow" };
+
+  it("leaves out a file only for a model that may not receive it, and names only the file", async () => {
     const lines: string[] = [];
     vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
       if (typeof chunk === "string") lines.push(chunk);
       return true;
     });
-    expect(contextFileGuard({ source: "/home/someone/project/AGENTS.md", text: "Use pnpm. Run the tests." })).toBe(true);
-    expect(contextFileGuard({ source: "/home/someone/project/AGENTS.md", text: `Deploy with ${SECRET}` })).toBe(false);
-    expect(contextFileGuard({ source: "/home/someone/CLAUDE.md", text: "Mail reports to duy@example.com" })).toBe(false);
+    const withheld: { name: string; dataClass: DataClass }[] = [];
+    const narrow = contextGuardFor({ model: MODEL, allowed: NARROW_CEILING, onWithheld: (item) => withheld.push(item) });
+    expect(narrow({ source: "/home/someone/project/AGENTS.md", text: "Use pnpm. Run the tests." })).toBe(true);
+    expect(narrow({ source: "/home/someone/project/AGENTS.md", text: `Deploy with ${SECRET}` })).toBe(false);
+    expect(narrow({ source: "/home/someone/CLAUDE.md", text: "Mail reports to duy@example.com" })).toBe(false);
+    expect(narrow({ source: "system-prompt", text: "Mail reports to duy@example.com" })).toBe(false);
+    expect(withheld).toEqual([
+      { name: "AGENTS.md", dataClass: "secret" },
+      { name: "CLAUDE.md", dataClass: "confidential" },
+      { name: "SYSTEM.md", dataClass: "confidential" },
+    ]);
     const said = lines.join("");
     expect(said).toContain('"source":"AGENTS.md"');
     expect(said).toContain('"dataClass":"secret"');
+    expect(said).toContain('"model":"acme/narrow"');
     expect(said).not.toContain("someone");
     expect(said).not.toContain(SECRET_VALUE);
+
+    // A model that may receive confidential data is given the same file; secret still only to one that may receive it.
+    const wide = contextGuardFor({ model: MODEL, allowed: DEFAULT_ALLOWED_DATA_CLASSES });
+    expect(wide({ source: "/home/someone/CLAUDE.md", text: "Mail reports to duy@example.com" })).toBe(true);
+    expect(wide({ source: "/home/someone/project/AGENTS.md", text: `Deploy with ${SECRET}` })).toBe(false);
+    expect(contextGuardFor({ model: MODEL, allowed: EVERY })({ source: "AGENTS.md", text: `Deploy with ${SECRET}` })).toBe(true);
+  });
+
+  /** A loader stand-in: each session's creation runs its brief's context guard over the files a real loader would find. */
+  class LoadingAdapter extends RecordingAdapter {
+    readonly loaded: boolean[] = [];
+    override async createWorkerSession(brief: WorkerBrief): ReturnType<FakePiAdapter["createWorkerSession"]> {
+      this.loaded.push(brief.contextGuard?.({ source: "/home/someone/project/AGENTS.md", text: "Mail duy@example.com" }) ?? true);
+      return await super.createWorkerSession(brief);
+    }
+  }
+
+  it("is held to the ceiling of the model each conversation's session runs", async () => {
+    const ceiling = (model: { provider: string }): readonly DataClass[] => (model.provider === "local" ? EVERY : NARROW_CEILING);
+    const narrow = new LoadingAdapter({ script: ["xong"] });
+    const narrowTurn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter: narrow, allowedDataClasses: ceiling });
+    await narrowTurn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào", messageId: "m1" });
+    expect(narrow.briefs[0]?.contextGuard).toBeTypeOf("function");
+    expect(narrow.loaded).toEqual([false]);
+
+    const local = new LoadingAdapter({ script: ["xong"] });
+    const localTurn = await createModelTurn({
+      env: { CC_MODEL_PROVIDER: "local", CC_MODEL_ID: "llama" },
+      cwd: process.cwd(),
+      adapter: local,
+      allowedDataClasses: ceiling,
+    });
+    const reply = await localTurn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào", messageId: "m1" });
+    expect(local.loaded).toEqual([true]);
+    expect(reply.withheldNote).toBeUndefined();
+  });
+
+  it("tells the person once per session what was left out, by file name and class only", async () => {
+    const adapter = new LoadingAdapter({ script: ["xong", "xong"] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      language: () => "en",
+      allowedDataClasses: () => NARROW_CEILING,
+      personalInstructions: () => `Sign in with ${SECRET}`,
+    });
+    const first = await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào", messageId: "m1" });
+    expect(first.withheldNote).toContain("AGENTS.md (confidential)");
+    expect(first.withheldNote).toContain("personal instructions (secret)");
+    expect(first.withheldNote).toContain("test-provider/test-model");
+    expect(first.withheldNote).not.toContain("someone");
+    expect(first.withheldNote).not.toContain("duy@example.com");
+    expect(first.withheldNote).not.toContain(SECRET_VALUE);
+    // Said once: the next reply in the same session does not repeat it.
+    const second = await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào lần nữa", messageId: "m2" });
+    expect(second.withheldNote).toBeUndefined();
+    expect(adapter.prompts).toHaveLength(2);
+  });
+
+  it("is worded in the person's language and bounded however much was left out", () => {
+    const items = Array.from({ length: 12 }, (_, index) => ({ name: `skill:s${index}`, dataClass: "secret" as const }));
+    const en = withheldContextText("en", { model: "acme/narrow", items });
+    expect(en).toContain("and 4 more");
+    expect(en).not.toContain("skill:s8");
+    const vi = withheldContextText("vi", { model: "acme/narrow", items: [{ name: "personal-instructions", dataClass: "confidential" }] });
+    expect(vi).toContain("hướng dẫn cá nhân (confidential)");
+    expect(vi).toContain("Không gửi cho acme/narrow");
   });
 });
 
@@ -493,6 +609,48 @@ describe("the person's own instructions", () => {
     personal = "Trả lời bằng tiếng Việt.";
     await turn!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "tổng hợp ghi chú" });
     expect(given).toEqual(["Trả lời ngắn gọn.", undefined, "Trả lời bằng tiếng Việt."]);
+  });
+});
+
+describe("the pin a session's personal instructions are read from", () => {
+  /** Records each session's id, and fails the prompt when asked to. */
+  class Sessions extends RecordingAdapter {
+    readonly ids: string[] = [];
+    failNext = false;
+    override async createWorkerSession(brief: WorkerBrief): ReturnType<FakePiAdapter["createWorkerSession"]> {
+      const handle = await super.createWorkerSession(brief);
+      this.ids.push(handle.sessionId);
+      return handle;
+    }
+    override async prompt(sessionId: string, text: string): Promise<void> {
+      if (this.failNext) {
+        this.failNext = false;
+        throw new Error("the provider went away");
+      }
+      await super.prompt(sessionId, text);
+    }
+  }
+
+  it("is let go with the session on a failed turn and on shutdown", async () => {
+    const pin = createPersonalInstructionsPin();
+    const adapter = new Sessions({ script: ["xong", "xong"] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      personalInstructions: () => "Trả lời ngắn gọn.",
+      personalInstructionsPin: pin,
+    });
+    adapter.failNext = true;
+    await expect(turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào", messageId: "m1" })).rejects.toThrow();
+    const failed = adapter.ids[0] ?? "";
+    expect(pin.get(failed)).toBeUndefined();
+
+    await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "chào lại", messageId: "m2" });
+    const live = adapter.ids[1] ?? "";
+    expect(pin.get(live)).toBe("Trả lời ngắn gọn.");
+    await turn!.dispose();
+    expect(pin.get(live)).toBeUndefined();
   });
 });
 
@@ -545,5 +703,25 @@ describe("a background run's refusal", () => {
 
     // An ordinary request is not refused for an unread ceiling: only confidential and secret are held back.
     await expect(turn!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: "tổng hợp ghi chú" })).resolves.toBe("xong");
+  });
+
+  it("names the ceiling that refused when only some of the candidates' ceilings could not be read", async () => {
+    const adapter = new RecordingAdapter({ script: ["xong"] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      language: () => "en",
+      // The routed model's ceiling cannot be read; the configured one's can, and it refuses.
+      allowedDataClasses: (model) => {
+        if (model.provider === "routed") throw new Error("pool unreadable");
+        return ["public", "internal"];
+      },
+      backgroundModel: async () => ({ provider: "routed", id: "small" }),
+    });
+    const cause = await notSent(turn!.runInBackground({ conversationId: CONVERSATION, principal: OWNER, text: `dùng ${SECRET}` }));
+    expect(cause.message).not.toContain("could not be read");
+    expect(cause.message).toContain("may not receive secret data");
+    expect(adapter.briefs).toEqual([]);
   });
 });

@@ -110,6 +110,36 @@ describe("the class of a text", () => {
     expect(dataClassOfText("SG.short.value")).toBe("internal");
   });
 
+  it("is secret for a Basic header whose either side is a real value", () => {
+    const basic = (decoded: string): string => `Authorization: Basic ${btoa(decoded)}`;
+    // A key sent as the user with an empty password, and a one-letter password.
+    expect(dataClassOfText(basic(["k3yAsUser", "Name9x:"].join("")))).toBe("secret");
+    expect(dataClassOfText(basic(["someone", "X"].join(":")))).toBe("secret");
+    // Both sides placeholders, or nothing at all, is no credential.
+    expect(dataClassOfText(basic(["example", "changeme"].join(":")))).toBe("internal");
+    expect(dataClassOfText(basic(["", "xxxxxxxx"].join(":")))).toBe("internal");
+  });
+
+  it("takes a mask for a placeholder only when it is at least four characters long", () => {
+    expect(dataClassOfText('password: "****"')).toBe("internal");
+    expect(dataClassOfText(`Authorization: Basic ${btoa("  :xxxx")}`)).toBe("internal");
+    expect(dataClassOfText(`Authorization: Basic ${btoa("  :xxx")}`)).toBe("secret");
+  });
+
+  it("does not take a value that only starts by addressing the reader for a placeholder", () => {
+    expect(dataClassOfText('password = "YourMomsMaidenNameIsSecret"')).toBe("secret");
+    expect(dataClassOfText('password = "insert_your_password_here"')).toBe("internal");
+    expect(dataClassOfText('API_KEY="replace-api-key"')).toBe("internal");
+  });
+
+  it("does not read a URL's placeholder password and host as an email address", () => {
+    expect(dataClassOfText(["postgres://app", "password@db.example.com/app"].join(":"))).toBe("internal");
+    // An address elsewhere in the same text still is one.
+    expect(dataClassOfText(`${["postgres://app", "password@db.example.com/app"].join(":")} owner duy@example.com`)).toBe(
+      "confidential",
+    );
+  });
+
   it("is not secret for ordinary code", () => {
     const code = [
       "export async function api_v2_handler_migration_0012(db: Database): Promise<void> {",

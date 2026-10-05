@@ -7,7 +7,9 @@ import {
   type WorkerBrief,
 } from "@clarkcant/pi-adapter";
 
-import { contextFileGuard } from "./send-boundary.ts";
+import { DEFAULT_ALLOWED_DATA_CLASSES, type DataClass } from "@clarkcant/contracts";
+
+import { contextGuardFor, toolResultGuardFor } from "./send-boundary.ts";
 
 /**
  * Starting a worker session in a directory the finder chose.
@@ -51,7 +53,15 @@ export interface ProjectSessionOptions {
   createAdapter?: (cwd: string) => PiAdapter;
   /** Called once a transcript exists, so the runtime can index it. */
   onSessionFile?: (input: { sessionId: string; sessionFile: string }) => void;
+  /**
+   * The data classes the session's model may be sent, read when a session starts; absent is what a profile that says
+   * nothing receives. One that cannot be read is answered with `public` alone, so nothing above it is sent.
+   */
+  allowedDataClasses?: (model: { provider: string; id: string }) => readonly DataClass[];
 }
+
+/** What a project session's model is called when the node names none: the SDK's own default. */
+const SDK_DEFAULT_MODEL = { provider: "pi", id: "default" };
 
 export function createProjectSessionStarter(options: ProjectSessionOptions): ProjectSessionStarter {
   return {
@@ -88,13 +98,23 @@ export function createProjectSessionStarter(options: ProjectSessionOptions): Pro
           // boundary travels on the brief as `projectRoots` and the tools resolve every path against it.
           cwd,
           sessionDir: options.sessionDir,
-          // The same check every conversation's session gets on what the SDK loads from the machine into a prompt.
-          contextGuard: contextFileGuard,
           ...(options.model === undefined ? {} : { model: options.model }),
           ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
           ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
         });
 
+      /*
+       * The send boundary, the same way a conversation's session has it: every result the scoped filesystem tools hand
+       * back — which carry the absolute paths they read — and everything the SDK loads from the machine into the prompt
+       * reach the model only if its ceiling admits them.
+       */
+      const model = options.model ?? SDK_DEFAULT_MODEL;
+      let allowed: readonly DataClass[];
+      try {
+        allowed = options.allowedDataClasses?.(model) ?? DEFAULT_ALLOWED_DATA_CLASSES;
+      } catch {
+        allowed = ["public"];
+      }
       const brief: WorkerBrief = {
         goal: input.goal,
         // Canonical, and all of them. These are the directories the session's file tools admit and nothing else.
@@ -108,6 +128,8 @@ export function createProjectSessionStarter(options: ProjectSessionOptions): Pro
         // Built from the approval record rather than from the paths, so each tool re-checks the identity the
         // kernel gave the directory here rather than a name that something else could answer to later.
         customTools: createScopedFsTools({ roots: approved.approved }),
+        toolResultGuard: toolResultGuardFor({ model: () => model, allowed: () => allowed }),
+        contextGuard: contextGuardFor({ model, allowed }),
       };
 
       const handle = await adapter.createWorkerSession(brief);

@@ -155,22 +155,28 @@ const PLACEHOLDER_WORDS = new Set([
 /**
  * Whether a credential-shaped value is an obvious placeholder: `your_api_key`, `example`, `changeme`, `YOURTOKENHERE`,
  * `xxxxxxxx`, `********`. Conservative on purpose — a miss here costs a refused turn, a wrong hit costs a credential — so
- * only a value with no digit can be one, and only when it is a known stand-in word, starts by addressing the reader
- * (`your…`, `insert…`, `replace…`), ends in `<key|token|secret|password|value>here`, or is one repeated mask character.
+ * only a value with no digit can be one, and only when it is a known stand-in word, addresses the reader about a generic
+ * credential (`your_api_key`, `insert_your_token_here`, `replace_password`), ends in
+ * `<key|token|secret|password|value>here`, or is at least four of one repeated mask character. A value that merely
+ * starts with `your` (`YourMomsMaidenNameIsSecret`) is a value.
  */
 function isPlaceholderValue(raw: string): boolean {
   const value = raw.trim().replace(/^["']|["']$/g, "");
   if (value === "") return true;
-  if (/^(.)\1*$/.test(value) && /^[x*.#-]$/i.test(value[0] ?? "")) return true;
+  if (/^(.)\1{3,}$/.test(value) && /^[x*.#-]$/i.test(value[0] ?? "")) return true;
   if (/\d/.test(value)) return false;
   const word = value.toLowerCase().replace(/[-_. ]/g, "");
   if (PLACEHOLDER_WORDS.has(word)) return true;
-  return /^(?:your|insert|replace)[a-z]+$/.test(word) || /(?:key|token|secret|password|value)(?:goes)?here$/.test(word);
+  return (
+    /^(?:(?:insert|replace)(?:your)?|your)(?:key|token|secret|password|apikey)(?:here)?$/.test(word) ||
+    /(?:key|token|secret|password|value)(?:goes)?here$/.test(word)
+  );
 }
 
 /**
- * Whether an `Authorization: Basic …` header carries a user and password: its value decodes to `user:password`. A word
- * that merely follows "Basic" does not decode to that, and is left alone.
+ * Whether an `Authorization: Basic …` header carries a credential: its value decodes to printable `user:password` text
+ * and either side is a real value. A key sent as the user with an empty password counts, and so does a one-letter
+ * password. A word that merely follows "Basic" does not decode to that, and is left alone.
  */
 function carriesBasicCredentials(match: string): boolean {
   const encoded = /Basic\s+(\S+)$/i.exec(match)?.[1] ?? "";
@@ -180,11 +186,19 @@ function carriesBasicCredentials(match: string): boolean {
   } catch {
     return false;
   }
+  if (!/^[\x20-\x7e]+$/.test(decoded)) return false;
   const split = decoded.indexOf(":");
-  return split > 0 && split < decoded.length - 1 && !isPlaceholderValue(decoded.slice(split + 1));
+  if (split < 0) return false;
+  return !isPlaceholderValue(decoded.slice(0, split)) || !isPlaceholderValue(decoded.slice(split + 1));
 }
 /** Shapes that identify a person or their machine: text carrying one is `confidential`. */
 const PERSONAL_SHAPES = new Set(["email", "phone", "home-path", "windows-path"]);
+
+/** The URL-credentials shape, taken out of a text before an address is looked for in it. */
+const URL_CREDENTIALS = new RegExp(
+  SECRET_SHAPES.find((shape) => shape.label === "url-credentials")?.pattern.source ?? "(?!)",
+  "gi",
+);
 
 /**
  * The class of a text, from its shapes alone.
@@ -209,7 +223,10 @@ export function dataClassesOfText(text: string): readonly DataClass[] {
     const credential = CREDENTIAL_SHAPES.has(shape.label);
     const dataClass: DataClass | undefined = credential ? "secret" : PERSONAL_SHAPES.has(shape.label) ? "confidential" : undefined;
     if (dataClass === undefined || found.has(dataClass)) continue;
-    const matches = text.match(new RegExp(shape.pattern.source, shape.pattern.flags)) ?? [];
+    // An address is read on the text without its URL credentials, so `postgres://app:password@db.example.com` is a
+    // connection string rather than the address `password@db.example.com`.
+    const subject = shape.label === "email" ? text.replace(URL_CREDENTIALS, " ") : text;
+    const matches = subject.match(new RegExp(shape.pattern.source, shape.pattern.flags)) ?? [];
     const hit =
       shape.label === "prefixed-token"
         ? matches.some(looksIssued)

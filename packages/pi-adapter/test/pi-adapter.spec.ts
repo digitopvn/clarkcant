@@ -350,6 +350,27 @@ function adapterWith(sdk: ReturnType<typeof stubSdk>): RealPiAdapter {
   });
 }
 
+describe("a session whose tool results are guarded", () => {
+  const brief = { goal: "g", projectRoots: [], allowedCapabilityRefs: [] };
+  const guard: NonNullable<WorkerBrief["toolResultGuard"]> = () => ({ withheld: false });
+
+  it("is refused the SDK's own tools, whose results would reach the model past the guard", async () => {
+    const sdk = stubSdk();
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      builtinTools: ["read", "grep"],
+      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+    await expect(adapter.createWorkerSession({ ...brief, toolResultGuard: guard })).rejects.toThrow(
+      /guarded cannot run the SDK's own tools \(read, grep\)/,
+    );
+    expect(sdk.sessions).toHaveLength(0);
+    // Without a guard the adapter's opt-in still stands, as the SDK probe uses it.
+    await adapter.createWorkerSession(brief);
+    expect(sdk.sessions[0]?.tools).toEqual(["read", "grep"]);
+  });
+});
+
 describe("the fake records what it was told", () => {
   it("the fake records the prompt it was given", async () => {
     // A test double that forgets its input cannot be used to assert what the node sent, which is the

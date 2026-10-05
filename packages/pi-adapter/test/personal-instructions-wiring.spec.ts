@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { RealPiAdapter, type RealPiAdapterOptions } from "../src/index.ts";
@@ -158,18 +162,28 @@ describe("an isolated session loads nothing from the machine", () => {
     expect(options.extensionFactories).toHaveLength(1);
   });
 
-  it("holds what the SDK discovers to the host's guard before a prompt is built from it", async () => {
+  it("holds what the SDK discovers to the session's guard before a prompt is built from it", async () => {
     const sdk = stubSdk();
     const refused: string[] = [];
+    // Skills are checked on their whole file, so each one the loader would offer is a real file.
+    const dir = mkdtempSync(join(tmpdir(), "cc-guard-skills-"));
+    const okSkill = join(dir, "ok.md");
+    const badBody = join(dir, "bad-body.md");
+    writeFileSync(okSkill, "---\nname: ok\n---\nFollow the steps.\n");
+    writeFileSync(badBody, "---\nname: bad-body\n---\nUse NOT-FOR-THE-MODEL to sign in.\n");
     await new RealPiAdapter({
       cwd: process.cwd(),
+      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    }).createWorkerSession({
+      goal: "g",
+      projectRoots: [],
+      allowedCapabilityRefs: [],
       contextGuard: ({ source, text }) => {
         const ok = !text.includes("NOT-FOR-THE-MODEL");
         if (!ok) refused.push(source);
         return ok;
       },
-      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
-    }).createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+    });
 
     const options = sdk.loaderOptions.at(0) as Record<string, (base: never) => unknown>;
     expect(
@@ -186,12 +200,16 @@ describe("an isolated session loads nothing from the machine", () => {
     expect(
       options.skillsOverride?.({
         skills: [
-          { name: "ok", description: "fine" },
-          { name: "bad", description: "NOT-FOR-THE-MODEL" },
+          { name: "ok", description: "fine", filePath: okSkill },
+          { name: "bad", description: "NOT-FOR-THE-MODEL", filePath: okSkill },
+          // Fine to list, but its body is what a `/skill:bad-body` message would be expanded into.
+          { name: "bad-body", description: "fine", filePath: badBody },
+          // A file that cannot be read cannot be checked, so the skill is not offered.
+          { name: "gone", description: "fine", filePath: join(dir, "gone.md") },
         ],
         diagnostics: [],
       } as never),
-    ).toEqual({ skills: [{ name: "ok", description: "fine" }], diagnostics: [] });
+    ).toEqual({ skills: [{ name: "ok", description: "fine", filePath: okSkill }], diagnostics: [] });
     expect(
       options.promptsOverride?.({
         prompts: [
@@ -201,7 +219,30 @@ describe("an isolated session loads nothing from the machine", () => {
         diagnostics: [],
       } as never),
     ).toEqual({ prompts: [{ name: "ok", description: "d", content: "fine" }], diagnostics: [] });
-    expect(refused).toEqual(["/repo/CLAUDE.md", "system-prompt", "append-system-prompt", "skill:bad", "prompt:bad"]);
+    expect(refused).toEqual([
+      "/repo/CLAUDE.md",
+      "system-prompt",
+      "append-system-prompt",
+      "skill:bad",
+      "skill:bad-body",
+      "prompt:bad",
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("builds each guarded session its own loader, with that session's guard", async () => {
+    const sdk = stubSdk();
+    const adapter = new RealPiAdapter({ cwd: process.cwd(), sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]> });
+    const brief = { goal: "g", projectRoots: [], allowedCapabilityRefs: [] };
+    // Two sessions on models with different ceilings: a file one may receive and the other may not.
+    await adapter.createWorkerSession({ ...brief, contextGuard: () => true });
+    await adapter.createWorkerSession({ ...brief, contextGuard: () => false });
+    expect(sdk.loaderOptions).toHaveLength(2);
+    const files = { agentsFiles: [{ path: "/repo/AGENTS.md", content: "Mail someone@example.com" }] };
+    const allow = sdk.loaderOptions[0] as Record<string, (base: never) => unknown>;
+    const deny = sdk.loaderOptions[1] as Record<string, (base: never) => unknown>;
+    expect(allow.agentsFilesOverride?.(files as never)).toEqual(files);
+    expect(deny.agentsFilesOverride?.(files as never)).toEqual({ agentsFiles: [] });
   });
 
   it("leaves discovery as the SDK has it for a session that is not isolated", async () => {

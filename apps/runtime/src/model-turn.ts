@@ -66,13 +66,16 @@ import {
 import { legacyRecap, planRecap } from "./context-planner.ts";
 import { type PersonalInstructionsPin, createPersonalInstructionsPin } from "./personal-instructions-pin.ts";
 import {
-  contextFileGuard,
+  PERSONAL_INSTRUCTIONS,
+  type WithheldItem,
+  contextGuardFor,
   dataClassUnavailable,
   dataClassUnavailableText,
   enforceSendBoundary,
   isDataClassUnavailable,
   modelName,
   toolResultGuardFor,
+  withheldContextText,
 } from "./send-boundary.ts";
 import {
   SESSION_POLICY_LIMITS,
@@ -416,6 +419,36 @@ interface Turn {
    * session, and the old one is let go. The transcript is not touched.
    */
   rebuild: () => Promise<boolean>;
+  /** What the current session's model was not given for its data class, and which of it the person has been told. */
+  withheld: SessionWithheld;
+}
+
+/**
+ * What one session's model was not given for its data class — a context file, a `SYSTEM.md`, a skill, the person's own
+ * instructions — by name and class only. Each is said to the person once per session: `pending` until a reply carries
+ * it, then `said`. A new session starts with a new record, so the same file withheld again is said again.
+ */
+interface SessionWithheld {
+  pending: Map<string, WithheldItem>;
+  said: Set<string>;
+}
+
+function newSessionWithheld(): SessionWithheld {
+  return { pending: new Map(), said: new Set() };
+}
+
+function recordWithheld(record: SessionWithheld, item: WithheldItem): void {
+  const key = `${item.name}\u0000${item.dataClass}`;
+  if (record.said.has(key) || record.pending.has(key)) return;
+  record.pending.set(key, item);
+}
+
+/** The withheld items not yet said in this session, marked as said; empty when there are none. */
+function takeWithheld(record: SessionWithheld): WithheldItem[] {
+  const items = [...record.pending.values()];
+  for (const key of record.pending.keys()) record.said.add(key);
+  record.pending.clear();
+  return items;
 }
 
 /** How a conversation's generation records its model: `provider/id`, or empty when nobody chose one. */
@@ -1198,8 +1231,6 @@ export async function createModelTurn(options: {
       cwd: options.cwd,
       model: selection,
       builtinTools: [],
-      // What the SDK finds on the machine for a session's prompt is checked before it is loaded, for every model.
-      contextGuard: contextFileGuard,
       ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
       ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
       // The value the send boundary checked for the session whose run is starting, never a fresh read.
@@ -1207,6 +1238,14 @@ export async function createModelTurn(options: {
         ? {}
         : { personalInstructions: personalPin.get }),
     });
+  /**
+   * Let a session go, with the personal instructions pinned for it: every path that ends a session — a failed or stopped
+   * turn, a handoff, idle eviction, a background run and shutdown — goes through here, so no pin outlives its session.
+   */
+  const disposeSession = (sessionId: string): Promise<void> => {
+    personalPin.forget(sessionId);
+    return adapter.dispose(sessionId);
+  };
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
   /**
@@ -1235,7 +1274,7 @@ export async function createModelTurn(options: {
       generationModels.delete(turn.conversationId);
       generationThinking.delete(turn.conversationId);
       turn.unsubscribe();
-      void adapter.dispose(turn.sessionId).catch(() => undefined);
+      void disposeSession(turn.sessionId).catch(() => undefined);
     }
   };
   /**
@@ -1405,15 +1444,19 @@ export async function createModelTurn(options: {
    * like any withheld text, and the send goes ahead without them. The caller checks the value with everything else the
    * send carries and pins it under the session it prompts (`pinPersonal`), so what the adapter appends is what was checked.
    */
-  const personalFor = (model: { provider: string; id: string }, allowed: readonly DataClass[]): string | undefined => {
+  const personalFor = (
+    model: { provider: string; id: string },
+    allowed: readonly DataClass[],
+  ): { text: string | undefined; withheld?: DataClass } => {
     let text: string | undefined;
     try {
       text = options.personalInstructions?.();
     } catch {
-      return undefined;
+      return { text: undefined };
     }
-    if (text === undefined || text.trim() === "") return undefined;
-    return enforceSendBoundary({ path: "personal-instructions", model, allowed, texts: [text] }).ok ? text : undefined;
+    if (text === undefined || text.trim() === "") return { text: undefined };
+    const check = enforceSendBoundary({ path: "personal-instructions", model, allowed, texts: [text] });
+    return check.ok ? { text } : { text: undefined, withheld: check.dataClass };
   };
 
   /*
@@ -1592,6 +1635,7 @@ export async function createModelTurn(options: {
       lastBrief: "",
       providerError: undefined,
       rebuild: async () => false,
+      withheld: newSessionWithheld(),
     };
     /*
      * After a tool call: remember what it touched, and hand back the instructions that newly apply. A failure here is a
@@ -1629,22 +1673,42 @@ export async function createModelTurn(options: {
      * One function rather than two literals, because a successor session created by a handoff with a different
      * brief would be a generation with different tools, and the model would find out mid-conversation.
      */
-    const briefFor = (model: { provider: string; id: string } | undefined): WorkerBrief => ({
-      // The brief is per conversation rather than per message, so the model keeps the thread
-      // it is already in instead of meeting the user again on every turn.
-      goal: "Answer the user in this conversation.",
-      projectRoots: [],
-      allowedCapabilityRefs: [],
-      // Resolved here rather than when the turn was built: this is the moment a model can actually be chosen for a
-      // session, and it is also the moment `services` exists to say what was chosen.
-      ...(model === undefined ? {} : { model }),
-      ...(customTools.length === 0 ? {} : { customTools }),
-      toolResultGuard,
-      // Carried on the brief as well as held here, because the adapter enforces it at the
-      // turn boundary and that is where a runaway turn is actually stopped.
-      ...thinkingAndLimit(),
-      maxTokens: budget.maxTokens,
-    });
+    const briefFor = (
+      model: { provider: string; id: string } | undefined,
+    ): { brief: WorkerBrief; withheld: SessionWithheld } => {
+      /*
+       * What the SDK loads from the machine into this session's prompt is held to the ceiling of the model this session
+       * will run, read now: a file is left out only for a model that may not receive it. What is left out is recorded
+       * for this session, so the person is told once, by name and class, on the session's next reply.
+       */
+      const runs = model ?? options.model?.() ?? runningModel(conversationId);
+      const withheld = newSessionWithheld();
+      const contextGuard = contextGuardFor({
+        model: runs,
+        allowed: ceilingOf(runs).allowed,
+        onWithheld: (item) => recordWithheld(withheld, item),
+      });
+      return {
+        withheld,
+        brief: {
+          // The brief is per conversation rather than per message, so the model keeps the thread
+          // it is already in instead of meeting the user again on every turn.
+          goal: "Answer the user in this conversation.",
+          projectRoots: [],
+          allowedCapabilityRefs: [],
+          // Resolved here rather than when the turn was built: this is the moment a model can actually be chosen for a
+          // session, and it is also the moment `services` exists to say what was chosen.
+          ...(model === undefined ? {} : { model }),
+          ...(customTools.length === 0 ? {} : { customTools }),
+          toolResultGuard,
+          contextGuard,
+          // Carried on the brief as well as held here, because the adapter enforces it at the
+          // turn boundary and that is where a runaway turn is actually stopped.
+          ...thinkingAndLimit(),
+          maxTokens: budget.maxTokens,
+        },
+      };
+    };
     /** The person's thinking level and turn limit as they stand now; absent ones are left off the brief. */
     const thinkingAndLimit = (): Pick<WorkerBrief, "thinkingLevel" | "maxWallClockMs"> => {
       const thinkingLevel = chosenThinking();
@@ -1700,8 +1764,10 @@ export async function createModelTurn(options: {
      * instructions, every tool and the screen as if for the first time. What the conversation's work touched is kept,
      * because it describes the work rather than the session.
      */
-    const adopt = (sessionId: string): void => {
+    const adopt = (sessionId: string, withheld: SessionWithheld): void => {
       const previous = turn.sessionId;
+      // What the new session's model was not given, said on its own replies.
+      turn.withheld = withheld;
       turn.unsubscribe();
       turn.sessionId = sessionId;
       turn.unsubscribe = listen(turn, sessionId);
@@ -1717,21 +1783,21 @@ export async function createModelTurn(options: {
       turn.answered = 0;
       turn.recentTexts = [];
       turn.lastBrief = "";
-      personalPin.forget(previous);
-      void adapter.dispose(previous).catch(() => undefined);
+      void disposeSession(previous).catch(() => undefined);
     };
 
     // Taken on by a handoff as well, so a later rebuild creates the session with this generation's tools.
     const rebuild = async (): Promise<boolean> => {
       const model = chosenModel();
-      const handle = await adapter.createWorkerSession(briefFor(model));
+      const { brief, withheld } = briefFor(model);
+      const handle = await adapter.createWorkerSession(brief);
       // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
       // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
       if (turn.stopped || turn.abort.signal.aborted) {
-        void adapter.dispose(handle.sessionId).catch(() => undefined);
+        void disposeSession(handle.sessionId).catch(() => undefined);
         return false;
       }
-      adopt(handle.sessionId);
+      adopt(handle.sessionId, withheld);
       // The model the new session runs, so a change made meanwhile is not mistaken for one still to make.
       generationModels.set(conversationId, modelKey(model));
       generationThinking.set(conversationId, chosenThinking() ?? "");
@@ -1740,8 +1806,9 @@ export async function createModelTurn(options: {
 
     if (existing !== undefined) {
       let successor: WorkerSessionHandle;
+      const next = briefFor(preferred);
       try {
-        ({ successor } = await adapter.handoff(existing.sessionId, briefFor(preferred)));
+        ({ successor } = await adapter.handoff(existing.sessionId, next.brief));
       } catch (cause) {
         /*
          * Nothing on the turn has changed yet, so the previous session is intact. It is not used in place of the model
@@ -1754,7 +1821,7 @@ export async function createModelTurn(options: {
       }
       // Stopped, or out of time, while the successor was being created: nobody will prompt it.
       if (setup.aborted) {
-        void adapter.dispose(successor.sessionId).catch(() => undefined);
+        void disposeSession(successor.sessionId).catch(() => undefined);
         throw new SetupStopped("stopped while switching model");
       }
       /*
@@ -1763,10 +1830,10 @@ export async function createModelTurn(options: {
        * any evicted one does.
        */
       if (turns.get(conversationId) !== existing) {
-        void adapter.dispose(successor.sessionId).catch(() => undefined);
+        void disposeSession(successor.sessionId).catch(() => undefined);
         return await turnFor(conversationId, principal, setup);
       }
-      adopt(successor.sessionId);
+      adopt(successor.sessionId, next.withheld);
       turn.registeredTools = registeredTools;
       turn.rebuild = rebuild;
       generationModels.set(conversationId, modelKey(preferred));
@@ -1778,8 +1845,9 @@ export async function createModelTurn(options: {
     turn.rebuild = rebuild;
     evictIdleTurns(Date.now());
     let handle: WorkerSessionHandle;
+    const first = briefFor(chosen);
     try {
-      handle = await adapter.createWorkerSession(briefFor(chosen));
+      handle = await adapter.createWorkerSession(first.brief);
     } catch (cause) {
       // Worded like a failed switch: what failed, in the person's language and without this machine's paths, and that
       // the message is kept.
@@ -1788,11 +1856,12 @@ export async function createModelTurn(options: {
       throw new Error(startFailed(preferredModel ?? describe(), reason), { cause });
     }
     if (setup.aborted) {
-      void adapter.dispose(handle.sessionId).catch(() => undefined);
+      void disposeSession(handle.sessionId).catch(() => undefined);
       throw new SetupStopped("stopped while creating the session");
     }
 
     turn.sessionId = handle.sessionId;
+    turn.withheld = first.withheld;
     turn.unsubscribe = listen(turn, handle.sessionId);
     generationModels.set(conversationId, preferredModel ?? "");
     generationThinking.set(conversationId, chosenThinking() ?? "");
@@ -2123,7 +2192,7 @@ export async function createModelTurn(options: {
         const metrics = turnMetrics({ adapter, sessionId, elapsedMs, model: runsOn().id });
         turn.lastUsedAtMs = Date.now();
         turn.unsubscribe();
-        void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(sessionId)).catch(() => undefined);
+        void (turn.stopping ?? Promise.resolve()).then(() => disposeSession(sessionId)).catch(() => undefined);
         return {
           text: "",
           segments: [],
@@ -2182,7 +2251,12 @@ export async function createModelTurn(options: {
        * model that refused, and one that would answer only after a send is not a reason to send.
        */
       // The person's own instructions go in the session's system prompt, so they are part of this send too.
-      const personal = personalFor(runsOn(), allowed);
+      const personalRead = personalFor(runsOn(), allowed);
+      const personal = personalRead.text;
+      // Left out of this send for its class: the person hears it once in this session, by name and class only.
+      if (personalRead.withheld !== undefined) {
+        recordWithheld(turn.withheld, { name: PERSONAL_INSTRUCTIONS, dataClass: personalRead.withheld });
+      }
       const boundary = enforceSendBoundary({
         path: "turn",
         model: runsOn(),
@@ -2307,7 +2381,7 @@ export async function createModelTurn(options: {
           // Only this turn's entry: a stop may already have handed the conversation to the next message's session.
           if (turns.get(input.conversationId) === turn) turns.delete(input.conversationId);
           turn.unsubscribe();
-          void adapter.dispose(promptedSession).catch(() => undefined);
+          void disposeSession(promptedSession).catch(() => undefined);
           // The provider said why before the run failed: a refusal, which a fallback may answer.
           if (turn.providerError !== undefined) {
             const reason = redactSecrets(redactLocalPaths(turn.providerError));
@@ -2348,7 +2422,7 @@ export async function createModelTurn(options: {
         // Read before the session goes: the tokens a stopped turn spent are still worth reporting.
         const metrics = turnMetrics({ adapter, sessionId: promptedSession, elapsedMs, model: runsOn().id });
         turn.unsubscribe();
-        void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(promptedSession)).catch(() => undefined);
+        void (turn.stopping ?? Promise.resolve()).then(() => disposeSession(promptedSession)).catch(() => undefined);
         // Stopped with nothing said yet is still an answer: the person asked for the stop, so it is not a failure.
         return { text, segments, provider: runsOn().provider, model: runsOn().id, elapsedMs, metrics, stopped: true };
       }
@@ -2360,7 +2434,7 @@ export async function createModelTurn(options: {
         void adapter
           .abort(promptedSession, "the run on a late message failed")
           .catch(() => undefined)
-          .then(() => adapter.dispose(promptedSession))
+          .then(() => disposeSession(promptedSession))
           .catch(() => undefined);
       }
 
@@ -2383,6 +2457,9 @@ export async function createModelTurn(options: {
         );
       }
 
+      // What this session's model was not given for its data class and the person has not yet been told, said once on
+      // this reply by name and class, in their language.
+      const withheld = takeWithheld(turn.withheld);
       // A reply that is only a view is a reply. Refusing it would make the one thing this node
       // was just taught to do look like a failure.
       return {
@@ -2392,6 +2469,9 @@ export async function createModelTurn(options: {
         model: runsOn().id,
         elapsedMs,
         metrics: turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: runsOn().id }),
+        ...(withheld.length === 0
+          ? {}
+          : { withheldNote: withheldContextText(language(), { model: modelName(runsOn()), items: withheld }) }),
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
@@ -2560,7 +2640,10 @@ export async function createModelTurn(options: {
             personal: string | undefined;
           }
         | undefined;
-      let blocked: { dataClass: DataClass; model: ModelSelection; read: boolean } | undefined;
+      let blocked: { dataClass: DataClass; model: ModelSelection } | undefined;
+      // Whether every refusal came from a ceiling that could not be read, which is then what the refusal says: one
+      // candidate whose ceiling was read and refused is a ceiling that refused.
+      let unread = true;
       for (const candidate of backgroundCandidates(routed, configured)) {
         const { allowed, read } = ceilingOf(candidate);
         const narrowed = context?.readerFor(allowed);
@@ -2570,7 +2653,7 @@ export async function createModelTurn(options: {
         const listed = reader?.answer({});
         const retrieved = listed?.kind === "done" ? listed.text : "";
         // The person's own instructions reach a background session's system prompt as they do a conversation's.
-        const personal = personalFor(candidate, allowed);
+        const personal = personalFor(candidate, allowed).text;
         const check = enforceSendBoundary({
           path: "background",
           model: candidate,
@@ -2581,7 +2664,8 @@ export async function createModelTurn(options: {
           prepared = { runsOn: candidate, allowed, reader, retrieved, personal };
           break;
         }
-        blocked ??= { dataClass: check.dataClass, model: candidate, read };
+        blocked ??= { dataClass: check.dataClass, model: candidate };
+        unread &&= !read;
       }
       if (prepared === undefined) {
         const blockedClass = blocked?.dataClass ?? "secret";
@@ -2589,13 +2673,13 @@ export async function createModelTurn(options: {
         throw dataClassUnavailable({
           dataClass: blockedClass,
           model,
-          unread: blocked?.read === false,
+          unread,
           message: dataClassUnavailableText(language(), {
             dataClass: blockedClass,
             model,
             subject: "background",
             // A ceiling that could not be read is said as that, never as a ceiling the model has.
-            ...(blocked?.read === false ? { unread: true } : {}),
+            ...(unread ? { unread: true } : {}),
           }),
         });
       }
@@ -2610,6 +2694,8 @@ export async function createModelTurn(options: {
         ...(reader === undefined ? {} : { customTools: [readContextTool(reader)] }),
         // Whatever a tool hands back reaches this model only if it may receive it, a picture included.
         toolResultGuard: toolResultGuardFor({ model: () => runsOn, allowed: () => allowed }),
+        // And what the SDK loads from the machine into its prompt, held to the same model's ceiling.
+        contextGuard: contextGuardFor({ model: runsOn, allowed }),
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
         // which is exactly why the model for it is a decision rather than a setting. Named even when nothing was routed,
         // so the model that runs is the one whose data classes narrowed what it reads, not the adapter's boot default.
@@ -2640,9 +2726,8 @@ export async function createModelTurn(options: {
         signal?.removeEventListener("abort", onAbort);
         unsubscribe();
         backgroundSessions.delete(workId);
-        personalPin.forget(handle.sessionId);
         // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
-        void adapter.dispose(handle.sessionId).catch(() => undefined);
+        void disposeSession(handle.sessionId).catch(() => undefined);
       }
       return said.trim();
     },
@@ -2658,7 +2743,7 @@ export async function createModelTurn(options: {
       for (const [workId, sessionId] of started) {
         backgroundSessions.delete(workId);
         await adapter.abort(sessionId, "người dùng đã dừng công việc đang chạy").catch(() => undefined);
-        void adapter.dispose(sessionId).catch(() => undefined);
+        void disposeSession(sessionId).catch(() => undefined);
       }
       return started.length;
     },
@@ -2731,13 +2816,13 @@ export async function createModelTurn(options: {
       for (const turn of turns.values()) {
         turn.unsubscribe();
         if (turn.inFlight) turn.abort.abort();
-        await adapter.dispose(turn.sessionId).catch(() => undefined);
+        await disposeSession(turn.sessionId).catch(() => undefined);
       }
       turns.clear();
       for (const [workId, sessionId] of [...backgroundSessions.entries()]) {
         backgroundSessions.delete(workId);
         await adapter.abort(sessionId, "node đang tắt").catch(() => undefined);
-        await adapter.dispose(sessionId).catch(() => undefined);
+        await disposeSession(sessionId).catch(() => undefined);
       }
     },
   };

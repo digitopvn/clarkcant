@@ -8,7 +8,7 @@ import {
   checkSendBoundary,
   contractError,
 } from "@clarkcant/contracts";
-import type { ToolResultGuard } from "@clarkcant/pi-adapter";
+import type { ContextGuard, ToolResultGuard } from "@clarkcant/pi-adapter";
 
 /**
  * The send boundary as the runtime applies it: a model's data-class ceiling is a limit on what is sent to it, not a
@@ -188,30 +188,82 @@ export function dataClassTaskRefusal(input: {
   );
 }
 
+/** Something left out of what a session's model was sent, named for the person: a file's base name, or what it is. */
+export interface WithheldItem {
+  name: string;
+  dataClass: DataClass;
+}
+
+/** What a loader source is called when a person is told it was left out: never a path, only the file's own name. */
+function withheldName(source: string): string {
+  if (source === "system-prompt") return "SYSTEM.md";
+  if (source === "append-system-prompt") return "APPEND_SYSTEM.md";
+  if (source.startsWith("skill:") || source.startsWith("prompt:")) return source;
+  // The file's own name, not where it sits: the directories above it can name the person.
+  return basename(source);
+}
+
 /**
- * What the SDK may load from the machine into a session's prompt — context files (`AGENTS.md`, `CLAUDE.md`), a
- * `SYSTEM.md`/`APPEND_SYSTEM.md`, skill descriptions, prompt templates — whatever model the session runs.
+ * What the SDK may load from the machine into one session's prompt — context files (`AGENTS.md`, `CLAUDE.md`), a
+ * `SYSTEM.md`/`APPEND_SYSTEM.md`, skills (description and body) and prompt templates — held to the ceiling of the model
+ * that session runs.
  *
- * The loader is built once per adapter and shared by every session it creates, whichever model each runs, so this
- * cannot be held to one model's ceiling. It is held to the ceiling every model has instead: text carrying `confidential`
- * or `secret` data is not loaded for any session, and an operator reads which source and which class on stderr, never
- * the text.
+ * The guard travels on the session's brief and the adapter builds that session's loader with it, so a file carrying
+ * `confidential` data is still loaded for a model that may receive it and left out only for one that may not. A file
+ * left out is said on stderr by its name and class, never its text, and handed to `onWithheld` so the person can
+ * be told the same.
  */
-export function contextFileGuard(input: { source: string; text: string }): boolean {
-  const check = checkSendBoundary({ allowed: ["public", "internal"], texts: [input.text] });
-  if (!check.ok) {
+export function contextGuardFor(input: {
+  model: { provider: string; id: string };
+  allowed: readonly DataClass[];
+  onWithheld?: (item: WithheldItem) => void;
+}): ContextGuard {
+  return ({ source, text }) => {
+    const check = checkSendBoundary({ allowed: input.allowed, texts: [text] });
+    if (check.ok) return true;
+    const name = withheldName(source);
     process.stderr.write(
       `${JSON.stringify({
         event: "context-file-withheld",
         code: check.code,
         path: "context-file" satisfies SendPath,
-        // The file's own name, not where it sits: the directories above it can name the person.
-        source: basename(input.source),
+        source: name,
         dataClass: check.dataClass,
+        model: modelName(input.model),
       })}\n`,
     );
-  }
-  return check.ok;
+    input.onWithheld?.({ name, dataClass: check.dataClass });
+    return false;
+  };
+}
+
+/** How many withheld items the sentence names before it only counts the rest. */
+const WITHHELD_NAMED = 8;
+
+/** The name the person's own instructions are recorded under when they are withheld; said in their language. */
+export const PERSONAL_INSTRUCTIONS = "personal-instructions";
+
+/**
+ * What a person reads, once per session, when something the session would have been given was left out for its model:
+ * each by name and class, never its text, that the conversation went on without it, and what they can change.
+ */
+export function withheldContextText(
+  language: "vi" | "en",
+  input: { model: string; items: readonly WithheldItem[] },
+): string {
+  // Bounded, so a machine with many withheld skills cannot fill the card: the first few by name, then how many more.
+  const shown = input.items.slice(0, WITHHELD_NAMED);
+  const more = input.items.length - shown.length;
+  const named = (personal: string, others: (count: number) => string): string =>
+    shown.map((item) => `${item.name === PERSONAL_INSTRUCTIONS ? personal : item.name} (${item.dataClass})`).join(", ") +
+    (more > 0 ? `, ${others(more)}` : "");
+  return language === "vi"
+    ? `Không gửi cho ${input.model} vì mức dữ liệu của chúng: ${named("hướng dẫn cá nhân", (count) => `và ${count} mục khác`)}. ` +
+        "Câu trả lời này được viết mà không có những phần đó. Để model dùng chúng, hãy chọn một model được nhận mức dữ liệu ấy " +
+        "hoặc cho phép mức đó trong Cài đặt → AI & Định tuyến."
+    : `Withheld from ${input.model} for their data class: ${named("personal instructions", (count) => `and ${count} more`)}. ` +
+        "This answer was written without them. To have them used, choose a model that may receive that class " +
+        "or allow it in Settings → AI & Routing.";
 }
 
 /**

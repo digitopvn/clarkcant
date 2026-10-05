@@ -1,4 +1,5 @@
 import type { Instant } from "@clarkcant/contracts";
+import type { ContextGuard } from "./context-guard-overrides.ts";
 
 /**
  * The Pi seam.
@@ -82,6 +83,15 @@ export interface WorkerBrief {
    * and before the model reads anything of it. Absent sends results as they are.
    */
   toolResultGuard?: ToolResultGuard;
+  /**
+   * What the session's resource loader may take from the machine into its prompt — context files (`AGENTS.md`,
+   * `CLAUDE.md`), a `SYSTEM.md`/`APPEND_SYSTEM.md`, skills (description and body) and prompt templates — decided by the
+   * host for this session's model (`context-guard-overrides.ts`). A session with a guard gets a loader of its own built
+   * with it, so a file is left out only for a model that may not receive it, and a `/skill:` message it is prompted or
+   * steered with is checked again on the skill's file as it is when the message is sent. Absent loads everything the SDK
+   * finds. An isolated adapter loads none of these in the first place.
+   */
+  contextGuard?: ContextGuard;
 }
 
 /**
