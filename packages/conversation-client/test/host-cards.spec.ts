@@ -314,7 +314,10 @@ describe("the model answer note", () => {
     it("parses the typed field strictly", () => {
       expect(readModelNote({ version: 1, elapsedMs: 10 })).toEqual({ elapsedMs: 10 });
       expect(readModelNote({ version: 1, elapsedMs: 10, fallback: { from: "a/b" } })).toEqual({ elapsedMs: 10, fallbackFrom: "a/b" });
-      expect(readModelNote({ version: 1, elapsedMs: 10, fallback: { from: "" } })).toEqual({ elapsedMs: 10 });
+      // What the contract does not accept is not half-read: the whole note is left to the rows.
+      expect(readModelNote({ version: 1, elapsedMs: 10, fallback: { from: "" } })).toBeUndefined();
+      expect(readModelNote({ version: 1, elapsedMs: 10.5 })).toBeUndefined();
+      expect(readModelNote({ version: 1, elapsedMs: 10, extra: true })).toBeUndefined();
       expect(readModelNote(undefined)).toBeUndefined();
       expect(readModelNote({ elapsedMs: 10 })).toBeUndefined();
     });

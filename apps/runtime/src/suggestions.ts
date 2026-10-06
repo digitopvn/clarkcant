@@ -81,6 +81,10 @@ function recencyLabel(at: string, now: string, words: HostText["suggestions"]["r
  *
  * A goal that is nothing but prefixes comes back as one bare prefix, not as itself, so feeding the offer's text
  * back in as the next goal settles instead of growing by a prefix each round trip.
+ *
+ * The English prefix is a plain word, so a goal a person typed themselves as "Continue: …" also loses it on the chip.
+ * That is accepted: the chip still names the work, and it sends the prefix back in front of it, so nothing the person
+ * meant is lost when they press it.
  */
 export function withoutContinuePrefix(goal: string): string {
   let rest = goal.trim();

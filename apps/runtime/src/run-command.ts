@@ -46,10 +46,13 @@ export const COMMAND_LIMITS = {
 const ACTIVITY_LABEL_MAX = 300;
 const ACTIVITY_PATH_MAX = 1000;
 
-/** How long a command took, in the unit a person reads it in: milliseconds under a second, seconds after. */
-export function durationWords(ms: number): string {
+/**
+ * How long a command took, in the unit a person reads it in: milliseconds under a second, seconds after, in the number
+ * format and words of `locale` (Vietnamese when none is named).
+ */
+export function durationWords(ms: number, locale: AppIntentLocale = "vi"): string {
   if (ms < 1000) return `${ms} ms`;
-  return `${new Intl.NumberFormat("vi", { maximumFractionDigits: 1 }).format(ms / 1000)} giây`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(ms / 1000)} ${locale === "en" ? "s" : "giây"}`;
 }
 
 export interface CommandOutcome {
@@ -474,8 +477,8 @@ export async function runGuardedCommand(input: {
       type: "evidence",
       kind: "exit-status",
       summary: outcome.timedOut
-        ? `Lệnh bị dừng sau ${durationWords(outcome.durationMs)} vì vượt thời gian cho phép.`
-        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${durationWords(outcome.durationMs)}.`,
+        ? hostText(input.language).approvals.timedOutEvidence(durationWords(outcome.durationMs, input.language))
+        : hostText(input.language).approvals.exitEvidence(outcome.exitCode, durationWords(outcome.durationMs, input.language)),
       // Non-zero is not "unverified": it is a result, and it contradicts success.
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.operationId,
@@ -654,8 +657,8 @@ export async function runApprovedCommand(input: {
       type: "evidence",
       kind: "exit-status",
       summary: outcome.timedOut
-        ? `Lệnh bị dừng sau ${durationWords(outcome.durationMs)} vì vượt thời gian cho phép.`
-        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${durationWords(outcome.durationMs)}.`,
+        ? hostText(input.language).approvals.timedOutEvidence(durationWords(outcome.durationMs, input.language))
+        : hostText(input.language).approvals.exitEvidence(outcome.exitCode, durationWords(outcome.durationMs, input.language)),
       // Non-zero is not "unverified": it is a result, and it contradicts success.
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.approvalId,

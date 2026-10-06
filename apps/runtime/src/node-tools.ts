@@ -1061,7 +1061,7 @@ export function createRunCommandTool(
           return { text: `${found.message}${options} Hãy chọn một thư mục rồi đề xuất lại.` };
         }
         cwd = found.cwd;
-        because = `được tìm thấy từ “${where}” (${found.relPath})`;
+        because = hostText(input.language?.()).approvals.foundFrom(where, found.relPath);
       }
 
       const policy = input.autonomy();

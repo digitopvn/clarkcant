@@ -123,9 +123,9 @@ describe("running an approved operation", () => {
     expect(result.description).not.toContain("Cloning into");
   });
 
-  it("labels the row it leaves in the person's interface language, Vietnamese when none is named", async () => {
-    const run = async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false });
-    const labelIn = async (language?: "vi" | "en"): Promise<string> => {
+  it("labels the row and words the receipt it leaves in the person's interface language, Vietnamese when none is named", async () => {
+    const run = async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1500, timedOut: false });
+    const wordsIn = async (language?: "vi" | "en"): Promise<{ label: string; receipt: string }> => {
       const result = await runApprovedCommand({
         payload,
         expectedDigest: digest,
@@ -135,13 +135,18 @@ describe("running an approved operation", () => {
         ...(language === undefined ? {} : { language }),
       });
       if (!result.ok) throw new Error(result.message);
-      const [activity] = result.blocks;
-      return activity?.type === "tool-activity" ? activity.label : "";
+      const [activity, evidence] = result.blocks;
+      return {
+        label: activity?.type === "tool-activity" ? activity.label : "",
+        receipt: evidence?.type === "evidence" ? evidence.summary : "",
+      };
     };
 
-    expect(await labelIn("en")).toMatch(/^Ran a command in /u);
-    expect(await labelIn("vi")).toMatch(/^Chạy lệnh trong /u);
-    expect(await labelIn()).toMatch(/^Chạy lệnh trong /u);
+    const english = await wordsIn("en");
+    expect(english.label).toMatch(/^Ran a command in /u);
+    expect(english.receipt).toBe("The command exited with code 0 after 1.5 s.");
+    expect((await wordsIn("vi")).label).toMatch(/^Chạy lệnh trong /u);
+    expect(await wordsIn()).toEqual({ label: expect.stringMatching(/^Chạy lệnh trong /u), receipt: "Lệnh thoát với mã 0 sau 1,5 giây." });
   });
 
   it("runs the narrowed budget the card carried, and never more than this host allows", async () => {
@@ -398,5 +403,11 @@ describe("how long a command took", () => {
     expect(durationWords(37)).toBe("37 ms");
     expect(durationWords(1053)).toBe("1,1 giây");
     expect(durationWords(12_000)).toBe("12 giây");
+  });
+
+  it("says it in English words and notation when the reader's language is English", () => {
+    expect(durationWords(37, "en")).toBe("37 ms");
+    expect(durationWords(1053, "en")).toBe("1.1 s");
+    expect(durationWords(12_000, "vi")).toBe("12 giây");
   });
 });

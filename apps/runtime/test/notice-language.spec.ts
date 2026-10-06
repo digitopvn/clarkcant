@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { effectCategorySchema, type Instant, type PeerEnvelope } from "@clarkcant/contracts";
+import { effectCategorySchema, peerMessageKindSchema, type Instant, type PeerEnvelope } from "@clarkcant/contracts";
 
 import { unknownEffectNotice } from "../src/effect-notices.ts";
 import { hostText } from "../src/host-text.ts";
+import { noticeText } from "../src/notice-text.ts";
 import { packageUpdateNotice, workerSettledNotice } from "../src/notices.ts";
 import { peerNoticeTurnedDownNotice } from "../src/peer-notices.ts";
 import { peerOfflineNotice } from "../src/peer-outage.ts";
+import { peerLostNotice, peerStuckNotice } from "../src/peer-skip.ts";
 import { browserTaskApprovalText } from "../src/task-browser.ts";
 
 /**
@@ -138,6 +140,67 @@ describe("an inbox notice is worded in its owner's language", () => {
     expect(wording(outage("given-up", "vi"))).toBe(wording(outage("given-up")));
     expect(wording(turnedDown("NOTICES_OFF", "vi"))).toBe(wording(turnedDown("NOTICES_OFF")));
     expect(wording(unknown(true, "vi"))).toBe(wording(unknown(true)));
+  });
+});
+
+/** Every kind of message a skip can give up on. */
+const PEER_SKIP_KINDS = peerMessageKindSchema.options.filter((kind) => kind !== "skip");
+
+const lostAll = PEER_SKIP_KINDS.map((kind, index) => ({
+  sequence: index + 1,
+  messageId: `msg_${String(index)}`,
+  kind,
+  ...(kind === "result" ? { taskId: "task_9" } : {}),
+}));
+
+const lost = (side: "out" | "in", count: number, language?: "vi" | "en") =>
+  peerLostNotice({
+    side,
+    peerNodeId: "node_peer",
+    label: "laptop",
+    through: 40,
+    lost: lostAll.slice(0, count) as never,
+    settled: ["task_9"],
+    at: AT,
+    ...(language === undefined ? {} : { language }),
+  });
+
+const stuck = (language?: "vi" | "en") =>
+  peerStuckNotice({ peerNodeId: "node_peer", label: "laptop", lastAcknowledgedAt: null, at: AT, ...(language === undefined ? {} : { language }) });
+
+describe("the notices about lost messages, a stuck pairing, expiry, GitHub watching and package jobs", () => {
+  it("are written with no Vietnamese in them when the owner's interface is English", () => {
+    const en = noticeText("en");
+    const samples = [
+      ...[1, 3, lostAll.length].flatMap((count) => [lost("out", count, "en"), lost("in", count, "en")].map(wording)),
+      wording(stuck("en")),
+      ...Object.values(en.expired),
+      ...Object.values(en.packageJob),
+      en.githubPolling.title("acme/widgets"),
+      en.githubPolling.keepsFailing("acme/widgets", 3, "timeout"),
+      en.githubPolling.tokenRefused("github_token", "acme/widgets", 401),
+      en.githubPolling.refused("acme/widgets", 404),
+    ];
+    for (const sample of samples) expect(sample).not.toMatch(VIETNAMESE_LETTER);
+    expect(lost("out", 1, "en").title).toBe("A message to another device was given up on");
+    expect(lost("in", 3, "en").title).toBe("3 messages from another device were lost");
+    // Every kind of message has its own English words, so a lost one is named rather than left as a code.
+    for (const kind of PEER_SKIP_KINDS) expect(en.peerSkip.kindWords[kind], kind).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("keep the Vietnamese words the node wrote before when no language is named", () => {
+    expect(lost("out", 1).title).toBe("Một tin gửi tới thiết bị khác đã bị bỏ");
+    expect(lost("in", 3).title).toBe("3 tin từ thiết bị khác đã bị mất");
+    expect(lost("out", 1).body).toMatch(/^Máy này đã bỏ một tin gửi tới thiết bị laptop vì gửi mãi không được\. /u);
+    expect(stuck().title).toBe("Ghép cặp với thiết bị khác đang bị kẹt");
+    const vi = noticeText();
+    expect(vi.expired).toEqual({
+      install: "Yêu cầu cài đặt đã hết hạn, chưa có gì được cài",
+      approval: "Yêu cầu duyệt đã hết hạn, không có gì được chạy",
+      question: "Câu hỏi đã hết hạn, không có ai trả lời",
+    });
+    expect(vi.githubPolling.title("acme/widgets")).toBe("Chưa theo dõi được acme/widgets");
+    expect(wording(lost("in", 2, "vi"))).toBe(wording(lost("in", 2)));
   });
 });
 

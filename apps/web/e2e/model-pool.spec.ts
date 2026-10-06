@@ -77,7 +77,8 @@ test("a touch phone is told which model it is on, without a key chord it has no 
 test("a keyboard is told the chord that changes the model", async ({ page }) => {
   await openApp(page);
   await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toContainText("Ctrl+]");
+  // The chord is the platform's own: Ctrl on Windows and Linux, Command on macOS.
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toContainText(/Ctrl\+\]|⌘\]/u);
 });
 test("the statusline names the model the next turn runs and its thinking level, and follows a switch", async ({ page }) => {
   // The fixture node runs no model, so the node's answer is given one; everything else in it is the node's own.

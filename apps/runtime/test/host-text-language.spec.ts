@@ -10,6 +10,7 @@ import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/ga
 import { artifactIntakeDeps, peerDelegationHandlers } from "../src/delegation-handlers.ts";
 import { hostText } from "../src/host-text.ts";
 import { QUESTION_TTL_MS, createQuestion, expireQuestions } from "../src/interactions.ts";
+import { tellStuck } from "../src/peer-skip.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -272,6 +273,31 @@ describe("the start screen's chips follow the owner's interface language", () =>
       label: "Mở lại phiên gần nhất",
       sourceLabel: "tiếp tục từ chỗ đã dừng",
     });
+  });
+});
+
+describe("an inbox notice the node records follows its owner's interface language, read when it is recorded", () => {
+  type Notice = { title: string; body?: string };
+
+  /** Tell the owner a pairing is stuck, through the node's own path, and read the inbox back over the wire. */
+  async function stuckNotice(peer: string): Promise<Notice | undefined> {
+    tellStuck(services, peer, AT as Instant);
+    const inbox = await request("GET", "/inbox");
+    expect(inbox.status).toBe(200);
+    return (inbox.body as { notices: (Notice & { subject?: { nodeId?: string } })[] }).notices.find((notice) => notice.subject?.nodeId === peer);
+  }
+
+  it("words it in English when the interface is English", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+
+    const notice = await stuckNotice("node_peer_en");
+    expect(notice?.title).toBe("The pairing with another device is stuck");
+    expect(`${notice?.title ?? ""} ${notice?.body ?? ""}`).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("words it in the same Vietnamese as before when no language was ever chosen", async () => {
+    const notice = await stuckNotice("node_peer_vi");
+    expect(notice?.title).toBe("Ghép cặp với thiết bị khác đang bị kẹt");
   });
 });
 

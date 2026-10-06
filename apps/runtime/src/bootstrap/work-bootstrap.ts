@@ -4,7 +4,8 @@ import { listSecretMetadata } from "@clarkcant/storage";
 
 import { withholdFromChildren } from "../child-env.ts";
 import { answerUncertain } from "../delegation-handlers.ts";
-import { ownerHostText } from "../host-text.ts";
+import { ownerHostText, ownerLocale } from "../host-text.ts";
+import { noticeText } from "../notice-text.ts";
 import { tryRecordNodeNotice } from "../notices.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
@@ -109,7 +110,7 @@ export function attachNodeWork(input: {
         sourceKind: "package",
         category: "result",
         severity: job.status === "completed" ? "success" : job.status === "cancelled" ? "info" : "warning",
-        title: job.status === "completed" ? "A package job finished" : job.status === "cancelled" ? "A package job was stopped" : "A package job did not finish",
+        title: noticeText(ownerLocale(runtime)).packageJob[job.status === "completed" || job.status === "cancelled" ? job.status : "other"],
         body: text,
         conversationId,
         subject: { kind: "conversation", conversationId },

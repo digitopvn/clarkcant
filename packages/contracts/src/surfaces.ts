@@ -429,7 +429,6 @@ export const systemCardBlockSchema = z.strictObject({
   updatedAt: instantSchema,
 });
 
-
 export const approvalCardBlockSchema = z.strictObject({
   type: z.literal("approval-card"),
   owner: z.literal("host"),

@@ -168,6 +168,12 @@ export interface HostText {
     commandRan: (cwd: string) => string;
     /** The row an approved capability call leaves. */
     capabilityRan: (outcome: "job" | "done" | "failed", ref: string) => string;
+    /** A command's receipt: the code it exited with (`null` when there was none) and how long it took, already worded. */
+    exitEvidence: (exitCode: number | null, took: string) => string;
+    /** A command's receipt when it ran out of time. */
+    timedOutEvidence: (took: string) => string;
+    /** Where the folder a command runs in came from: the words it was found from and its path inside them. */
+    foundFrom: (where: string, relPath: string) => string;
   };
   /**
    * The start screen's suggestions. `label` is the chip, `text` what pressing it sends, `source` the line under it.
@@ -441,6 +447,9 @@ const VI: HostText = {
     commandRan: (cwd) => `Chạy lệnh trong ${cwd}`,
     capabilityRan: (outcome, ref) =>
       outcome === "job" ? `Đã bắt đầu job cho ${ref}` : outcome === "done" ? `Đã gọi ${ref}` : `Không gọi được ${ref}`,
+    exitEvidence: (exitCode, took) => `Lệnh thoát với mã ${exitCode ?? "không rõ"} sau ${took}.`,
+    timedOutEvidence: (took) => `Lệnh bị dừng sau ${took} vì vượt thời gian cho phép.`,
+    foundFrom: (where, relPath) => `được tìm thấy từ “${where}” (${relPath})`,
   },
   suggestions: {
     recency: { unknown: "gần đây", today: "hôm nay", yesterday: "hôm qua", thisWeek: "trong tuần này", earlier: "trước đó" },
@@ -660,6 +669,9 @@ const EN: HostText = {
     commandRan: (cwd) => `Ran a command in ${cwd}`,
     capabilityRan: (outcome, ref) =>
       outcome === "job" ? `Started a job for ${ref}` : outcome === "done" ? `Called ${ref}` : `Could not call ${ref}`,
+    exitEvidence: (exitCode, took) => `The command exited with code ${exitCode ?? "unknown"} after ${took}.`,
+    timedOutEvidence: (took) => `The command was stopped after ${took} because it ran past its time limit.`,
+    foundFrom: (where, relPath) => `found from “${where}” (${relPath})`,
   },
   suggestions: {
     recency: { unknown: "recently", today: "today", yesterday: "yesterday", thisWeek: "this week", earlier: "earlier" },
@@ -673,7 +685,7 @@ const EN: HostText = {
     latestSource: "carry on where you left off",
     memoryLabel: (text) => `Recall: ${text}`,
     memoryText: (text) => `Show me what was remembered: ${text}`,
-    memorySource: (recency) => `you remembered it, ${recency}`,
+    memorySource: (recency) => `saved to memory, ${recency}`,
     projectLabel: (name) => `Open the project ${name}`,
     projectText: (name) => `Open the project ${name}`,
     projectSource: "a folder used recently",

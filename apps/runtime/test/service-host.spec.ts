@@ -495,6 +495,38 @@ describe("the policy in front of a service", () => {
     expect(approved.blocks[0]).toMatchObject({ type: "tool-activity", status: "done", result: "Saved. 1 note(s): gọi mẹ" });
   });
 
+  it("words the card and the row an approved call leaves in the owner's interface language", async () => {
+    activate();
+    await running(start());
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" });
+    const askAndRun = async (): Promise<{ description: string; label: string }> => {
+      const asked = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "milk" }, source: "agent" });
+      if (asked.kind !== "approval-required") throw new Error(`expected a card, got ${JSON.stringify(asked)}`);
+      const approved = await runApprovedCapability(invokeDeps(), {
+        payload: asked.card.payload ?? "",
+        expectedDigest: asked.card.operationDigest,
+        approvalId: asked.approval.approvalId,
+        conversationId: "conv_a",
+      });
+      if (!approved.ok) throw new Error(approved.message);
+      return { description: asked.card.operationDescription, label: String(approved.blocks[0]?.type === "tool-activity" ? approved.blocks[0].label : "") };
+    };
+
+    // Vietnamese, as before, while the owner never chose a language.
+    const vietnamese = await askAndRun();
+    expect(vietnamese.description).toMatch(/^Gọi /u);
+    expect(vietnamese.label).toBe(`Đã gọi ${ADD}`);
+
+    const chosen = writeRegisteredPreference(
+      { db, now: () => new Date().toISOString() as Instant },
+      { principalId: PRINCIPAL, key: "experience.language", value: "en", source: "user" },
+    );
+    if (!chosen.ok) throw new Error(chosen.message);
+    const english = await askAndRun();
+    expect(english.description).toMatch(new RegExp(`^Call .+ \\(${ADD.replaceAll(".", "\\.")}\\)$`, "u"));
+    expect(english.label).toBe(`Called ${ADD}`);
+  });
+
   it("does not run an approval the policy has since refused, or one for a capability that changed", async () => {
     activate();
     await running(start());

@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import {
   attachmentRefSchema,
   commandCardSchema,
+  modelNoteSchema,
   referenceBlockSchema,
   referenceToken,
   type AttachmentRef,
@@ -371,19 +372,15 @@ export function readableInstant(value: string, locale: string, now: Date = new D
 }
 
 /**
- * The typed facts of a model note (`modelNote` on a connection card, version 1): how long the answer took and, when a
- * fallback answered, which model was chosen. Anything else — a record written before the field existed, or a version
- * this client does not know — reads as absent, and the card falls back on its readable rows.
+ * The typed facts of a model note (`modelNote` on a connection card), read through the contract's own schema: how long
+ * the answer took and, when a fallback answered, which model was chosen. Anything the schema does not accept — a record
+ * written before the field existed, a version this client does not know, a malformed note — reads as absent, and the
+ * card falls back on its readable rows.
  */
 export function readModelNote(value: unknown): { elapsedMs: number; fallbackFrom?: string } | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const note = value as Record<string, unknown>;
-  if (note.version !== 1) return undefined;
-  const elapsedMs = note.elapsedMs;
-  if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs) || elapsedMs < 0) return undefined;
-  const fallback = typeof note.fallback === "object" && note.fallback !== null ? (note.fallback as Record<string, unknown>) : undefined;
-  const from = typeof fallback?.from === "string" && fallback.from !== "" ? fallback.from : undefined;
-  return from === undefined ? { elapsedMs } : { elapsedMs, fallbackFrom: from };
+  const note = modelNoteSchema.safeParse(value);
+  if (!note.success) return undefined;
+  return note.data.fallback === undefined ? { elapsedMs: note.data.elapsedMs } : { elapsedMs: note.data.elapsedMs, fallbackFrom: note.data.fallback.from };
 }
 
 /**

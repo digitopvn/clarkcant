@@ -1206,9 +1206,12 @@ Dùng segmented controls, toggles và swatches:
   tín hiệu "ngôn ngữ UI" đa nền tảng nào đủ tin cậy để khỏi âm thầm đổi ngôn ngữ sản phẩm của người
   nói tiếng Việt sang ngôn ngữ khác. Chỉ chrome mặc định (composer, chrome của timeline, settings,
   thông báo lỗi, điều khiển giọng nói, tiêu đề marketplace) được dịch; output của agent không bao giờ
-  bị dịch. Những gì node tự viết cho chủ của nó — thẻ và dòng của host, lời xin duyệt, thông báo trong hộp thư, gợi ý
-  ở màn hình bắt đầu, tab Công cụ — được viết bằng ngôn ngữ này ngay lúc ghi, không bao giờ dịch ở client; nội dung
-  một node gửi sang node đã ghép cặp thì giữ nguyên, vì không biết ngôn ngữ của chủ node đó.
+  bị dịch. Lời node tự viết cho chủ của nó được viết bằng ngôn ngữ này ngay lúc ghi, và không bao giờ dịch ở client.
+  Điều đó gồm ghi chú model và các thẻ khác của host, dòng và biên nhận mà một lệnh hay lời gọi package đã duyệt để
+  lại, thẻ xin duyệt và lý do một việc đang chờ duyệt, thông báo trong hộp thư, gợi ý ở màn hình bắt đầu, và nhãn
+  trong tab Công cụ. Hai loại nội dung được giữ nguyên như khi viết. Một là nội dung một node gửi sang node đã ghép
+  cặp, vì không biết ngôn ngữ của chủ node đó. Hai là nhãn và mô tả do package hoặc extension tự viết: chúng hiện
+  đúng lời của tác giả.
 - Theme Lab: Duyệt chủ đề mở Gallery tạm thời phía trên Cài đặt. Lúc mở, tiêu điểm được đặt vào theme đang chọn một
   lần; những cập nhật xem trước sau đó không lấy lại tiêu điểm. Chọn trong Gallery chỉ xem trước component sản phẩm
   tại chỗ; Áp dụng dùng cùng lệnh ghi preference đã được xác nhận như danh sách theme chính. Sáu lựa chọn gần nhất
