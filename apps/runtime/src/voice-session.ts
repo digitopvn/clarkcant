@@ -10,12 +10,24 @@ import {
   type ConversationId,
   type Instant,
   type QuestionKind,
+  type RecognitionContext,
+  type RecognitionProvenance,
+  type RecognizedUtterance,
   type SemanticView,
   type VoiceCapabilities,
   nowInstant,
 } from "@clarkcant/contracts";
 import { recordVoiceTranscript } from "@clarkcant/core";
-import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
+import {
+  DEFAULT_LIVE_MODEL,
+  GeminiLiveAdapter,
+  type SpeechRecognitionAdapter,
+  UtteranceAudioBuffer,
+  type UtteranceRetry,
+  type VoiceProviderAdapter,
+  settleUtterance,
+  settleUtteranceNow,
+} from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
 import { type SpeechLocale, spokenApprovalDecided } from "./application/action-speech.ts";
@@ -248,6 +260,29 @@ export interface VoiceGatewayOptions {
   }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
+  /**
+   * A dedicated recognizer for what the person says.
+   *
+   * Absent: the live session's own input transcription is the person's words, as it always was. Present: the same
+   * audio goes to both, the live session stays the voice (and the barge-in), and the person's words come from this
+   * recognizer - its interim hypotheses shown as they change, and only its settled final utterance dispatched. If it
+   * cannot open, or fails during the session, the live transcription takes over rather than the session going deaf.
+   */
+  createRecognizer?: () => SpeechRecognitionAdapter;
+  /**
+   * The session vocabulary: bounded, ranked and redacted terms built on the node.
+   *
+   * Absent: no normalisation, the transcript is dispatched as heard. Present: every utterance, from either source,
+   * is normalised against it before it is read as a command, an answer or a message.
+   */
+  recognitionContext?: (input: { conversationId: ConversationId | undefined }) => Promise<RecognitionContext>;
+  /** Recognize one completed utterance again when a technical span in it was unsure or ambiguous. Recognizer path only. */
+  utteranceRetry?: UtteranceRetry;
+  /**
+   * What recognition and normalisation did to each dispatched utterance: the terms changed, never the sentence. A
+   * consumer that logs it should log counts and rules, since a changed term is still a fragment of what was said.
+   */
+  onRecognition?: (provenance: RecognitionProvenance) => void;
   /**
    * Live-provider test utterance service.
    *
@@ -528,6 +563,27 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let adapter: VoiceProviderAdapter | undefined;
 
     /*
+     * The person's words, when a dedicated recognizer hears them.
+     *
+     * `recognizer` is set only while it is the source: undefined before it opens, after it fails, and on a session
+     * without one, and then the live transcription is the source exactly as before. Its final utterances are settled
+     * one at a time and in order on `recognitionQueue`, and an utterance is dispatched once: `settledUtterances` drops
+     * any revision of one already taken, which is what keeps a late or repeated final from becoming a second message.
+     */
+    let recognizer: SpeechRecognitionAdapter | undefined;
+    let recognitionQueue: Promise<void> = Promise.resolve();
+    const settledUtterances = new Set<string>();
+    /** The newest interim hypothesis not yet final, kept so a session that closes mid-sentence does not lose it. */
+    let pendingInterim = "";
+    /** Audio of the utterance being spoken, only while a retry can use it. */
+    const utteranceAudio = options.utteranceRetry === undefined ? undefined : new UtteranceAudioBuffer();
+    let muted = false;
+    /** The session vocabulary, once built. Undefined: transcripts are dispatched as heard. */
+    let recognitionContext: RecognitionContext | undefined;
+    /** Set when the session starts closing, so a final the recognizer flushes on the way out is not dispatched. */
+    let closing = false;
+
+    /*
      * Whether the agent has asked for something to be said, and has not finished saying it.
      *
      * The voice channel carries exactly what the agent decided to say, and nothing the model volunteers. That rule
@@ -594,6 +650,161 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       ws.close(closeCode, code);
     };
 
+    /** Who heard a transcript that came from the live session itself. */
+    const liveSource = (): { provider: string; model: string } => ({
+      provider: adapter?.provider ?? "gemini-live",
+      model: options.model ?? DEFAULT_LIVE_MODEL,
+    });
+
+    /**
+     * A transcript with no audio of its own to recognize again, made canonical: normalised against the session
+     * vocabulary, its provenance reported, and the canonical text returned. As heard when there is no vocabulary yet.
+     */
+    const canonicalWithoutRetry = (
+      text: string,
+      utteranceId: string,
+      at: Instant,
+      source: { provider: string; model: string },
+    ): string => {
+      const context = recognitionContext;
+      if (context === undefined || text.trim() === "") return text;
+      const settled = settleUtteranceNow({
+        utterance: {
+          voiceSessionId: sessionId,
+          utteranceId,
+          revision: 0,
+          isFinal: true,
+          text: text.slice(0, 8000),
+          provider: source.provider,
+          model: source.model,
+          contextApplied: false,
+          at,
+          sequence: 0,
+        },
+        context,
+      });
+      options.onRecognition?.(settled.provenance);
+      return settled.text;
+    };
+
+    /** How many live-transcribed utterances this session has dispatched, for their provenance ids. */
+    let liveUtterances = 0;
+    /** The live reading since the recognizer's last final: what takes over if the recognizer fails mid-sentence. */
+    let liveShadow = "";
+
+    /**
+     * Wait for the transcription to go quiet, then take the sentence.
+     *
+     * Restarted on every fragment, so a provider that streams partials extends the same sentence rather than being cut
+     * off in the middle of it.
+     */
+    const armSettle = (): void => {
+      if (settle !== undefined) clearTimeout(settle);
+      settle = setTimeout(() => {
+        settle = undefined;
+        askLive(now());
+      }, options.utteranceSettleMs ?? 400);
+    };
+
+    /**
+     * Dispatch what the live transcription heard, in its canonical spelling.
+     *
+     * When normalisation changed the words, the page is sent the canonical sentence as the final user line, so what
+     * the person reads is what was dispatched rather than the raw reading it replaced.
+     */
+    const askLive = (at: Instant): void => {
+      const heard = userText.trim();
+      if (heard !== "" && recognitionContext !== undefined) {
+        liveUtterances += 1;
+        const canonical = canonicalWithoutRetry(heard, `${sessionId}:l${liveUtterances}`, at, liveSource());
+        if (canonical !== heard) {
+          userText = canonical;
+          send({ type: "transcript", role: "user", text: canonical, final: true });
+        }
+      }
+      ask(at);
+    };
+
+    /** Remember an utterance as dispatched, bounded so a long session does not grow this without end. */
+    const markSettled = (utteranceId: string): void => {
+      settledUtterances.add(utteranceId);
+      if (settledUtterances.size > 256) {
+        const oldest = settledUtterances.values().next().value;
+        if (oldest !== undefined) settledUtterances.delete(oldest);
+      }
+    };
+
+    /**
+     * One result from the dedicated recognizer.
+     *
+     * An interim is shown and replaced as it changes, and dispatches nothing. A final is taken once: it is settled -
+     * normalised, and recognized again when a technical span in it was unsure - in the order it was said, and only then
+     * becomes the person's sentence, through the same `ask` a live transcript goes through.
+     */
+    const onRecognized = (utterance: RecognizedUtterance): void => {
+      if (closing || recognizer === undefined || settledUtterances.has(utterance.utteranceId)) return;
+      if (!utterance.isFinal) {
+        pendingInterim = utterance.text;
+        if (utterance.text.trim() !== "") send({ type: "transcript", role: "user", text: utterance.text, final: false });
+        return;
+      }
+      markSettled(utterance.utteranceId);
+      pendingInterim = "";
+      liveShadow = "";
+      const audio = utteranceAudio?.take();
+      const context = recognitionContext;
+      if (utterance.text.trim() === "") return;
+      recognitionQueue = recognitionQueue
+        .then(async () => {
+          const settled =
+            context === undefined
+              ? { text: utterance.text.trim(), provenance: undefined }
+              : await settleUtterance({
+                  utterance,
+                  context,
+                  ...(audio === undefined ? {} : { audio }),
+                  ...(options.utteranceRetry === undefined ? {} : { retry: options.utteranceRetry }),
+                });
+          if (settled.provenance !== undefined) options.onRecognition?.(settled.provenance);
+          // A session that closed while this was settling keeps the sentence as a leftover rather than answering it.
+          if (closing) {
+            userText = userText.trim() === "" ? settled.text : `${userText.trim()} ${settled.text}`;
+            return;
+          }
+          send({ type: "transcript", role: "user", text: settled.text, final: true });
+          userText = settled.text;
+          ask(utterance.at);
+        })
+        .catch(() => {
+          // Settling is deterministic and its retry is bounded and caught, so this is a defect rather than a provider
+          // failure. The sentence is not lost: it goes as heard.
+          if (closing) return;
+          send({ type: "transcript", role: "user", text: utterance.text.trim(), final: true });
+          userText = utterance.text.trim();
+          ask(utterance.at);
+        });
+    };
+
+    /**
+     * The recognizer stopped hearing. The live transcription is the source from here on, starting with its own
+     * reading of the sentence in progress, so the utterance the person was in the middle of is still answered.
+     */
+    const recognizerLost = (): void => {
+      const lost = recognizer;
+      if (lost === undefined) return;
+      recognizer = undefined;
+      utteranceAudio?.clear();
+      const inProgress = liveShadow.trim() !== "" ? liveShadow.trim() : pendingInterim.trim();
+      liveShadow = "";
+      pendingInterim = "";
+      if (inProgress !== "") {
+        userText = userText.trim() === "" ? inProgress : `${userText.trim()} ${inProgress}`;
+        armSettle();
+      }
+      void lost.stop().catch(() => undefined);
+      process.stderr.write("voice: the dedicated recognizer stopped, so this session continues on the live session's transcription\n");
+    };
+
     /**
      * Record the session once.
      *
@@ -610,6 +821,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         settle = undefined;
       }
       if (conversationId === undefined) return 0;
+      // A recognizer hypothesis that never became final is still something the person said, kept in its canonical
+      // spelling like every other utterance.
+      if (pendingInterim.trim() !== "") {
+        const leftover = canonicalWithoutRetry(pendingInterim, `${sessionId}:leftover`, now(), recognizer ?? liveSource());
+        userText = userText.trim() === "" ? leftover : `${userText.trim()} ${leftover}`;
+        pendingInterim = "";
+      }
       // With an agent in the path every answered utterance is already a message in the conversation,
       // written while it was being said. What the agent wrote is reported as it is, and whatever is
       // left over is what never became a message - a sentence the agent could not answer, or one that
@@ -1003,12 +1221,22 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     };
 
     const finish = async (): Promise<void> => {
+      closing = true;
+      // An utterance still settling - its retry is bounded - is waited for, so it is kept in the record instead of
+      // lost between being heard and being dispatched.
+      await recognitionQueue;
       const recordedMessages = record();
       // Only the socket that owns the slot may release it. A refused second socket closes too,
       // and clearing the slot unconditionally here would end a session that is still running —
       // which is how this was found.
       if (active?.sessionId === sessionId) active = undefined;
-      await adapter?.disconnect().catch(() => undefined);
+      const stopping = recognizer;
+      recognizer = undefined;
+      utteranceAudio?.clear();
+      await Promise.all([
+        adapter?.disconnect().catch(() => undefined),
+        stopping?.stop().catch(() => undefined),
+      ]);
       send({ type: "ended", recordedMessages });
     };
 
@@ -1024,7 +1252,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       }
 
       if (isBinary) {
-        adapter?.sendAudio(new Uint8Array(data as Buffer));
+        const frame = new Uint8Array(data as Buffer);
+        // The live session always hears the audio: it is the voice, and hearing the person is what lets it stop
+        // talking when they talk over it.
+        adapter?.sendAudio(frame);
+        if (recognizer !== undefined) {
+          recognizer.sendAudio(frame);
+          if (!muted) utteranceAudio?.push(frame);
+        }
         return;
       }
 
@@ -1036,7 +1271,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (control?.["type"] === "mute") {
         // Mute is applied at the adapter as well as at the client's track. Two layers on purpose:
         // a mute that depends on one is a mute that fails silently when that one is broken.
-        adapter?.setMuted(control["muted"] === true);
+        muted = control["muted"] === true;
+        adapter?.setMuted(muted);
+        recognizer?.setMuted(muted);
+        // Audio from before the mute is not kept across it: a retry never runs on words said while muted, or on a
+        // sentence the mute cut in half.
+        if (muted) utteranceAudio?.clear();
         return;
       }
       if (control?.["type"] === "focus") {
@@ -1109,7 +1349,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         options.voiceLiveUtterance.sendUserText = (text: string) => {
           userText += text;
           send({ type: "transcript", role: "user", text, final: true });
-          ask(now());
+          askLive(now());
         };
       }
 
@@ -1126,25 +1366,29 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         if (ws.readyState === ws.OPEN) ws.send(pcm16, { binary: true });
       });
       adapter.onTranscript((fragment) => {
+        if (fragment.role === "user" && recognizer !== undefined) {
+          // The dedicated recognizer is the source of the person's words. The live reading of the same audio is
+          // kept only as the fallback for the utterance in progress, should the recognizer fail in the middle of it.
+          liveShadow = `${liveShadow}${fragment.text}`.slice(-8000);
+          return;
+        }
         if (fragment.role === "user") {
           userText += fragment.text;
+          // Forwarded before the sentence is taken, so the page has the person's words before anything said about
+          // them, and a canonical reading sent while taking it is the last word on what they said.
+          send({ type: "transcript", role: fragment.role, text: fragment.text, final: fragment.isFinal });
           // The final fragment of an utterance is the adapter saying this one is complete, so this is
           // where a sentence becomes a message.
           if (fragment.isFinal) {
-            ask(fragment.at);
-          } else if (fragment.text.trim() !== "") {
-            // Transcribed words arrived and more may still be coming: wait for the quiet, then take the sentence.
-            // Restarted on every fragment, so a provider that streams partials extends the same sentence rather
-            // than being cut off in the middle of it.
             if (settle !== undefined) clearTimeout(settle);
-            settle = setTimeout(() => {
-              settle = undefined;
-              ask(now());
-            }, options.utteranceSettleMs ?? 400);
+            settle = undefined;
+            askLive(fragment.at);
+          } else if (fragment.text.trim() !== "") {
+            armSettle();
           }
-        } else if (fragment.role === "assistant") {
-          assistantText += fragment.text;
+          return;
         }
+        if (fragment.role === "assistant") assistantText += fragment.text;
         // The live model's own words are only the answer when there is no agent. With one in the path
         // they are the model reading back what it was given, and forwarding them would show the reply
         // twice.
@@ -1152,11 +1396,59 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         send({ type: "transcript", role: fragment.role, text: fragment.text, final: fragment.isFinal });
       });
 
+      /*
+       * The vocabulary is built while the providers connect, and a failure to build it leaves the session as it was
+       * before vocabularies existed: transcripts dispatched as heard.
+       */
+      const buildContext = options.recognitionContext;
+      const contextReady =
+        buildContext === undefined
+          ? Promise.resolve()
+          : buildContext({ conversationId }).then(
+              (context) => {
+                recognitionContext = context;
+              },
+              () => undefined,
+            );
+
+      /*
+       * The dedicated recognizer, opened beside the live session. It becomes the source of the person's words only once
+       * it is listening; one that cannot open leaves the live transcription as the source, and the session still opens.
+       */
+      const startRecognizer = async (): Promise<void> => {
+        const create = options.createRecognizer;
+        if (create === undefined) return;
+        const candidate = create();
+        candidate.onUtterance(onRecognized);
+        candidate.onStateChange((state) => {
+          if (state === "failed" && recognizer === candidate) recognizerLost();
+        });
+        try {
+          await contextReady;
+          const context = recognitionContext;
+          await candidate.start({ sessionId, tokenProvider: async () => credential, ...(context === undefined ? {} : { context }) });
+          if (closing) {
+            await candidate.stop();
+            return;
+          }
+          candidate.setMuted(muted);
+          recognizer = candidate;
+        } catch {
+          await candidate.stop().catch(() => undefined);
+          // Named without the provider's message: a transport error can carry the request it failed on.
+          process.stderr.write("voice: the dedicated recognizer could not open, so this session uses the live session's transcription\n");
+        }
+      };
+      const recognizerReady = startRecognizer();
+
       try {
         // The adapter asks for the credential rather than being handed one at construction, so
         // the window in which it exists is the length of this call.
         await adapter.connect({ sessionId, tokenProvider: async () => credential });
+        await recognizerReady;
       } catch (cause) {
+        closing = true;
+        void recognizerReady.then(() => recognizer?.stop().catch(() => undefined));
         authenticated = false;
         active = undefined;
         deny(
