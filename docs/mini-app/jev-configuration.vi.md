@@ -122,10 +122,10 @@ key, or any host-owned card. The assembled state is capped at 16 KiB and is refu
 rather than sent and rejected. A second check re-scans the serialized state for a credential
 and refuses to send it at all if one survives.
 
-**Trần data class.** Mọi lời gọi quyết định, dù là quyết định nào và provider nào nhận, chỉ mang nội
-dung thuộc các class mà selector được phép xem: `public` và `internal` (`SELECTOR_DATA_CLASSES`, cùng
-giới hạn mà context planner áp dụng). Nội dung vượt trần bị bỏ ra trước khi dựng request, không bao giờ
-gửi đi rồi mới lọc:
+**Trần data class.** Trong mọi lời gọi quyết định, dù là quyết định nào và provider nào nhận, nội dung
+do người dùng, một tệp hay một bản ghi cung cấp chỉ được thuộc các class mà selector được phép xem:
+`public` và `internal` (`SELECTOR_DATA_CLASSES`, cùng giới hạn mà context planner áp dụng). Nội dung
+vượt trần bị bỏ ra trước khi dựng request, không bao giờ gửi đi rồi mới lọc:
 
 - một ứng viên đại diện cho một bản ghi dữ liệu của người dùng (một kết quả tìm kiếm, một ghi nhớ hay
   một tin cũ hơn) chỉ được đưa ra khi toàn bộ bản ghi nằm trong trần. Một kết quả tìm kiếm được xét
@@ -137,15 +137,25 @@ gửi đi rồi mới lọc:
   lại một dạng nhạy cảm (mười chữ số vốn nối liền với chữ cái nay đứng cuối văn bản) sẽ được che lần
   nữa, và văn bản vẫn vượt trần thì không được gửi.
 
-Định danh do host viết (id lựa chọn, alias của model, ref) không bị xét theo trần này: với bộ phân loại
-theo hình dạng, một model id có ngày tháng trông như số điện thoại. Chúng vẫn nằm trong phạm vi kiểm tra
-credential bên dưới.
+Những gì do chính host viết được miễn khỏi trần này, vì với bộ phân loại theo hình dạng, một model id
+có ngày tháng trông như số điện thoại:
+
+- định danh: id lựa chọn, ref, id và loại của ứng viên, locale, và các con số đếm;
+- các chỉ dẫn và câu mô tả lựa chọn cố định của host;
+- mô tả trong danh mục: `alias (provider/modelId)` của một tuyến model, nhãn của một template trình
+  bày, mô tả của một cách thu hẹp mà guardrail đưa ra, và dòng `about` của một nhóm tool.
+
+Chúng vẫn nằm trong phạm vi kiểm tra credential bên dưới. Trường nào trong request của từng quyết
+định thuộc bên nào được liệt kê từng trường một trong
+`apps/runtime/test/decision-request-fields.spec.ts`; một trường mới sẽ làm test đó thất bại cho tới khi
+nó được xếp vào một bên.
 
 Bước cuối cùng trước khi gọi bất kỳ provider nào, dù provider nào được chọn, trước hết đo request đã tuần
 tự hoá: request lớn hơn 64 KiB không được gửi, và không gì đọc tiếp nó. Sau đó bước này quét toàn bộ
 request (state và các câu hỏi, kể cả mô tả của từng lựa chọn) để tìm credential, bằng bộ phân loại mà
 ranh giới gửi dùng cho đầu vào của model. Id và tên chỉ giống token thì không tính; một header HTTP Basic
-được viết thành một key và giá trị của nó (`{"Authorization": "Basic …"}`) thì có tính. Nếu phát hiện,
+được viết thành một key và giá trị của nó (`{"Authorization": "Basic …"}`), thành một phép gán
+(`headers["Authorization"] = "Basic …"`) hay trong dấu backtick thì có tính. Nếu phát hiện,
 request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi provider khác, và lý do
 cùng telemetry không chứa phần nào của giá trị.
 
@@ -259,10 +269,13 @@ nothing, and re-measure with
 `CLARKCANT_EMBEDDINGS_LIVE=1 pnpm exec vitest run apps/runtime/test/hybrid-calibration-live.spec.ts`,
 which prints a per-ceiling sweep. The numbers belong in a report before the default changes.
 
-**What a composed surface costs.** One selector batch per composition when no template was named (two
-at most, if the template changes the candidate set), and zero when the model names a template. Tìm
-kiếm chỉ tốn một lời gọi khi `decider = jev`, có ít nhất hai kết quả sát nhau, thứ hạng chưa tự tách
-chúng ra, và có ít nhất hai kết quả nằm trong trần data class của selector.
+**Một surface được dựng tốn bao nhiêu.** Mỗi lần dựng tốn một lô gọi selector khi chưa có template nào
+được nêu tên (tối đa hai lô, nếu template làm đổi tập ứng viên), và không tốn lời gọi nào khi model đã
+nêu tên một template. Tìm kiếm chỉ tốn một lời gọi khi `decider = jev`, có ít nhất hai kết quả sát
+nhau, thứ hạng chưa tự tách chúng ra, và có ít nhất hai kết quả nằm trong trần data class của
+selector. Việc xét class của một kết quả không làm tìm kiếm chậm thêm: kết quả từ tìm kiếm theo từ
+khoá được xét trên chính văn bản mà tìm kiếm đã trả về, kết quả chỉ phía vector tìm thấy được đọc lại
+trong một truy vấn duy nhất, và chỉ những kết quả sắp được đưa cho selector mới được xét.
 
 **Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
 the home directory, and the system ignore list). Changing them needs no restart. What the selector

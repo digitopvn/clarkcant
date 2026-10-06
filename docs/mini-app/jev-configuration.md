@@ -121,10 +121,11 @@ key, or any host-owned card. The assembled state is capped at 16 KiB and is refu
 rather than sent and rejected. A second check re-scans the serialized state for a credential
 and refuses to send it at all if one survives.
 
-**The data-class ceiling.** Every decision call, whichever decision it makes and whichever provider
-receives it, carries only content of the classes the selector may be shown: `public` and `internal`
-(`SELECTOR_DATA_CLASSES`, the same limit the context planner applies). Content above that is removed
-before the request is built, never sent and filtered afterwards:
+**The data-class ceiling.** In every decision call, whichever decision it makes and whichever
+provider receives it, the content a person, a file or a record supplied is limited to the classes the
+selector may be shown: `public` and `internal` (`SELECTOR_DATA_CLASSES`, the same limit the context
+planner applies). Content above that is removed before the request is built, never sent and filtered
+afterwards:
 
 - a candidate that stands for a record of the person's data (a search result, a memory note or an
   earlier message) is offered only when the whole record is within the ceiling. A search result is
@@ -136,15 +137,24 @@ before the request is built, never sent and filtered afterwards:
   A cut that leaves a shape (ten digits that ran on into letters now end the text) is redacted
   again, and text still above the ceiling is not sent.
 
-Host-written identifiers (option ids, model aliases, refs) are not judged against this ceiling: a
-dated model id reads as a phone number to the shape classifier. They are still covered by the
-credential check below.
+What the host writes itself is exempt from this ceiling, because a dated model id reads as a phone
+number to the shape classifier:
+
+- identifiers: option ids, refs, candidate ids and kinds, the locale, and counts;
+- the host's fixed instructions and option sentences;
+- catalogue descriptions: a model route's `alias (provider/modelId)`, a presentation template's
+  label, a guardrail narrowing's description, and a tool family's `about` line.
+
+These are still covered by the credential check below. Which fields of each decision's request fall
+on which side is listed, field by field, in `apps/runtime/test/decision-request-fields.spec.ts`; a
+new field fails that test until it is placed on one side.
 
 The last step before any provider is called, whichever one is selected, first measures the
 serialized request: one over 64 KiB is not sent, and nothing reads it further. It then scans the whole
 request (state and questions, including option descriptions) for a credential, with the classifier
 the send boundary uses for a model's input. Ids and names that only resemble a token do not count; an
-HTTP Basic header written as a key and its value (`{"Authorization": "Basic …"}`) does. A hit means
+HTTP Basic header written as a key and its value (`{"Authorization": "Basic …"}`), as an assignment
+(`headers["Authorization"] = "Basic …"`) or in backticks does. A hit means
 the request is not sent at all; the call falls back as any provider failure does, and the reason and
 telemetry carry no part of the value.
 
@@ -262,6 +272,9 @@ which prints a per-ceiling sweep. The numbers belong in a report before the defa
 at most, if the template changes the candidate set), and zero when the model names a template. Search
 costs one call only when `decider = jev`, at least two results are close, the ranking did not
 already separate them, and at least two results are within the selector's data-class ceiling.
+Judging a result's class adds no search cost: a lexical result is judged on the text the search
+already returned, results only the vector side found are read back in one query, and only the
+results about to be offered to the selector are judged.
 
 **Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
 the home directory, and the system ignore list). Changing them needs no restart. What the selector
