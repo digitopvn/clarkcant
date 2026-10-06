@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { type Instant, type PeerEnvelope, type PeerSkipLost, NOTICE_BODY_MAX, peerSkipSchema } from "@clarkcant/contracts";
+import { type AppIntentLocale, type Instant, type PeerEnvelope, type PeerSkipLost, NOTICE_BODY_MAX, peerSkipSchema } from "@clarkcant/contracts";
 import { type Database, appendAuditEvent, countRecentInbox, getPeer, peerCursor, peerDeliveryState } from "@clarkcant/storage";
 
+import { preferredAppIntentLocale } from "./app-intents.ts";
+import { ownerLocale } from "./host-text.ts";
+import { type NoticeText, noticeText } from "./notice-text.ts";
 import { type NodeNotice, type NoticeServices, tryRecordNodeNotice } from "./notices.ts";
 import { PEER_NOTICES_PER_MINUTE } from "./peer-notices.ts";
 import type { SkipReport } from "./peer-transport.ts";
@@ -23,69 +26,44 @@ import type { SkipReport } from "./peer-transport.ts";
 const LOST_KEY_PREFIX = "peer-lost";
 const STUCK_KEY_PREFIX = "peer-stuck";
 
-/** What each kind of message is, in words the owner reads. */
-const KIND_WORDS: Record<PeerSkipLost["kind"], string> = {
-  handshake: "lời chào kết nối",
-  "invite.claim": "yêu cầu nhận lời mời ghép cặp",
-  "pair.confirm": "quyền làm việc được cấp",
-  revoke: "yêu cầu rút quyền làm việc",
-  delegate: "việc được giao",
-  accepted: "xác nhận đã nhận việc",
-  status: "cập nhật trạng thái của việc",
-  "input.request": "câu hỏi cần trả lời",
-  "input.response": "câu trả lời",
-  "approval.request": "yêu cầu duyệt",
-  "approval.response": "quyết định duyệt",
-  "cancel.request": "yêu cầu dừng việc",
-  result: "kết quả của việc được giao",
-  "artifact.offer": "tệp được gửi",
-  "artifact.accept": "trả lời về tệp được gửi",
-  heartbeat: "tín hiệu giữ kết nối",
-  signal: "tín hiệu",
-  notice: "thông báo",
-};
-
 /** How many lost messages a notice names one by one; the rest are counted. */
 const NAMED_MAX = 5;
 
-const inWords = (one: PeerSkipLost): string => `${KIND_WORDS[one.kind]}${one.taskId === undefined ? "" : ` (việc ${one.taskId})`}`;
+type SkipWords = NoticeText["peerSkip"];
+
+const inWords = (one: PeerSkipLost, say: SkipWords): string =>
+  `${say.kindWords[one.kind]}${one.taskId === undefined ? "" : say.forTask(one.taskId)}`;
 
 /**
  * The lost messages, named one by one as far as `room` allows and at most `NAMED_MAX`, the rest counted. The guidance
  * comes before this list in a notice, so it is the list that gives way when the body would run past its bound.
  */
-function lostInWords(lost: readonly PeerSkipLost[], room: number): string {
+function lostInWords(lost: readonly PeerSkipLost[], room: number, say: SkipWords): string {
   for (let named = Math.min(lost.length, NAMED_MAX); named >= 0; named -= 1) {
     const rest = lost.length - named;
-    const parts = lost.slice(0, named).map(inWords);
-    if (rest > 0) parts.push(named === 0 ? howMany(rest) : `và ${String(rest)} tin khác`);
+    const parts = lost.slice(0, named).map((one) => inWords(one, say));
+    if (rest > 0) parts.push(named === 0 ? say.howMany(rest) : say.andMore(rest));
     const text = parts.join("; ");
     if (text.length <= room) return text;
   }
-  return howMany(lost.length);
+  return say.howMany(lost.length);
 }
-
-const howMany = (count: number): string => (count === 1 ? "một tin" : `${String(count)} tin`);
 
 /**
  * What losing these messages does, and what does not happen, by kind. Only a lost hand-over or stop settles a task,
  * and only on the side that sent it; a lost result settles the task on the side that handed it out; a lost question,
  * answer or approval is not sent again, so whoever waits for it waits until the request expires.
  */
-function consequences(side: "out" | "in", lost: readonly PeerSkipLost[], settled: number): string {
+function consequences(side: "out" | "in", lost: readonly PeerSkipLost[], settled: number, say: SkipWords): string {
   const kinds = new Set(lost.map((one) => one.kind));
   const said: string[] = [];
-  if (side === "out" && (kinds.has("delegate") || kinds.has("cancel.request"))) {
-    said.push("Việc giao đi hoặc lệnh dừng bị mất đã được chốt trong hội thoại của việc đó.");
-  }
-  if (side === "out" && kinds.has("result")) said.push("Thiết bị đó chốt việc có kết quả bị mất là chưa rõ.");
-  if (side === "in" && settled > 0) {
-    said.push("Việc có kết quả bị mất được chốt là chưa rõ trong hội thoại của việc đó.");
-  }
+  if (side === "out" && (kinds.has("delegate") || kinds.has("cancel.request"))) said.push(say.settledOut);
+  if (side === "out" && kinds.has("result")) said.push(say.resultUncertainThere);
+  if (side === "in" && settled > 0) said.push(say.settledIn);
   if (["input.request", "input.response", "approval.request", "approval.response"].some((kind) => kinds.has(kind as PeerSkipLost["kind"]))) {
-    said.push("Câu hỏi, câu trả lời hay việc duyệt bị mất sẽ không gửi lại; bên chờ sẽ chờ tới khi hết hạn.");
+    said.push(say.notResent);
   }
-  if (said.length === 0) said.push("Không việc nào phải chốt lại vì các tin này.");
+  if (said.length === 0) said.push(say.nothingToSettle);
   return said.join(" ");
 }
 
@@ -105,23 +83,22 @@ export function peerLostNotice(input: {
   /** Tasks this node handed the peer whose lost result settled them as uncertain. */
   settled?: readonly string[];
   at: Instant;
+  /** The owner's interface language; Vietnamese when none is named. */
+  language?: AppIntentLocale;
 }): NodeNotice {
+  const say = noticeText(input.language).peerSkip;
   const name = input.label ?? input.peerNodeId;
   const count = input.lost.length;
- const guidance =
+  const guidance =
     input.side === "out"
-      ? `Máy này đã bỏ ${howMany(count)} gửi tới thiết bị ${name} vì gửi mãi không được. ` +
-        "Đã báo cho thiết bị đó; những tin gửi sau vẫn được giữ và gửi tiếp theo thứ tự. " +
-        `${consequences("out", input.lost, 0)} Nếu vẫn cần, hãy gửi lại. Đã bỏ: `
-      : `Thiết bị ${name} báo đã bỏ ${howMany(count)} gửi tới máy này vì gửi mãi không được. ` +
-        `Máy này sẽ không nhận được ${count === 1 ? "tin đó" : "các tin đó"}; những tin khác từ thiết bị đó vẫn được nhận bình thường. ` +
-        `${consequences("in", input.lost, (input.settled ?? []).length)} Nếu vẫn cần, hãy làm lại hoặc nhờ gửi lại. Tin đã mất: `;
-  const body = `${guidance}${lostInWords(input.lost, NOTICE_BODY_MAX - guidance.length - 1)}.`;
+      ? say.guidanceOut(name, count, consequences("out", input.lost, 0, say))
+      : say.guidanceIn(name, count, consequences("in", input.lost, (input.settled ?? []).length, say));
+  const body = `${guidance}${lostInWords(input.lost, NOTICE_BODY_MAX - guidance.length - 1, say)}.`;
   return {
     sourceKind: "system",
     category: "alert",
     severity: "warning",
-    title: input.side === "out" ? `${count === 1 ? "Một tin" : `${String(count)} tin`} gửi tới thiết bị khác đã bị bỏ` : `${count === 1 ? "Một tin" : `${String(count)} tin`} từ thiết bị khác đã bị mất`,
+    title: input.side === "out" ? say.titleOut(count) : say.titleIn(count),
     body,
     subject: { kind: "peer", nodeId: input.peerNodeId },
     dedupKey: `${LOST_KEY_PREFIX}:${input.peerNodeId}:${input.side}:${String(input.through)}`,
@@ -140,6 +117,7 @@ export function tellSkipped(services: NoticeServices, report: SkipReport, at: In
       through: report.through,
       lost: report.lost,
       at,
+      language: ownerLocale(services.runtime),
     }),
   );
 }
@@ -158,18 +136,22 @@ export function peerStuckKey(peerNodeId: string, lastAcknowledgedAt: Instant | n
  * The notice that a pairing is stuck: this node gave up on a message to a peer that has not said it takes a skip, so
  * that peer refuses everything after it. What happened, what is kept, and that updating ClarkCant there is what frees it.
  */
-export function peerStuckNotice(input: { peerNodeId: string; label?: string; lastAcknowledgedAt: Instant | null; at: Instant }): NodeNotice {
+export function peerStuckNotice(input: {
+  peerNodeId: string;
+  label?: string;
+  lastAcknowledgedAt: Instant | null;
+  at: Instant;
+  /** The owner's interface language; Vietnamese when none is named. */
+  language?: AppIntentLocale;
+}): NodeNotice {
+  const say = noticeText(input.language).peerSkip;
   const name = input.label ?? input.peerNodeId;
   return {
     sourceKind: "system",
     category: "alert",
     severity: "error",
-    title: "Ghép cặp với thiết bị khác đang bị kẹt",
-    body:
-      `Máy này đã bỏ ít nhất một tin gửi tới thiết bị ${name} sau nhiều lần thử, và thiết bị đó chưa cho biết nó bỏ qua được tin đã mất: ` +
-      "nó sẽ từ chối mọi tin gửi sau từ máy này. Những tin còn lại vẫn nằm trong hàng đợi trên máy này và còn được thử lại một thời gian. " +
-      "Hãy cập nhật ClarkCant trên thiết bị đó: khi có tin gửi tới, máy này sẽ tự báo cho nó những gì đã mất rồi gửi tiếp. " +
-      "Thông báo này tự đóng khi thiết bị đó nhận được tin từ máy này.",
+    title: say.stuckTitle,
+    body: say.stuckBody(name),
     subject: { kind: "peer", nodeId: input.peerNodeId },
     dedupKey: peerStuckKey(input.peerNodeId, input.lastAcknowledgedAt),
     at: input.at,
@@ -181,7 +163,10 @@ export function tellStuck(services: NoticeServices, peerNodeId: string, at: Inst
   try {
     const { lastAcknowledgedAt } = peerDeliveryState(services.runtime.db, peerNodeId);
     const label = getPeer(services.runtime.db, peerNodeId)?.label;
-    tryRecordNodeNotice(services, peerStuckNotice({ peerNodeId, ...(label === undefined ? {} : { label }), lastAcknowledgedAt, at }));
+    tryRecordNodeNotice(
+      services,
+      peerStuckNotice({ peerNodeId, ...(label === undefined ? {} : { label }), lastAcknowledgedAt, at, language: ownerLocale(services.runtime) }),
+    );
   } catch (cause) {
     process.stderr.write(`inbox: could not tell that the pairing with ${peerNodeId} is stuck (${cause instanceof Error ? cause.message : String(cause)})\n`);
   }
@@ -255,6 +240,8 @@ export function receivePeerSkip(
           lost,
           settled,
           at,
+          // The notice is this node's owner's, so it is worded in their language, read now.
+          language: preferredAppIntentLocale({ db: deps.db, now: deps.now }, deps.ownerPrincipalId),
         }),
       );
     } catch (cause) {

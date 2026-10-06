@@ -1,6 +1,5 @@
 import {
   type AppIntent,
-  type AppIntentConfirmationFailure,
   appIntentConfirmRequestSchema,
   appIntentRequestSchema,
   describeAppIntent,
@@ -24,6 +23,7 @@ import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { grantConversationDeletion } from "../application/conversation-delete.ts";
 import type { HostControlAcks } from "../host-control-acks.ts";
 import type { WidgetPerformAcks } from "../widget-perform-acks.ts";
+import { hostText, ownerLocale } from "../host-text.ts";
 import { buildSuggestions } from "../suggestions.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -74,21 +74,6 @@ export async function handleInteractionRoutes(deps: InteractionRouteDeps): Promi
 
 
 /**
- * What each confirmation failure means, in words.
- *
- * Spelled out here rather than left to a caller: an expired confirmation and a wrong one lead a person to different
- * next actions, and a bare code on screen sends them looking for a bug that is not there.
- */
-const CONFIRMATION_MESSAGES: Record<AppIntentConfirmationFailure, string> = {
-  CONFIRMATION_NOT_FOUND: "Không có lời xác nhận nào đang chờ.",
-  CONFIRMATION_EXPIRED: "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé.",
-  CONFIRMATION_ALREADY_USED: "Lời xác nhận này đã được dùng rồi.",
-};
-
-/** Said when someone declines. Nothing happened, and the answer says so rather than staying silent. */
-const DECLINED_SAY = "Tôi đã bỏ qua câu lệnh đó.";
-
-/**
  * Application intents.
  *
  * Two routes and one rule: a request comes back as a decision, and only `kind: "intent"` is executable. Quitting
@@ -111,6 +96,8 @@ function suggestionsResponse(services: InteractionServices): GatewayResponse {
     nodeId: runtime.identity.nodeId,
     now: () => new Date().toISOString(),
     principalId: runtime.identity.ownerPrincipalId,
+    // The chips are the host's words, so they are written in the owner's interface language, read now.
+    language: ownerLocale(runtime),
   });
   return { status: 200, body: { items } };
 }
@@ -210,10 +197,14 @@ async function handleAppIntentRoutes(
     if (!outcome.ok) {
       const status =
         outcome.code === "CONFIRMATION_ALREADY_USED" ? 409 : outcome.code === "CONFIRMATION_EXPIRED" ? 410 : 404;
-      return fail(status, outcome.code, CONFIRMATION_MESSAGES[outcome.code]);
+      // In the owner's words, read now: the person who said the command is the one reading why it did not go through.
+      return fail(status, outcome.code, hostText(preferredAppIntentLocale(intentDeps, principalId)).confirmations.failed[outcome.code]);
     }
     if (body.data.decision === "denied") {
-      return json(200, { granted: false, decision: { kind: "refused", say: DECLINED_SAY } });
+      return json(200, {
+        granted: false,
+        decision: { kind: "refused", say: hostText(preferredAppIntentLocale(intentDeps, principalId)).confirmations.declined },
+      });
     }
     if (outcome.intent.kind === "conversation.delete") {
       const decision = grantConversationDeletion({...intentDeps, principalId}, outcome.intent, preferredAppIntentLocale(intentDeps, principalId));

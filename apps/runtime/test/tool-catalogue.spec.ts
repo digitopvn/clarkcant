@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
-import { PI_BUILTIN_TOOLS, nodeToolCatalogue, registerNodeTools } from "../src/tool-catalogue.ts";
+import { PI_BUILTIN_TOOL_NAMES, nodeToolCatalogue, registerNodeTools } from "../src/tool-catalogue.ts";
 
 /**
  * The Tools tab's source.
@@ -60,8 +60,45 @@ describe("the tools a node reports", () => {
       agentNote?: string;
     };
     expect(body.self?.map((tool) => tool.name)).toEqual(["run_command"]);
-    expect(body.agent?.map((tool) => tool.name)).toEqual(PI_BUILTIN_TOOLS.map((tool) => tool.name));
+    expect(body.agent?.map((tool) => tool.name)).toEqual([...PI_BUILTIN_TOOL_NAMES]);
     // The note is part of the answer: a list of built-ins without it reads as the whole of what the agent can do.
     expect(body.agentNote).toBeTruthy();
   });
 });
+
+describe("the Tools tab's words follow the owner's interface language", () => {
+  type ToolsBody = { self: { name: string; label: string }[]; agent: { label: string; description: string }[]; agentNote: string };
+
+  beforeEach(() => {
+    registerNodeTools([
+      { name: "run_command", label: "Chạy một lệnh", description: "Sau khi bạn duyệt." },
+      { name: "a_package_tool", label: "Its own label", description: "From a package." },
+    ]);
+  });
+
+  it("names the node's tools and the agent's built-ins in English when the interface is English", async () => {
+    const written = await handleRequest(deps, {
+      method: "PUT",
+      path: "/preferences/experience.language",
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+      body: JSON.stringify({ value: "en" }),
+    });
+    expect(written.status).toBe(200);
+
+    const body = (await get("/tools")).body as ToolsBody;
+    expect(body.self.find((tool) => tool.name === "run_command")?.label).toBe("Run a command");
+    // A tool the host has no words for keeps the label it was defined with.
+    expect(body.self.find((tool) => tool.name === "a_package_tool")?.label).toBe("Its own label");
+    expect(JSON.stringify([body.agent, body.agentNote])).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("keeps the Vietnamese words when no language was ever chosen", async () => {
+    const body = (await get("/tools")).body as ToolsBody;
+    expect(body.self.find((tool) => tool.name === "run_command")?.label).toBe("Chạy một lệnh");
+    expect(JSON.stringify([body.agent, body.agentNote])).toMatch(VIETNAMESE_LETTER);
+  });
+});
+
+/** Any letter only Vietnamese writes. */
+const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;

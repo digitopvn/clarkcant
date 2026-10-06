@@ -6,14 +6,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  type AppIntentLocale,
   type ExecutionPolicyConfig,
   type Instant,
   type MessageBlock,
 } from "@clarkcant/contracts";
 import type { CoordinationDeps } from "@clarkcant/core";
-import { decideExecution, guardrailCovers } from "@clarkcant/core";
+import { decideExecution, guardrailCovers, writeRegisteredPreference } from "@clarkcant/core";
 import { migrate, openDatabase, nodeStoreSecretBackend, putSecretMetadata, type Database } from "@clarkcant/storage";
 
+import { preferredAppIntentLocale } from "../src/app-intents.ts";
 import { commandDigest, type CommandOutcome } from "../src/run-command.ts";
 import type { InteractionDeps } from "../src/interactions.ts";
 import type { SecretBroker } from "../src/secret-broker.ts";
@@ -62,6 +64,7 @@ function makeTool(options: {
   approvals?: () => CoordinationDeps;
   interactions?: InteractionDeps;
   broker?: SecretBroker;
+  language?: () => AppIntentLocale;
   resolveFolder?: (intent: string) => Promise<
     | { status: "resolved"; cwd: string; relPath: string }
     | { status: "ask"; message: string; options: readonly string[] }
@@ -94,6 +97,7 @@ function makeTool(options: {
     ...(options.broker === undefined ? {} : { broker: options.broker }),
     ...(options.interactions === undefined ? {} : { interactions: options.interactions }),
     ...(options.resolveFolder === undefined ? {} : { resolveFolder: options.resolveFolder }),
+    ...(options.language === undefined ? {} : { language: options.language }),
     run: async (request) => {
       runs.push(request);
       return outcome();
@@ -488,6 +492,92 @@ describe("the confirm policy, kept whole", () => {
       expect(answer.text).toContain("phải bấm duyệt");
     } finally {
       database?.close();
+    }
+  });
+});
+
+describe("what the command tool writes follows the owner's interface language", () => {
+  /** Any letter only Vietnamese writes. */
+  const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;
+  const OWNER = "prin_owner";
+  const AT = "2026-09-19T10:00:00.000Z" as Instant;
+
+  /** A node database whose owner chose `language` in Settings, if any, and the tool's reading of it. */
+  function owner(language?: "vi" | "en"): { database: Database; approvals: () => CoordinationDeps; language: () => AppIntentLocale } {
+    const database = openDatabase({ path: join(dir, "node.sqlite") });
+    migrate(database);
+    if (language !== undefined) {
+      const written = writeRegisteredPreference(
+        { db: database, now: () => AT },
+        { principalId: OWNER, key: "experience.language", value: language, source: "user" },
+      );
+      if (!written.ok) throw new Error(written.message);
+    }
+    return {
+      database,
+      approvals: () => ({ db: database, nodeId: "node_local", now: () => AT, newId: (prefix: string) => `${prefix}_test` }),
+      language: () => preferredAppIntentLocale({ db: database, now: () => AT }, OWNER),
+    };
+  }
+
+  const found = async (): Promise<{ status: "resolved"; cwd: string; relPath: string }> => ({ status: "resolved", cwd: work, relPath: "work" });
+
+  it("writes the row and receipt of a command it ran with no Vietnamese in them when the interface is English", async () => {
+    const node = owner("en");
+    try {
+      const { tool, runs } = makeTool({ guard: { status: "allow" }, language: node.language, resolveFolder: found });
+      const answer = await tool.execute({ command: "pnpm build", where: "the build folder" });
+
+      expect(runs).toHaveLength(1);
+      const [activity, evidence] = answer.hostBlocks ?? [];
+      expect(String(activity?.label)).toContain("found from “the build folder” (work)");
+      expect(evidence?.summary).toBe("The command exited with code 0 after 12 ms.");
+      expect(JSON.stringify(answer.hostBlocks)).not.toMatch(VIETNAMESE_LETTER);
+    } finally {
+      node.database.close();
+    }
+  });
+
+  it("describes the command on its approval card in English when the interface is English", async () => {
+    const node = owner("en");
+    try {
+      const { tool } = makeTool({
+        policy: { mode: "ask" },
+        guard: { status: "allow" },
+        approvals: node.approvals,
+        language: node.language,
+        resolveFolder: found,
+      });
+      const answer = await tool.execute({ command: "pnpm build", where: "the build folder" });
+      const card = answer.hostCard as { type?: string; operationDescription?: string } | undefined;
+
+      expect(card?.type).toBe("approval-card");
+      expect(card?.operationDescription).toBe(`Run a command in ${work} (found from “the build folder” (work))`);
+    } finally {
+      node.database.close();
+    }
+  });
+
+  it("keeps the Vietnamese words when no language was ever chosen", async () => {
+    const node = owner();
+    try {
+      const { tool } = makeTool({
+        policy: { mode: "ask" },
+        guard: { status: "allow" },
+        approvals: node.approvals,
+        language: node.language,
+        resolveFolder: found,
+      });
+      const answer = await tool.execute({ command: "pnpm build", where: "thư mục build" });
+      expect((answer.hostCard as { operationDescription?: string } | undefined)?.operationDescription).toBe(
+        `Chạy một lệnh trong ${work} (được tìm thấy từ “thư mục build” (work))`,
+      );
+
+      const ran = makeTool({ guard: { status: "allow" }, language: node.language });
+      const receipt = await ran.tool.execute({ command: "pnpm build" });
+      expect(receipt.hostBlocks?.[1]?.summary).toBe("Lệnh thoát với mã 0 sau 12 ms.");
+    } finally {
+      node.database.close();
     }
   });
 });

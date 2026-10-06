@@ -1,7 +1,9 @@
-import type { EffectRecord, Instant } from "@clarkcant/contracts";
+import type { AppIntentLocale, EffectRecord, Instant } from "@clarkcant/contracts";
 import { browserPressOfIntent, describeBrowserPress } from "@clarkcant/core";
 import { DISMISSED_RETENTION_MS, type Database, effectsForTask, getTask, unknownEffectsSince } from "@clarkcant/storage";
 
+import { ownerLocale } from "./host-text.ts";
+import { noticeText } from "./notice-text.ts";
 import { type NodeNotice, tryRecordNodeNotice, workerNoticeKey } from "./notices.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -57,7 +59,7 @@ function quote(text: string, max = QUOTE_MAX): string {
  *
  * The first unknown effect's own intent is quoted rather than its id or digest, which say nothing to a person; any
  * others are counted. A stop the person made is named as theirs, so the notice does not read as something that went
- * wrong on its own.
+ * wrong on its own. Worded in the owner's `language`, Vietnamese when none is named.
  */
 export function unknownEffectNotice(input: {
   effects: readonly (Pick<EffectRecord, "taskId" | "intent" | "reconciliationEvidence"> & { capabilityRef?: string })[];
@@ -65,37 +67,31 @@ export function unknownEffectNotice(input: {
   at: Instant;
   /** The key it is recorded under: the task's own worker key, unless it follows an answer for an earlier effect. */
   dedupKey?: string;
+  language?: AppIntentLocale;
 }): NodeNotice | undefined {
   const [first] = input.effects;
   if (first === undefined) return undefined;
+  const locale = input.language ?? "vi";
+  const say = noticeText(locale).unknownEffect;
   // A submission in the browser is checked on the site it went to, not on a remote a command pushed to. A press is
   // recorded as data and worded here, in the notice's own language like the rest of it; the target it ran in is left off.
   const browser = first.capabilityRef?.startsWith(BROWSER_CAPABILITY_PREFIX) === true;
   const press = browser ? browserPressOfIntent(first.intent) : undefined;
-  const intent = press !== undefined ? describeBrowserPress(press, "vi") : browser ? (first.intent.split(" — ")[0] ?? first.intent) : first.intent;
+  const intent = press !== undefined ? describeBrowserPress(press, locale) : browser ? (first.intent.split(" — ")[0] ?? first.intent) : first.intent;
   // A browser task's goal ends with the addresses it starts at; the request before them is what the person asked for.
   const goal = input.task === undefined ? undefined : browser ? (input.task.goal.split("\n\n")[0] ?? input.task.goal) : input.task.goal;
-  const forTask = goal === undefined ? "" : ` cho việc “${quote(goal)}”`;
+  const forTask = goal === undefined ? "" : say.forTask(quote(goal));
   const what =
-    first.reconciliationEvidence === COMMAND_STOPPED_ON_REQUEST
-      ? "đã bị dừng theo yêu cầu trong lúc đang chạy"
-      : browser
-        ? "đã được gửi đi nhưng trang không trả lời"
-        : "đã được gửi đi nhưng không báo lại kết quả";
-  const others = input.effects.length > 1 ? ` (và ${String(input.effects.length - 1)} thao tác khác cũng vậy)` : "";
-  const next = browser
-    ? `Việc được giữ ở trạng thái chưa rõ kết quả và trình duyệt không gửi thêm gì, vì gửi lại có thể làm nó hai lần. ` +
-      `Hãy kiểm tra trên trang đó (ví dụ email xác nhận) rồi ghi nhận kết quả, trước khi làm lại.`
-    : `Việc được giữ ở trạng thái chưa rõ kết quả; mọi lệnh ra bên ngoài mà nó nhận ra đều bị từ chối, vì chạy lại có thể làm nó hai lần. ` +
-      `Hãy kiểm tra ở nơi nhận (ví dụ remote Git) rồi ghi nhận kết quả, trước khi chạy lại.`;
+    first.reconciliationEvidence === COMMAND_STOPPED_ON_REQUEST ? say.stopped : browser ? say.browserNoAnswer : say.noAnswer;
+  const others = input.effects.length > 1 ? say.others(input.effects.length - 1) : "";
+  const next = browser ? say.nextBrowser : say.nextCommand;
+  const rest = `${forTask} ${what}${others}, ${say.uncertain}. ${next}`;
   return {
     sourceKind: "worker",
     category: "alert",
     severity: "warning",
-    title: "Chưa rõ một thao tác đã có hiệu lực hay chưa",
-    body: press !== undefined
-      ? browserBody(intent, `${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`)
-      : `“${quote(intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`,
+    title: say.title,
+    body: press !== undefined ? browserBody(say.actionPrefix, intent, rest) : `“${quote(intent)}”${rest}`,
     ...(input.task === undefined ? {} : { conversationId: input.task.conversationId }),
     subject: {
       kind: "task",
@@ -111,9 +107,9 @@ export function unknownEffectNotice(input: {
  * A press is worded as a phrase with its own quoted button name (`bấm “Gửi” trên shop.example/apply`), so it is said as
  * the action it was rather than quoted again, and given as much of the body as the rest leaves.
  */
-function browserBody(intent: string, rest: string): string {
-  const room = Math.max(40, BODY_MAX - rest.length - "Thao tác ".length);
-  return `Thao tác ${quote(intent, room)}${rest}`.slice(0, BODY_MAX);
+function browserBody(prefix: string, intent: string, rest: string): string {
+  const room = Math.max(40, BODY_MAX - rest.length - prefix.length);
+  return `${prefix}${quote(intent, room)}${rest}`.slice(0, BODY_MAX);
 }
 
 /**
@@ -125,8 +121,16 @@ export function unknownEffectsOf(db: Database, taskId: string): EffectRecord[] {
   return effectsForTask(db, taskId).filter((effect) => effect.state === "unknown");
 }
 
-/** The notice for a task's unknown effects, read from the ledger, or nothing when it has none. */
-export function unknownEffectsNotice(db: Database, taskId: string, at: Instant, dedupKey?: string): NodeNotice | undefined {
+/**
+ * The notice for a task's unknown effects, read from the ledger, or nothing when it has none. `language` is the owner's
+ * interface language, read by the caller when the notice is written.
+ */
+export function unknownEffectsNotice(
+  db: Database,
+  taskId: string,
+  at: Instant,
+  options: { dedupKey?: string; language?: AppIntentLocale } = {},
+): NodeNotice | undefined {
   const effects = unknownEffectsOf(db, taskId);
   if (effects.length === 0) return undefined;
   const task = getTask(db, taskId);
@@ -134,7 +138,8 @@ export function unknownEffectsNotice(db: Database, taskId: string, at: Instant, 
     effects,
     ...(task === undefined ? {} : { task: { conversationId: task.conversationId, goal: task.goal } }),
     at,
-    ...(dedupKey === undefined ? {} : { dedupKey }),
+    ...(options.dedupKey === undefined ? {} : { dedupKey: options.dedupKey }),
+    ...(options.language === undefined ? {} : { language: options.language }),
   });
 }
 
@@ -154,7 +159,7 @@ export function sweepUnknownEffects(services: EffectNoticeServices, now: Instant
   const tasks = new Set(unknownEffectsSince(db, services.runtime.identity.nodeId, since).map((effect) => effect.taskId));
   for (const taskId of tasks) {
     try {
-      const notice = unknownEffectsNotice(db, taskId, now);
+      const notice = unknownEffectsNotice(db, taskId, now, { language: ownerLocale(services.runtime) });
       if (notice !== undefined) tryRecordNodeNotice(services, notice);
     } catch (cause) {
       process.stderr.write(

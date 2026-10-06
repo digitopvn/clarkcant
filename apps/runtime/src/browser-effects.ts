@@ -6,6 +6,7 @@ import { type BrowserPress, browserPressIntent, markEffectUnknown, prepareEffect
 import { effectsForTask, transaction, upsertEffect } from "@clarkcant/storage";
 
 import { unknownEffectsNotice } from "./effect-notices.ts";
+import { ownerLocale } from "./host-text.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -100,7 +101,7 @@ function settleBrowserEffect(ledger: BrowserEffectLedger, effect: EffectRecord, 
         const moved = advanceEffect(effect, { to: "unknown", at, reason });
         if (moved.ok) upsertEffect(deps.db, moved.effect);
       }
-      const notice = unknownEffectsNotice(deps.db, ledger.taskId, at);
+      const notice = unknownEffectsNotice(deps.db, ledger.taskId, at, { language: ownerLocale(ledger.services.runtime) });
       if (notice !== undefined) tryRecordNodeNotice(ledger.services, notice);
       return;
     }

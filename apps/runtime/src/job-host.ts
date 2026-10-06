@@ -1,4 +1,5 @@
 import {
+  type AppIntentLocale,
   JOB_LIMITS,
   type JobOwner,
   type JobRecord,
@@ -22,6 +23,7 @@ import type { WorkSupervisor } from "./work-supervisor.ts";
 import type { McpToolResult } from "@clarkcant/mcp-adapters";
 import type { ArtifactBrokerDeps } from "./artifact-broker.ts";
 import { storeJobResultArtifacts } from "./job-result-artifacts.ts";
+import { noticeText } from "./notice-text.ts";
 import { ServiceCallError } from "./service-host.ts";
 
 export interface JobRunOutcome {
@@ -96,23 +98,23 @@ const PROGRESS_INTERVAL_MS = 250;
 /**
  * The note a finished job leaves in its conversation: which capability, what it produced by name, and what to do next.
  * Words never claim more than the job record holds; a stopped or failed job that was sent may still have had its effect.
+ * Worded in `language`, the owner's; Vietnamese when none is named.
  */
 export function jobEndNotice(
   job: Pick<JobRecord, "capabilityRef" | "status" | "resultRefs">,
   outcome: Pick<JobRunOutcome, "status" | "sent">,
+  language: AppIntentLocale = "vi",
 ): string {
-  const what = `The package job for ${job.capabilityRef}`;
+  const say = noticeText(language).packageJobEnded;
+  const ref = job.capabilityRef;
   if (outcome.status === "completed") {
-    if (job.resultRefs.length === 0) return `${what} completed. Its widget shows the result.`;
-    const names = job.resultRefs.slice(0, NAMED_RESULTS).map((ref) => `“${ref.name}”`).join(", ");
-    const more = job.resultRefs.length > NAMED_RESULTS ? ` and ${String(job.resultRefs.length - NAMED_RESULTS)} more` : "";
-    return `${what} completed and produced ${names}${more}. Open its widget to use ${job.resultRefs.length === 1 ? "it" : "them"}.`;
+    if (job.resultRefs.length === 0) return say.completed(ref);
+    const names = job.resultRefs.slice(0, NAMED_RESULTS).map((result) => `“${result.name}”`).join(", ");
+    return say.produced(ref, names, Math.max(0, job.resultRefs.length - NAMED_RESULTS), job.resultRefs.length);
   }
-  if (outcome.sent === false) return `${what} ended before its request was sent. Nothing ran; it can be started again from its widget.`;
-  if (outcome.status === "cancelled") {
-    return `${what} was stopped. The service may have finished its effect before it received the cancellation; check the result before starting it again.`;
-  }
-  return `${what} failed. The service may have done part of its work; check the result before starting it again.`;
+  if (outcome.sent === false) return say.notSent(ref);
+  if (outcome.status === "cancelled") return say.stopped(ref);
+  return say.failed(ref);
 }
 
 export function createPackageJobHost(input: {
@@ -121,8 +123,13 @@ export function createPackageJobHost(input: {
   nodeBootId: string;
   newId: (prefix: string) => string;
   supervisor: WorkSupervisor;
-  /** How a job ended, said in its conversation. `job` is the ended record, so a caller can point an inbox notice at it. */
-  report?: (conversationId: string, text: string, job: Pick<JobRecord, "jobId" | "status">) => void;
+  /**
+   * How a job ended, said in its conversation. `job` is the ended record, so a caller can point an inbox notice at it;
+   * `language` is the one `text` was worded in, so a notice's title can be worded in the same one.
+   */
+  report?: (conversationId: string, text: string, job: Pick<JobRecord, "jobId" | "status">, language: AppIntentLocale) => void;
+  /** The owner's interface language, read each time a job's ending is worded. Absent is Vietnamese, as for all host text. */
+  language?: () => AppIntentLocale;
   now?: () => Instant;
   maxActiveJobs?: number;
   artifactBroker?: ArtifactBrokerDeps;
@@ -156,10 +163,10 @@ export function createPackageJobHost(input: {
     const job = getJob(input.db, jobId);
     if (!changed || job === undefined) return undefined;
     publish(job);
-    const message = jobEndNotice(job, outcome);
     if (job.conversationId !== undefined) {
       try {
-        input.report?.(job.conversationId, message, job);
+        const language = input.language?.() ?? "vi";
+        input.report?.(job.conversationId, jobEndNotice(job, outcome, language), job, language);
       } catch {
         // Reporting is best effort; the persisted job and effect ledger remain authoritative.
       }
@@ -311,10 +318,12 @@ export function createPackageJobHost(input: {
       for (const job of interrupted) {
         if (job.conversationId === undefined) continue;
         try {
+          const language = input.language?.() ?? "vi";
           input.report?.(
             job.conversationId,
-            `The package job for ${job.capabilityRef} was interrupted when the node restarted. Its service may have completed its effect; review it before retrying.`,
+            noticeText(language).packageJobEnded.interrupted(job.capabilityRef),
             { jobId: job.jobId, status: "failed" },
+            language,
           );
         } catch {
           // The job is already marked failed; one note that cannot be written must not stop the rest of recovery.

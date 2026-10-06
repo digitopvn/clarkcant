@@ -6,6 +6,8 @@ import { expireInstallApprovals } from "./application/install-approval.ts";
 import { QUESTION_TTL_MS, expireQuestions, interactionFromBlock } from "./interactions.ts";
 import { interactionDepsFor } from "./routes/conversations.ts";
 import { answerApprovalDecision } from "./delegation-handlers.ts";
+import { ownerLocale } from "./host-text.ts";
+import { noticeText } from "./notice-text.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -72,6 +74,8 @@ function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): vo
     since,
   );
   if (rows.length === 0) return;
+  // The titles are the owner's, in their language read now; each body is the request's own words, written when it was asked.
+  const say = noticeText(ownerLocale(services.runtime)).expired;
 
   /*
    * An install the person's policy asked about has no conversation either, but it is not noise to leave out: the
@@ -87,7 +91,7 @@ function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): vo
       sourceKind: "system",
       category: "alert",
       severity: "warning",
-      title: "Yêu cầu cài đặt đã hết hạn, chưa có gì được cài",
+      title: say.install,
       body: expired.description,
       dedupKey: `expired:${expired.approvalId}`,
       at: now,
@@ -118,7 +122,7 @@ function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): vo
       sourceKind: "system",
       category: "alert",
       severity: "warning",
-      title: "Yêu cầu duyệt đã hết hạn, không có gì được chạy",
+      title: say.approval,
       body: row.operation_description,
       conversationId,
       dedupKey: `expired:${row.approval_id}`,
@@ -230,6 +234,7 @@ function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): vo
     }
   }
 
+  const say = noticeText(ownerLocale(services.runtime)).expired;
   for (const conversationId of new Set(conversationByQuestionId.values())) {
     const windowedBlocks = blocksByConversation.get(conversationId) ?? [];
     for (const questionId of expiredCandidates(windowedBlocks, now)) {
@@ -238,7 +243,7 @@ function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): vo
         sourceKind: "system",
         category: "alert",
         severity: "warning",
-        title: "Câu hỏi đã hết hạn, không có ai trả lời",
+        title: say.question,
         ...(prompt === undefined ? {} : { body: prompt }),
         conversationId,
         // Named, so the inbox can offer to ask it again (`noticeActionsFor`) and check that nobody has since.

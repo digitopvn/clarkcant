@@ -269,7 +269,8 @@ describe("what a delivery starts", () => {
     service.tick();
     expect(dispatched).toEqual([]);
     const refused = assistantTexts(conversationId).find((text) => text.includes("không chạy"));
-    expect(refused).toContain("is a clone of github.com/acme/other, not github.com/Codertocat/Hello-World");
+    // Why, in the same language as the sentence around it.
+    expect(refused).toContain("là bản clone của github.com/acme/other, không phải github.com/Codertocat/Hello-World");
     // The remote is named by repository, never by the URL it was written as.
     expect(assistantTexts(conversationId).join("\n")).not.toContain("not-for-the-conversation");
     const runs = allRows<{ state: string; task_id: string }>(services.runtime.db, "SELECT state, task_id FROM intent_runs");

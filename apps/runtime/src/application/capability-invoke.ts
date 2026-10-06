@@ -26,7 +26,9 @@ import type { McpJsonObject, McpToolResult } from "@clarkcant/mcp-adapters";
 import { asJsonValue, type Database, oneRow, payloadDigest } from "@clarkcant/storage";
 import { z } from "zod";
 
+import { preferredAppIntentLocale } from "../app-intents.ts";
 import { describeArtifact, readArtifactRangeAsync } from "../artifact-broker.ts";
+import { type HostText, hostText } from "../host-text.ts";
 import { ServiceCallError, type ServiceArtifactInput, type ServiceHost } from "../service-host.ts";
 import type { NodeServices } from "../services.ts";
 import type { PackageJobHost, JobRunOutcome } from "../job-host.ts";
@@ -474,7 +476,7 @@ export async function invokeCapability(
       { db: deps.db, nodeId: deps.nodeId, now, newId: deps.newId },
       {
         operationDigest,
-        operationDescription: `Gọi ${descriptor.summary} (${request.ref})`,
+        operationDescription: approvalWords(deps, now).capabilityCall(descriptor.summary, request.ref),
         effectCategory: descriptor.effectCategory,
         ttlMs: APPROVAL_TTL_MS,
       },
@@ -710,6 +712,14 @@ function checkInputArtifacts(
   };
 }
 
+/**
+ * The words of an approval and of the row its call leaves, in the interface language of the principal the call is for,
+ * read when they are written. Vietnamese when that person never chose one.
+ */
+function approvalWords(deps: Pick<CapabilityInvokeDeps, "db" | "principalId">, now: () => Instant): HostText["approvals"] {
+  return hostText(preferredAppIntentLocale({ db: deps.db, now }, deps.principalId)).approvals;
+}
+
 /** Whether an approval card's payload is a capability call rather than a command. */
 export function isCapabilityPayload(payload: string): boolean {
   try {
@@ -836,8 +846,7 @@ export async function runApprovedCapability(
         : outcome.kind === "refused"
           ? outcome.message
           : "not run";
-  const label =
-    outcome.kind === "job" ? `Đã bắt đầu job cho ${ref}` : succeeded ? `Đã gọi ${ref}` : `Không gọi được ${ref}`;
+  const label = approvalWords(deps, now).capabilityRan(outcome.kind === "job" ? "job" : succeeded ? "done" : "failed", ref);
   const block: MessageBlock = {
     type: "tool-activity",
     toolCallId: `invoke-${input.approvalId}`,

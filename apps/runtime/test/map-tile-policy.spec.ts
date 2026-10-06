@@ -283,6 +283,47 @@ describe("Clark", () => {
   });
 });
 
+describe("in the owner's language", () => {
+  /** Any letter only Vietnamese writes. */
+  const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;
+
+  function chooseEnglish(): void {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now },
+      { principalId: owner(), key: "experience.language", value: "en", source: "user" },
+    );
+    if (!written.ok) throw new Error(written.message);
+  }
+
+  it("words the card, its receipt and the activity record in English when the owner chose English", async () => {
+    chooseEnglish();
+    expect((await enterKey("https://other.example")).status).toBe(200);
+    setExecution({ mode: "ask" });
+    const card = (await tool().execute({ action: "set", ...PROVIDER, keyHeader: "x-api-key" })).hostCard as unknown as Card;
+    expect(card.operationDescription).toBe(
+      `Turn on map tiles from ${PROVIDER.origin} (${PROVIDER.attribution}, max zoom 17; the saved key was entered for ` +
+        `https://other.example, so it is NOT sent to ${PROVIDER.origin}: this provider runs without a key — the map uses only ` +
+        "its offline base — until the person enters the key again in Settings → Extensions → Map tiles)",
+    );
+
+    expect((await decide(card, "granted")).status).toBe(200);
+    const receipt = blocks().find((block) => block.type === "tool-activity" && block.name === "set_map_tiles");
+    const label = receipt?.type === "tool-activity" ? receipt.label : undefined;
+    expect(label).toBe(
+      `Set the tile provider to ${PROVIDER.origin}, but the saved key is for https://other.example, so it is not sent there: ` +
+        "the map uses only its offline base until the person enters the key again in Settings → Extensions → Map tiles",
+    );
+    expect(label).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("records turning tiles off in English when the owner chose English", async () => {
+    chooseEnglish();
+    expect((await request("PUT", `/preferences/${MAP_TILE_POLICY_PREFERENCE}`, { value: PROVIDER })).status).toBe(200);
+    await tool().execute({ action: "clear" });
+    expect(JSON.stringify((await request("GET", "/activity")).body)).toContain("Clark: Turn map tiles off: the map uses only its offline base");
+  });
+});
+
 describe("a policy naming another secret", () => {
   it("is refused on every path, and the secret it names is left untouched", async () => {
     const stored = await request("POST", "/credentials", { fields: [{ name: "github_token", value: GITHUB, kind: "token", consumer: "command:gh" }] });

@@ -43,6 +43,7 @@ import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
 import { removeIdleTaskProfiles } from "../task-browser.ts";
 import { createTaskDispatcher } from "../task-dispatch.ts";
+import { ownerLocale } from "../host-text.ts";
 import { startUpdateCheckTimer } from "../update-checks.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { mediaPolicyFromEnv } from "../media-views.ts";
@@ -209,6 +210,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     // one matters because a node started inside a checkout is being pointed at that checkout by a person.
     resources: () => ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]),
     fallbackCwd: () => process.cwd(),
+    // The owner's interface language, read per command, for the card's description and the row a command leaves.
+    language: () => ownerLocale(deps.services.runtime),
     // The same decision layer the finder uses: one adapter, one policy, one fallback chain. A node with
     // no configured selector reports `unavailable`, and the person's fail-open setting decides what that
     // means — which is not the same thing as a guardrail that said yes.

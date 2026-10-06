@@ -332,6 +332,22 @@ export const evidenceBlockSchema = z.strictObject({
 });
 
 /**
+ * What the model note says, as data: how long the turn took, and the model the person chose when another one answered.
+ *
+ * Versioned: a note written now says `version: 1`. A reader that meets a note without it — one written before it
+ * existed — or with a version it does not know, reads the same facts from the note's rows as before.
+ */
+export const MODEL_NOTE_VERSION = 1;
+export const modelNoteSchema = z.strictObject({
+  version: z.literal(MODEL_NOTE_VERSION),
+  /** How long the model took to answer, in milliseconds: the figure the note's time row shows. */
+  elapsedMs: z.number().int().nonnegative(),
+  /** Set when a fallback answered instead of the chosen model; `from` is the chosen one, `provider/model`. */
+  fallback: z.strictObject({ from: z.string().min(1).max(1000) }).optional(),
+});
+export type ModelNote = z.infer<typeof modelNoteSchema>;
+
+/**
  * Host-owned trust card.
  *
  * `owner` is always the host, and the renderer uses it to apply host chrome and to place the card
@@ -403,6 +419,11 @@ export const systemCardBlockSchema = z.strictObject({
       cwd: z.string().max(500).optional(),
     })
     .optional(),
+  /**
+   * The facts of the note that records which model answered a turn (`subject: "connection"`), typed, so an interface
+   * reads them without parsing the rows, which are written in the person's language. See `modelNoteSchema`.
+   */
+  modelNote: modelNoteSchema.optional(),
   /** Whether the user can back out, and what that does. */
   cancellable: z.boolean(),
   updatedAt: instantSchema,

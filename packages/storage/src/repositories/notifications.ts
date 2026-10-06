@@ -94,6 +94,11 @@ export interface RecordNotificationInput {
    */
   dedupKey: string;
   at: Instant;
+  /**
+   * The title stored when `title` is empty once cleaned, in the reader's language. The repository cannot read the
+   * person's language itself, so the writer passes it; Vietnamese when none is given.
+   */
+  untitled?: string;
 }
 
 interface NotificationRow {
@@ -195,6 +200,7 @@ export function recordNotification(
     const suppressed =
       noticeKindQuietable(kind) && findNoticeSuppression(db, input.principalId, noticeSuppressionKey(kind)) !== undefined;
     const title = clean(input.title, NOTICE_TITLE_MAX);
+    const untitled = clean(input.untitled ?? "", NOTICE_TITLE_MAX);
     const body = input.body === undefined ? "" : clean(input.body, NOTICE_BODY_MAX);
     db.prepare(
       `INSERT INTO notifications
@@ -207,7 +213,7 @@ export function recordNotification(
       input.sourceKind,
       input.category,
       input.severity,
-      title === "" ? "(không có tiêu đề)" : title,
+      title !== "" ? title : untitled !== "" ? untitled : "(không có tiêu đề)",
       body === "" ? null : body,
       input.conversationId ?? null,
       input.originNodeId ?? null,

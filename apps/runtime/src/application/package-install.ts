@@ -54,6 +54,8 @@ import {
 } from "@clarkcant/core";
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
+import { hostText, ownerLocale } from "../host-text.ts";
+
 /**
  * Installing a package a directory listed.
  *
@@ -628,7 +630,7 @@ export async function installPackage(
       transaction(runtime.db, () => {
         const created = requestApproval(coordination, {
           operationDigest: entry.digest,
-          operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
+          operationDescription: hostText(ownerLocale(runtime)).approvals.installCard(entry.displayName, entry.version, entry.riskTier),
           effectCategory: "local-write",
           ttlMs: INSTALL_APPROVAL_TTL_MS,
         });
@@ -807,7 +809,7 @@ export async function installPackage(
         existing?.approval_id ??
         requestApproval(coordination, {
           operationDigest,
-          operationDescription: `cấp quyền ${ref} cho ${entry.displayName} ${entry.version}`,
+          operationDescription: hostText(ownerLocale(runtime)).approvals.grantCard(ref, entry.displayName, entry.version),
           effectCategory: effectCategoryForLane(computedRiskTier),
           ttlMs: INSTALL_APPROVAL_TTL_MS,
         }).approvalId,

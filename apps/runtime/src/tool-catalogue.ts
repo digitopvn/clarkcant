@@ -1,3 +1,7 @@
+import type { AppIntentLocale } from "@clarkcant/contracts";
+
+import { hostText } from "./host-text.ts";
+
 /**
  * The tools this node offers, for an interface that has to be able to say so.
  *
@@ -15,12 +19,7 @@ export interface ToolCatalogueEntry {
 }
 
 /** The tools the pi agent carries on its own, before any extension it loads. */
-export const PI_BUILTIN_TOOLS: readonly ToolCatalogueEntry[] = [
-  { name: "read", label: "Đọc tệp", description: "Đọc nội dung một tệp trong thư mục làm việc." },
-  { name: "write", label: "Ghi tệp", description: "Tạo hoặc thay thế một tệp." },
-  { name: "edit", label: "Sửa tệp", description: "Thay một đoạn chính xác trong tệp." },
-  { name: "bash", label: "Chạy lệnh", description: "Chạy một lệnh shell trong thư mục làm việc." },
-];
+export const PI_BUILTIN_TOOL_NAMES = ["read", "write", "edit", "bash"] as const;
 
 let catalogue: readonly ToolCatalogueEntry[] = [];
 
@@ -37,4 +36,25 @@ export function registerNodeTools(tools: readonly ToolCatalogueEntry[]): void {
  */
 export function nodeToolCatalogue(): readonly ToolCatalogueEntry[] {
   return catalogue;
+}
+
+/**
+ * The Tools tab as a person reads it, in their interface language (Vietnamese when none is named).
+ *
+ * A tool's label is the host's word for it: one of this node's own tools is named in the language the row its call
+ * leaves is named in (`HostText.toolLabel`), and a tool the host has no words for keeps the label it was defined with.
+ * A description is what the model is told and stays as it is; the agent's built-ins are described by the host, so
+ * theirs follow the language too.
+ */
+export function toolsTab(locale: AppIntentLocale = "vi"): {
+  self: ToolCatalogueEntry[];
+  agent: ToolCatalogueEntry[];
+  agentNote: string;
+} {
+  const text = hostText(locale);
+  return {
+    self: catalogue.map((tool) => ({ ...tool, label: text.toolLabel(tool.name, tool.label) })),
+    agent: PI_BUILTIN_TOOL_NAMES.map((name) => ({ name, ...text.toolsTab.agentTools[name] })),
+    agentNote: text.toolsTab.agentNote,
+  };
 }

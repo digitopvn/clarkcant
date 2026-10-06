@@ -86,6 +86,7 @@ describe("durable package job host", () => {
     const reports: string[] = [];
     const host = createPackageJobHost({
       db, nodeId: "node_1", nodeBootId: "boot_2", newId: () => "job_unused", supervisor,
+      language: () => "en",
       report: (_conversationId, text) => reports.push(text),
     });
     insertJob(db, { ...job("job_crashed"), status: "running", resultRefs: [], createdAt: "2026-10-01T10:00:00.000Z", startedAt: "2026-10-01T10:00:00.000Z", nodeBootId: "boot_1" } as never);
@@ -97,6 +98,21 @@ describe("durable package job host", () => {
     expect(host.canAdmit()).toBe(true);
     expect(host.recover()).toBe(0);
     expect(reports).toHaveLength(1);
+  });
+
+  it("words a restart note in Vietnamese by default, and tells the reporter the language it used", () => {
+    const reports: { text: string; language: string }[] = [];
+    const host = createPackageJobHost({
+      db, nodeId: "node_1", nodeBootId: "boot_2", newId: () => "job_unused", supervisor: createWorkSupervisor(),
+      report: (_conversationId, text, _job, language) => reports.push({ text, language }),
+    });
+    insertJob(db, { ...job("job_crashed"), status: "running", resultRefs: [], createdAt: "2026-10-01T10:00:00.000Z", startedAt: "2026-10-01T10:00:00.000Z", nodeBootId: "boot_1" } as never);
+
+    expect(host.recover()).toBe(1);
+    expect(reports).toEqual([{
+      text: "Job của package cho example.export@1 bị gián đoạn khi node khởi động lại. Service của nó có thể đã hoàn tất tác động; hãy xem lại trước khi thử lại.",
+      language: "vi",
+    }]);
   });
 
   it("fails every interrupted job even when the note for one of them cannot be written", () => {
@@ -170,6 +186,7 @@ describe("durable package job host", () => {
     const outcomes: unknown[] = [];
     const host = createPackageJobHost({
       db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor,
+      language: () => "en",
       report: (_conversationId, text) => reports.push(text),
     });
     let calls = 0;
@@ -190,6 +207,7 @@ describe("durable package job host", () => {
     const reports: string[] = [];
     const host = createPackageJobHost({
       db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor,
+      language: () => "en",
       report: (_conversationId, text) => reports.push(text),
     });
     let signal: AbortSignal | undefined;
@@ -215,16 +233,30 @@ describe("durable package job host", () => {
 
   it("names what a finished job produced and what to do next", () => {
     const ref = (name: string) => ({ v: 1, artifactId: `art_${name}`, kind: "fixed", mimeType: "image/png", sizeBytes: 1, name }) as never;
-    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "completed", resultRefs: [ref("a.png")] }, { status: "completed" }))
+    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "completed", resultRefs: [ref("a.png")] }, { status: "completed" }, "en"))
       .toBe("The package job for example.export@1 completed and produced “a.png”. Open its widget to use it.");
     expect(jobEndNotice({
       capabilityRef: "example.export@1" as never, status: "completed",
       resultRefs: [ref("1.png"), ref("2.png"), ref("3.png"), ref("4.png")],
-    }, { status: "completed" })).toContain("“1.png”, “2.png”, “3.png” and 1 more");
-    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: true }))
+    }, { status: "completed" }, "en")).toContain("“1.png”, “2.png”, “3.png” and 1 more");
+    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: true }, "en"))
       .toContain("may have finished its effect");
-    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: false }))
+    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: false }, "en"))
       .toContain("Nothing ran");
+  });
+
+  it("says the same in Vietnamese by default, with no English left in it", () => {
+    const ref = (name: string) => ({ v: 1, artifactId: `art_${name}`, kind: "fixed", mimeType: "image/png", sizeBytes: 1, name }) as never;
+    const english = /\b(?:package job|completed|produced|stopped|failed|widget shows|Nothing ran)\b/u;
+    const said = [
+      jobEndNotice({ capabilityRef: "example.export@1" as never, status: "completed", resultRefs: [ref("a.png")] }, { status: "completed" }),
+      jobEndNotice({ capabilityRef: "example.export@1" as never, status: "completed", resultRefs: [] }, { status: "completed" }),
+      jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: true }),
+      jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: false }),
+      jobEndNotice({ capabilityRef: "example.export@1" as never, status: "failed", resultRefs: [] }, { status: "failed", sent: true }),
+    ];
+    expect(said[0]).toBe("Job của package cho example.export@1 đã xong và tạo ra “a.png”. Mở widget của nó để dùng tệp này.");
+    for (const sentence of said) expect(sentence).not.toMatch(english);
   });
 
   it("leaves the job for boot recovery, without an unhandled rejection, when its ending cannot be recorded", async () => {

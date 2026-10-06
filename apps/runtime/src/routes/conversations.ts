@@ -2325,6 +2325,8 @@ export async function decideApprovalForNode(
     // drawn and the decision being made, and this is the moment it matters.
     resources: ownedResourcesFor(services),
     conversationId: input.conversationId,
+    // The row it leaves is the host's words, in the language the refusal above would have been written in.
+    language: locale,
   });
   if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
 

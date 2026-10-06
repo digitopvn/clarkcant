@@ -17,6 +17,8 @@ import {
   putSignalPollState,
 } from "@clarkcant/storage";
 
+import { ownerLocale } from "./host-text.ts";
+import { noticeText } from "./notice-text.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import { githubSelfLogins } from "./routes/github-signals.ts";
 import { createSecretBroker } from "./secret-broker.ts";
@@ -152,16 +154,17 @@ export function createGithubPolling(
     // the person hears once per run whichever comes first, and again only after the repository has answered.
     const refused = error !== undefined && [401, 403, 404].includes(error.status);
     if (!refused && failures < NOTICE_AFTER_FAILURES) return;
+    const say = noticeText(ownerLocale(services.runtime)).githubPolling;
     const body = !refused
-      ? `Chưa đọc được sự kiện GitHub của ${target.repository} sau ${String(failures)} lần thử (${reason}). Node vẫn thử lại, thưa dần, và các việc tự động về repository này chờ đến khi đọc được.`
+      ? say.keepsFailing(target.repository, failures, reason)
       : withToken
-        ? `GitHub từ chối token “${GITHUB_TOKEN_SECRET_NAME}” khi node đọc sự kiện của ${target.repository} (${String(error.status)}): token có thể đã hết hạn hoặc không có quyền đọc repository này. Hãy nói với Clark để lưu lại token; node thử lại ngay khi có token mới.`
-        : `GitHub không cho node này đọc sự kiện của ${target.repository} (${String(error.status)}). Nếu đây là repository riêng tư, hãy nói với Clark để lưu token GitHub cho việc theo dõi repository này; node thử lại ngay khi có token.`;
+        ? say.tokenRefused(GITHUB_TOKEN_SECRET_NAME, target.repository, error.status)
+        : say.refused(target.repository, error.status);
     tryRecordNodeNotice(services, {
       sourceKind: "automation",
       category: "alert",
       severity: "warning",
-      title: `Chưa theo dõi được ${target.repository}`,
+      title: say.title(target.repository),
       body,
       conversationId: target.conversationId,
       // Names the repository, so "stop telling me about this" quiets this repository's polling and no other's.

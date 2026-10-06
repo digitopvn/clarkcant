@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Instant, MessageBlock } from "@clarkcant/contracts";
+import type { AppIntentLocale, Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { fitHead, fitTail } from "./card-text.ts";
 import { commandEnvironment } from "./child-env.ts";
+import { hostText } from "./host-text.ts";
 import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
 import { STOP_GRACE_MS, noteStarted, readProcStartTime, signalTree, stopTree } from "./process-tree.ts";
 
@@ -45,10 +46,13 @@ export const COMMAND_LIMITS = {
 const ACTIVITY_LABEL_MAX = 300;
 const ACTIVITY_PATH_MAX = 1000;
 
-/** How long a command took, in the unit a person reads it in: milliseconds under a second, seconds after. */
-export function durationWords(ms: number): string {
+/**
+ * How long a command took, in the unit a person reads it in: milliseconds under a second, seconds after, in the number
+ * format and words of `locale` (Vietnamese when none is named).
+ */
+export function durationWords(ms: number, locale: AppIntentLocale = "vi"): string {
   if (ms < 1000) return `${ms} ms`;
-  return `${new Intl.NumberFormat("vi", { maximumFractionDigits: 1 }).format(ms / 1000)} giây`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(ms / 1000)} ${locale === "en" ? "s" : "giây"}`;
 }
 
 export interface CommandOutcome {
@@ -205,6 +209,8 @@ export interface RunCommandOptions {
   conversationId?: string;
   /** The task this command runs for, when a task's worker asked for it. */
   taskId?: string;
+  /** The language of the notes the host adds to the output (a cut, a refusal, a failed start); Vietnamese when none is named. */
+  language?: AppIntentLocale;
 }
 
 /**
@@ -226,11 +232,12 @@ export async function runCommand(
   const timeoutMs = options.timeoutMs ?? COMMAND_LIMITS.timeoutMs;
   const maxOutputBytes = options.maxOutputBytes ?? COMMAND_LIMITS.maxOutputBytes;
   const startedAt = Date.now();
+  const say = hostText(options.language).approvals;
   if (refusingCommands) {
     return {
       exitCode: null,
       stdout: "",
-      stderr: "node đang tắt nên lệnh không được chạy; không có gì được thực hiện",
+      stderr: say.refusedWhileStopping,
       durationMs: 0,
       timedOut: false,
     };
@@ -264,7 +271,7 @@ export async function runCommand(
       // nothing more, which is a different claim.
       if (recorded >= maxOutputBytes) return;
       const room = maxOutputBytes - recorded;
-      const piece = text.length <= room ? text : `${text.slice(0, room)}\n… (đã cắt bớt)`;
+      const piece = text.length <= room ? text : `${text.slice(0, room)}${say.truncated}`;
       recorded += piece.length;
       if (into === "stdout") stdout += piece;
       else stderr += piece;
@@ -323,7 +330,7 @@ export async function runCommand(
     }, timeoutMs);
 
     child.on("error", (cause: Error) => {
-      stderr += `${stderr === "" ? "" : "\n"}không chạy được lệnh: ${cause.message}`;
+      stderr += `${stderr === "" ? "" : "\n"}${say.didNotStart(cause.message)}`;
       finish(null);
     });
     child.on("close", (code: number | null) => finish(code));
@@ -334,28 +341,25 @@ export async function runCommand(
  * What the conversation says about a finished command.
  *
  * The verdict only. The output itself belongs in the block's result, which the interface draws as a code
- * block, and saying it in both places is what made a receipt print its own output twice.
+ * block, and saying it in both places is what made a receipt print its own output twice. Worded in `language`, the
+ * person's interface language, because it is also the line the audit trail keeps; Vietnamese when none is named.
  */
-export function describeCommandOutcome(command: string, outcome: CommandOutcome): string {
-  const verdict = outcome.stopped === true
-    ? `bị dừng theo yêu cầu sau ${outcome.durationMs} ms`
-    : outcome.timedOut
-      ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
-      : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
-  return `\`${command}\` ${verdict}.`;
+export function describeCommandOutcome(command: string, outcome: CommandOutcome, language: AppIntentLocale = "vi"): string {
+  const ended = outcome.stopped === true ? "stopped" : outcome.timedOut ? "timed-out" : "exited";
+  return hostText(language).approvals.commandVerdict(command, ended, outcome.exitCode, outcome.durationMs);
 }
 
 /**
  * What the command printed, as the result a reader can copy.
  *
- * Labelled by stream, because which of the two a line came from is often the whole question, and "Không có
- * output." rather than an empty block, because a command that printed nothing is a fact worth stating.
+ * Labelled by stream, because which of the two a line came from is often the whole question, and "No output" (in
+ * `language`) rather than an empty block, because a command that printed nothing is a fact worth stating.
  */
-export function commandOutput(outcome: CommandOutcome): string {
+export function commandOutput(outcome: CommandOutcome, language: AppIntentLocale = "vi"): string {
   const parts: string[] = [];
   if (outcome.stdout.trim() !== "") parts.push(`stdout:\n${outcome.stdout.trimEnd()}`);
   if (outcome.stderr.trim() !== "") parts.push(`stderr:\n${outcome.stderr.trimEnd()}`);
-  return parts.length === 0 ? "Không có output." : parts.join("\n\n");
+  return parts.length === 0 ? hostText(language).approvals.noOutput : parts.join("\n\n");
 }
 
 /**
@@ -405,6 +409,8 @@ export async function runGuardedCommand(input: {
   conversationId?: string;
   /** The task the command runs for, so stopping the task stops it. */
   taskId?: string;
+  /** The language of the row's label when the model gave no reason; Vietnamese when none is named. */
+  language?: AppIntentLocale;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -433,6 +439,7 @@ export async function runGuardedCommand(input: {
           env: commandEnvironment(request.env),
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
           ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+          ...(input.language === undefined ? {} : { language: input.language }),
         },
       ))
   )({
@@ -444,7 +451,7 @@ export async function runGuardedCommand(input: {
   });
   const outcome = withoutInjectedValues(ran, input.env);
 
-  const description = describeCommandOutcome(command, outcome);
+  const description = describeCommandOutcome(command, outcome, input.language);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
   const because = input.reason ?? "";
   const why = input.why ?? "";
@@ -457,12 +464,12 @@ export async function runGuardedCommand(input: {
       // What the command was for, when the model said; the folder is the receipt's `path`, drawn beside the label, so
       // a turn of ten commands in one project does not repeat the same path ten times in front of what each one did.
       label: fitHead(
-        (why === "" ? `Chạy lệnh trong ${cwd}` : why) + (because === "" ? "" : ` (${because})`),
+        (why === "" ? hostText(input.language).approvals.commandRan(cwd) : why) + (because === "" ? "" : ` (${because})`),
         ACTIVITY_LABEL_MAX,
       ),
       status: succeeded ? "done" : "failed",
       args: { command, cwd, decision: "guarded", effect: input.envelope.classification.commandClass },
-      result: commandOutput(outcome),
+      result: commandOutput(outcome, input.language),
       path: fitTail(cwd, ACTIVITY_PATH_MAX),
       startedAt,
       endedAt: at(),
@@ -471,8 +478,8 @@ export async function runGuardedCommand(input: {
       type: "evidence",
       kind: "exit-status",
       summary: outcome.timedOut
-        ? `Lệnh bị dừng sau ${durationWords(outcome.durationMs)} vì vượt thời gian cho phép.`
-        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${durationWords(outcome.durationMs)}.`,
+        ? hostText(input.language).approvals.timedOutEvidence(durationWords(outcome.durationMs, input.language))
+        : hostText(input.language).approvals.exitEvidence(outcome.exitCode, durationWords(outcome.durationMs, input.language)),
       // Non-zero is not "unverified": it is a result, and it contradicts success.
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.operationId,
@@ -561,6 +568,8 @@ export async function runApprovedCommand(input: {
   resources: OwnedResources;
   /** The conversation the approval was given in, so the running command can be listed and stopped from there. */
   conversationId?: string;
+  /** The language of the row the run leaves, the person's interface language; Vietnamese when none is named. */
+  language?: AppIntentLocale;
   /** Injected so the whole decision path can be tested without spawning anything. */
   run?: (request: {
     command: string;
@@ -624,10 +633,14 @@ export async function runApprovedCommand(input: {
     ((request) =>
       runCommand(
         { command: request.command, cwd: request.cwd },
-        { ...request, ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }) },
+        {
+          ...request,
+          ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+          ...(input.language === undefined ? {} : { language: input.language }),
+        },
       ))
   )({ command, cwd: resolvedCwd, ...budget });
-  const description = describeCommandOutcome(command, outcome);
+  const description = describeCommandOutcome(command, outcome, input.language);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
 
   const blocks: MessageBlock[] = [
@@ -635,12 +648,12 @@ export async function runApprovedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.approvalId}`,
       name: "run_command",
-      label: fitHead(`Chạy lệnh trong ${resolvedCwd}`, ACTIVITY_LABEL_MAX),
+      label: fitHead(hostText(input.language).approvals.commandRan(resolvedCwd), ACTIVITY_LABEL_MAX),
       status: succeeded ? "done" : "failed",
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
       args: { command, cwd: resolvedCwd, approvalId: input.approvalId, decision: "granted" },
-      result: commandOutput(outcome),
+      result: commandOutput(outcome, input.language),
       path: fitTail(resolvedCwd, ACTIVITY_PATH_MAX),
       startedAt,
       endedAt: at(),
@@ -649,8 +662,8 @@ export async function runApprovedCommand(input: {
       type: "evidence",
       kind: "exit-status",
       summary: outcome.timedOut
-        ? `Lệnh bị dừng sau ${durationWords(outcome.durationMs)} vì vượt thời gian cho phép.`
-        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${durationWords(outcome.durationMs)}.`,
+        ? hostText(input.language).approvals.timedOutEvidence(durationWords(outcome.durationMs, input.language))
+        : hostText(input.language).approvals.exitEvidence(outcome.exitCode, durationWords(outcome.durationMs, input.language)),
       // Non-zero is not "unverified": it is a result, and it contradicts success.
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.approvalId,

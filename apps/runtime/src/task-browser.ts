@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import type { ActResult, BrowserDriver, ObserveResult, ObservedElement } from "@clarkcant/browser-playwright";
 import {
+  type AppIntentLocale,
   type AutomationAction,
   type CapabilityDescriptor,
   type ExecutionPolicyConfig,
@@ -23,6 +24,7 @@ import {
 } from "@clarkcant/core";
 
 import { BROWSER_CAPABILITY, actWithLedger, browserDigest, type BrowserEffectLedger } from "./browser-effects.ts";
+import { hostText } from "./host-text.ts";
 
 /**
  * The browser a task's worker drives, answered on the node.
@@ -182,11 +184,12 @@ function hostOf(site: string): string {
 /**
  * What the person is asked to approve for a browser task, in their language: which sites, and what for.
  *
- * The goal's own addresses line is left off: the sites are named once, as hosts.
+ * The goal's own addresses line is left off: the sites are named once, as hosts. Worded in `locale`, Vietnamese when
+ * none is named.
  */
-export function browserTaskApprovalText(sites: readonly string[], goal: string): string {
+export function browserTaskApprovalText(sites: readonly string[], goal: string, locale: AppIntentLocale = "vi"): string {
   const [request = goal] = goal.split(BROWSER_GOAL_ADDRESSES);
-  return oneLine(`dùng trình duyệt trên ${sites.map(hostOf).join(", ")} cho việc “${oneLine(request, 160)}”`, 320);
+  return oneLine(hostText(locale).approvals.browserTask(sites.map(hostOf).join(", "), oneLine(request, 160)), 320);
 }
 
 /**

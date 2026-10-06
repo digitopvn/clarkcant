@@ -50,7 +50,7 @@ import {
 } from "@clarkcant/storage";
 
 import { repositoryBindingRefusal, triggerBrief } from "./automation-service.ts";
-import type { HostText } from "./host-text.ts";
+import { hostText, type HostText } from "./host-text.ts";
 import type { NodeIdentity } from "./node.ts";
 import { describeResultArtifacts, prepareDelegatedArtifacts, queueArtifactOffers, returnableFileBytes } from "./delegated-artifacts.ts";
 import { type TaskDispatcher, type TaskOutputFile, stopTask } from "./task-dispatch.ts";
@@ -744,7 +744,8 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
           ...(brief.trigger.subject === undefined ? {} : { subject: brief.trigger.subject }),
         };
   const repositories = resources.resources.flatMap((resource) => (resource.kind === "repository" ? [resource.path] : []));
-  const refusal = repositoryBindingRefusal(trigger, repositories, deps.readRemote);
+  // Sent back to the peer as its reason, worded like every other reason this node sends a peer.
+  const refusal = repositoryBindingRefusal(trigger, repositories, deps.readRemote, hostText("en").automation);
   if (refusal !== undefined) return refuse(deps, peer, taskId, refusal);
 
   // What both owners allowed; any effect outside it waits for this node's owner, in every execution mode.

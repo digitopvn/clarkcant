@@ -114,18 +114,19 @@ export function repositoryBindingRefusal(
   signal: Pick<Signal, "source" | "subject"> | undefined,
   repositories: readonly string[],
   readRemote: (path: string) => string | undefined,
+  words: Pick<HostText["automation"], "noOriginRemote" | "wrongClone" | "notGitHubRemote">,
 ): string | undefined {
   const repository = signal?.subject?.refs?.repository;
   if (signal?.source.provider !== GITHUB_PROVIDER || repository === undefined) return undefined;
   const host = signal.subject?.refs?.host;
   for (const path of repositories) {
     const remote = readRemote(path);
-    if (remote === undefined) return `${path} has no origin remote, so it cannot be checked against ${repository}`;
+    if (remote === undefined) return words.noOriginRemote(path, repository);
     if (!remoteMatchesRepository(remote, repository, host)) {
       const actual = githubRepositoryFromRemote(remote);
       // The parsed name only: a remote URL may carry a token, and this sentence goes into the conversation.
-      const where = actual === undefined ? "a remote that is not a GitHub repository" : `${actual.host}/${actual.fullName}`;
-      return `${path} is a clone of ${where}, not ${host ?? "github.com"}/${repository}`;
+      const where = actual === undefined ? words.notGitHubRemote : `${actual.host}/${actual.fullName}`;
+      return words.wrongClone(path, where, `${host ?? "github.com"}/${repository}`);
     }
   }
   return undefined;
@@ -183,9 +184,9 @@ export function startAutomationService(
       // The executor's checkouts are the executor's to check; this node checks only its own.
       const refusal =
         action.executor === undefined
-          ? repositoryBindingRefusal(signal, repositories, readRemote)
+          ? repositoryBindingRefusal(signal, repositories, readRemote, words)
           : grant === undefined
-            ? `no live grant lets ${action.executor} run it any more; ask Clark to set it up again`
+            ? words.noLiveGrant(action.executor)
             : undefined;
       if (refusal !== undefined) {
         settleIntentRun(deps, run.runId, "failed", refusal);
@@ -271,7 +272,9 @@ export function startAutomationService(
       case "parked": {
         // Left pending, so every tick looks again and the task goes on once something can run it. Said once.
         if (!prepared.newlyParked) return;
-        const text = words.parked(prepared.intent.summary, because, prepared.reason, prepared.taskId);
+        // Only a run parked just now is told, and that is always one waiting for a capability: worded here, in the owner's
+        // language, rather than the task's own record of it.
+        const text = words.parked(prepared.intent.summary, because, words.waitingForCapability(prepared.capabilityRef), prepared.taskId);
         say(prepared.intent.conversationId, text);
         tryRecordNodeNotice(services, {
           sourceKind: "automation",

@@ -122,7 +122,8 @@ test("a press starts a job whose service progress survives a remount, and the wi
   // The service may have finished its effect before it heard the cancel, and the ending says so instead of claiming otherwise.
   await expect(resumed).toContainText("may already have completed its effect");
   await expect(widget.locator("[data-notes-export-cancel]")).toBeDisabled();
-  await expect(page.getByText(`The package job for ${EXPORT} was stopped`).last()).toBeVisible({ timeout: 30_000 });
+  // The node's note, in its owner's language: the suite's node keeps the default, Vietnamese.
+  await expect(page.getByText(`Job của package cho ${EXPORT} đã bị dừng`).last()).toBeVisible({ timeout: 30_000 });
 });
 
 test("a finished job hands the widget its file by reference and says so in the conversation", async ({ page }) => {
@@ -134,13 +135,15 @@ test("a finished job hands the widget its file by reference and says so in the c
   await expect(job).toHaveAttribute("data-notes-job-status", "completed", { timeout: 60_000 });
   await expect(job).toContainText("Exported");
   await expect(job).toHaveAttribute("data-notes-job-files", /\S/);
-  await expect(page.getByText(`The package job for ${EXPORT} completed`).last()).toBeVisible({ timeout: 30_000 });
-  // The same ending is in the inbox, so it is found again after the conversation has moved on.
+  // The node's note, in its owner's language: the suite's node keeps the default, Vietnamese.
+  await expect(page.getByText(`Job của package cho ${EXPORT} đã xong`).last()).toBeVisible({ timeout: 30_000 });
+  // The same ending is in the inbox, so it is found again after the conversation has moved on, its title in the same
+  // language as its body.
   const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } })).json()) as {
     notices: { title: string; body?: string }[];
   };
   expect(inbox.notices).toContainEqual(
-    expect.objectContaining({ title: "A package job finished", body: expect.stringContaining(`The package job for ${EXPORT} completed`) }),
+    expect.objectContaining({ title: "Một job của package đã xong", body: expect.stringContaining(`Job của package cho ${EXPORT} đã xong`) }),
   );
 });
 

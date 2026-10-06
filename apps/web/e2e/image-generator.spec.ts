@@ -350,7 +350,8 @@ test("a prompt becomes a job whose progress survives a reload, and its image lan
   await expect(widget.locator("#root")).toHaveAttribute("data-image-count", "1");
   // The bytes the widget read from the result artifact are the provider's image for this prompt.
   expect(await image.getAttribute("src")).toBe(`data:image/png;base64,${renderImage(prompt).toString("base64")}`);
-  await expect(page.getByText(`The package job for ${GENERATE} completed`).last()).toBeVisible({ timeout: 30_000 });
+  // The node's note, in its owner's language: the suite's node keeps the default, Vietnamese.
+  await expect(page.getByText(`Job của package cho ${GENERATE} đã xong`).last()).toBeVisible({ timeout: 30_000 });
 
   // Every request reached the provider with the key, which only the node could have added. The capability is declared
   // external-write, so the node sent the start as a POST with the prompt in its body; following it were reads.
@@ -415,7 +416,8 @@ test("every running job keeps its own Stop, a stopped job asks the provider noth
     // It may have finished part of the work before it heard the stop, and the widget says so.
     await expect(panel).toContainText("Đã dừng");
     await expect(panel.locator("[data-image-cancel]")).toBeHidden();
-    await expect(page.getByText(`The package job for ${GENERATE} was stopped`).nth(1)).toBeVisible({ timeout: 30_000 });
+    // The node's note, in its owner's language: the suite's node keeps the default, Vietnamese.
+    await expect(page.getByText(`Job của package cho ${GENERATE} đã bị dừng`).nth(1)).toBeVisible({ timeout: 30_000 });
     const asked = fake().requests.length;
     await page.waitForTimeout(3_000);
     expect(fake().requests.length, "the service kept polling the provider after the job was stopped").toBe(asked);

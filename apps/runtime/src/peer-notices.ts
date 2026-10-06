@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { type Instant, type PeerEnvelope, peerNoticeSchema, peerTextAsData } from "@clarkcant/contracts";
+import { type AppIntentLocale, type Instant, type PeerEnvelope, peerNoticeSchema, peerTextAsData } from "@clarkcant/contracts";
 import { sendEnvelope } from "@clarkcant/node-link";
 import {
   type Database,
@@ -12,6 +12,8 @@ import {
   nextOutboundSequence,
 } from "@clarkcant/storage";
 
+import { ownerLocale } from "./host-text.ts";
+import { noticeText } from "./notice-text.ts";
 import { type NodeNotice, type NoticeServices, tryRecordNodeNotice } from "./notices.ts";
 import type { TurnedDown } from "./peer-transport.ts";
 
@@ -178,26 +180,6 @@ export function receivePeerNotice(
 
 const TURNED_DOWN_KEY_PREFIX = "peer-notice-refused";
 
-/** Why, and what to do next, for each reason a node gives for not taking a notice. */
-const TURNED_DOWN_WORDS: Record<PeerNoticeRefusalCode, { why: string; next: string }> = {
-  PEER_NOT_ALLOWED: {
-    why: "chủ của thiết bị đó chưa cho phép làm việc với Clark này",
-    next: "Nếu muốn thiết bị đó nhận thông báo từ máy này, chủ của nó cần cho phép làm việc với Clark này (ví dụ bằng allow_peer_tasks), rồi gửi lại.",
-  },
-  RATE_LIMITED: {
-    why: `máy này đã gửi tới đó quá ${String(PEER_NOTICES_PER_MINUTE)} thông báo trong một phút`,
-    next: "Hãy đợi một phút rồi gửi lại những gì còn cần.",
-  },
-  NOTICE_UNREADABLE: {
-    why: "thiết bị đó không đọc được thông báo này",
-    next: "Hãy cập nhật ClarkCant trên cả hai máy rồi gửi lại.",
-  },
-  NOTICES_OFF: {
-    why: "ClarkCant trên thiết bị đó không ghi thông báo từ thiết bị khác",
-    next: "Hãy cập nhật ClarkCant trên thiết bị đó nếu muốn nó nhận thông báo.",
-  },
-};
-
 function isRefusalCode(code: string | undefined): code is PeerNoticeRefusalCode {
   return (PEER_NOTICE_REFUSAL_CODES as readonly (string | undefined)[]).includes(code);
 }
@@ -208,7 +190,8 @@ function isRefusalCode(code: string | undefined): code is PeerNoticeRefusalCode 
  *
  * One per peer and reason: a known reason is keyed by its code, anything else by a digest of the peer's words, so a
  * burst of refusals for the same reason is one notice. The peer's words are shown only when its code is not one this
- * node knows, and then as quoted data.
+ * node knows, and then as quoted data. Worded in this node's owner's `language`, Vietnamese when none is named: the
+ * notice is for them, not for the peer.
  */
 export function peerNoticeTurnedDownNotice(input: {
   peerNodeId: string;
@@ -218,20 +201,22 @@ export function peerNoticeTurnedDownNotice(input: {
   reason: string;
   code?: string;
   at: Instant;
+  language?: AppIntentLocale;
 }): NodeNotice {
+  const say = noticeText(input.language).peerTurnedDown;
   const name = input.label ?? input.peerNodeId;
   const sent = peerNoticeSchema.safeParse(input.envelope.payload["notice"]);
-  const what = sent.success ? `thông báo “${sent.data.title}”` : "một thông báo";
-  const known = isRefusalCode(input.code) ? TURNED_DOWN_WORDS[input.code] : undefined;
-  const why = known?.why ?? `thiết bị đó trả lời: “${input.reason}”`;
-  const next = known?.next ?? "Nếu cần, hãy hỏi chủ của thiết bị đó về lý do trên rồi gửi lại.";
+  const what = say.what(sent.success ? sent.data.title : undefined);
+  const known = isRefusalCode(input.code) ? say.reasons[input.code] : undefined;
+  const why = known?.why(PEER_NOTICES_PER_MINUTE) ?? say.otherWhy(input.reason);
+  const next = known?.next ?? say.otherNext;
   const reasonKey = isRefusalCode(input.code) ? input.code : `other-${createHash("sha256").update(input.reason).digest("hex").slice(0, 16)}`;
   return {
     sourceKind: "system",
     category: "alert",
     severity: "warning",
-    title: "Thiết bị khác không nhận thông báo",
-    body: `Thiết bị ${name} đã nhận nhưng không ghi ${what} mà máy này gửi: ${why}. Không có gì được ghi ở đó, và máy này sẽ không gửi lại. ${next}`,
+    title: say.title,
+    body: say.body(name, what, why, next),
     subject: { kind: "peer", nodeId: input.peerNodeId },
     dedupKey: `${TURNED_DOWN_KEY_PREFIX}:${input.peerNodeId}:${reasonKey}`,
     at: input.at,
@@ -250,6 +235,7 @@ export function tellNoticeTurnedDown(services: NoticeServices, turned: TurnedDow
       reason: turned.reason,
       ...(turned.code === undefined ? {} : { code: turned.code }),
       at,
+      language: ownerLocale(services.runtime),
     }),
   );
 }

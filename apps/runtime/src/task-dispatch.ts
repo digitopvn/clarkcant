@@ -3,10 +3,10 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 
 import type {
+  AppIntentLocale,
   ApprovalId,
   CapabilityDescriptor,
   CapabilityRef,
-  EffectCategory,
   Instant,
   Principal,
   TaskId,
@@ -48,6 +48,8 @@ import {
 } from "@clarkcant/project-work";
 import { appendAuditEvent, getTask, oneRow, type Database } from "@clarkcant/storage";
 
+import { preferredAppIntentLocale } from "./app-intents.ts";
+import { hostText } from "./host-text.ts";
 import type { BackgroundFallback } from "./model-turn.ts";
 import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
@@ -260,7 +262,11 @@ export interface TaskDispatcherDeps {
     conversationId: string;
     approvalId: string;
     message: string;
-    /** Only the effect waiting for a decision, without what the owner is told about deciding it. */
+    /**
+     * Only the effect waiting for a decision, without what the owner is told about deciding it. In Vietnamese whatever
+     * the owner's language: it is what a peer that handed the task over is told, and that peer's owner's language is
+     * not known here.
+     */
     effect: string;
   }) => void;
   at?: () => Instant;
@@ -376,28 +382,17 @@ const DEFAULT_MAX_QUEUED = 10;
 const DEFAULT_LEASE_TTL_MS = 15 * 60_000;
 const DEFAULT_APPROVAL_TTL_MS = 10 * 60_000;
 
-/** Plain-language Vietnamese for an effect category, used when a capability has no summary of its own. */
-const EFFECT_CATEGORY_LABEL_VI: Record<EffectCategory, string> = {
-  read: "đọc dữ liệu",
-  "local-write": "thay đổi tệp trên máy này",
-  "external-write": "gửi thay đổi ra ngoài máy này",
-  destructive: "thực hiện một thao tác không thể hoàn tác",
-  financial: "thực hiện một giao dịch tài chính",
-  communication: "gửi một liên lạc (email, tin nhắn, ...)",
-  "media-capture": "ghi âm hoặc quay hình",
-};
-
 /**
- * What a task needs approval for, in words a person reads rather than an internal reference.
+ * What a task needs approval for, in words a person reads rather than an internal reference, in `locale`.
  *
  * Never a capability ref, an approval id or a digest - those stay in the approval's own structured fields
  * (`taskId`, `operationDigest`) for the inbox and `read_inbox` to carry, not in the sentence a person or the
- * expiry sweep shows about it.
+ * expiry sweep shows about it. A capability's own summary is its author's words and is used as written.
  */
-function describeCapabilityEffectVi(descriptor: CapabilityDescriptor): string {
+function describeCapabilityEffect(descriptor: CapabilityDescriptor, locale: AppIntentLocale): string {
   const summary = descriptor.summary.trim();
   if (summary.length > 0) return summary;
-  return `một thao tác ${EFFECT_CATEGORY_LABEL_VI[descriptor.effectCategory]}`;
+  return hostText(locale).approvals.categoryEffect(descriptor.effectCategory);
 }
 
 /**
@@ -807,13 +802,14 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
         if (decision.kind === "ask") {
           releaseLease(coordination, lease.lease.leaseId);
-          // A browser task is approved for its sites and its request, so the person is shown both.
-          const effectDescription = browsing
-            ? browserTaskApprovalText(browserSites, task.goal)
-            : describeCapabilityEffectVi(descriptor);
-          const parkedReason =
-            `Cần được duyệt trước khi thực hiện: ${effectDescription}. Việc chưa chạy; ` +
-            `nếu được duyệt việc sẽ tiếp tục, nếu bị từ chối hoặc hết hạn thì việc sẽ dừng hẳn.`;
+          // A browser task is approved for its sites and its request, so the person is shown both. The approval, the
+          // parked reason and the line in the conversation are for this node's owner, in their interface language; the
+          // effect a peer that handed this task over is told stays as it was, because its owner's language is not known.
+          const effectIn = (locale: AppIntentLocale): string =>
+            browsing ? browserTaskApprovalText(browserSites, task.goal, locale) : describeCapabilityEffect(descriptor, locale);
+          const locale = preferredAppIntentLocale({ db: deps.conductor.db, now: at }, principalId);
+          const effectDescription = effectIn(locale);
+          const parkedReason = hostText(locale).approvals.needsApproval(effectDescription);
           // Park first, and only request the approval - and tell the conversation - if the park itself
           // lands. A task that is no longer `running` when this gate reaches it (stopped, or parked by some
           // other path in the meantime) must not gain an approval nobody can ever decide for real: an
@@ -839,7 +835,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             conversationId: task.conversationId,
             approvalId: approval.approvalId,
             message: parkedReason,
-            effect: effectDescription,
+            effect: effectIn("vi"),
           });
           return;
         }

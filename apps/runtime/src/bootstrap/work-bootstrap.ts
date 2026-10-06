@@ -4,7 +4,8 @@ import { listSecretMetadata } from "@clarkcant/storage";
 
 import { withholdFromChildren } from "../child-env.ts";
 import { answerUncertain } from "../delegation-handlers.ts";
-import { ownerHostText } from "../host-text.ts";
+import { ownerHostText, ownerLocale } from "../host-text.ts";
+import { noticeText } from "../notice-text.ts";
 import { tryRecordNodeNotice } from "../notices.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
@@ -101,15 +102,17 @@ export function attachNodeWork(input: {
       newId: services.conductor.newId,
       now: () => new Date(),
     },
+    language: () => ownerLocale(runtime),
     // The note is the result; the notice is the pointer to it, which is also how an open conversation learns to re-read.
-    report: (conversationId, text, job) => {
+    // The title is worded in the language the note was, so one notice never mixes two.
+    report: (conversationId, text, job, language) => {
       const at = nowInstant();
       appendHostReply(services, { conversationId, text, at });
       tryRecordNodeNotice(services, {
         sourceKind: "package",
         category: "result",
         severity: job.status === "completed" ? "success" : job.status === "cancelled" ? "info" : "warning",
-        title: job.status === "completed" ? "A package job finished" : job.status === "cancelled" ? "A package job was stopped" : "A package job did not finish",
+        title: noticeText(language).packageJob[job.status === "completed" || job.status === "cancelled" ? job.status : "other"],
         body: text,
         conversationId,
         subject: { kind: "conversation", conversationId },

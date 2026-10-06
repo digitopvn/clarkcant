@@ -168,6 +168,17 @@ The origin stays with the work it started:
 `clarkcant api`. So a program holding the node token can change this setting. Undoing `execution.machineTurns` puts
 back only that choice; it answers `undone: false` when the last policy write did not change it.
 
+### Which model answered: the model note
+
+Each model turn ends with a host `system-card` whose `subject` is `"connection"`: the note that records which model
+answered. Its `fields` are rows to read, worded in the owner's language when they are written. The same facts are on
+the card as data, so a client never has to read a row's label:
+`modelNote: { "version": 1, "elapsedMs": <integer ≥ 0>, "fallback"?: { "from": "<provider/model>" } }`.
+`elapsedMs` is how long the model took, the same figure the time row shows. `fallback` is there only when a fallback
+model answered instead of the one the person chose, and `from` names the chosen one. A card written before the field
+existed has no `modelNote`. A client that meets one without it, with a version it does not know, or with a note it
+cannot read, falls back on the rows.
+
 ### Conversation deletion
 
 The person's text command “delete this conversation” and spoken equivalent resolve to the same `conversation.delete`
