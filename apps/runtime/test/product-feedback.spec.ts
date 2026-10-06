@@ -443,6 +443,23 @@ describe("publishing a report on the person's press", () => {
     );
     expect(executed).toEqual(expect.arrayContaining([expect.objectContaining({ category: "external-write", approvedBy: "person", because: expect.stringContaining("pressed") })]));
   });
+
+  it("writes the ledger in its fixed English, not the language the node is set to when the person presses", async () => {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: at },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", value: "vi", source: "user" },
+    );
+    if (!written.ok) throw new Error(written.message);
+    const { draft } = await prepared(bug("Orb stutters on battery"));
+    await press(draft.reportId);
+
+    const [executed] = allRows<{ document: string }>(services.runtime.db, "SELECT document FROM events WHERE kind = 'effect.executed'");
+    const description = (JSON.parse(executed?.document ?? "{}") as { description?: string }).description;
+    expect(description).toBe(`Open issue “${draft.title}” on digitopvn/clarkcant`);
+    const effectId = getFeedbackReport(services.runtime.db, draft.reportId)?.effectId ?? "";
+    const goal = getTask(services.runtime.db, getEffect(services.runtime.db, effectId)?.taskId ?? "")?.goal;
+    expect(goal).toBe(description);
+  });
 });
 
 describe("after a restart", () => {

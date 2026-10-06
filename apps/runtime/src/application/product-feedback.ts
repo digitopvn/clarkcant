@@ -286,18 +286,15 @@ export function feedbackPublishDigest(draft: FeedbackDraft): string {
   );
 }
 
-/** Where it lands: the duplicate's issue for a comment, else the new issue. */
-function describeWrite(draft: FeedbackDraft, locale: Locale): string {
-  const say = sayIn(locale);
+/**
+ * Where it lands: the duplicate's issue for a comment, else the new issue. This goes into the action ledger, which is
+ * written once and read by whoever looks later, in whatever language they chose then, so it is the ledger's fixed
+ * English like every other entry's, never the language the node happened to be set to when the person pressed.
+ */
+function describeWrite(draft: FeedbackDraft): string {
   return draft.duplicateOf === undefined
-    ? say(
-        `Tạo issue “${draft.title}” trên ${draft.repository}`,
-        `Open issue “${draft.title}” on ${draft.repository}`,
-      )
-    : say(
-        `Thêm một lần gặp lại vào issue #${String(draft.duplicateOf.number)} (“${draft.duplicateOf.title}”) trên ${draft.repository}`,
-        `Add another occurrence to issue #${String(draft.duplicateOf.number)} (“${draft.duplicateOf.title}”) on ${draft.repository}`,
-      );
+    ? `Open issue “${draft.title}” on ${draft.repository}`
+    : `Add another occurrence to issue #${String(draft.duplicateOf.number)} (“${draft.duplicateOf.title}”) on ${draft.repository}`;
 }
 
 function ledgerNow(): Instant {
@@ -551,7 +548,7 @@ export async function publishFeedback(
 
   // The person pressed; the execution policy decides whether a press may write to GitHub on this node.
   const operationDigest = feedbackPublishDigest(draft);
-  const description = describeWrite(draft, locale);
+  const description = describeWrite(draft);
   const execution = readExecutionPolicy({ db: services.runtime.db, now: input.at }, services.runtime.identity.ownerPrincipalId);
   const asked = decideExecution({
     policy: execution,
