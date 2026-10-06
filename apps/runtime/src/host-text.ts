@@ -1,4 +1,4 @@
-import { type AppIntentLocale, nowInstant } from "@clarkcant/contracts";
+import { type AppIntentLocale, type EffectCategory, nowInstant } from "@clarkcant/contracts";
 import type { Database } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "./app-intents.ts";
@@ -147,6 +147,55 @@ export interface HostText {
     receivedLater: (name: string, peer: string, taskId: string) => string;
     failedLater: (name: string, peer: string, taskId: string, message: string) => string;
   };
+  /**
+   * What an approval asks about and the row it leaves once it ran: the card's description of the operation, the reason
+   * a parked task gives, and the label of the receipt an approved command or capability call writes.
+   */
+  approvals: {
+    /** An effect category as a person reads it, for a capability that has no summary of its own. */
+    effectCategory: Record<EffectCategory, string>;
+    /** What a task needs approval for when its capability says nothing more than its effect category. */
+    categoryEffect: (category: EffectCategory) => string;
+    /** Why a task is parked until someone approves `effect`. */
+    needsApproval: (effect: string) => string;
+    /** A browser task's approval: the sites, as hosts, and the request. */
+    browserTask: (hosts: string, request: string) => string;
+    /** A package capability call the card asks about. */
+    capabilityCall: (summary: string, ref: string) => string;
+    /** A command the card asks about; the folder's provenance and the model's reason follow it. */
+    commandCard: (cwd: string) => string;
+    /** The row a command leaves when nothing more specific was said about it. */
+    commandRan: (cwd: string) => string;
+    /** The row an approved capability call leaves. */
+    capabilityRan: (outcome: "job" | "done" | "failed", ref: string) => string;
+  };
+  /**
+   * The start screen's suggestions. `label` is the chip, `text` what pressing it sends, `source` the line under it.
+   * `recency` is how long ago, in words computed from the instant.
+   */
+  suggestions: {
+    recency: { unknown: string; today: string; yesterday: string; thisWeek: string; earlier: string };
+    /** What a "continue this" offer puts in front of the task's goal. */
+    continuePrefix: string;
+    unfinishedSource: (recency: string) => string;
+    pinnedLabel: string;
+    pinnedText: string;
+    pinnedSource: (recency: string) => string;
+    latestLabel: string;
+    latestText: string;
+    latestSource: string;
+    memoryLabel: (text: string) => string;
+    memoryText: (text: string) => string;
+    memorySource: (recency: string) => string;
+    projectLabel: (name: string) => string;
+    projectText: (name: string) => string;
+    projectSource: string;
+  };
+  /** The Tools tab: the agent's own tools, which this node did not define, and the note under them. */
+  toolsTab: {
+    agentTools: Readonly<Record<"read" | "write" | "edit" | "bash", { label: string; description: string }>>;
+    agentNote: string;
+  };
 }
 
 /**
@@ -189,6 +238,26 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   terminal_read: "Read the terminal",
   terminal_run: "Run a command in the terminal",
   update_automation: "Change an automation",
+};
+
+const VI_EFFECT_CATEGORY: Record<EffectCategory, string> = {
+  read: "đọc dữ liệu",
+  "local-write": "thay đổi tệp trên máy này",
+  "external-write": "gửi thay đổi ra ngoài máy này",
+  destructive: "thực hiện một thao tác không thể hoàn tác",
+  financial: "thực hiện một giao dịch tài chính",
+  communication: "gửi một liên lạc (email, tin nhắn, ...)",
+  "media-capture": "ghi âm hoặc quay hình",
+};
+
+const EN_EFFECT_CATEGORY: Record<EffectCategory, string> = {
+  read: "read data",
+  "local-write": "change files on this machine",
+  "external-write": "send changes outside this machine",
+  destructive: "do something that cannot be undone",
+  financial: "make a financial transaction",
+  communication: "send a message (email, chat, ...)",
+  "media-capture": "record audio or video",
 };
 
 const VI: HostText = {
@@ -359,6 +428,45 @@ const VI: HostText = {
     notTaken: (name, reason) => `không nhận ${name}: ${reason ?? "không rõ lý do"}`,
     receivedLater: (name, peer, taskId) => `Đã nhận tệp ${name} từ ${peer} cho task ${taskId}.`,
     failedLater: (name, peer, taskId, message) => `Không nhận được tệp ${name} từ ${peer} cho task ${taskId}: ${message}.`,
+  },
+  approvals: {
+    effectCategory: VI_EFFECT_CATEGORY,
+    categoryEffect: (category) => `một thao tác ${VI_EFFECT_CATEGORY[category]}`,
+    needsApproval: (effect) =>
+      `Cần được duyệt trước khi thực hiện: ${effect}. Việc chưa chạy; ` +
+      `nếu được duyệt việc sẽ tiếp tục, nếu bị từ chối hoặc hết hạn thì việc sẽ dừng hẳn.`,
+    browserTask: (hosts, request) => `dùng trình duyệt trên ${hosts} cho việc “${request}”`,
+    capabilityCall: (summary, ref) => `Gọi ${summary} (${ref})`,
+    commandCard: (cwd) => `Chạy một lệnh trong ${cwd}`,
+    commandRan: (cwd) => `Chạy lệnh trong ${cwd}`,
+    capabilityRan: (outcome, ref) =>
+      outcome === "job" ? `Đã bắt đầu job cho ${ref}` : outcome === "done" ? `Đã gọi ${ref}` : `Không gọi được ${ref}`,
+  },
+  suggestions: {
+    recency: { unknown: "gần đây", today: "hôm nay", yesterday: "hôm qua", thisWeek: "trong tuần này", earlier: "trước đó" },
+    continuePrefix: "Tiếp tục việc: ",
+    unfinishedSource: (recency) => `việc còn dang dở, ${recency}`,
+    pinnedLabel: "Mở lại widget đã ghim",
+    pinnedText: "Mở lại widget mà tôi đã ghim trong phiên gần nhất",
+    pinnedSource: (recency) => `bạn đã ghim, ${recency}`,
+    latestLabel: "Mở lại phiên gần nhất",
+    latestText: "Cho tui xem lại phiên làm việc gần nhất",
+    latestSource: "tiếp tục từ chỗ đã dừng",
+    memoryLabel: (text) => `Nhớ lại: ${text}`,
+    memoryText: (text) => `Cho tui xem lại điều đã ghi nhớ: ${text}`,
+    memorySource: (recency) => `bạn đã ghi nhớ, ${recency}`,
+    projectLabel: (name) => `Mở dự án ${name}`,
+    projectText: (name) => `Mở dự án ${name}`,
+    projectSource: "thư mục dùng gần đây",
+  },
+  toolsTab: {
+    agentTools: {
+      read: { label: "Đọc tệp", description: "Đọc nội dung một tệp trong thư mục làm việc." },
+      write: { label: "Ghi tệp", description: "Tạo hoặc thay thế một tệp." },
+      edit: { label: "Sửa tệp", description: "Thay một đoạn chính xác trong tệp." },
+      bash: { label: "Chạy lệnh", description: "Chạy một lệnh shell trong thư mục làm việc." },
+    },
+    agentNote: "Công cụ gốc của pi. Extension mà pi tự nạp thêm thì không liệt kê ở đây.",
   },
 };
 
@@ -540,11 +648,61 @@ const EN: HostText = {
     receivedLater: (name, peer, taskId) => `Received the file ${name} from ${peer} for task ${taskId}.`,
     failedLater: (name, peer, taskId, message) => `Did not receive the file ${name} from ${peer} for task ${taskId}: ${message}.`,
   },
+  approvals: {
+    effectCategory: EN_EFFECT_CATEGORY,
+    categoryEffect: (category) => `an action to ${EN_EFFECT_CATEGORY[category]}`,
+    needsApproval: (effect) =>
+      `Needs approval before it runs: ${effect}. Nothing has run yet; ` +
+      "if it is approved the work carries on, and if it is denied or expires the work stops for good.",
+    browserTask: (hosts, request) => `use the browser on ${hosts} for “${request}”`,
+    capabilityCall: (summary, ref) => `Call ${summary} (${ref})`,
+    commandCard: (cwd) => `Run a command in ${cwd}`,
+    commandRan: (cwd) => `Ran a command in ${cwd}`,
+    capabilityRan: (outcome, ref) =>
+      outcome === "job" ? `Started a job for ${ref}` : outcome === "done" ? `Called ${ref}` : `Could not call ${ref}`,
+  },
+  suggestions: {
+    recency: { unknown: "recently", today: "today", yesterday: "yesterday", thisWeek: "this week", earlier: "earlier" },
+    continuePrefix: "Continue: ",
+    unfinishedSource: (recency) => `unfinished work, ${recency}`,
+    pinnedLabel: "Reopen the pinned widget",
+    pinnedText: "Reopen the widget I pinned in the last session",
+    pinnedSource: (recency) => `you pinned it, ${recency}`,
+    latestLabel: "Reopen the last session",
+    latestText: "Show me the last session again",
+    latestSource: "carry on where you left off",
+    memoryLabel: (text) => `Recall: ${text}`,
+    memoryText: (text) => `Show me what was remembered: ${text}`,
+    memorySource: (recency) => `you remembered it, ${recency}`,
+    projectLabel: (name) => `Open the project ${name}`,
+    projectText: (name) => `Open the project ${name}`,
+    projectSource: "a folder used recently",
+  },
+  toolsTab: {
+    agentTools: {
+      read: { label: "Read a file", description: "Read the contents of a file in the working folder." },
+      write: { label: "Write a file", description: "Create or replace a file." },
+      edit: { label: "Edit a file", description: "Replace an exact passage in a file." },
+      bash: { label: "Run a command", description: "Run a shell command in the working folder." },
+    },
+    agentNote: "pi's own tools. Extensions pi loads by itself are not listed here.",
+  },
 };
 
 /** The host's words in one language; Vietnamese when none is named. */
 export function hostText(locale: AppIntentLocale = "vi"): HostText {
   return locale === "en" ? EN : VI;
+}
+
+/**
+ * The prefix a "continue this" suggestion is written with, in every language, so a goal sent from a chip in one
+ * language is read back without it after the person switched to the other.
+ */
+export const CONTINUE_PREFIXES: readonly string[] = [VI.suggestions.continuePrefix, EN.suggestions.continuePrefix];
+
+/** The node owner's interface language, read now: `experience.language`, Vietnamese when it was never chosen. */
+export function ownerLocale(runtime: { db: Database; identity: { ownerPrincipalId: string } }): AppIntentLocale {
+  return preferredAppIntentLocale({ db: runtime.db, now: nowInstant }, runtime.identity.ownerPrincipalId);
 }
 
 /**
@@ -555,5 +713,5 @@ export function hostText(locale: AppIntentLocale = "vi"): HostText {
  * report that lands after they switched language reads in the new one.
  */
 export function ownerHostText(runtime: { db: Database; identity: { ownerPrincipalId: string } }): HostText {
-  return hostText(preferredAppIntentLocale({ db: runtime.db, now: nowInstant }, runtime.identity.ownerPrincipalId));
+  return hostText(ownerLocale(runtime));
 }

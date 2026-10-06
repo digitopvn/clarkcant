@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Instant, MessageBlock } from "@clarkcant/contracts";
+import type { AppIntentLocale, Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { fitHead, fitTail } from "./card-text.ts";
 import { commandEnvironment } from "./child-env.ts";
+import { hostText } from "./host-text.ts";
 import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
 import { STOP_GRACE_MS, noteStarted, readProcStartTime, signalTree, stopTree } from "./process-tree.ts";
 
@@ -405,6 +406,8 @@ export async function runGuardedCommand(input: {
   conversationId?: string;
   /** The task the command runs for, so stopping the task stops it. */
   taskId?: string;
+  /** The language of the row's label when the model gave no reason; Vietnamese when none is named. */
+  language?: AppIntentLocale;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -457,7 +460,7 @@ export async function runGuardedCommand(input: {
       // What the command was for, when the model said; the folder is the receipt's `path`, drawn beside the label, so
       // a turn of ten commands in one project does not repeat the same path ten times in front of what each one did.
       label: fitHead(
-        (why === "" ? `Chạy lệnh trong ${cwd}` : why) + (because === "" ? "" : ` (${because})`),
+        (why === "" ? hostText(input.language).approvals.commandRan(cwd) : why) + (because === "" ? "" : ` (${because})`),
         ACTIVITY_LABEL_MAX,
       ),
       status: succeeded ? "done" : "failed",
@@ -561,6 +564,8 @@ export async function runApprovedCommand(input: {
   resources: OwnedResources;
   /** The conversation the approval was given in, so the running command can be listed and stopped from there. */
   conversationId?: string;
+  /** The language of the row the run leaves, the person's interface language; Vietnamese when none is named. */
+  language?: AppIntentLocale;
   /** Injected so the whole decision path can be tested without spawning anything. */
   run?: (request: {
     command: string;
@@ -635,7 +640,7 @@ export async function runApprovedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.approvalId}`,
       name: "run_command",
-      label: fitHead(`Chạy lệnh trong ${resolvedCwd}`, ACTIVITY_LABEL_MAX),
+      label: fitHead(hostText(input.language).approvals.commandRan(resolvedCwd), ACTIVITY_LABEL_MAX),
       status: succeeded ? "done" : "failed",
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.

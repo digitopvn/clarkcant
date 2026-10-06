@@ -1,5 +1,15 @@
-import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind, NoticeSubject, RiskLane } from "@clarkcant/contracts";
+import type {
+  AppIntentLocale,
+  Instant,
+  NoticeCategory,
+  NoticeSeverity,
+  NoticeSourceKind,
+  NoticeSubject,
+  RiskLane,
+} from "@clarkcant/contracts";
 import { type Database, dismissNotificationsByKeyPrefix, recordNotification } from "@clarkcant/storage";
+
+import { noticeText } from "./notice-text.ts";
 
 /**
  * Writing a notice into the person's inbox, from anywhere on this node.
@@ -113,7 +123,8 @@ export function workerNoticeKey(taskId: string): string {
  *
  * A cancellation was the person's own doing, so it is information rather than something that went wrong;
  * "uncertain" is a warning because the task may or may not have had its effect, and that is worth a look. The task id
- * is the dedup key and never the title: it is an internal handle, and the title is what a person reads first.
+ * is the dedup key and never the title: it is an internal handle, and the title is what a person reads first. The title
+ * is in the owner's `language` (Vietnamese when none is named); the body is the task's own message.
  */
 export function workerSettledNotice(input: {
   taskId: string;
@@ -121,13 +132,13 @@ export function workerSettledNotice(input: {
   outcome: "succeeded" | "failed" | "cancelled" | "uncertain";
   message: string;
   at: Instant;
+  language?: AppIntentLocale;
 }): NodeNotice {
-  const { severity, title } = WORKER_OUTCOMES[input.outcome];
   return {
     sourceKind: "worker",
     category: "result",
-    severity,
-    title,
+    severity: WORKER_SEVERITY[input.outcome],
+    title: noticeText(input.language).workerOutcome[input.outcome],
     body: input.message,
     conversationId: input.conversationId,
     subject: { kind: "task", taskId: input.taskId, conversationId: input.conversationId },
@@ -136,30 +147,11 @@ export function workerSettledNotice(input: {
   };
 }
 
-const WORKER_OUTCOMES: Record<
-  "succeeded" | "failed" | "cancelled" | "uncertain",
-  { severity: NoticeSeverity; title: string }
-> = {
-  succeeded: { severity: "success", title: "Việc chạy nền đã xong" },
-  failed: { severity: "error", title: "Việc chạy nền không xong" },
-  cancelled: { severity: "info", title: "Việc chạy nền đã được hủy" },
-  uncertain: { severity: "warning", title: "Việc chạy nền chưa rõ kết quả" },
-};
-
-/**
- * The risk lane's wording, in Vietnamese, for a notice body.
- *
- * The same four lanes and the same rule `packages/conversation-client/src/package-provenance.ts` uses for the
- * marketplace list: a native Pi extension is trusted process-level code that runs beside the host, and an isolated
- * widget is opaque-origin code with none of that — AGENTS.md names showing the two with the same wording as the
- * one mistake this exists to prevent, so an update notice about a `trusted-native` package says so plainly rather
- * than reusing the isolated-widget sentence for both.
- */
-const LANE_LABEL: Record<RiskLane, string> = {
-  declarative: "chỉ dữ liệu",
-  "isolated-ui": "widget cách ly",
-  service: "service riêng tiến trình",
-  "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
+const WORKER_SEVERITY: Record<"succeeded" | "failed" | "cancelled" | "uncertain", NoticeSeverity> = {
+  succeeded: "success",
+  failed: "error",
+  cancelled: "info",
+  uncertain: "warning",
 };
 
 /** Every package update notice for `packageId` from `sourceKind`, whatever version it offers, starts with this. */
@@ -207,6 +199,11 @@ export function tryRetirePiUpdateNotices(services: NoticeServices, at: Instant):
  * `MAX_NOTIFICATIONS`, oldest evicted first. Once this row is gone either way, the same version checking again
  * writes a fresh notice — so a person who dismissed an update notice can see the very same version come back, not
  * only a newer one, once that row has aged out or been evicted.
+ *
+ * Worded in the owner's `language` (Vietnamese when none is named). The risk lane follows the same four lanes and the
+ * same rule `packages/conversation-client/src/package-provenance.ts` uses for the marketplace list: a native Pi
+ * extension is trusted process-level code that runs beside the host, and an isolated widget is opaque-origin code with
+ * none of that — AGENTS.md names showing the two with the same wording as the one mistake this exists to prevent.
  */
 export function packageUpdateNotice(input: {
   packageId: string;
@@ -215,13 +212,15 @@ export function packageUpdateNotice(input: {
   sourceKind: "npm" | "git" | "local";
   lane: RiskLane;
   at: Instant;
+  language?: AppIntentLocale;
 }): NodeNotice {
+  const say = noticeText(input.language).packageUpdate;
   return {
     sourceKind: "package",
     category: "update",
     severity: "info",
-    title: `Có bản cập nhật: ${input.packageId}`,
-    body: `${input.currentVersion} → ${input.newVersion} · nguồn ${input.sourceKind} · ${LANE_LABEL[input.lane]}`,
+    title: say.title(input.packageId),
+    body: say.body(input.currentVersion, input.newVersion, input.sourceKind, say.lane[input.lane]),
     subject: { kind: "package", packageId: input.packageId, version: input.newVersion, source: input.sourceKind },
     dedupKey: `${packageUpdateKeyPrefix(input.sourceKind, input.packageId)}${input.newVersion}`,
     at: input.at,

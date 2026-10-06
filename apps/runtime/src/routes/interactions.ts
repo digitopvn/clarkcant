@@ -24,6 +24,7 @@ import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { grantConversationDeletion } from "../application/conversation-delete.ts";
 import type { HostControlAcks } from "../host-control-acks.ts";
 import type { WidgetPerformAcks } from "../widget-perform-acks.ts";
+import { ownerLocale } from "../host-text.ts";
 import { buildSuggestions } from "../suggestions.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -111,6 +112,8 @@ function suggestionsResponse(services: InteractionServices): GatewayResponse {
     nodeId: runtime.identity.nodeId,
     now: () => new Date().toISOString(),
     principalId: runtime.identity.ownerPrincipalId,
+    // The chips are the host's words, so they are written in the owner's interface language, read now.
+    language: ownerLocale(runtime),
   });
   return { status: 200, body: { items } };
 }

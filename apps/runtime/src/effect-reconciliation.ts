@@ -4,7 +4,7 @@ import { dismissNotificationByKey, dismissNotificationsByKeyPrefix, getEffect } 
 
 import { preferredAppIntentLocale } from "./app-intents.ts";
 import { unknownEffectFollowUpKey, unknownEffectsNotice } from "./effect-notices.ts";
-import { hostText } from "./host-text.ts";
+import { hostText, ownerLocale } from "./host-text.ts";
 import { tryRecordNodeNotice, workerNoticeKey } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -97,7 +97,10 @@ function resolveNotices(services: EffectReconcileServices, taskId: string, nextU
     dismissNotificationByKey(db, { principalId, dedupKey: workerNoticeKey(taskId), at });
     dismissNotificationsByKeyPrefix(db, { principalId, dedupKeyPrefix: `${workerNoticeKey(taskId)}:`, at });
     if (nextUnknownId !== undefined) {
-      const next = unknownEffectsNotice(db, taskId, at, unknownEffectFollowUpKey(taskId, nextUnknownId));
+      const next = unknownEffectsNotice(db, taskId, at, {
+        dedupKey: unknownEffectFollowUpKey(taskId, nextUnknownId),
+        language: ownerLocale(services.runtime),
+      });
       if (next !== undefined) tryRecordNodeNotice(services, next);
     }
   } catch (cause) {

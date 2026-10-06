@@ -1223,7 +1223,9 @@ Use segmented controls, toggles and swatches:
   cross-platform signal for "UI language" is reliable enough not to silently switch a Vietnamese
   speaker's product language away from Vietnamese. Only default chrome (composer, timeline chrome,
   settings, error copy, voice controls, marketplace headings) is translated; agent output is never
-  translated.
+  translated. What the node itself writes for its owner — host cards and rows, approval wording, inbox notices,
+  start-screen suggestions, the Tools tab — is worded in this language when it is written, never translated on the
+  client; text a node sends to a paired node stays as it is, because that node's owner's language is not known.
 - Theme Lab: Browse themes opens a temporary Gallery above Settings. Opening puts focus on the selected theme once;
   subsequent preview updates do not steal it. Picking in the Gallery previews production components locally, and
   Apply uses the same confirmed preference write as the main theme list. The last six choices are available as

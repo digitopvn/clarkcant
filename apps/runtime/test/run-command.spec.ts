@@ -123,6 +123,27 @@ describe("running an approved operation", () => {
     expect(result.description).not.toContain("Cloning into");
   });
 
+  it("labels the row it leaves in the person's interface language, Vietnamese when none is named", async () => {
+    const run = async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false });
+    const labelIn = async (language?: "vi" | "en"): Promise<string> => {
+      const result = await runApprovedCommand({
+        payload,
+        expectedDigest: digest,
+        approvalId: "appr_1",
+        resources: owned,
+        run,
+        ...(language === undefined ? {} : { language }),
+      });
+      if (!result.ok) throw new Error(result.message);
+      const [activity] = result.blocks;
+      return activity?.type === "tool-activity" ? activity.label : "";
+    };
+
+    expect(await labelIn("en")).toMatch(/^Ran a command in /u);
+    expect(await labelIn("vi")).toMatch(/^Chạy lệnh trong /u);
+    expect(await labelIn()).toMatch(/^Chạy lệnh trong /u);
+  });
+
   it("runs the narrowed budget the card carried, and never more than this host allows", async () => {
     /*
      * An asking mode consults the judgment layer before it draws a card, and what that layer narrowed — a shorter

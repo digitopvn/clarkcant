@@ -1,4 +1,4 @@
-import { suggestionIdSchema, type Suggestion } from "@clarkcant/contracts";
+import { type AppIntentLocale, suggestionIdSchema, type Suggestion } from "@clarkcant/contracts";
 import {
   listActiveTasks,
   listConversations,
@@ -7,6 +7,8 @@ import {
   listProjects,
   type Database,
 } from "@clarkcant/storage";
+
+import { CONTINUE_PREFIXES, type HostText, hostText } from "./host-text.ts";
 
 /**
  * What to offer somebody who has just opened the app.
@@ -18,6 +20,10 @@ import {
  *
  * Every suggestion is a sentence pressing it will send. A label that is not the text is a chip that lies about
  * what it does, which is why `text` is built here and not by the caller.
+ *
+ * The words are the host's, in the person's interface language (`language`, Vietnamese when none is named): the chip,
+ * the sentence it sends and the line under it are written in the same language, so a chip never sends a sentence in
+ * another language than the one it shows.
  */
 
 /** The records this reads. `nodeId` is here because projects are the node's, not the conversation's. */
@@ -35,6 +41,8 @@ export interface SuggestionDeps {
    * something the person can also go and read, and delete.
    */
   principalId: string;
+  /** The language the chips are written in; Vietnamese when none is named. */
+  language?: AppIntentLocale;
 }
 
 /** A suggestion's id is derived from what it points at, so the same offer keeps the same name. */
@@ -57,36 +65,39 @@ function trim(value: string, limit: number): string {
  * Computed from the instant rather than written down, because "hôm qua" on a record from last week is a lie the
  * person can check - and one that would make the label worthless rather than merely imprecise.
  */
-function recencyLabel(at: string, now: string): string {
+function recencyLabel(at: string, now: string, words: HostText["suggestions"]["recency"]): string {
   const then = Date.parse(at);
   const current = Date.parse(now);
-  if (!Number.isFinite(then) || !Number.isFinite(current)) return "gần đây";
+  if (!Number.isFinite(then) || !Number.isFinite(current)) return words.unknown;
   const days = Math.floor((current - then) / 86_400_000);
-  if (days <= 0) return "hôm nay";
-  if (days === 1) return "hôm qua";
-  if (days <= 7) return "trong tuần này";
-  return "trước đó";
+  if (days <= 0) return words.today;
+  if (days === 1) return words.yesterday;
+  if (days <= 7) return words.thisWeek;
+  return words.earlier;
 }
 
-/** What a "continue this" offer puts in front of the task's goal. */
-const CONTINUE_PREFIX = "Tiếp tục việc: ";
-
 /**
- * A goal without any number of continue prefixes in front of it.
+ * A goal without any number of continue prefixes in front of it, in either language.
  *
  * A goal that is nothing but prefixes comes back as one bare prefix, not as itself, so feeding the offer's text
  * back in as the next goal settles instead of growing by a prefix each round trip.
  */
 export function withoutContinuePrefix(goal: string): string {
-  const bare = CONTINUE_PREFIX.trim();
   let rest = goal.trim();
-  while (rest.startsWith(bare)) rest = rest.slice(bare.length).trim();
-  return rest === "" ? bare : rest;
+  let last: string | undefined;
+  for (;;) {
+    const bare = CONTINUE_PREFIXES.map((prefix) => prefix.trim()).find((prefix) => rest.startsWith(prefix));
+    if (bare === undefined) break;
+    last = bare;
+    rest = rest.slice(bare.length).trim();
+  }
+  return rest === "" && last !== undefined ? last : rest;
 }
 
 export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
   const limit = deps.limit ?? 4;
   const now = deps.now();
+  const say = hostText(deps.language).suggestions;
   const offered: Suggestion[] = [];
   const seenRefs = new Set<string>();
 
@@ -123,7 +134,7 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
     //
     // The goal is read without the prefix this offer adds. Pressing the chip sends its text as a new turn, and
     // that turn's task keeps the text verbatim as its goal, so without this each round trip stacked one more
-    // "Tiếp tục việc: " in front and the chip filled with the prefix instead of the work.
+    // continue prefix in front and the chip filled with the prefix instead of the work.
     // Goals that come out the same after that are one piece of work and get one chip.
     const seenGoals = new Set<string>();
     for (const task of listActiveTasks(deps.db, latest)) {
@@ -132,9 +143,9 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
       seenGoals.add(goal);
       offer({
         label: goal,
-        text: `${CONTINUE_PREFIX}${goal}`,
+        text: `${say.continuePrefix}${goal}`,
         source: "task",
-        sourceLabel: `việc còn dang dở, ${recencyLabel(task.updatedAt, now)}`,
+        sourceLabel: say.unfinishedSource(recencyLabel(task.updatedAt, now, say.recency)),
         at: task.updatedAt,
         ref: task.taskId,
       });
@@ -144,10 +155,10 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
     const newestPin = listPins(deps.db, latest)[0];
     if (newestPin !== undefined) {
       offer({
-        label: "Mở lại widget đã ghim",
-        text: "Mở lại widget mà tôi đã ghim trong phiên gần nhất",
+        label: say.pinnedLabel,
+        text: say.pinnedText,
         source: "pin",
-        sourceLabel: `bạn đã ghim, ${recencyLabel(newestPin.createdAt, now)}`,
+        sourceLabel: say.pinnedSource(recencyLabel(newestPin.createdAt, now, say.recency)),
         at: newestPin.createdAt,
         ref: newestPin.pinId,
       });
@@ -156,10 +167,10 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
     // (c) The session itself. No time word here on purpose: the list of conversations carries no instant, and a
     // label that guessed one would be the one thing this file exists to avoid.
     offer({
-      label: "Mở lại phiên gần nhất",
-      text: "Cho tui xem lại phiên làm việc gần nhất",
+      label: say.latestLabel,
+      text: say.latestText,
       source: "conversation",
-      sourceLabel: "tiếp tục từ chỗ đã dừng",
+      sourceLabel: say.latestSource,
       at: now,
       ref: latest,
     });
@@ -170,10 +181,10 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
   const newestMemory = listMemoryRecords(deps.db, { principalId: deps.principalId })[0];
   if (newestMemory !== undefined) {
     offer({
-      label: `Nhớ lại: ${newestMemory.text}`,
-      text: `Cho tui xem lại điều đã ghi nhớ: ${newestMemory.text}`,
+      label: say.memoryLabel(newestMemory.text),
+      text: say.memoryText(newestMemory.text),
       source: "memory",
-      sourceLabel: `bạn đã ghi nhớ, ${recencyLabel(newestMemory.at, now)}`,
+      sourceLabel: say.memorySource(recencyLabel(newestMemory.at, now, say.recency)),
       at: newestMemory.at,
       ref: newestMemory.memoryId,
     });
@@ -184,10 +195,10 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
   // a folder that was actually used is offered under "used recently".
   for (const project of listProjects(deps.db, deps.nodeId, 5).filter((entry) => entry.lastUsedAt !== undefined)) {
     offer({
-      label: `Mở dự án ${project.name}`,
-      text: `Mở dự án ${project.name}`,
+      label: say.projectLabel(project.name),
+      text: say.projectText(project.name),
       source: "project",
-      sourceLabel: "thư mục dùng gần đây",
+      sourceLabel: say.projectSource,
       at: now,
       ref: project.projectId,
     });

@@ -1,4 +1,4 @@
-import type { Instant } from "@clarkcant/contracts";
+import type { AppIntentLocale, Instant } from "@clarkcant/contracts";
 import {
   type PeerRecord,
   dismissNotificationsByKeyPrefix,
@@ -7,6 +7,8 @@ import {
   peerDeliveryState,
 } from "@clarkcant/storage";
 
+import { ownerLocale } from "./host-text.ts";
+import { type NoticeText, noticeText } from "./notice-text.ts";
 import { type NodeNotice, type NoticeServices, tryRecordNodeNotice } from "./notices.ts";
 import { peerStuckKey, peerStuckPrefix } from "./peer-skip.ts";
 import { answeredStatus } from "./peer-transport.ts";
@@ -70,52 +72,15 @@ function toldAt(prefix: string, key: string | undefined): { step: number; situat
  * A moment as a person on this machine reads it: hour and minute, the day, and the zone — the node's own, as its other
  * surfaces use, falling back to UTC — so it is not read in another zone by someone looking from elsewhere.
  */
-function readableTime(at: Instant): string {
+function readableTime(at: Instant, say: NoticeText["peerOutage"]): string {
   const date = new Date(at);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const time = new Intl.DateTimeFormat("vi-VN", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-  const day = new Intl.DateTimeFormat("vi-VN", { timeZone, day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
+  const time = new Intl.DateTimeFormat(say.dateLocale, { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  const day = new Intl.DateTimeFormat(say.dateLocale, { timeZone, day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
   const zone =
     new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).formatToParts(date).find((part) => part.type === "timeZoneName")
       ?.value ?? timeZone;
-  return `${time} ngày ${day} (${zone})`;
-}
-
-const TITLES: Record<Situation, string> = {
-  unreachable: "Không gửi được tới thiết bị khác",
-  refused: "Thiết bị khác từ chối nhận",
-  erroring: "Thiết bị khác báo lỗi khi nhận",
-  "given-up": "Đã ngừng gửi tới thiết bị khác",
-};
-
-function body(situation: Situation, name: string, since: string, status: number | undefined): string {
-  const code = status === undefined ? "" : ` (mã ${String(status)})`;
-  switch (situation) {
-    case "unreachable":
-      return (
-        `Không gửi được tới thiết bị ${name} ${since}: thiết bị đó không trả lời. ` +
-        "Những gì cần gửi vẫn nằm trong hàng đợi trên máy này và còn được thử lại tự động một thời gian; thông báo này tự đóng khi gửi được. " +
-        "Nếu thiết bị đó đã tắt hẳn hoặc đổi địa chỉ, hãy bật nó lên hoặc ghép cặp lại."
-      );
-    case "refused":
-      return (
-        `Thiết bị ${name} vẫn trả lời nhưng từ chối những gì máy này gửi ${since}${code}. ` +
-        "Máy này còn thử lại một thời gian rồi sẽ dừng; thông báo này tự đóng nếu thiết bị đó nhận. " +
-        "Hãy kiểm tra việc ghép cặp trên thiết bị đó, hoặc cập nhật ClarkCant trên cả hai máy."
-      );
-    case "erroring":
-      return (
-        `Thiết bị ${name} vẫn trả lời nhưng báo lỗi khi nhận những gì máy này gửi ${since}${code}: nó đang chạy, nhưng ClarkCant trên đó chưa xử lý được. ` +
-        "Những gì cần gửi vẫn nằm trong hàng đợi trên máy này và còn được thử lại tự động một thời gian; thông báo này tự đóng khi gửi được. " +
-        "Nếu lỗi kéo dài, hãy mở ClarkCant trên thiết bị đó để xem lỗi, rồi khởi động lại hoặc cập nhật nó."
-      );
-    case "given-up":
-      return (
-        `Máy này đã ngừng gửi tới thiết bị ${name}: những gì cần gửi ${since} không gửi được sau nhiều lần thử và đã bị bỏ, sẽ không được gửi lại. ` +
-        "Việc đã giao cho thiết bị đó được chốt trong hội thoại của từng việc (thất bại hoặc chưa rõ). " +
-        "Khi thiết bị đó hoạt động lại, hãy gửi lại những gì còn cần; thông báo này tự đóng khi thiết bị đó nhận được tin mới từ máy này."
-      );
-  }
+  return say.readableTime(time, day, zone);
 }
 
 /** The notice for one outage: what failed and since when, what is kept, and what happens next. */
@@ -133,14 +98,17 @@ export function peerOfflineNotice(input: {
   /** This outage's place in the sequence of situations it went through. */
   step: number;
   at: Instant;
+  /** The owner's interface language; Vietnamese when none is named. */
+  language?: AppIntentLocale;
 }): NodeNotice {
-  const since = `${input.atLeast === true ? "ít nhất từ lúc" : "từ lúc"} ${readableTime(input.since)}`;
+  const say = noticeText(input.language).peerOutage;
+  const since = say.since(readableTime(input.since, say), input.atLeast === true);
   return {
     sourceKind: "system",
     category: "alert",
     severity: input.situation === "given-up" ? "error" : "warning",
-    title: TITLES[input.situation],
-    body: body(input.situation, input.label ?? input.peerNodeId, since, input.status),
+    title: say.title[input.situation],
+    body: say.body(input.situation, input.label ?? input.peerNodeId, since, input.status),
     subject: { kind: "peer", nodeId: input.peerNodeId },
     dedupKey: `${outagePrefix(input.peerNodeId, input.lastAcknowledgedAt)}${String(input.step)}:${input.situation}`,
     at: input.at,
@@ -209,6 +177,7 @@ function reconcilePeer(services: NoticeServices, peer: PeerRecord, at: Instant, 
       lastAcknowledgedAt: state.lastAcknowledgedAt,
       step,
       at,
+      language: ownerLocale(services.runtime),
     }),
   );
 }

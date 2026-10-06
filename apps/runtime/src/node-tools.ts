@@ -16,6 +16,7 @@ import {
   orbProfileSchema,
   settingsTabSchema,
   type AppIntentDecision,
+  type AppIntentLocale,
   type ConversationId,
   type DirectoryEntry,
   type ExecutionPolicyConfig,
@@ -80,6 +81,7 @@ import type { HostControlAcks } from "./host-control-acks.ts";
 import { checkThemeChoice } from "./application/appearance-intents.ts";
 import { localContentDigest } from "./application/package-install.ts";
 import { preferredAppIntentLocale } from "./app-intents.ts";
+import { hostText } from "./host-text.ts";
 import type { ThemeRegistry } from "./application/themes.ts";
 
 /** The colour schemes `appearance.set-color-scheme` accepts, as the contract lists them. */
@@ -806,6 +808,11 @@ export interface CommandToolDeps {
    * choose between comes back as a question for the model to carry, which is worse but honest.
    */
   interactions?: InteractionDeps;
+  /**
+   * The person's interface language, read at call time, for the host's own words about a command: the approval card's
+   * description and the row a command run without a reason leaves. Absent is Vietnamese, as for all host text.
+   */
+  language?: () => AppIntentLocale;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -1186,7 +1193,7 @@ export function createRunCommandTool(
           operationDigest: approvedDigest,
           // Only read, so a long reason is shortened to what the card holds; the record keeps the same words.
           operationDescription: fitHead(
-            `Chạy một lệnh trong ${guarded.cwd}` + (reason === "" ? "" : ` (${reason})`) + (why === "" ? "" : `: ${why}`),
+            hostText(input.language?.()).approvals.commandCard(guarded.cwd) + (reason === "" ? "" : ` (${reason})`) + (why === "" ? "" : `: ${why}`),
             APPROVAL_DESCRIPTION_MAX,
           ),
           effectCategory: guarded.effectCategory,
@@ -1274,6 +1281,7 @@ export function createRunCommandTool(
         ...(why === "" ? {} : { why }),
         ...(env === undefined ? {} : { env }),
         ...(effectAudit?.conversationId === undefined ? {} : { conversationId: effectAudit.conversationId }),
+        ...(input.language === undefined ? {} : { language: input.language() }),
         ...(input.now === undefined ? {} : { now: input.now }),
         ...(input.run === undefined ? {} : { run: input.run }),
       });

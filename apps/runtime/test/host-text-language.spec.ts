@@ -245,6 +245,36 @@ describe("what the node writes outside any turn follows its owner's interface la
   });
 });
 
+describe("the start screen's chips follow the owner's interface language", () => {
+  type Chip = { source: string; label: string; text: string; sourceLabel?: string };
+
+  async function chips(): Promise<Chip[]> {
+    await newConversation();
+    const response = await request("GET", "/suggestions");
+    expect(response.status).toBe(200);
+    return (response.body as { items: Chip[] }).items;
+  }
+
+  it("writes them in English when the interface is English", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+
+    const offered = await chips();
+    expect(offered.find((chip) => chip.source === "conversation")).toMatchObject({
+      label: "Reopen the last session",
+      sourceLabel: "carry on where you left off",
+    });
+    expect(JSON.stringify(offered)).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("writes them in the same Vietnamese as before when no language was ever chosen", async () => {
+    const offered = await chips();
+    expect(offered.find((chip) => chip.source === "conversation")).toMatchObject({
+      label: "Mở lại phiên gần nhất",
+      sourceLabel: "tiếp tục từ chỗ đã dừng",
+    });
+  });
+});
+
 describe("the host's catalog", () => {
   it("has English words with no Vietnamese in them for every report the node writes outside a turn", () => {
     const en = hostText("en");
