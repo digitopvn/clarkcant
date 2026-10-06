@@ -62,7 +62,13 @@ export function reconcileEffectForNode(
   if (conversationId !== undefined) {
     try {
       if (settlement !== undefined) {
-        taskDispatchReports(services).onSettled({ taskId, conversationId, outcome: settlement.outcome, message: settlement.message });
+        taskDispatchReports(services).onSettled({
+          taskId,
+          conversationId,
+          outcome: settlement.outcome,
+          message: settlement.message,
+          reason: settlement.reason,
+        });
       } else {
         appendHostReply(services, { conversationId, text: recordedLine(services, effect, input.outcome, taskId, remainingUnknown.length, runGoing), at: input.at });
       }

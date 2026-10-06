@@ -436,7 +436,8 @@ describe("a task set up in the conversation", () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ title: "Việc tự động không bắt đầu được", conversation_id: conversationId });
     expect(notices[0]?.body).toContain('"Sửa issue khi có nhãn" không bắt đầu được');
-    expect(notices[0]?.body).toContain("disk is full");
+    // The exception is quoted as what it is, a diagnostic, rather than worded into the sentence.
+    expect(notices[0]?.body).toContain("Lỗi gặp phải: “disk is full”");
     expect(notices[0]?.body).toContain("bản thân việc tự động vẫn được giữ nguyên");
     expect(notices[0]?.dedup_key).toMatch(/^automation:irun_[^:]+$/);
     expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({

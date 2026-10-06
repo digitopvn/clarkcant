@@ -2,11 +2,12 @@ import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { reportDelegatedOutcome, reportDelegatedStatus } from "./delegation.ts";
 import { unknownEffectsNotice } from "./effect-notices.ts";
-import { ownerHostText, ownerLocale } from "./host-text.ts";
+import { hostText, ownerHostText, ownerLocale } from "./host-text.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
 import type { TaskDispatcherDeps } from "./task-dispatch.ts";
+import { taskSettledText } from "./task-settled-text.ts";
 
 /**
  * A settled task, as either path reports it: a run here says what its worker wrote, and a task handed to a peer says
@@ -31,9 +32,12 @@ export function taskDispatchReports(
         at: new Date().toISOString() as Instant,
       });
     },
-    onSettled: ({ taskId, conversationId, outcome, message, ran, outputs, blocks }: TaskSettledReport) => {
+    onSettled: ({ taskId, conversationId, outcome, message, reason, ran, outputs, blocks }: TaskSettledReport) => {
       const at = new Date().toISOString() as Instant;
-      const text = ownerHostText(services.runtime).tasks.settled(outcome, taskId, message);
+      // Read once, so the line in the conversation and the notice are in the same language, all the way through: the
+      // host's own words are worded from their reason, never passed through under a title in another language.
+      const language = ownerLocale(services.runtime);
+      const text = hostText(language).tasks.settled(outcome, taskId, taskSettledText({ message, ...(reason === undefined ? {} : { reason }) }, language));
       // What came back with it — the files a peer sent — shown right after the words that say it.
       appendHostReply(services, {
         conversationId,
@@ -46,13 +50,12 @@ export function taskDispatchReports(
       // is reported as that effect, under the same key: it is the one thing the person has to do something about, and
       // the effect sweep would otherwise say it a second time.
       let effectNotice: ReturnType<typeof unknownEffectsNotice>;
-      const language = ownerLocale(services.runtime);
       try {
         effectNotice = unknownEffectsNotice(services.runtime.db, taskId, at, { language });
       } catch (cause) {
         process.stderr.write(`inbox: could not read the effects of task ${taskId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
       }
-      tryRecordNodeNotice(services, effectNotice ?? workerSettledNotice({ taskId, conversationId, outcome, message, at, language }));
+      tryRecordNodeNotice(services, effectNotice ?? workerSettledNotice({ taskId, conversationId, outcome, message, ...(reason === undefined ? {} : { reason }), at, language }));
       // A task a peer handed over is answered there too, which is how its own task settles.
       const { runtime, conductor } = services;
       // The files its worker wrote go back with the answer, read now, before the task's worktree is taken away.
