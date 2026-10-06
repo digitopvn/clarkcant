@@ -39,10 +39,11 @@ tính phiên bản bằng tay.
 | `fix`, `perf` | patch |
 | `build`: thay đổi thứ được phát hành (bundler, Electron, đóng gói, phụ thuộc lúc chạy) | patch |
 | `refactor`: mã được phát hành có thay đổi, nên Clark đã cài luôn chạy đúng những byte mà một phiên bản gọi tên | patch |
-| `revert` một commit đã phát hành | patch (revert một thay đổi breaking cũng là breaking và cần `!`) |
+| `revert` một commit đã phát hành thuộc type có phát hành (`feat`, `fix`, `perf`, `build`, `refactor`, `revert`, hoặc mọi type có scope `dist`) | patch (revert một thay đổi breaking cũng là breaking và cần `!`) |
+| `revert` một commit không phát hành (`docs`, `test`, `chore`, `ci`, `style`), hoặc có header không phải Conventional Commit | không gì cả |
 | `revert` một commit trong cùng khoảng chưa phát hành | không gì cả: cặp commit triệt tiêu nhau |
 | `docs`, `test`, `chore`, `ci`, `style` | không |
-| mọi type có scope `dist`, ví dụ `chore(dist): …` | patch: cách đánh dấu một type vốn không phát hành là có ảnh hưởng tới bản phát hành |
+| mọi type có scope `dist`, ví dụ `chore(dist): …` | patch: cách đánh dấu một type vốn không phát hành là có ảnh hưởng tới bản phát hành; ghi chú liệt kê nó ở mục Distribution |
 
 Khi một khoảng có nhiều commit phát hành, mức cao nhất thắng. Một khoảng không có commit phát hành nào thì không lên
 kế hoạch gì, và workflow vẫn thành công mà không phát hành.
@@ -91,6 +92,14 @@ dùng được khi không có mạng. Mọi cách hỏi đều tới nó:
 Màn hình này cho thấy phiên bản và kênh đang cài cùng ghi chú chuẩn. Nó không có nút Cập nhật, trạng thái cập nhật hay
 bộ chọn kênh, vì chưa có dịch vụ cập nhật.
 
+**Giới hạn của bản chạy từ mã nguồn.** Bản ghi nhúng được ghi khi một bản phát hành được lên kế hoạch, và phần đóng
+dấu không bao giờ được commit ngược lại. Vì vậy một bản checkout mang bản ghi của baseline hoặc bản phát hành gần nhất,
+trong khi mã của nó có thể đã mới hơn. Với kênh `source`, thẻ, `/changelog` và model đều nêu commit và ngày mà ghi chú
+dừng lại (`notesCover` trong view), và nói rằng bản checkout có thể có thay đổi mới hơn chưa được liệt kê. Khi bản ghi
+mới nhất vẫn là baseline, "Ghi chú phát hành đầy đủ" trỏ tới lịch sử commit tính đến commit đó, vì chưa có bản phát
+hành nào. Bản checkout không tự so với `HEAD` của nó: image Docker hay một cây thư mục được sao chép không có lịch sử git
+để so sánh.
+
 ## Workflow phát hành
 
 `.github/workflows/release.yml` chạy khi push lên `main` và `dev`, và khi chạy tay. Nó không chạy trên pull request,
@@ -129,7 +138,7 @@ Maintainer làm những việc này một lần, sau khi hợp đồng phát hà
 
 | Bước | Nội dung | Bị chặn bởi |
 |---|---|---|
-| 1 | Spike đóng gói: Windows MSIX hay Squirrel, bundle macOS, Linux/Omarchy | Quyết định: [ADR-003](research/adr-003-desktop-packaging.vi.md) (đề xuất), #193 cho Omarchy |
+| 1 | Spike đóng gói: Windows MSIX hay Squirrel, bundle macOS, Linux/Omarchy | Quyết định: [ADR-004](research/adr-004-desktop-packaging.vi.md) (đề xuất), #193 cho Omarchy |
 | 2 | Ma trận build, ký số, xác minh và phát hành; checksum; GitHub Release; feed của kênh | Bước 1; thông tin xác thực để ký ([ký phát hành](release-signing.vi.md)) |
 | 3 | UpdateService và staging | Bước 1 |
 | 4 | Supervisor, bộ lập kế hoạch kích hoạt, khởi chạy sạch lần sau | Bước 3 |

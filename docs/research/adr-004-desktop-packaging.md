@@ -1,6 +1,6 @@
-# ADR-003 — Desktop packaging for signed releases (proposal)
+# ADR-004 — Desktop packaging for signed releases (proposal)
 
-> English (default) · [Tiếng Việt](adr-003-desktop-packaging.vi.md)
+> English (default) · [Tiếng Việt](adr-004-desktop-packaging.vi.md)
 
 **Status: proposed, not decided.** This note scopes the packaging spike in #508 step 1. Nothing here is built. The
 spike's measurements decide; this note says what to measure and what we would choose if the measurements come out as

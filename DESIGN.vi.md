@@ -1240,6 +1240,12 @@ Dùng segmented controls, toggles và swatches:
     vẫn còn gắn, nếu không thì mở ở kích thước mặc định.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: mở subpanel.
+- Phiên bản & có gì mới: phiên bản và kênh Clark đang cài, cùng ghi chú phát hành đi kèm bản build, đọc được khi không
+  có mạng (`GET /changelog`). Đây là cùng danh sách mà `/changelog` và câu hỏi "có gì mới?" vẽ thành thẻ trong hội thoại:
+  các phiên bản mới nhất trước, các mục nhóm theo Thay đổi không tương thích, Tính năng, Sửa lỗi, Thay đổi khác. Bản chạy
+  từ mã nguồn còn nói ghi chú dừng ở commit nào và bản checkout có thể có thay đổi mới hơn. Không có nút cập nhật, trạng
+  thái cập nhật hay lựa chọn kênh cho tới khi có dịch vụ cập nhật. Khi không đọc được ghi chú, mục này nói rõ trong một
+  câu và phần còn lại của Cài đặt vẫn dùng được.
 
 Không hiển thị contrast debugging cho consumer; đưa vào Developer section.
 

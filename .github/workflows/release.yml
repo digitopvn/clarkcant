@@ -14,7 +14,7 @@ name: Release
 #     manifests and release record (never committed back) and runs the repository's full verification on it.
 #
 # What does not exist yet, deliberately, so this workflow cannot tag, sign or publish anything:
-#   - per-OS packaging (Windows, macOS, Linux/Omarchy), decided by docs/research/adr-003-desktop-packaging.md;
+#   - per-OS packaging (Windows, macOS, Linux/Omarchy), decided by docs/research/adr-004-desktop-packaging.md;
 #   - signing and notarization (docs/release-signing.md lists the credentials and the TEST-before-PROD order);
 #   - creating the tag and the GitHub release, and the update feeds an update service would read.
 # No job here has write permission, an environment, or a secret. Adding any of those stages is a reviewed change to

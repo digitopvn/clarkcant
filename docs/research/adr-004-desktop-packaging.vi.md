@@ -1,6 +1,6 @@
-# ADR-003 — Đóng gói desktop cho bản phát hành có ký số (đề xuất)
+# ADR-004 — Đóng gói desktop cho bản phát hành có ký số (đề xuất)
 
-> [English](adr-003-desktop-packaging.md) · Tiếng Việt
+> [English](adr-004-desktop-packaging.md) · Tiếng Việt
 
 **Trạng thái: đề xuất, chưa quyết định.** Ghi chú này khoanh phạm vi cho spike đóng gói ở #508 bước 1. Chưa có gì ở
 đây được xây dựng. Số liệu đo của spike sẽ quyết định; ghi chú này nói cần đo gì, và ta sẽ chọn gì nếu kết quả đúng như

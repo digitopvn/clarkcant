@@ -39,7 +39,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | Method | Path | Body |
 |---|---|---|
 | GET | `/node` | – |
-| GET | `/changelog?since=` | – — phiên bản Clark này thay đổi gì, đọc từ ghi chú phát hành đi kèm bản build (không cần mạng, chỉ đọc); `since` chỉ giữ các phiên bản sau một phiên bản như `1.4`; `400` khi giá trị không phải phiên bản, `503 CHANGELOG_UNAVAILABLE` khi bản build không có ghi chú đọc được ([phát hành](releases.vi.md)) |
+| GET | `/changelog?since=` | – — phiên bản Clark này thay đổi gì, đọc từ ghi chú phát hành đi kèm bản build (không cần mạng, chỉ đọc); `since` chỉ giữ các phiên bản sau một phiên bản như `1.4`; bản chạy từ mã nguồn có thêm `notesCover`, commit và ngày mà ghi chú dừng lại; `400` khi giá trị không phải phiên bản, `503 CHANGELOG_UNAVAILABLE` khi bản build không có ghi chú đọc được ([phát hành](releases.vi.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |

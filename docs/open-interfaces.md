@@ -38,7 +38,7 @@ The stable surface is the one `/openapi.json` describes:
 | Method | Path | Body |
 |---|---|---|
 | GET | `/node` | – |
-| GET | `/changelog?since=` | – — what this version of Clark changed, from the release notes embedded with the build (offline, read-only); `since` keeps the releases after a version such as `1.4`; `400` for a value that is not a version, `503 CHANGELOG_UNAVAILABLE` when the build carries no readable notes ([releases](releases.md)) |
+| GET | `/changelog?since=` | – — what this version of Clark changed, from the release notes embedded with the build (offline, read-only); `since` keeps the releases after a version such as `1.4`; a build run from source adds `notesCover`, the commit and date its notes reach; `400` for a value that is not a version, `503 CHANGELOG_UNAVAILABLE` when the build carries no readable notes ([releases](releases.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — person-owned deletion; policy may ask or refuse |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — waits for the answer |

@@ -1256,6 +1256,12 @@ Use segmented controls, toggles and swatches:
     display is still attached, and at the default size otherwise.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: opens a subpanel.
+- Version & what's new: the installed Clark version and channel, and the release notes that came with the build,
+  read offline (`GET /changelog`). It is the same list `/changelog` and "what's new?" draw as a card in the conversation:
+  releases newest first, entries grouped Breaking, Features, Fixes, Other. A build run from source also says which
+  commit its notes reach and that the checkout may hold later changes. There is no update button, update status or channel
+  choice until an update service exists. When the notes cannot be read, the section says so in one sentence and keeps
+  the rest of Settings usable.
 
 Don't show contrast debugging to consumers; put it in the Developer section.
 

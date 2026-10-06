@@ -40,10 +40,11 @@ version by hand.
 | `fix`, `perf` | patch |
 | `build`: a change to what ships (bundler, Electron, packaging, runtime dependencies) | patch |
 | `refactor`: shipped code changes, so an installed Clark always runs bytes a version names | patch |
-| `revert` of an already released commit | patch (reverting a breaking change is itself breaking and needs `!`) |
+| `revert` of an already released commit of a releasing type (`feat`, `fix`, `perf`, `build`, `refactor`, `revert`, or any type with scope `dist`) | patch (reverting a breaking change is itself breaking and needs `!`) |
+| `revert` of a commit that did not release (`docs`, `test`, `chore`, `ci`, `style`), or whose header is not a Conventional Commit | nothing |
 | `revert` of a commit in the same unreleased range | nothing: the pair cancels |
 | `docs`, `test`, `chore`, `ci`, `style` | none |
-| any type with scope `dist`, e.g. `chore(dist): …` | patch: how a non-releasing type is marked release-affecting |
+| any type with scope `dist`, e.g. `chore(dist): …` | patch: how a non-releasing type is marked release-affecting; its notes list it under Distribution |
 
 When a range holds several releasing commits, the highest level wins. A range with no releasing commit plans nothing,
 and the workflow succeeds without a release.
@@ -92,6 +93,14 @@ so it works offline. Every way of asking reaches it:
 The view shows the installed version and channel and the canonical notes. It has no Update action, no update status
 and no channel selector, because there is no update service yet.
 
+**Limitation of a build run from source.** The embedded record is written when a release is planned, and the stamp
+is never committed back. A checkout therefore carries the record of its last baseline or release, while its code may
+be ahead of it. For the `source` channel, the card, `/changelog` and the model all name the commit and date the notes
+reach (`notesCover` in the view), and say that the checkout may include later changes that are not listed. While the
+newest record is the baseline, "Full release notes" links to the commit history up to that commit, because no release
+has been published yet. A source checkout does not compare itself with its own `HEAD`: a Docker image or a copied tree
+has no git history to compare against.
+
 ## The release workflow
 
 `.github/workflows/release.yml` runs on pushes to `main` and `dev`, and by hand. It does not run on pull requests, so
@@ -130,7 +139,7 @@ A maintainer does these once, after the release contract merges:
 
 | Step | What | Blocked by |
 |---|---|---|
-| 1 | Packaging spike: Windows MSIX vs Squirrel, macOS bundle, Linux/Omarchy | Decision: [ADR-003](research/adr-003-desktop-packaging.md) (proposal), #193 for Omarchy |
+| 1 | Packaging spike: Windows MSIX vs Squirrel, macOS bundle, Linux/Omarchy | Decision: [ADR-004](research/adr-004-desktop-packaging.md) (proposal), #193 for Omarchy |
 | 2 | Build, sign, verify and publish matrix; checksums; GitHub Release; channel feed | Step 1; signing credentials ([release signing](release-signing.md)) |
 | 3 | UpdateService and staging | Step 1 |
 | 4 | Supervisor, activation planner, clean next launch | Step 3 |
