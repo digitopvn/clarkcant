@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { DEFAULT_ALLOWED_DATA_CLASSES, dataClassSchema } from "./data-class.ts";
 import { capabilityRefSchema } from "./grants.ts";
-import { absoluteHostPathProblem, hostPathWithin } from "./host-path.ts";
+import { hostPathWithin } from "./host-path.ts";
 import { connectionIdSchema, effectCategorySchema, nodeIdSchema } from "./primitives.ts";
 import { runtimeFeatureNameSchema } from "./runtime-fabric.ts";
 import { taskResourceSchema, type TaskResource } from "./tasks.ts";
@@ -125,12 +125,7 @@ function resourceCovers(outer: TaskResource, inner: TaskResource): boolean {
     return outer.kind === inner.kind && outer.path === inner.path;
   }
   if (outer.access === "read" && inner.access === "write") return false;
-  if (outer.path === inner.path) return true;
-  return (
-    absoluteHostPathProblem(outer.path) === undefined &&
-    absoluteHostPathProblem(inner.path) === undefined &&
-    hostPathWithin(inner.path, outer.path)
-  );
+  return outer.path === inner.path || hostPathWithin(inner.path, outer.path);
 }
 
 function targetKey(target: DeliveryTarget): string {

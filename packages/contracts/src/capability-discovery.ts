@@ -155,11 +155,12 @@ export const cliPackageManagerSchema = z.enum([
 export type CliPackageManager = z.infer<typeof cliPackageManagerSchema>;
 
 /**
- * A package name a manager could hold: starts with a letter, digit or `@`, then only name characters. No whitespace,
- * no leading `-` (which a command line reads as an option), no shell metacharacters. Each manager's own naming rules
- * are the resolver's to check.
+ * A package name a manager could hold: an optional leading `@` (an npm scope), then a letter or digit, then only name
+ * characters. No whitespace, no leading `-` (which a command line reads as an option), no shell metacharacters, and no
+ * `@` after the first character, because `name@ref` (`x@latest`, `github.com/x/y@main`) smuggles a moving version past
+ * the exact `version` field. Each manager's own naming rules are the resolver's to check.
  */
-export const CLI_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9@][A-Za-z0-9._/@+-]*$/;
+export const CLI_PACKAGE_NAME_PATTERN = /^@?[A-Za-z0-9][A-Za-z0-9._/+-]*$/;
 
 /**
  * An exact version: at least `major.minor`, an optional leading `v` (Go modules) and an optional build or revision

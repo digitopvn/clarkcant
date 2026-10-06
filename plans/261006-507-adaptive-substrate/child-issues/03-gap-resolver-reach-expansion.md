@@ -27,6 +27,9 @@ acquire/connect/enable through the existing canonical paths, verify, and resume 
 - Consent binding via `ReachConsent` / `consentDoesNotCover`; standing preferences remembered through Jev/policy memory.
   The consent store owns what the contract cannot: spending a `once` consent so it is used a single time, and revoking
   `task` and `standing` consents.
+- Reach enforcement resolves symbolic links, junctions and mounts on the node before comparing a folder against the
+  consented reach, refuses a path that resolves outside it, and refuses a Windows-style path on a non-Windows node;
+  `reachWidening` and `hostPathWithin` compare paths textually only.
 - Verify the acquired capability (readiness) before resuming; report failures truthfully.
 
 ## Acceptance criteria

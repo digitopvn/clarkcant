@@ -313,15 +313,18 @@ function same(a: unknown, b: unknown): boolean {
  * It covers the same thing — acquired from the same verifiable source and running in the same place — providing no
  * capability beyond those consented to, taking no kind of step beyond those shown, in the same lane, reaching no
  * further. `once` covers only the plan it was given for and the same candidate; `task` only the same task and candidate;
- * `standing` any later plan for the same thing, whatever id discovery gave it then. A standing consent for something
- * with neither a source nor a location has no stable identity, so it stays bound to the candidate id.
+ * `standing` any later plan for the same thing, whatever id discovery gave it then. Only a verifiable source gives a
+ * thing a stable identity; a standing consent for something without one — even with a location, which two different
+ * things on one node share — stays bound to the candidate id.
  */
 export function consentDoesNotCover(
   consent: ReachConsent,
   request: { planId: ReachExpansionPlan["planId"]; taskId?: ReachExpansionPlan["taskId"]; option: AcquisitionPlan },
 ): string | undefined {
   const { option } = request;
-  const anchored = consent.acquisition !== undefined || consent.location !== undefined;
+  // Only a verifiable source identifies the thing across discoveries. A place alone does not: two different things on
+  // the same node would share it.
+  const anchored = consent.acquisition !== undefined;
   if ((consent.scope !== "standing" || !anchored) && consent.candidateId !== option.candidateId) {
     return "the consent was given for another option";
   }

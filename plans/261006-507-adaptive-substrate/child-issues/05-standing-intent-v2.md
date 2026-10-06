@@ -17,6 +17,8 @@ bounded by an `ExecutionEnvelope` (`packages/contracts/src/execution-envelope.ts
 
 ## Scope
 
+- Envelope enforcement resolves symbolic links, junctions and mounts on the executing node before comparing a folder
+  against the envelope, and refuses a path that resolves outside it; `envelopeWidening` compares paths textually only.
 - Schedule form: one-shot, interval, calendar recurrence (iCalendar RRULE + IANA timezone), start/end bounds, explicit
   misfire/catch-up policy, bounded jitter only where appropriate. Natural language compiles to it once; execution is
   deterministic. A new storage migration (never edit an applied one).

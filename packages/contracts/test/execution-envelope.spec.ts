@@ -100,6 +100,7 @@ describe("an envelope handed on", () => {
     expect(envelopeWidening(inside("/srv/reportsOld"), outer)).toEqual(["the folder /srv/reportsOld (read)"]);
     expect(envelopeWidening(inside("/srv"), outer)).toEqual(["the folder /srv (read)"]);
     expect(envelopeWidening(inside("/srv/reports/../secrets"), outer)).toEqual(["the folder /srv/reports/../secrets (read)"]);
+    expect(envelopeWidening(inside("/srv/reports\\x"), outer)).toEqual(["the folder /srv/reports\\x (read)"]);
     const windows = envelope({ resources: [{ kind: "folder", path: "C:\\Reports", access: "write" }] });
     expect(envelopeWidening(inside("c:\\Reports\\2026"), windows)).toEqual([]);
   });

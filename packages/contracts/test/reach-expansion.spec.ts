@@ -192,6 +192,18 @@ describe("consent", () => {
     expect(consentDoesNotCover(consent("task"), { planId: laterPlan, taskId: plan.taskId, option: rediscovered })).toMatch(/another option/);
   });
 
+  it("keeps a standing consent for something with only a place bound to its candidate", () => {
+    const placed = reachExpansionPlanSchema.parse({
+      ...plan,
+      alternatives: [{ ...alternative, location: { nodeId: "node_laptop" } }],
+    });
+    const given = reachConsentFor(placed, { candidateId: "cand_local", scope: "standing", decidedAt: plan.createdAt });
+    if (typeof given === "string") throw new Error(given);
+    const neighbour = { ...placed.alternatives[0]!, candidateId: "cand_other" as AcquisitionPlan["candidateId"] };
+    expect(consentDoesNotCover(given, { planId: laterPlan, option: neighbour })).toMatch(/another option/);
+    expect(consentDoesNotCover(given, { planId: laterPlan, option: placed.alternatives[0]! })).toBeUndefined();
+  });
+
   it("keeps a standing consent for something with no source or place bound to its candidate", () => {
     const local = reachConsentFor(plan, { candidateId: "cand_local", scope: "standing", decidedAt: plan.createdAt });
     if (typeof local === "string") throw new Error(local);
