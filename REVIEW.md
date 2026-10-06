@@ -193,7 +193,7 @@ The merge gate is `.github/required-checks.json`, enforced by the
   change to them is not detected automatically; review them whenever the
   ruleset is edited.
 
-No human approval is required; an agent's attestation counts the same The
+No human approval is required; an agent's attestation counts the same. The
 attesting reviewer must not have authored the change: a separate subagent
 context or a different person. A review done before the PR opened does not
 replace attesting the PR's final head.
