@@ -113,6 +113,8 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
   const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
   const [playingIds, setPlayingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [selectionIds, setSelectionIds] = useState<readonly [string, string] | undefined>(undefined);
+  /** The row of the embedded frame last activated: what plays in it is not visible from here, so it is assumed to. */
+  const [embedId, setEmbedId] = useState<string | undefined>(undefined);
 
   /*
    * Which rows arrived at the end, and which enter with their animation.
@@ -125,16 +127,27 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
   const opening = useRef<ReadonlySet<string> | undefined>(undefined);
   const arrived = useRef(new Set<string>());
   const enters = useRef(new Map<string, boolean>());
+  /** Arrived rows still to be announced: a row stops being announced once it leaves the document, and stays so. */
+  const announced = useRef(new Set<string>());
+  const arrive = (id: string): void => {
+    arrived.current.add(id);
+    announced.current.add(id);
+  };
   if (ids.length > 0) {
     const previous = rendered.current;
     if (!previous.any) {
       opening.current = new Set(ids);
     } else if (previous.tail === undefined) {
-      for (const id of ids) arrived.current.add(id);
+      for (const id of ids) arrive(id);
     } else {
       const at = ids.lastIndexOf(previous.tail);
-      if (at >= 0) for (const id of ids.slice(at + 1)) arrived.current.add(id);
+      if (at >= 0) for (const id of ids.slice(at + 1)) if (!arrived.current.has(id)) arrive(id);
     }
+    /*
+     * A page that cannot be stitched to the held window (after a long disconnect, `mergeTimeline`) replaces it; its
+     * newest message is then not after the previous tail, so nothing on it counts as arrived: it is announced and
+     * animated as history, not as a burst of new messages the person did not watch arrive.
+     */
   }
   rendered.current = { tail: ids.at(-1), any: true };
 
@@ -147,6 +160,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       if (index >= 0) indices.add(index);
     };
     add(focusedId);
+    add(embedId);
     add(viewport.anchor?.id);
     for (const id of playingIds) add(id);
     if (selectionIds !== undefined) {
@@ -155,7 +169,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       if (from >= 0 && to >= 0) for (let index = Math.min(from, to); index <= Math.max(from, to); index += 1) indices.add(index);
     }
     return indices;
-  }, [focusedId, ids, playingIds, selectionIds, undoIndex, viewport.anchor]);
+  }, [embedId, focusedId, ids, playingIds, selectionIds, undoIndex, viewport.anchor]);
 
   const windowFor = useCallback(
     (at: { anchor: Anchor | undefined; height: number }): TranscriptWindow =>
@@ -300,6 +314,8 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     const mounted = new Set(shown.mounted.map((index) => ids[index]!));
     // A row that left the document enters without animation if it comes back.
     for (const id of enters.current.keys()) if (!mounted.has(id)) enters.current.set(id, false);
+    // And is not announced again: it was said once, when it arrived.
+    for (const id of announced.current) if (!mounted.has(id)) announced.current.delete(id);
     const present = [...mounted];
     const key = present.join("\u0000");
     if (key !== reported.current) {
@@ -317,9 +333,32 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     if (rows === null) return;
     const doc = rows.ownerDocument;
     const onFocusIn = (event: FocusEvent): void => setFocusedId(rowIdOf(event.target as Node, rows));
-    const onFocusOut = (event: FocusEvent): void => {
-      if (!(event.relatedTarget instanceof Node) || !rows.contains(event.relatedTarget)) setFocusedId(undefined);
+    /*
+     * Focus is read from the document once it has settled rather than from `relatedTarget`, which is null when focus
+     * goes into an embedded frame (or out of the window) and would let the row holding that frame be unmounted.
+     */
+    const settleFocus = (): void => {
+      const active = doc.activeElement;
+      setFocusedId(active !== null && rows.contains(active) ? rowIdOf(active, rows) : undefined);
     };
+    const onFocusOut = (): void => queueMicrotask(settleFocus);
+    /*
+     * An embedded frame (a video, a map) takes focus and plays inside a document of its own: no focus or play event
+     * reaches this one, only the window's blur, with the frame as the active element. Its row is kept as focused, and
+     * kept after that as the last embed activated, until another embed is: whether it is still playing cannot be read.
+     */
+    let blurTimer: ReturnType<typeof setTimeout> | undefined;
+    const onWindowBlur = (): void => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        const active = doc.activeElement;
+        if (!(active instanceof HTMLIFrameElement) || !rows.contains(active)) return;
+        const id = rowIdOf(active, rows);
+        setFocusedId(id);
+        if (id !== undefined) setEmbedId(id);
+      }, 0);
+    };
+    const view = doc.defaultView;
     const playing = (event: Event): void => {
       const id = rowIdOf(event.target as Node, rows);
       if (id === undefined) return;
@@ -343,11 +382,14 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     };
     rows.addEventListener("focusin", onFocusIn);
     rows.addEventListener("focusout", onFocusOut);
+    view?.addEventListener("blur", onWindowBlur);
     for (const type of ["play", "playing", "pause", "ended", "emptied"]) rows.addEventListener(type, playing, true);
     doc.addEventListener("selectionchange", onSelection);
     return () => {
       rows.removeEventListener("focusin", onFocusIn);
       rows.removeEventListener("focusout", onFocusOut);
+      view?.removeEventListener("blur", onWindowBlur);
+      clearTimeout(blurTimer);
       for (const type of ["play", "playing", "pause", "ended", "emptied"]) rows.removeEventListener(type, playing, true);
       doc.removeEventListener("selectionchange", onSelection);
     };
@@ -370,8 +412,10 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     <>
       {edge}
       <div className="cc-transcript-rows" ref={list} data-rows-total={ids.length} data-rows-mounted={shown.mounted.length}>
-        {shown.segments.map((segment) =>
-          segment.kind === "gap" ? (
+        {/* One flat list keyed by message id: rows in nested arrays would be remounted whenever a spacer above them
+            appeared or went, losing focus, selection, playback and the entrance decision with them. */}
+        {shown.segments.flatMap((segment) =>
+          segment.kind === "gap" ? [
             <div
               key={`gap-${ids[segment.from]!}`}
               className="cc-transcript-gap"
@@ -379,8 +423,8 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
               data-rows={segment.to - segment.from}
               aria-hidden="true"
               style={{ height: `${String(segment.height)}px` }}
-            />
-          ) : (
+            />,
+          ] : (
             messages.slice(segment.from, segment.to).map((message, offset) => {
               const index = segment.from + offset;
               const id = message.messageId;
@@ -395,7 +439,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
                   data-row-id={id}
                   data-visibility={rowVisibility(index, shown)}
                   data-enter={enters.current.get(id) === true ? undefined : "none"}
-                  aria-live={arrived.current.has(id) ? undefined : "off"}
+                  aria-live={announced.current.has(id) ? undefined : "off"}
                 >
                   <TimelineMessageRow
                     message={message}

@@ -305,6 +305,42 @@ async function frame(page: Page, event: string, payload: unknown): Promise<void>
   );
 }
 
+/**
+ * End a scripted turn with the node's newest page plus the two messages the turn added, as the node's `done` does.
+ *
+ * The two are not written to the store: the page is what the client is told, which is what these claims are about.
+ */
+async function finishTurn(
+  page: Page,
+  conversationId: string,
+  prefix: string,
+): Promise<{ asked: { messageId: string }; answered: { messageId: string } }> {
+  const latest = await api<{ messages: unknown[]; window: { sequences: number[] } } & Record<string, unknown>>(
+    "GET",
+    `/conversations/${encodeURIComponent(conversationId)}/timeline?window=latest`,
+  );
+  const at = new Date().toISOString();
+  const asked = { messageId: `${prefix}_asked`, role: "user", blocks: [{ type: "text", format: "markdown", content: "một câu hỏi mới" }], createdAt: at };
+  const answered = { messageId: `${prefix}_answered`, role: "assistant", blocks: [{ type: "text", format: "markdown", content: "Câu trả lời đã xong." }], createdAt: at };
+  await frame(page, "done", {
+    resolution: "answered",
+    taskId: null,
+    messageIds: [answered.messageId],
+    timeline: {
+      ...latest,
+      cursor: Number(latest.cursor ?? 0) + 2,
+      messages: [...latest.messages, asked, answered],
+      window: { ...latest.window, toSequence: MESSAGES + 2, hasNewer: false, sequences: [...latest.window.sequences, MESSAGES + 1, MESSAGES + 2] },
+    },
+  });
+  await page.evaluate(() => {
+    // SAFETY: the seam installed by `scriptReply`.
+    (window as unknown as { __scriptedReply?: { end: () => void } }).__scriptedReply?.end();
+  });
+  await expect(page.locator("[data-live]")).toHaveCount(0);
+  return { asked, answered };
+}
+
 test("streaming leaves settled history untouched and does not pull a reader back down; new content is one press away", async ({
   page,
 }) => {
@@ -345,29 +381,7 @@ test("streaming leaves settled history untouched and does not pull a reader back
   expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
 
   // The turn ends with the node's newest page: two messages more than the reader has seen.
-  const latest = await api<{ messages: unknown[]; window: { sequences: number[] } } & Record<string, unknown>>(
-    "GET",
-    `/conversations/${encodeURIComponent(conversationId)}/timeline?window=latest`,
-  );
-  const at = new Date().toISOString();
-  const asked = { messageId: `${idOf(MESSAGES)}_asked`, role: "user", blocks: [{ type: "text", format: "markdown", content: "một câu hỏi mới" }], createdAt: at };
-  const answered = { messageId: `${idOf(MESSAGES)}_answered`, role: "assistant", blocks: [{ type: "text", format: "markdown", content: "Câu trả lời đã xong." }], createdAt: at };
-  await frame(page, "done", {
-    resolution: "answered",
-    taskId: null,
-    messageIds: [answered.messageId],
-    timeline: {
-      ...latest,
-      cursor: Number(latest.cursor ?? 0) + 2,
-      messages: [...latest.messages, asked, answered],
-      window: { ...latest.window, toSequence: MESSAGES + 2, hasNewer: false, sequences: [...latest.window.sequences, MESSAGES + 1, MESSAGES + 2] },
-    },
-  });
-  await page.evaluate(() => {
-    // SAFETY: the seam installed by `scriptReply`.
-    (window as unknown as { __scriptedReply?: { end: () => void } }).__scriptedReply?.end();
-  });
-  await expect(page.locator("[data-live]")).toHaveCount(0);
+  const { answered } = await finishTurn(page, conversationId, idOf(MESSAGES));
   await settle(page);
   expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
 
@@ -380,4 +394,143 @@ test("streaming leaves settled history untouched and does not pull a reader back
   // What arrived at the end is announced; history mounted by scrolling is not.
   await expect(row(page, answered.messageId)).not.toHaveAttribute("aria-live", "off");
   await expect(row(page, idOf(MESSAGES))).toHaveAttribute("aria-live", "off");
+});
+
+/** Remember a row's element, so a later check can tell whether it is the same node or a remounted one. */
+async function rememberRow(page: Page, name: string, id: string): Promise<void> {
+  await row(page, id).evaluate((slot, key) => {
+    // SAFETY: a registry this spec reads back; nothing in the application reads it.
+    const holder = window as unknown as { __keptRows?: Record<string, Element> };
+    holder.__keptRows ??= {};
+    holder.__keptRows[key] = slot;
+  }, name);
+}
+
+async function sameRow(page: Page, name: string, id: string): Promise<boolean> {
+  return row(page, id).evaluate(
+    (slot, key) => (window as unknown as { __keptRows?: Record<string, Element> }).__keptRows?.[key] === slot,
+    name,
+  );
+}
+
+async function toNewest(page: Page): Promise<void> {
+  await scrollTo(page, await scroller(page).evaluate((node) => node.scrollHeight));
+}
+
+test("rows a person is using stay the same nodes while spacers come and go around them", async ({ page }) => {
+  const { conversationId, idOf } = await seedConversation();
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  const newest = idOf(MESSAGES);
+  await expect(row(page, newest)).toBeInViewport();
+  await rememberRow(page, "newest", newest);
+  // Its entrance, kept to compare: a row that entered again would carry another one.
+  await row(page, newest).evaluate((slot) => {
+    // SAFETY: a registry this spec reads back; nothing in the application reads it.
+    (window as unknown as { __entrances?: Animation[] }).__entrances = slot.getAnimations({ subtree: true });
+  });
+
+  // A focused fold, and a passage selected in another row.
+  const focused = idOf(FOLD_AT);
+  await scrollUntilMounted(page, focused, -1);
+  const summary = row(page, focused).locator('[data-reasoning="true"] > summary');
+  await summary.scrollIntoViewIfNeeded();
+  await summary.focus();
+  await expect(summary).toBeFocused();
+  await rememberRow(page, "focused", focused);
+  const selected = idOf(FOLD_AT - 2);
+  await scrollUntilMounted(page, selected, -1);
+  await rememberRow(page, "selected", selected);
+  const passage = await row(page, selected).evaluate((slot) => {
+    const text = slot.querySelector(".cc-row p");
+    if (text === null) throw new Error("no passage to select");
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return selection?.toString() ?? "";
+  });
+  expect(passage).toContain(`Tin nhắn số ${String(FOLD_AT - 2)}.`);
+
+  // Far above all three, then back to the newest: every spacer between them appeared and went again.
+  for (let step = 0; step < 6; step += 1) await scrollBy(page, -2_400);
+  await expect(page.locator(".cc-transcript-gap")).not.toHaveCount(0);
+  for (const id of [newest, focused, selected]) await expect(row(page, id)).toHaveCount(1);
+  await toNewest(page);
+  await expect(row(page, newest)).toBeInViewport();
+
+  expect(await sameRow(page, "newest", newest)).toBe(true);
+  expect(await sameRow(page, "focused", focused)).toBe(true);
+  expect(await sameRow(page, "selected", selected)).toBe(true);
+  await expect(summary).toBeFocused();
+  expect(await page.evaluate(() => document.getSelection()?.toString() ?? "")).toBe(passage);
+  // The newest row did not enter a second time.
+  expect(
+    await row(page, newest).evaluate((slot) => {
+      const before = (window as unknown as { __entrances?: Animation[] }).__entrances ?? [];
+      return slot.getAnimations({ subtree: true }).every((animation) => before.includes(animation));
+    }),
+  ).toBe(true);
+});
+
+test("a playing row, and the row of the embedded frame last used, stay mounted far from the screen", async ({ page }) => {
+  const { conversationId, idOf } = await seedConversation();
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+
+  // A player's play event, as a real player in the row raises it (the transcript listens in the capture phase).
+  const playing = idOf(MESSAGES - 40);
+  await scrollUntilMounted(page, playing, -1);
+  await row(page, playing).evaluate((slot) => slot.querySelector(".cc-row")?.dispatchEvent(new Event("play")));
+  // An embedded frame, used: focus goes into a document of its own and this one only sees the window blur.
+  const embedded = idOf(MESSAGES - 44);
+  await scrollUntilMounted(page, embedded, -1);
+  await row(page, embedded).evaluate((slot) => {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("data-test-embed", "true");
+    frame.srcdoc = "<button>phát</button>";
+    slot.querySelector(".cc-row")?.append(frame);
+  });
+  await page.frameLocator('[data-test-embed="true"]').locator("button").click();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("IFRAME");
+
+  await toNewest(page);
+  await expect(row(page, playing)).toHaveCount(1);
+  await expect(row(page, embedded)).toHaveCount(1);
+
+  // Focus back in the page: the embed's row is still the one last used, so it stays.
+  await page.locator("[data-composer]").focus();
+  await scrollBy(page, -300);
+  await expect(row(page, embedded)).toHaveCount(1);
+  // Paused, the playing row goes like any row far from the screen.
+  await row(page, playing).evaluate((slot) => slot.querySelector(".cc-row")?.dispatchEvent(new Event("pause")));
+  await scrollBy(page, 300);
+  await expect(row(page, playing)).toHaveCount(0);
+});
+
+test("a row that arrived is announced once, and not again when it is mounted again", async ({ page }) => {
+  const { conversationId, idOf } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await composer.fill("một câu hỏi mới");
+  await composer.press("Enter");
+  await frame(page, "delta", { text: "Trả lời." });
+  const { asked, answered } = await finishTurn(page, conversationId, idOf(MESSAGES));
+  await expect(row(page, asked.messageId)).toBeInViewport();
+  await expect(row(page, asked.messageId)).not.toHaveAttribute("aria-live", "off");
+  await expect(row(page, answered.messageId)).not.toHaveAttribute("aria-live", "off");
+
+  // Away and back: the question is mounted again as history; the newest row never left.
+  for (let step = 0; step < 4; step += 1) await scrollBy(page, -2_400);
+  await expect(row(page, asked.messageId)).toHaveCount(0);
+  await toNewest(page);
+  await expect(row(page, asked.messageId)).toBeInViewport();
+  await expect(row(page, asked.messageId)).toHaveAttribute("aria-live", "off");
+  await expect(row(page, asked.messageId)).toHaveAttribute("data-enter", "none");
+  await expect(row(page, answered.messageId)).not.toHaveAttribute("aria-live", "off");
 });

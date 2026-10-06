@@ -268,7 +268,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
           </div>
         ) : (
           <div className="cc-layout" role="group" aria-label={t("widgets.surface.regionsAria")} data-layout-root="true">
-            <LayoutTree node={view.layout} sections={sectionById} region={region} />
+            <LayoutTree node={view.layout} path="root" sections={sectionById} region={region} />
           </div>
         )}
       </div>
@@ -390,6 +390,11 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
 
 interface LayoutTreeProps {
   node: LayoutNode;
+  /**
+   * Where the node sits in the tree, by child index from the root: what names a tab strip's or a collapsible's view
+   * state, since labels repeat and a strip's children can be the same as another's.
+   */
+  path: string;
   sections: ReadonlyMap<string, CompositeSurfaceSection>;
   region: (section: CompositeSurfaceSection) => ReactElement;
 }
@@ -403,7 +408,7 @@ interface LayoutTreeProps {
  * tree says for it, not dropped.
  */
 function LayoutTree(props: LayoutTreeProps): ReactElement | null {
-  const { node, sections, region } = props;
+  const { node, path, sections, region } = props;
   if (node.kind === "divider") return <hr className="cc-layout-divider" data-layout="divider" />;
   if (node.kind === "widget") {
     const section = sections.get(node.sectionId);
@@ -417,7 +422,9 @@ function LayoutTree(props: LayoutTreeProps): ReactElement | null {
   }
 
   const children = (container: LayoutContainerNode): ReactNode[] =>
-    container.children.map((child, index) => <LayoutTree key={index} node={child} sections={sections} region={region} />);
+    container.children.map((child, index) => (
+      <LayoutTree key={index} node={child} path={`${path}/${String(index)}`} sections={sections} region={region} />
+    ));
   const heading = node.label === undefined ? null : <span className="cc-layout-label">{node.label}</span>;
 
   switch (node.kind) {
@@ -447,10 +454,10 @@ function LayoutTree(props: LayoutTreeProps): ReactElement | null {
         </section>
       );
     case "tabs":
-      return <LayoutTabs node={node} sections={sections} region={region} />;
+      return <LayoutTabs node={node} path={path} sections={sections} region={region} />;
     case "collapsible":
       return (
-        <LayoutCollapsible label={node.label ?? ""} open={node.open === true}>
+        <LayoutCollapsible label={node.label ?? ""} path={path} open={node.open === true}>
           {children(node)}
         </LayoutCollapsible>
       );
@@ -477,12 +484,9 @@ function tabLabel(node: LayoutNode): string {
  * focus. Hidden panels stay mounted so a table's sort or a chart's hover survives switching away and back.
  */
 function LayoutTabs(props: LayoutTreeProps & { node: LayoutContainerNode }): ReactElement {
-  const { node, sections, region } = props;
-  // Named by what the strip holds, so two strips in one surface keep their own choice.
-  const [selected, setSelected] = useSurfaceViewState(
-    `tabs:${node.children.map((child) => (child.kind === "widget" ? child.sectionId : tabLabel(child))).join("|")}`,
-    0,
-  );
+  const { node, path, sections, region } = props;
+  // Named by where the strip sits in the tree, so two strips in one surface keep their own choice.
+  const [selected, setSelected] = useSurfaceViewState(`tabs:${path}`, 0);
   const base = useId();
   const strip = useRef<HTMLDivElement>(null);
 
@@ -532,7 +536,12 @@ function LayoutTabs(props: LayoutTreeProps & { node: LayoutContainerNode }): Rea
           tabIndex={0}
         >
           {/* The tab already says the leaf's label, so the panel does not repeat it. */}
-          <LayoutTree node={child.kind === "widget" ? { kind: "widget", sectionId: child.sectionId } : child} sections={sections} region={region} />
+          <LayoutTree
+            node={child.kind === "widget" ? { kind: "widget", sectionId: child.sectionId } : child}
+            path={`${path}/${String(index)}`}
+            sections={sections}
+            region={region}
+          />
         </div>
       ))}
     </div>
@@ -540,8 +549,9 @@ function LayoutTabs(props: LayoutTreeProps & { node: LayoutContainerNode }): Rea
 }
 
 /** A section that starts open or closed, as the tree says, and then belongs to the reader. */
-function LayoutCollapsible(props: { label: string; open: boolean; children: ReactNode }): ReactElement {
-  const [open, setOpen] = useSurfaceViewState(`collapsible:${props.label}`, props.open);
+function LayoutCollapsible(props: { label: string; path: string; open: boolean; children: ReactNode }): ReactElement {
+  // Named by where it sits in the tree: two collapsibles can share a label.
+  const [open, setOpen] = useSurfaceViewState(`collapsible:${props.path}`, props.open);
   return (
     <details
       className="cc-layout-collapsible"

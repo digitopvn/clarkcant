@@ -475,7 +475,7 @@ The thinking state ends as soon as the first content/tool event appears.
 A long conversation stays one continuous conversation:
 
 - it opens on its newest messages; older history is read as the reader nears the top, with no button to press, and is put in front without moving the row being read;
-- only the rows around the screen are in the document; the focused row, a row whose player is playing, the rows a selection spans and the newest row always stay;
+- only the rows around the screen are in the document; the focused row, a row whose player is playing, the row of the embedded frame (a video, a map) last used, the rows a selection spans and the newest row always stay;
 - a surface scrolled away and back keeps the view a person left it in for the session (an open fold, a draft, a search), never secrets typed into a credential card;
 - while the reader is more than a screen above the bottom and something new arrives there, a "Jump to latest" button floats over the foot of the transcript; it is never permanent chrome and goes away at the bottom;
 - a failed read of older history says so in place, keeps everything on screen and offers to try again;
