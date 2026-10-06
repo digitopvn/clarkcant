@@ -1,4 +1,4 @@
-import { type AppIntentLocale, type EffectCategory, nowInstant } from "@clarkcant/contracts";
+import { type AppIntentConfirmationFailure, type AppIntentLocale, type EffectCategory, nowInstant } from "@clarkcant/contracts";
 import type { Database } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "./app-intents.ts";
@@ -146,6 +146,8 @@ export interface HostText {
     notTaken: (name: string, reason: string | undefined) => string;
     receivedLater: (name: string, peer: string, taskId: string) => string;
     failedLater: (name: string, peer: string, taskId: string, message: string) => string;
+    /** The evidence a received file leaves on its task: its size, the node it came from, and that its digest matched. */
+    receivedEvidence: (name: string, bytes: number, peer: string) => string;
   };
   /**
    * What an approval asks about and the row it leaves once it ran: the card's description of the operation, the reason
@@ -212,6 +214,14 @@ export interface HostText {
     projectLabel: (name: string) => string;
     projectText: (name: string) => string;
     projectSource: string;
+  };
+  /**
+   * The answer to a spoken or typed request that needed confirming: why a confirmation could not be used, and what is
+   * said when the person declines. An expired one and a wrong one lead to different next steps, so each is spelled out.
+   */
+  confirmations: {
+    failed: Record<AppIntentConfirmationFailure, string>;
+    declined: string;
   };
   /** The Tools tab: the agent's own tools, which this node did not define, and the note under them. */
   toolsTab: {
@@ -479,6 +489,7 @@ const VI: HostText = {
     notTaken: (name, reason) => `không nhận ${name}: ${reason ?? "không rõ lý do"}`,
     receivedLater: (name, peer, taskId) => `Đã nhận tệp ${name} từ ${peer} cho task ${taskId}.`,
     failedLater: (name, peer, taskId, message) => `Không nhận được tệp ${name} từ ${peer} cho task ${taskId}: ${message}.`,
+    receivedEvidence: (name, bytes, peer) => `${name} (${String(bytes)} byte) từ ${peer}, khớp digest đã đề nghị`,
   },
   approvals: {
     effectCategory: VI_EFFECT_CATEGORY,
@@ -547,6 +558,14 @@ const VI: HostText = {
     projectLabel: (name) => `Mở dự án ${name}`,
     projectText: (name) => `Mở dự án ${name}`,
     projectSource: "thư mục dùng gần đây",
+  },
+  confirmations: {
+    failed: {
+      CONFIRMATION_NOT_FOUND: "Không có lời xác nhận nào đang chờ.",
+      CONFIRMATION_EXPIRED: "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé.",
+      CONFIRMATION_ALREADY_USED: "Lời xác nhận này đã được dùng rồi.",
+    },
+    declined: "Tôi đã bỏ qua câu lệnh đó.",
   },
   toolsTab: {
     agentTools: {
@@ -736,6 +755,7 @@ const EN: HostText = {
     notTaken: (name, reason) => `did not take ${name}: ${reason ?? "no reason given"}`,
     receivedLater: (name, peer, taskId) => `Received the file ${name} from ${peer} for task ${taskId}.`,
     failedLater: (name, peer, taskId, message) => `Did not receive the file ${name} from ${peer} for task ${taskId}: ${message}.`,
+    receivedEvidence: (name, bytes, peer) => `${name} (${String(bytes)} bytes) from ${peer}, matching the offered digest`,
   },
   approvals: {
     effectCategory: EN_EFFECT_CATEGORY,
@@ -804,6 +824,14 @@ const EN: HostText = {
     projectLabel: (name) => `Open the project ${name}`,
     projectText: (name) => `Open the project ${name}`,
     projectSource: "a folder used recently",
+  },
+  confirmations: {
+    failed: {
+      CONFIRMATION_NOT_FOUND: "No confirmation is waiting.",
+      CONFIRMATION_EXPIRED: "The confirmation has expired. Please say the command again.",
+      CONFIRMATION_ALREADY_USED: "This confirmation has already been used.",
+    },
+    declined: "I skipped that command.",
   },
   toolsTab: {
     agentTools: {

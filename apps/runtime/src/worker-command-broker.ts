@@ -368,6 +368,8 @@ export function createWorkerCommandBroker(input: {
         ...(env === undefined ? {} : { env }),
         conversationId: input.conversationId,
         taskId: input.taskId,
+        // The owner's language, as on the guarded path, so the row, the receipt and the audit line read the same.
+        ...(deps.language === undefined ? {} : { language: deps.language() }),
         ...(deps.now === undefined ? {} : { now: deps.now }),
         ...(deps.run === undefined ? {} : { run: deps.run }),
       });

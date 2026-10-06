@@ -28,6 +28,7 @@ import {
   insertTaskArtifact,
   listTaskArtifacts,
   nextOutboundSequence,
+  oneRow,
   parseJson,
   pendingOutbox,
   recordPeerAdvertisement,
@@ -1224,6 +1225,11 @@ describe("the files a task handed to another Clark brings back", { timeout: 60_0
       { kind: "api-receipt", verdict: "verified", ref: null, digest: null },
       { kind: "file-version", verdict: "verified", ref: `artifact:${String(file?.artifactId)}`, digest: writtenDigest },
     ]);
+    // The evidence line is written for A's owner, in their language: Vietnamese, since none was chosen.
+    expect(
+      oneRow<{ summary: string }>(a.services.runtime.db, "SELECT summary FROM evidence WHERE run_id = ? AND kind = 'file-version'", String(home?.activeRunId))
+        ?.summary,
+    ).toBe(`notes.md (${String(writtenBytes)} byte) từ ${identityOf(b).nodeId}, khớp digest đã đề nghị`);
 
     // Shown once, where the result is said: with the result when it arrived first, or just after it when not.
     expect(shownFiles(a, onA)).toEqual([

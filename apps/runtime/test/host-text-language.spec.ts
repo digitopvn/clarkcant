@@ -362,7 +362,11 @@ describe("the host's catalog", () => {
       en.delegation.resultLost("node_b"),
       en.files.summary([en.files.received("notes.md"), en.files.notTaken("big.bin", undefined)].join("; ")),
       en.files.receivedLater("notes.md", "node_b", "task_1"),
+      en.files.receivedEvidence("notes.md", 12, "node_b"),
+      en.confirmations.declined,
+      ...Object.values(en.confirmations.failed),
     ];
+    expect(en.files.receivedEvidence("notes.md", 12, "node_b")).toBe("notes.md (12 bytes) from node_b, matching the offered digest");
     for (const sample of samples) expect(sample).not.toMatch(VIETNAMESE_LETTER);
   });
 

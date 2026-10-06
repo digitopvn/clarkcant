@@ -441,7 +441,7 @@ export async function collectTaskArtifact(deps: ArtifactIntakeDeps, taskId: stri
           kind: "file-version",
           ref: `artifact:${artifactId}`,
           digest: file.digest,
-          summary: `${file.name} (${String(fetched.bytes)} byte) từ ${file.peerNodeId}, khớp digest đã đề nghị`.slice(0, 1000),
+          summary: deps.words().receivedEvidence(file.name, fetched.bytes, file.peerNodeId).slice(0, 1000),
           verdict: "verified",
         },
       },
