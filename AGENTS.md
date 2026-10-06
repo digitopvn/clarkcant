@@ -289,32 +289,32 @@ Do not treat an invariant checker as evidence for things it does not verify.
 
 ### Issue status labels and ownership
 
-Every contributor, human or agent, keeps an issue's status label and assignee
-current, so parallel work does not collide.
+Keep each issue's assignee and status label current, so parallel work does not
+collide.
 
-- Before starting, read the issue's assignee, status label, linked PRs and open
-  branches. If someone else owns it, or an open PR already addresses it, comment
-  and coordinate instead of starting parallel work.
-- Assign yourself (the GitHub account doing the work) when you start.
-- Move exactly one status label through the lifecycle:
+- Before starting, read the assignee, status label, claim comments and linked
+  PRs. If someone else owns the issue or an open PR addresses it, coordinate
+  instead of starting parallel work.
+- When starting, assign the GitHub account doing the work and post a claim
+  comment naming the branch (and the agent session or worktree). Agents often
+  share one account, so the claim comment is what identifies the owner.
+- Replace the status label rather than adding another; an issue carries one:
 
-  | Label | Meaning |
-  | --- | --- |
-  | `in progress` | actively being implemented |
-  | `blocked` | cannot continue; the comment names the blocker issue or external gate |
-  | `in review` | implementation finished; review in progress |
-  | `done` | PR opened for the issue; waiting for CI/merge |
-  | `shipped` | merged into `main` |
+| Label | Meaning |
+| --- | --- |
+| `in progress` | being implemented |
+| `blocked` | cannot continue; a comment names the blocking issue or external gate |
+| `in review` | implementation finished; isolated review before the PR opens |
+| `done` | PR opened; final-head attestation, CI and merge pending |
+| `shipped` | the issue's full scope is merged into `main` |
 
-- `external-gate` is not a status. Keep it alongside the status when part of the
+- `external-gate` is not a status; keep it beside the status when part of the
   work needs credentials, hardware or a second host.
-- An epic stays `in progress` while child issues carry their own status. Partial
-  delivery is recorded in a comment that says what landed and what remains.
-- Review a change in an isolated reviewer context (a separate subagent or a
-  different person) that did not write it, then attest it as `REVIEW.md`
-  describes.
-- A finding unrelated to the current issue becomes its own issue. A related or
-  duplicate issue gets a comment linking the current work.
+- Use a closing keyword only when the PR delivers the issue's full scope. A
+  partial merge returns the issue to `in progress` (or `blocked`) with a comment
+  saying what landed and what remains; epics stay `in progress` while child
+  issues carry their own status. After an auto-merge, the next contributor who
+  touches the issue sets `shipped`.
 
 ## Documentation and language
 
