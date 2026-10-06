@@ -18,7 +18,12 @@ import {
  * - `spacing`: the term's own words, split the way speech splits them ("use effect" -> useEffect, "voice session dot
  *   ts" -> voice-session.ts).
  * - `alias`: a mis-hearing recorded for that term and no other ("stale closer" -> stale closure).
- * - `near-match`: a single-character slip on a long term ("playwrite" -> Playwright).
+ * - `near-match`: a single-character slip in one word of a long glossary, provider or model name ("playwrigt" ->
+ *   Playwright). Never into a symbol, path, branch or package, whose near neighbours are other real names, and never
+ *   from text already written as code.
+ *
+ * Part of a longer written word (`live` in `gemini-live.tsx`) is never touched, and punctuation the spelling carries
+ * is not written twice.
  *
  * It abstains rather than guesses. When a span reads as more than one known term it is left exactly as heard and
  * reported, so a targeted retry or the person can settle it. Every rule but a distinctive casing fix also needs the
@@ -28,7 +33,8 @@ import {
  *
  * A command is never the result of a guess. Commands are recognized and kept, but no alias, spacing variant or near
  * match is ever rewritten into one: `git status` and `git stash` differ by what they do, and a normaliser that picked
- * between them would be deciding what runs.
+ * between them would be deciding what runs. For the same reason no respelled word is allowed to complete a command
+ * with its neighbours ("git re base" stays as heard).
  */
 
 export interface NormalizationResult {
@@ -54,7 +60,7 @@ interface Form {
 interface Lexicon {
   forms: Map<string, Form[]>;
   longest: number;
-  nearMatchable: Array<{ term: RecognitionTerm; compact: string }>;
+  nearMatchable: Array<{ term: RecognitionTerm; words: string[] }>;
   compacts: Array<{ term: RecognitionTerm; compact: string }>;
 }
 
@@ -69,13 +75,28 @@ const TECHNICAL_CUES = new Set([
   "hàm", "biến", "nhánh", "tệp", "lỗi", "lệnh", "gói", "thư", "mục", "chạy", "cài",
 ]);
 
-/** Letters that only Vietnamese uses among the languages this reads: a sentence with them is not English. */
-const VIETNAMESE_LETTERS = /[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/iu;
+/**
+ * Vietnamese letters: every vowel with a tone mark, plus ă â đ ê ô ơ ư. A sentence with one is not English. A few of
+ * them (à é ó ...) also occur in borrowed English words; that only makes the evidence weaker, never a rewrite on its own.
+ */
+const VIETNAMESE_LETTERS = /[àáãảạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]/iu;
 
 const SEPARATOR_BETWEEN_WORDS = /^[\s._/-]*$/u;
 /** Terms shorter than this, once compacted, are never near-matched: a one-letter slip on a short word is a different word. */
 const NEAR_MATCH_MIN_LENGTH = 7;
 const MAX_FORM_WORDS = 6;
+/**
+ * The kinds a one-character slip may be corrected into. Names people say - glossary words, providers, models - have one
+ * spelling and no near neighbours that mean something else. Symbols, paths, branches and packages do: `setUser` and
+ * `getUser`, `app.ts` and `app.tsx` are one edit apart and are different things, so for them only an exact spoken form
+ * counts.
+ */
+const NEAR_MATCHABLE_KINDS: ReadonlySet<RecognitionTerm["kind"]> = new Set(["glossary", "provider", "model"]);
+/** Characters that join a word to the next inside one written token: `gemini-live.tsx`, `@scope/name`, `a/b`. */
+const JOINER = /[._/\\@#:-]/u;
+const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
+/** Text that is already written as code: inner capitals, a joiner between letters, or digits in a word. */
+const IDENTIFIER_SHAPED = /\p{Ll}\p{Lu}|[\p{L}\p{N}][._/\\@#-][\p{L}\p{N}]|\p{L}\p{N}|\p{N}\p{L}/u;
 
 const lexicons = new WeakMap<RecognitionContext, Lexicon>();
 
@@ -117,10 +138,16 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   const result: NormalizationResult = { text, changes: [], abstained: [], technical: [] };
   const replacements: Array<{ start: number; end: number; to: string }> = [];
   for (const hit of hits) {
-    const start = tokens[hit.from]!.start;
-    const end = tokens[hit.to - 1]!.end;
-    const source = text.slice(start, end);
     const terms = distinctTerms(hit.candidates);
+    // Punctuation the spelling itself carries ("@" of a scoped package, a trailing "/") belongs to the span when the
+    // text already has it, so a replacement never writes it twice.
+    const single = terms.length === 1 ? terms[0] : undefined;
+    const start = tokens[hit.from]!.start - (single === undefined ? 0 : presentBefore(text, tokens[hit.from]!.start, leadingMarks(single.text)));
+    const end = tokens[hit.to - 1]!.end + (single === undefined ? 0 : presentAfter(text, tokens[hit.to - 1]!.end, trailingMarks(single.text)));
+    // Part of a longer written word - `gemini-live.tsx`, `src/app.ts` - is somebody's own spelling of something else,
+    // not this term: it is neither corrected nor reported.
+    if (embeddedInWord(text, start, end)) continue;
+    const source = text.slice(start, end);
     if (terms.length > 1) {
       result.abstained.push({ start, end, text: source, candidates: terms.map((term) => term.text).slice(0, 8) });
       continue;
@@ -133,6 +160,9 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // A casing form heard with different separators ("node js" for Node.js) is a spacing change, not a casing one.
     const rule: Rule = literal === "casing" && source.toLowerCase() !== term.text.toLowerCase() ? "spacing" : literal;
     if (term.kind === "command" && rule !== "casing") continue;
+    // Nor is a command assembled from a guess: "git re base" stays as heard rather than becoming `git rebase` because
+    // its last word was respelled. Which command runs is never the normaliser's decision.
+    if (rule !== "casing" && completesCommand(tokens, hit.from, hit.to, term, lexicon)) continue;
     if (rule === "casing" && !raisesCaseOnly(source, term.text)) continue;
     const needsContext = rule !== "casing" || !isDistinctive(term);
     if (needsContext && !supported(hit.from, hit.to)) continue;
@@ -177,14 +207,10 @@ function matchAt(
       return { from: index, to: index + length, candidates: joined.map((entry) => ({ term: entry.term, rule: "spacing" })), near: false };
     }
     if (compact.length < NEAR_MATCH_MIN_LENGTH - 1) continue;
-    const near = lexicon.nearMatchable.filter(
-      (entry) =>
-        Math.abs(entry.compact.length - compact.length) <= 1 &&
-        entry.compact !== compact &&
-        // A plural is the same word used correctly, not a slip.
-        compact !== `${entry.compact}s` &&
-        withinOneEdit(entry.compact, compact),
-    );
+    // Something already written as code was written on purpose; a slip is a spoken word, not an identifier.
+    if (IDENTIFIER_SHAPED.test(text.slice(tokens[index]!.start, tokens[index + length - 1]!.end))) continue;
+    const heard = tokens.slice(index, index + length).map((token) => token.lower);
+    const near = lexicon.nearMatchable.filter((entry) => isSlipOf(entry.words, heard));
     if (near.length > 0) {
       return { from: index, to: index + length, candidates: near.map((entry) => ({ term: entry.term, rule: "near-match" })), near: true };
     }
@@ -226,7 +252,9 @@ function lexiconFor(context: RecognitionContext): Lexicon {
     for (const alias of term.aliases ?? []) add(tokenize(alias).map((token) => token.lower), { term, rule: "alias" });
     const compact = tokenize(term.text).map((token) => token.lower).join("");
     if (!/^\p{N}+$/u.test(compact)) compacts.push({ term, compact });
-    if (term.kind !== "command" && compact.length >= NEAR_MATCH_MIN_LENGTH) nearMatchable.push({ term, compact });
+    if (NEAR_MATCHABLE_KINDS.has(term.kind) && compact.length >= NEAR_MATCH_MIN_LENGTH) {
+      nearMatchable.push({ term, words: tokenize(term.text).map((token) => token.lower) });
+    }
   }
   const lexicon = { forms, longest, nearMatchable, compacts };
   lexicons.set(context, lexicon);
@@ -279,6 +307,72 @@ function distinctTerms(forms: readonly Form[]): RecognitionTerm[] {
 function strongestRule(forms: readonly Form[]): Rule {
   const order: Rule[] = ["casing", "spacing", "alias", "near-match"];
   return order.find((rule) => forms.some((form) => form.rule === rule)) ?? "near-match";
+}
+
+/**
+ * Whether the heard words are the term's own words with exactly one of them slipped by one character.
+ *
+ * Word for word, so a slip never absorbs a neighbour: "a pull request" is three words and `pull request` two, and the
+ * "a" is the person's, not a typo in the term.
+ */
+function isSlipOf(termWords: readonly string[], heard: readonly string[]): boolean {
+  if (termWords.length !== heard.length) return false;
+  let slips = 0;
+  for (let index = 0; index < heard.length; index += 1) {
+    const want = termWords[index]!;
+    const got = heard[index]!;
+    if (want === got) continue;
+    // A plural is the same word used correctly, not a slip.
+    if (got === `${want}s` || !withinOneEdit(want, got)) return false;
+    slips += 1;
+  }
+  return slips === 1;
+}
+
+/** The punctuation a spelling starts with, such as the `@` of a scoped package. */
+function leadingMarks(spelling: string): string {
+  return /^[^\p{L}\p{M}\p{N}]*/u.exec(spelling)?.[0] ?? "";
+}
+
+/** The punctuation a spelling ends with. */
+function trailingMarks(spelling: string): string {
+  return /[^\p{L}\p{M}\p{N}]*$/u.exec(spelling)?.[0] ?? "";
+}
+
+/** How much of `marks` the text already has just before `at`, taken whole or not at all. */
+function presentBefore(text: string, at: number, marks: string): number {
+  return marks !== "" && text.slice(Math.max(0, at - marks.length), at) === marks ? marks.length : 0;
+}
+
+/** How much of `marks` the text already has just after `at`, taken whole or not at all. */
+function presentAfter(text: string, at: number, marks: string): number {
+  return marks !== "" && text.slice(at, at + marks.length) === marks ? marks.length : 0;
+}
+
+/** Whether the span is glued to more of the same written word on either side, as `live` is in `gemini-live.tsx`. */
+function embeddedInWord(text: string, start: number, end: number): boolean {
+  const before = text[start - 1];
+  const after = text[end];
+  const wordBefore = before !== undefined && (WORD_CHARACTER.test(before) || (JOINER.test(before) && WORD_CHARACTER.test(text[start - 2] ?? "")));
+  const wordAfter = after !== undefined && (WORD_CHARACTER.test(after) || (JOINER.test(after) && WORD_CHARACTER.test(text[end + 1] ?? "")));
+  return wordBefore || wordAfter;
+}
+
+/** Whether writing `term` over tokens `from..to` would make it, with a word or two around it, a known command. */
+function completesCommand(tokens: readonly Token[], from: number, to: number, term: RecognitionTerm, lexicon: Lexicon): boolean {
+  const words = tokenize(term.text).map((token) => token.lower);
+  for (let before = 0; before <= 2; before += 1) {
+    for (let after = 0; after <= 2; after += 1) {
+      if ((before === 0 && after === 0) || from - before < 0 || to + after > tokens.length) continue;
+      const key = [
+        ...tokens.slice(from - before, from).map((token) => token.lower),
+        ...words,
+        ...tokens.slice(to, to + after).map((token) => token.lower),
+      ].join(" ");
+      if (lexicon.forms.get(key)?.some((form) => form.term.kind === "command") === true) return true;
+    }
+  }
+  return false;
 }
 
 /** Damerau-Levenshtein distance of at most one, without building the matrix. */

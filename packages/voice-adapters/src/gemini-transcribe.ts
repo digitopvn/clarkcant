@@ -47,6 +47,10 @@ export const GEMINI_TRANSCRIBE_SESSION_LIMIT_MS = 10 * 60_000;
 const MAX_AUDIO_FRAME_BYTES = 512 * 1024;
 /** Consecutive reopen attempts before the recognizer gives up and says so. */
 const DEFAULT_MAX_REOPENS = 3;
+/** How long a connection may take to complete setup before it counts as failed to open. */
+export const DEFAULT_TRANSCRIBE_SETUP_TIMEOUT_MS = 5000;
+/** Audio kept while a session reopens - ten seconds of PCM16 at 16 kHz mono - and sent once it is listening again. */
+const RECONNECT_BACKLOG_BYTES = 10 * 32_000;
 /** How long a connection must have worked before its close counts as the provider's limit rather than a fault. */
 const STABLE_CONNECTION_MS = 30_000;
 
@@ -143,6 +147,8 @@ export interface GeminiTranscribeOptions {
   now?: () => Instant;
   /** Consecutive reopen attempts after an unexpected close. */
   maxReopens?: number;
+  /** How long one connection may take to complete setup. */
+  setupTimeoutMs?: number;
 }
 
 export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
@@ -154,8 +160,21 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
   readonly #createSocket: LiveSocketFactory;
   readonly #now: () => Instant;
   readonly #maxReopens: number;
+  readonly #setupTimeoutMs: number;
 
   #socket: LiveSocket | undefined;
+  #setupTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The utterance a closed session was in the middle of.
+   *
+   * A reopen is not the end of a sentence: the provider ends every session at ten minutes, whatever the person is
+   * saying. What the closed session had heard stays the start of the utterance, and the reopened session's reading of
+   * the rest is joined to it, so one sentence is still one utterance - never half of it dispatched as if complete.
+   */
+  #carry: string | undefined;
+  /** Audio heard while reopening, sent to the new session once it listens, so the words said meanwhile are not lost. */
+  #backlog: Uint8Array[] = [];
+  #backlogBytes = 0;
   #sessionId = "";
   #tokenProvider: (() => Promise<string>) | undefined;
   #context: RecognitionContext | undefined;
@@ -183,6 +202,7 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     this.#createSocket = options.createSocket ?? globalSocketFactory;
     this.#now = options.now ?? nowInstant;
     this.#maxReopens = options.maxReopens ?? DEFAULT_MAX_REOPENS;
+    this.#setupTimeoutMs = options.setupTimeoutMs ?? DEFAULT_TRANSCRIBE_SETUP_TIMEOUT_MS;
     this.capabilities = {
       provider: this.provider,
       model: this.model,
@@ -220,14 +240,29 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     this.#stopped = true;
     const socket = this.#socket;
     this.#socket = undefined;
+    this.#clearSetupTimer();
+    this.#backlog = [];
+    this.#backlogBytes = 0;
+    // A `start` still waiting for setup is released rather than left pending for ever: stopping is how a caller that
+    // stopped waiting gets its connection closed.
+    const pending = this.#pendingReady;
     this.#pendingReady = undefined;
     socket?.close();
     if (this.#state !== "failed") this.#setState("ended");
+    pending?.reject(new Error("the recognizer was stopped before it was listening"));
   }
 
   sendAudio(frame: Uint8Array): void {
+    if (this.#muted || frame.byteLength === 0 || frame.byteLength > MAX_AUDIO_FRAME_BYTES) {
+      this.#framesDropped += 1;
+      return;
+    }
+    if (this.#state === "reconnecting" && !this.#stopped) {
+      this.#holdForReconnect(frame);
+      return;
+    }
     const socket = this.#socket;
-    if (socket === undefined || this.#state !== "listening" || this.#muted || frame.byteLength === 0 || frame.byteLength > MAX_AUDIO_FRAME_BYTES) {
+    if (socket === undefined || this.#state !== "listening") {
       this.#framesDropped += 1;
       return;
     }
@@ -270,6 +305,7 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
       this.#setState("failed");
       throw new Error("no credential was provided for the transcription session");
     }
+    if (this.#stopped) throw new Error("the recognizer was stopped before it was listening");
     const vocabulary = transcribeVocabulary(this.#context);
     this.#readyAtMs = undefined;
     const ready = new Promise<void>((resolve, reject) => {
@@ -277,6 +313,16 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     });
     const socket = this.#createSocket(`${this.#endpoint}?key=${encodeURIComponent(credential)}`);
     this.#socket = socket;
+    // A provider that accepts the connection and never completes setup must not hold the session open: past the
+    // bound it is a failure to open, which the caller can fall back from.
+    this.#clearSetupTimer();
+    this.#setupTimer = setTimeout(() => {
+      this.#setupTimer = undefined;
+      if (this.#socket !== socket || this.#readyAtMs !== undefined) return;
+      this.#socket = undefined;
+      socket.close();
+      this.#rejectPending(new Error(`transcription setup did not complete within ${this.#setupTimeoutMs} ms`));
+    }, this.#setupTimeoutMs);
 
     socket.onOpen(() => {
       socket.send(JSON.stringify(buildTranscribeSetupMessage({ model: this.model, vocabulary })));
@@ -304,10 +350,12 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
    *
    * The provider ends every session at ten minutes, so a close after a working session is reopened rather than
    * reported as the end of recognition; the newest context is applied on the way. A hypothesis the closed session never
-   * finalized is kept as the end of its utterance, because a sentence heard and then lost is the worse failure.
+   * finalized is not dispatched as if complete: it is carried into the reopened session as the start of the same
+   * utterance. If recognition cannot continue, it stays the last interim, which the caller keeps or hands to another
+   * source.
    */
   #closed(info: { code: number; reason: string }): void {
-    this.#flushInterim();
+    this.#clearSetupTimer();
     if (this.#readyAtMs === undefined) {
       this.#setState("failed");
       this.#rejectPending(new Error(`transcription socket closed before setup (${info.code}${info.reason === "" ? "" : `: ${info.reason}`})`));
@@ -321,9 +369,46 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
       return;
     }
     this.#reopens += 1;
+    this.#carry = this.#interim;
     this.#open().catch(() => {
+      this.#backlog = [];
+      this.#backlogBytes = 0;
       this.#setState("failed");
     });
+  }
+
+  #holdForReconnect(frame: Uint8Array): void {
+    this.#backlog.push(frame.slice());
+    this.#backlogBytes += frame.byteLength;
+    while (this.#backlogBytes > RECONNECT_BACKLOG_BYTES) {
+      const dropped = this.#backlog.shift();
+      this.#backlogBytes -= dropped?.byteLength ?? 0;
+      this.#framesDropped += 1;
+    }
+  }
+
+  #sendBacklog(): void {
+    const socket = this.#socket;
+    const held = this.#backlog;
+    this.#backlog = [];
+    this.#backlogBytes = 0;
+    if (socket === undefined) return;
+    for (const frame of held) {
+      socket.send(JSON.stringify(buildAudioMessage(frame)));
+      this.#framesSent += 1;
+    }
+  }
+
+  #clearSetupTimer(): void {
+    if (this.#setupTimer === undefined) return;
+    clearTimeout(this.#setupTimer);
+    this.#setupTimer = undefined;
+  }
+
+  /** A reading of the current utterance, after whatever a closed session had already heard of it. */
+  #withCarry(text: string): string {
+    const carry = this.#carry?.trim();
+    return carry === undefined || carry === "" ? text : `${carry} ${text.trim()}`;
   }
 
   #rejectPending(cause: Error): void {
@@ -337,21 +422,26 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
   #apply(event: TranscribeEvent): void {
     switch (event.kind) {
       case "ready": {
+        this.#clearSetupTimer();
         this.#readyAtMs = Date.now();
         this.#setState("listening");
+        this.#sendBacklog();
         const pending = this.#pendingReady;
         this.#pendingReady = undefined;
         pending?.resolve();
         return;
       }
       case "interim": {
-        this.#interim = event.text;
-        this.#emit(event.text, false, "provider");
+        const text = this.#withCarry(event.text);
+        this.#interim = text;
+        this.#emit(text, false);
         return;
       }
       case "final": {
+        const text = this.#withCarry(event.text);
+        this.#carry = undefined;
         this.#interim = undefined;
-        this.#emit(event.text, true, "provider");
+        this.#emit(text, true);
         this.#utterance += 1;
         this.#revision = 0;
         return;
@@ -370,23 +460,14 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     }
   }
 
-  #flushInterim(): void {
-    const text = this.#interim;
-    this.#interim = undefined;
-    if (text === undefined || text.trim() === "") return;
-    this.#emit(text, true, "session-end");
-    this.#utterance += 1;
-    this.#revision = 0;
-  }
-
-  #emit(text: string, isFinal: boolean, settledBy: "provider" | "session-end"): void {
+  #emit(text: string, isFinal: boolean): void {
     const utterance = recognizedUtteranceSchema.parse({
       voiceSessionId: this.#sessionId,
       utteranceId: `${this.#sessionId}:s${this.#utterance}`,
       revision: this.#revision,
       isFinal,
       text: text.slice(0, 8000),
-      ...(isFinal ? { settledBy } : {}),
+      ...(isFinal ? { settledBy: "provider" } : {}),
       provider: this.provider,
       model: this.model,
       contextApplied: this.#contextApplied,

@@ -45,8 +45,9 @@ export interface GlossaryEntry {
 /**
  * Terms a coding conversation uses whatever the project.
  *
- * Aliases are mis-hearings observed for that term and no other ("stale closer", "Jeff" for Jev). Spacing variants such
- * as "use effect" are not listed: the normaliser derives them from the spelling, so they cannot drift from it.
+ * Aliases are mis-hearings observed for that term and no other ("stale closer"). A real word or name is never an alias:
+ * "Jeff" is how Jev is often misheard, and also somebody's name, so it stays as heard. Spacing variants such as "use
+ * effect" are not listed: the normaliser derives them from the spelling, so they cannot drift from it.
  */
 export const CODING_GLOSSARY: readonly GlossaryEntry[] = [
   { text: "TypeScript", kind: "glossary" },
@@ -64,7 +65,7 @@ export const CODING_GLOSSARY: readonly GlossaryEntry[] = [
   { text: "OAuth", kind: "glossary", aliases: ["oh auth"] },
   { text: "MCP", kind: "glossary" },
   { text: "Pi", kind: "glossary" },
-  { text: "Jev", kind: "glossary", aliases: ["Jeff"] },
+  { text: "Jev", kind: "glossary" },
   { text: "Playwright", kind: "glossary", aliases: ["play write", "playwrite"] },
   { text: "Vitest", kind: "glossary", aliases: ["vite test"] },
   { text: "Node.js", kind: "glossary", aliases: ["node j s"] },

@@ -5,9 +5,9 @@
     "languageHints": ["vi-VN", "en-US"],
     "repositories": ["clarkcant", "clarkcant-web"],
     "packages": ["@clarkcant/contracts", "@clarkcant/voice-adapters", "zod", "vitest", "ws", "react", "electron"],
-    "paths": ["voice-session.ts", "apps/runtime/src/voice-session.ts", "gemini-live.ts", "pnpm-lock.yaml", "DESIGN.md", "AGENTS.md"],
+    "paths": ["voice-session.ts", "apps/runtime/src/voice-session.ts", "gemini-live.ts", "src/app.tsx", "pnpm-lock.yaml", "DESIGN.md", "AGENTS.md"],
     "branches": ["feat/468-code-switching-transcription", "fix/505-worker-settled-notice-language"],
-    "symbols": ["attachVoiceGateway", "foldTranscriptUpdate", "redactSecrets", "VoiceProviderAdapter", "useVoiceSession", "handleUserMessage", "voiceSession", "voice_session"],
+    "symbols": ["attachVoiceGateway", "foldTranscriptUpdate", "redactSecrets", "VoiceProviderAdapter", "useVoiceSession", "handleUserMessage", "voiceSession", "voice_session", "getUser"],
     "issues": ["#468", "#509"],
     "tools": ["control_app", "web_search"],
     "models": ["gemini-3.8-live", "gemini-3.5-transcribe-live", "claude-sonnet-4-5", "gpt-5"],
@@ -81,6 +81,12 @@
     { "id": "u065", "categories": ["english", "acronym", "framework"], "reference": "the WebSocket closes when the OAuth token expires", "terms": [{ "text": "WebSocket", "kind": "glossary" }, { "text": "OAuth", "kind": "acronym" }], "recognizers": { "simulated-live-baseline": "the web socket closes when the oauth token expires" } },
     { "id": "u066", "categories": ["code-switch", "command", "effectful"], "reference": "dừng lại, đừng chạy git reset", "terms": [{ "text": "git reset", "kind": "command" }], "recognizers": { "simulated-live-baseline": "dừng lại, đừng chạy git reset" } },
     { "id": "u067", "categories": ["code-switch", "symbol", "acronym"], "reference": "trong useVoiceSession có gọi API nào không", "terms": [{ "text": "useVoiceSession", "kind": "symbol" }, { "text": "API", "kind": "acronym" }], "recognizers": { "simulated-live-baseline": "trong use voice session có gọi api nào không" } },
-    { "id": "u068", "categories": ["code-switch", "symbol", "ambiguous"], "reference": "đổi tên biến voiceSession cho rõ hơn", "terms": [{ "text": "voiceSession", "kind": "symbol" }], "recognizers": { "simulated-live-baseline": "đổi tên biến voice session cho rõ hơn" } }
+    { "id": "u068", "categories": ["code-switch", "symbol", "ambiguous"], "reference": "đổi tên biến voiceSession cho rõ hơn", "terms": [{ "text": "voiceSession", "kind": "symbol" }], "recognizers": { "simulated-live-baseline": "đổi tên biến voice session cho rõ hơn" } },
+    { "id": "u069", "categories": ["code-switch", "symbol", "negative", "near-neighbour"], "reference": "sửa hàm setUser cho đúng type", "terms": [{ "text": "setUser", "kind": "symbol" }], "recognizers": { "simulated-live-baseline": "sửa hàm setUser cho đúng type" } },
+    { "id": "u070", "categories": ["code-switch", "path", "negative", "near-neighbour"], "reference": "mở src/app.ts chứ không phải src/app.tsx", "terms": [{ "text": "src/app.ts", "kind": "path" }, { "text": "src/app.tsx", "kind": "path" }], "recognizers": { "simulated-live-baseline": "mở src/app.ts chứ không phải src/app.tsx" } },
+    { "id": "u071", "categories": ["code-switch", "path", "negative", "embedded"], "reference": "so sánh gemini-live.tsx với gemini-live.ts", "terms": [{ "text": "gemini-live.ts", "kind": "path" }], "recognizers": { "simulated-live-baseline": "so sánh gemini-live.tsx với gemini-live.ts" } },
+    { "id": "u072", "categories": ["code-switch", "negative", "person-name"], "reference": "hỏi anh Jeff bên design xem màu này ổn không", "terms": [], "recognizers": { "simulated-live-baseline": "hỏi anh Jeff bên design xem màu này ổn không" } },
+    { "id": "u073", "categories": ["english", "glossary", "negative"], "reference": "open a pull request for this fix", "terms": [{ "text": "pull request", "kind": "glossary" }], "recognizers": { "simulated-live-baseline": "open a pull request for this fix" } },
+    { "id": "u074", "categories": ["code-switch", "command", "command-guard"], "reference": "chạy git rebase lên main đi", "terms": [{ "text": "git rebase", "kind": "command" }], "recognizers": { "simulated-live-baseline": "chạy git re base lên main đi" } }
   ]
 }

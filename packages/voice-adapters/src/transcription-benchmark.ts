@@ -109,6 +109,17 @@ export function benchmarkRecognizer(corpus: BenchmarkCorpus, recognizer: string,
   return { recognizer, raw: scoreTranscripts(raw), normalized: scoreTranscripts(normalized), changes, abstained, regressions };
 }
 
+/**
+ * Utterances whose canonical reference the normaliser would change.
+ *
+ * What was said, spelled right, must come back exactly as it is: any id here is a rewrite of a correct sentence, which
+ * is the one failure a normaliser is never allowed. The corpus carries negative entries (near neighbours such as
+ * `setUser` beside `getUser`, a person's name that sounds like a term) so this is a real test and not a formality.
+ */
+export function unstableReferences(corpus: BenchmarkCorpus, context = corpusContext(corpus)): string[] {
+  return corpus.utterances.filter((utterance) => normalizeTranscript(utterance.reference, context).text !== utterance.reference).map((utterance) => utterance.id);
+}
+
 export function recognizersIn(corpus: BenchmarkCorpus): string[] {
   return [...new Set(corpus.utterances.flatMap((utterance) => Object.keys(utterance.recognizers)))].sort();
 }
@@ -116,8 +127,10 @@ export function recognizersIn(corpus: BenchmarkCorpus): string[] {
 /** A Markdown report: one row per recognizer and stage, then preservation by kind. */
 export function formatBenchmarkReport(corpus: BenchmarkCorpus, results: readonly RecognizerBenchmark[]): string {
   const percent = (value: number): string => `${(value * 100).toFixed(1)}%`;
+  const unstable = unstableReferences(corpus);
   const lines = [
     `Corpus: ${corpus.utterances.length} utterances, ${corpus.utterances.reduce((sum, utterance) => sum + utterance.terms.length, 0)} technical terms.`,
+    `Canonical references the normaliser would change: ${unstable.length}${unstable.length === 0 ? "" : ` (${unstable.join(", ")})`}.`,
     "",
     "| Recognizer | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",

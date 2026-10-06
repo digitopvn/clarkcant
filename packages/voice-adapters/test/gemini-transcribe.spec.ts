@@ -67,7 +67,7 @@ class FakeSocket implements LiveSocket {
 const CREDENTIAL = "test-transcribe-credential";
 const CONTEXT = buildRecognitionContext({ symbols: ["useVoiceSession"], packages: ["@clarkcant/voice-adapters"] });
 
-function harness(options: { maxReopens?: number } = {}) {
+function harness(options: { maxReopens?: number; setupTimeoutMs?: number } = {}) {
   const sockets: FakeSocket[] = [];
   const urls: string[] = [];
   let created: (() => void) | undefined;
@@ -194,18 +194,63 @@ describe("a transcription session", () => {
     expect(adapter.audioFrameCounts).toEqual({ sent: 1, dropped: 1 });
   });
 
-  it("keeps an unfinished hypothesis as the end of its utterance when the session ends", async () => {
-    const { socket, utterances, nextSocket } = await started();
+  it("carries a sentence across a reopen as one utterance, with the audio said meanwhile", async () => {
+    const { socket, adapter, utterances, nextSocket, states } = await started();
     socket.deliver({ serverContent: { interimInputTranscription: { text: "mở file index" } } });
     const reopened = nextSocket();
+    // A close after a working session is the provider's ten-minute limit: the recognizer reopens with its context.
     socket.drop(1000, "session limit");
 
-    expect(utterances.at(-1)).toMatchObject({ isFinal: true, text: "mở file index", settledBy: "session-end" });
-    // A close after a working session is the provider's ten-minute limit: the recognizer reopens with its context.
+    // Half a sentence is not dispatched as if it were finished.
+    expect(utterances.filter((utterance) => utterance.isFinal)).toEqual([]);
+    expect(states.at(-1)).toBe("reconnecting");
+    adapter.sendAudio(new Uint8Array([5, 6]));
+    adapter.sendAudio(new Uint8Array([7, 8]));
+
     const second = await reopened;
     second.open();
     second.deliver({ setupComplete: {} });
     expect(second.sentObjects()[0]?.["setup"]).toBeDefined();
+    // The words said while it reopened reach the new session rather than being dropped.
+    expect(second.sentObjects().filter((message) => message["realtimeInput"] !== undefined)).toHaveLength(2);
+    expect(adapter.audioFrameCounts.dropped).toBe(0);
+
+    second.deliver({ serverContent: { interimInputTranscription: { text: "chấm ts" } } });
+    second.deliver({ serverContent: { inputTranscription: { text: "chấm ts giúp tui" } } });
+    expect(utterances.map((utterance) => [utterance.utteranceId, utterance.isFinal, utterance.text])).toEqual([
+      ["voice-1:s0", false, "mở file index"],
+      ["voice-1:s0", false, "mở file index chấm ts"],
+      ["voice-1:s0", true, "mở file index chấm ts giúp tui"],
+    ]);
+  });
+
+  it("leaves an unfinished hypothesis as the last interim, not a final, when recognition cannot continue", async () => {
+    const { socket, utterances, states } = await started({ maxReopens: 0 });
+    socket.deliver({ serverContent: { interimInputTranscription: { text: "mở file" } } });
+    socket.drop(1011, "internal");
+    expect(states.at(-1)).toBe("failed");
+    expect(utterances.map((utterance) => utterance.isFinal)).toEqual([false]);
+  });
+
+  it("gives up on a setup that never completes, within its bound", async () => {
+    const h = harness({ setupTimeoutMs: 20 });
+    const created = h.nextSocket();
+    const starting = h.adapter.start({ sessionId: "voice-5", tokenProvider: async () => CREDENTIAL });
+    const socket = await created;
+    socket.open();
+    await expect(starting).rejects.toThrow("did not complete within 20 ms");
+    expect(socket.closed).toBe(true);
+    expect(h.adapter.state).toBe("failed");
+  });
+
+  it("releases a start still waiting for setup when it is stopped", async () => {
+    const h = harness();
+    const created = h.nextSocket();
+    const starting = h.adapter.start({ sessionId: "voice-6", tokenProvider: async () => CREDENTIAL });
+    const socket = await created;
+    await h.adapter.stop();
+    await expect(starting).rejects.toThrow("stopped before it was listening");
+    expect(socket.closed).toBe(true);
   });
 
   it("fails rather than reopening forever when the provider keeps closing", async () => {

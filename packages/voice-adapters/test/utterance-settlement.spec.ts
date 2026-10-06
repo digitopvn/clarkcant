@@ -95,15 +95,21 @@ describe("settling an utterance", () => {
     });
     expect(failed.provenance.retry?.outcome).toBe("failed");
 
+    let signal: AbortSignal | undefined;
     const slow = await settleUtterance({
       utterance: utterance(AMBIGUOUS),
       context: CONTEXT,
       audio: AUDIO,
-      retry: () => new Promise(() => undefined),
+      retry: (input) => {
+        signal = input.signal;
+        return new Promise(() => undefined);
+      },
       retryTimeoutMs: 20,
     });
     expect(slow.text).toBe(AMBIGUOUS);
     expect(slow.provenance.retry?.outcome).toBe("failed");
+    // Past its bound the retry is told to stop, so it does not keep a provider session open unseen.
+    expect(signal?.aborted).toBe(true);
   });
 
   it("reports a retry as unavailable when there is no audio or no retry, never as done", async () => {
@@ -195,15 +201,25 @@ class ScriptedRecognizer implements SpeechRecognitionAdapter {
   stopped = false;
   context: RecognitionContext | undefined;
   readonly reply: string;
+  /** A provider that accepts the connection and never completes setup: start waits until stopped. */
+  readonly hangsAtStart: boolean;
   #listener: ((utterance: RecognizedUtterance) => void) | undefined;
-  constructor(reply: string) {
+  #release: ((cause: Error) => void) | undefined;
+  constructor(reply: string, hangsAtStart = false) {
     this.reply = reply;
+    this.hangsAtStart = hangsAtStart;
   }
   async start(input: { context?: RecognitionContext }): Promise<void> {
     this.context = input.context;
+    if (this.hangsAtStart) {
+      await new Promise<void>((_, reject) => {
+        this.#release = reject;
+      });
+    }
   }
   async stop(): Promise<void> {
     this.stopped = true;
+    this.#release?.(new Error("stopped"));
   }
   sendAudio(frame: Uint8Array): void {
     this.bytes += frame.byteLength;
@@ -239,7 +255,7 @@ describe("a recognizer as a retry", () => {
       quietMs: 10,
     });
     const audio = new Uint8Array(3200 * 2 + 100);
-    const heard = await retry({ audio, context: CONTEXT, reason: "ambiguous-technical-span" });
+    const heard = await retry({ audio, context: CONTEXT, reason: "ambiguous-technical-span", signal: new AbortController().signal });
 
     expect(heard).toBe("đổi tên biến voiceSession");
     expect(recognizers).toHaveLength(1);
@@ -250,6 +266,21 @@ describe("a recognizer as a retry", () => {
 
   it("answers nothing when the recognizer heard nothing", async () => {
     const retry = recognizerRetry({ createRecognizer: () => new ScriptedRecognizer("  "), tokenProvider: async () => "key", quietMs: 10 });
-    expect(await retry({ audio: AUDIO, context: CONTEXT, reason: "ambiguous-technical-span" })).toBeUndefined();
+    expect(await retry({ audio: AUDIO, context: CONTEXT, reason: "ambiguous-technical-span", signal: new AbortController().signal })).toBeUndefined();
+  });
+
+  it("closes its session when the caller stops waiting, even one stuck opening", async () => {
+    const recognizer = new ScriptedRecognizer("đổi tên biến voiceSession", true);
+    const retry = recognizerRetry({ createRecognizer: () => recognizer, tokenProvider: async () => "key", quietMs: 10 });
+    const settled = await settleUtterance({
+      utterance: utterance(AMBIGUOUS),
+      context: CONTEXT,
+      audio: AUDIO,
+      retry,
+      retryTimeoutMs: 20,
+    });
+    expect(settled.provenance.retry?.outcome).toBe("failed");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(recognizer.stopped).toBe(true);
   });
 });

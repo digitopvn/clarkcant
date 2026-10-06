@@ -81,7 +81,16 @@ describe("normalising a code-switched utterance", () => {
     expect(normalized("chạy vite test rồi mở pull request")).toBe("chạy Vitest rồi mở pull request");
     expect(normalized("dùng hook use voice session")).toBe("dùng hook useVoiceSession");
     expect(normalized("push lên clark cant web")).toBe("push lên clarkcant-web");
-    expect(normalized("Jeff quyết định thế nào")).toBe("Jev quyết định thế nào");
+  });
+
+  it("writes a scoped package's own punctuation once, not twice", () => {
+    expect(normalized("cài @clarkcant/voice-adapters đi")).toBe("cài @clarkcant/voice-adapters đi");
+    expect(normalized("cài clarkcant voice adapters đi")).toBe("cài @clarkcant/voice-adapters đi");
+  });
+
+  it("detects a Vietnamese sentence by any tone-marked vowel, not only the rarer ones", () => {
+    // "cái" and "là" carry only marks that French or Spanish also use, and are still Vietnamese.
+    expect(normalized("cái này là use effect")).toBe("cái này là useEffect");
   });
 
   it("records every change with its rule, bounded", () => {
@@ -111,6 +120,36 @@ describe("refusing to guess", () => {
   it("never turns one command into another", () => {
     expect(normalized("git stat rồi git stash")).toBe("git stat rồi git stash");
     expect(normalized("git stash my changes")).toBe("git stash my changes");
+  });
+
+  it("never assembles a command out of a respelled word and its neighbours", () => {
+    expect(normalized("chạy git re base đi")).toBe("chạy git re base đi");
+    expect(normalized("chạy pnp m install đi")).toBe("chạy pnp m install đi");
+    // The same respelling away from a command is still made.
+    expect(normalized("cài pnp m rồi chạy test")).toBe("cài pnpm rồi chạy test");
+  });
+
+  it("does not respell one real identifier into its neighbour", () => {
+    const context = buildRecognitionContext({ symbols: ["getUser"], paths: ["src/app.tsx", "voice-session.ts"] });
+    for (const sentence of ["sửa hàm setUser trong file", "mở src/app.ts giúp tui", "mở voice-sessions.ts đi", "mở src/app.tsx giúp tui"]) {
+      expect(normalizeTranscript(sentence, context).text).toBe(sentence);
+    }
+  });
+
+  it("never touches part of a longer written word", () => {
+    const context = buildRecognitionContext({ paths: ["gemini-live.ts"] });
+    expect(normalizeTranscript("sửa gemini-live.tsx nhé", context).text).toBe("sửa gemini-live.tsx nhé");
+    expect(normalizeTranscript("sửa src/gemini-live.ts nhé", context).changes).toEqual([]);
+  });
+
+  it("keeps a slip correction to one word of the term, never swallowing a neighbour", () => {
+    expect(normalized("open a pull request for this bug")).toBe("open a pull request for this bug");
+    expect(normalized("dùng playwrigt để test")).toBe("dùng Playwright để test");
+  });
+
+  it("leaves a person's name alone even when it sounds like a term", () => {
+    expect(normalized("Jeff quyết định thế nào")).toBe("Jeff quyết định thế nào");
+    expect(normalized("hỏi anh Jeff bên design")).toBe("hỏi anh Jeff bên design");
   });
 
   it("leaves English prose alone when nothing in it says it is about code", () => {

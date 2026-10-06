@@ -88,6 +88,7 @@ export {
   formatBenchmarkReport,
   parseCorpus,
   recognizersIn,
+  unstableReferences,
 } from "./transcription-benchmark.ts";
 export {
   BENCHMARK_TERM_KINDS,

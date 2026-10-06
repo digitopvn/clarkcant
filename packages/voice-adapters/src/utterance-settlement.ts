@@ -35,9 +35,15 @@ export type RetryReason = NonNullable<RecognitionProvenance["retry"]>["reason"];
  * Recognize one completed utterance again.
  *
  * Given the utterance's own audio, bounded and never stored, and a context focused on what was uncertain. Returns the
- * recognized text, or nothing when it heard nothing.
+ * recognized text, or nothing when it heard nothing. `signal` aborts when the caller stops waiting: a retry past its
+ * bound must close whatever it opened, not keep running unseen.
  */
-export type UtteranceRetry = (input: { audio: Uint8Array; context: RecognitionContext; reason: RetryReason }) => Promise<string | undefined>;
+export type UtteranceRetry = (input: {
+  audio: Uint8Array;
+  context: RecognitionContext;
+  reason: RetryReason;
+  signal: AbortSignal;
+}) => Promise<string | undefined>;
 
 export interface SettledUtterance {
   /** The reading that was kept, before normalisation. */
@@ -72,8 +78,13 @@ export async function settleUtterance(input: SettleInput): Promise<SettledUttera
       retry = { reason, outcome: "unavailable" };
     } else {
       const focused = focusContext(context, original.abstained.flatMap((span) => span.candidates));
+      const abort = new AbortController();
       try {
-        const alternative = await withTimeout(input.retry({ audio: input.audio, context: focused, reason }), input.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS);
+        const alternative = await withTimeout(
+          input.retry({ audio: input.audio, context: focused, reason, signal: abort.signal }),
+          input.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS,
+          abort,
+        );
         if (alternative !== undefined && preferAlternative(utterance.text, alternative, context, lowTechnical.length)) {
           heard = alternative;
           chosen = normalizeTranscript(alternative, context);
@@ -198,7 +209,8 @@ export function recognizerRetry(options: {
   quietMs?: number;
 }): UtteranceRetry {
   let count = 0;
-  return async ({ audio, context }) => {
+  return async ({ audio, context, signal }) => {
+    if (signal.aborted) return undefined;
     const recognizer = options.createRecognizer();
     count += 1;
     const finals: string[] = [];
@@ -216,17 +228,26 @@ export function recognizerRetry(options: {
       if (utterance.text.trim() !== "") finals.push(utterance.text.trim());
       arm();
     });
+    // The caller stopped waiting: close the session now, which also releases a start still waiting for setup.
+    const onAbort = (): void => {
+      settle();
+      void recognizer.stop().catch(() => undefined);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
     try {
       await recognizer.start({ sessionId: `retry-${count}`, tokenProvider: options.tokenProvider, context });
+      if (signal.aborted) return undefined;
       for (let at = 0; at < audio.byteLength; at += RETRY_FRAME_BYTES) recognizer.sendAudio(audio.subarray(at, at + RETRY_FRAME_BYTES));
       recognizer.endAudio?.();
       arm();
       await quiet;
     } finally {
+      signal.removeEventListener("abort", onAbort);
       if (timer !== undefined) clearTimeout(timer);
       unsubscribe();
       await recognizer.stop().catch(() => undefined);
     }
+    if (signal.aborted) return undefined;
     const text = finals.join(" ").trim();
     return text === "" ? undefined : text;
   };
@@ -292,13 +313,19 @@ function looksLikeCode(text: string): boolean {
   return /\p{Ll}\p{Lu}|[_/]|\.\p{L}{1,6}\b|\p{L}\p{N}/u.test(text);
 }
 
-async function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+/** The work, or a rejection after `timeoutMs` - at which point `abort` tells the work to stop. */
+async function withTimeout<T>(work: Promise<T>, timeoutMs: number, abort: AbortController): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // The abandoned work may still reject later; that is expected and not an unhandled failure.
+  work.catch(() => undefined);
   try {
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("the retry took too long")), timeoutMs);
+        timer = setTimeout(() => {
+          abort.abort();
+          reject(new Error("the retry took too long"));
+        }, timeoutMs);
       }),
     ]);
   } finally {

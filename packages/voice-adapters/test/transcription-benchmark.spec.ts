@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { pcmFromWav } from "../src/transcription-benchmark-cli.ts";
-import { benchmarkRecognizer, formatBenchmarkReport, parseCorpus, recognizersIn } from "../src/transcription-benchmark.ts";
+import { normalizeTranscript } from "../src/transcript-normalizer.ts";
+import { benchmarkRecognizer, corpusContext, formatBenchmarkReport, parseCorpus, recognizersIn, unstableReferences } from "../src/transcription-benchmark.ts";
 import { characterErrorRate, editDistance, scoreTranscripts, termPreserved, wordErrorRate } from "../src/transcription-metrics.ts";
 
 /**
@@ -88,6 +89,27 @@ describe("the normaliser on the corpus", () => {
     expect(result.normalized.cer).toBeLessThan(result.raw.cer);
   });
 
+  it("leaves every canonical reference exactly as it is", () => {
+    expect(unstableReferences(corpus)).toEqual([]);
+  });
+
+  it("carries negative entries - near neighbours, embedded names, a person's name - and leaves each one alone", () => {
+    const negatives = corpus.utterances.filter((utterance) => utterance.categories.includes("negative"));
+    expect(negatives.length).toBeGreaterThanOrEqual(5);
+    const context = corpusContext(corpus);
+    for (const utterance of negatives) {
+      expect(utterance.recognizers["simulated-live-baseline"]).toBe(utterance.reference);
+      expect(normalizeTranscript(utterance.reference, context).changes).toEqual([]);
+    }
+  });
+
+  it("does not assemble a command out of a respelled word", () => {
+    const guarded = corpus.utterances.find((utterance) => utterance.categories.includes("command-guard"));
+    expect(guarded).toBeDefined();
+    const heard = guarded!.recognizers["simulated-live-baseline"]!;
+    expect(normalizeTranscript(heard, corpusContext(corpus)).text).toBe(heard);
+  });
+
   it("keeps every command and version it was given, and abstains rather than guessing", () => {
     for (const kind of ["command", "version"] as const) {
       expect(result.normalized.preservation[kind]?.preserved).toBeGreaterThanOrEqual(result.raw.preservation[kind]?.preserved ?? 0);
@@ -100,6 +122,7 @@ describe("the normaliser on the corpus", () => {
     expect(report).toContain("| simulated-live-baseline | raw |");
     expect(report).toContain("| simulated-live-baseline | normalized |");
     expect(report).toContain(`Corpus: ${corpus.utterances.length} utterances`);
+    expect(report).toContain("Canonical references the normaliser would change: 0.");
   });
 });
 
