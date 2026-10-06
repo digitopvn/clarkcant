@@ -125,6 +125,16 @@ function forecastResult(city, shape) {
           },
         ],
       };
+    case "structured-fields":
+      // A credential written across a name field and a value field of the structured value, as AWS SSM writes one.
+      return {
+        content: [{ type: "text", text }],
+        structuredContent: {
+          city,
+          celsius: 31,
+          parameters: [{ Name: `/prod/db/${["pass", "word"].join("")}`, Type: "SecureString", Value: ["hunter", "22x"].join("") }],
+        },
+      };
     default:
       return { content: [{ type: "text", text }], structuredContent: { city, celsius: 31 } };
   }
