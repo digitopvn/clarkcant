@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { lstatSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import {
@@ -40,6 +40,8 @@ import { readPackage } from "./widget-package.ts";
 export const DEV_ENGINE_LIMITS = { maxFiles: 5_000, maxBytes: 64 * 1024 * 1024 } as const;
 /** How long the watcher waits after the last change before it builds, so a save that writes several files builds once. */
 export const DEV_ENGINE_DEBOUNCE_MS = 150;
+/** How often a watched folder is checked to still be there, for a platform whose watcher does not say it went away. */
+export const DEV_ENGINE_ROOT_CHECK_MS = 1_000;
 /**
  * Folders at the package root that are not the package: version control, and the author's installed dependencies, which
  * the package does not ship and which may hold thousands of files and links (a pnpm `node_modules` is junctions). Left
@@ -95,6 +97,10 @@ export interface DevEngineOptions {
   onBuild?: (event: DevEngineEvent) => void;
   /** Told when the watcher itself fails (the folder was removed, the platform cannot watch it). */
   onWatchError?: (error: Error) => void;
+  /** Told once when the watched folder is no longer there (deleted or renamed); watching has stopped. */
+  onRootGone?: () => void;
+  /** How often a watched folder is checked to still be there (`DEV_ENGINE_ROOT_CHECK_MS`). */
+  rootCheckMs?: number;
   /**
    * The facet lanes a build may declare. A package with a facet in any other lane is a failed build
    * (`FACET_LANE_UNSUPPORTED`), not a generation. Absent, every lane builds: the standalone dev host runs none of them.
@@ -206,6 +212,13 @@ function sizeOf(root: string): number {
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
+/**
+ * Why the folder's files could not be taken for a build. A folder over the size limit, or a link that points
+ * outside it, stays refused until the person changes the folder; anything else may pass on the next save.
+ */
+const devFilesCodeOf = (code: string): "FILES_TOO_LARGE" | "FILES_LINK_REFUSED" | "FILES_UNREADABLE" =>
+  code === "ARTIFACT_TOO_LARGE" ? "FILES_TOO_LARGE" : code === "ARTIFACT_SYMLINK_ESCAPE" ? "FILES_LINK_REFUSED" : "FILES_UNREADABLE";
+
 export function startDevEngine(options: DevEngineOptions): DevEngine {
   const root = resolve(options.root);
   const limits = options.limits ?? DEV_ENGINE_LIMITS;
@@ -266,7 +279,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       if (options.cacheRoot === undefined) {
         const digested = digestOfDirectory(root, { exclude: DEV_ENGINE_EXCLUDED_ROOT_NAMES, excludeAnyCase: true, limits });
         if (!digested.ok) {
-          return fail(trigger, [{ severity: "error", code: "FILES_UNREADABLE", message: `the files could not be digested: ${digested.message}` }]);
+          return fail(trigger, [{ severity: "error", code: devFilesCodeOf(digested.code), message: `the files could not be digested: ${digested.message}` }]);
         }
         digest = digested.digest;
       } else {
@@ -278,8 +291,13 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         });
         if (!snapshot.ok) {
           // Files that changed while they were copied are not a broken package: the next change event builds them again.
+          // A folder that is too large, or a link that leaves it, stays refused until the person changes the folder.
           return fail(trigger, [
-            { severity: "error", code: "FILES_UNREADABLE", message: `the files could not be copied for this build (${snapshot.code}): ${snapshot.message}` },
+            {
+              severity: "error",
+              code: devFilesCodeOf(snapshot.code),
+              message: `the files could not be copied for this build (${snapshot.code}): ${snapshot.message}`,
+            },
           ]);
         }
         folder = snapshot.artifact.path;
@@ -345,22 +363,44 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
 
   let watcher: FSWatcher | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let rootCheck: ReturnType<typeof setInterval> | undefined;
   const debounceMs = options.debounceMs ?? DEV_ENGINE_DEBOUNCE_MS;
   const stopWatching = (): void => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
+    if (rootCheck !== undefined) clearInterval(rootCheck);
+    rootCheck = undefined;
     watcher?.close();
     watcher = undefined;
+  };
+  /**
+   * Whether the folder is still there, and if not, stop watching and say so. A folder deleted or renamed while watched
+   * is not reported by every platform's watcher (Windows reports neither an event nor an error), so this is checked on
+   * every change and on a timer rather than left to the watcher.
+   */
+  const rootStillThere = (): boolean => {
+    if (closed || watcher === undefined) return !closed;
+    let present: boolean;
+    try {
+      present = statSync(root).isDirectory();
+    } catch {
+      present = false;
+    }
+    if (present) return true;
+    stopWatching();
+    options.onRootGone?.();
+    return false;
   };
   if (options.watch !== false) {
     try {
       watcher = watch(root, { recursive: true }, (_event, filename) => {
         const name = typeof filename === "string" ? filename : "";
+        if (!rootStillThere()) return;
         if (isExcludedRootName(name.split(/[\\/]/)[0] ?? "")) return;
         if (timer !== undefined) clearTimeout(timer);
         timer = setTimeout(() => {
           timer = undefined;
-          if (closed) return;
+          if (closed || !rootStillThere()) return;
           void enqueue("change").then(
             (event) => {
               if (!closed) options.onBuild?.(event);
@@ -373,9 +413,13 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       // The watcher never keeps a process alive by itself: the dev host's server or the node does that.
       watcher.unref();
       watcher.on("error", (error) => {
+        // A folder that went away is said as that, not as a watcher failure.
+        if (!rootStillThere()) return;
         stopWatching();
         options.onWatchError?.(error);
       });
+      rootCheck = setInterval(() => void rootStillThere(), options.rootCheckMs ?? DEV_ENGINE_ROOT_CHECK_MS);
+      rootCheck.unref();
     } catch (cause) {
       watcher = undefined;
       options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));

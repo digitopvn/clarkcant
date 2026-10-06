@@ -57,9 +57,10 @@ import {
  * Whose intent the installs carry out is the session's initiative. A session the person starts on their own surface
  * installs as their request, for any folder on the node outside its data folder. A session Clark starts during a turn
  * installs as Clark's own proposal (`proposed`), so a mode that asks before what the person did not ask for by name asks,
- * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`) or a folder inside a project root the person
- * configured themselves. A turn a
- * machine surface, an automation or a peer sent starts nothing.
+ * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`), or a folder inside a `workspace.roots` value
+ * the person recorded themselves (`configuredRoots`). Nothing lets the person record that value yet, so in practice Clark
+ * develops in the workspace; choosing a project folder is tracked in digitopvn/clarkcant#538. A turn a machine surface,
+ * an automation or a peer sent starts nothing.
  *
  * Phases 1–2 run only packages whose facets stay in the widget frame or are data (`WIDGET_DEV_ALLOWED_ISOLATIONS`); a
  * package with a service, tools or native facet is a failed build saying so.
@@ -224,11 +225,11 @@ export function createWidgetDevSessions(
    * Local folders only: a Windows share or device path is refused. Nothing that holds the node's data folder, or lies
    * inside it, may be watched, except Clark's widget workspace: the package cache, the session store and the database
    * live there, and a session that watched them would build from its own snapshots. A session Clark starts may watch only
-   * that workspace and folders inside a root the person configured themselves (`configuredRoots`), so a model cannot
-   * point the node's install path at an arbitrary folder; the person may name any other local folder from their own
-   * surface.
+   * that workspace and folders inside a root the person recorded themselves (`configuredRoots`), so a model cannot
+   * point the node's install path at an arbitrary folder. A session the person starts on their own surface (the REST
+   * route, as the owner) may name any other local folder.
    */
-  const checkRoot = (raw: string, initiative: WidgetDevInitiative): WidgetDevResult<string> => {
+  const checkRoot = (raw: string, initiative: { kind: WidgetDevInitiative["kind"] }): WidgetDevResult<string> => {
     const given = raw.trim();
     if (!isAbsolute(given)) return refusal(400, "ROOT_NOT_ABSOLUTE", "give the package folder as an absolute path on this node");
     if (isRemoteOrDevicePath(given)) {
@@ -263,10 +264,11 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * The folders the person configured themselves for their projects (`workspace.roots`, written by them in settings or
-   * onboarding). The built-in default, the home folder and the drive the node runs from, is not a choice the person
-   * made, and a value Clark wrote is not one either: neither lets Clark watch a folder. The node has no registry of
-   * projects the person added apart from these roots; its project index is a scan beneath them.
+   * The folders the person recorded themselves for their projects: a `workspace.roots` preference whose source is the
+   * person (`user` or `onboarding`). The built-in default, the home folder and the drive the node runs from, is not a
+   * choice the person made, and a value Clark wrote is not one either: neither lets Clark watch a folder. No surface
+   * writes such a value today, so this is normally empty; the node has no registry of projects apart from these roots
+   * (its project index is a scan beneath them), and letting the person choose a folder is digitopvn/clarkcant#538.
    */
   const configuredRoots = (): string[] => {
     const runtime = services().runtime;
@@ -394,6 +396,7 @@ export function createWidgetDevSessions(
         }
       } else {
         const denied = approval?.decision === "denied";
+        const said = hostText(ownerLocale(services().runtime)).approvals;
         stored = update(sessionId, (current) =>
           current.pending === undefined
             ? current
@@ -401,9 +404,7 @@ export function createWidgetDevSessions(
                 ...current,
                 pending: {
                   ...current.pending,
-                  refused: denied
-                    ? { code: "APPROVAL_DENIED", message: "you declined to run this build, so the previous one keeps running" }
-                    : { code: "APPROVAL_EXPIRED", message: "nobody answered the question about this build in time, so the previous one keeps running" },
+                  refused: denied ? { code: "APPROVAL_DENIED", message: said.devBuildDenied } : { code: "APPROVAL_EXPIRED", message: said.devBuildExpired },
                 },
               },
         );
@@ -539,7 +540,7 @@ export function createWidgetDevSessions(
         outcome.generationId === "" ? activeGeneration(installDeps(), latest.listing.packageId, services().runtime.identity.nodeId) : undefined;
       const generationId = outcome.generationId !== "" ? outcome.generationId : active?.snapshotDigest === latest.generation.digest ? active.generationId : undefined;
       if (generationId === undefined) {
-        const refused = { code: "INSTALL_NOT_ACTIVE", message: "the install was recorded, but this build is not the one running" };
+        const refused = { code: "INSTALL_NOT_ACTIVE", message: hostText(ownerLocale(services().runtime)).approvals.devBuildNotActive };
         update(sessionId, (current) => (current.pending === undefined ? current : { ...current, pending: { ...current.pending, refused } }));
         return;
       }
@@ -664,6 +665,26 @@ export function createWidgetDevSessions(
     return update(sessionId, ({ pending: _dropped, ...rest }) => ({ ...rest, status: "stopped", stopReason: reason }));
   };
 
+  /**
+   * Whether a live session's folder has gone (deleted or renamed); when it has, the session is stopped as `folder-gone`
+   * before anything is built or installed from it. A platform watcher does not always report this (Windows reports
+   * nothing), so the check is made before each build is followed, not only on a watcher error.
+   */
+  const stoppedIfGone = (sessionId: string, root: string): boolean => {
+    let present: boolean;
+    try {
+      present = statSync(root).isDirectory();
+    } catch {
+      present = false;
+    }
+    if (present) return false;
+    if (live.has(sessionId)) {
+      markStopped(sessionId, "folder-gone");
+      process.stderr.write(`widget dev: ${root} is gone, so its session was stopped; what it ran keeps running\n`);
+    }
+    return true;
+  };
+
   const watch = (stored: StoredDevSession): LiveSession => {
     const sessionId = stored.sessionId;
     const running = stored.running;
@@ -690,7 +711,7 @@ export function createWidgetDevSessions(
         baseline: () => live.get(sessionId)?.baseline,
         onBuild: (event) => {
           void serial(sessionId, async () => {
-            if (live.get(sessionId) !== session) return;
+            if (live.get(sessionId) !== session || stoppedIfGone(sessionId, stored.root)) return;
             update(sessionId, (current) => ({ ...current, lastBuild: event.build }));
             if (event.kind === "generation") remember(sessionId, event.record.generation.digest);
             await settle(sessionId, event.build.trigger);
@@ -705,6 +726,11 @@ export function createWidgetDevSessions(
             if (live.get(sessionId) === session) markStopped(sessionId, "watch-failed");
           });
         },
+        onRootGone: () => {
+          void serial(sessionId, async () => {
+            if (live.get(sessionId) === session) stoppedIfGone(sessionId, stored.root);
+          });
+        },
       }),
     };
     live.set(sessionId, session);
@@ -715,7 +741,8 @@ export function createWidgetDevSessions(
   const firstBuild = async (session: LiveSession): Promise<void> => {
     const event = await session.engine.ready;
     await serial(session.sessionId, async () => {
-      if (live.get(session.sessionId) !== session) return;
+      const root = read(session.sessionId)?.root;
+      if (live.get(session.sessionId) !== session || (root !== undefined && stoppedIfGone(session.sessionId, root))) return;
       update(session.sessionId, (current) => ({ ...current, lastBuild: event.build }));
       if (event.kind === "generation") remember(session.sessionId, event.record.generation.digest);
       await settle(session.sessionId, "start");
@@ -809,6 +836,15 @@ export function createWidgetDevSessions(
           ? refusal(404, "SESSION_NOT_FOUND", "there is no such widget dev session on this node")
           : refusal(409, "SESSION_STOPPED", "this session is stopped; start it again to build its folder");
       }
+      const root = read(sessionId)?.root;
+      if (root !== undefined) {
+        // A folder that has gone is said as a stopped session rather than built (and failed) once more.
+        const gone = await serial(sessionId, async () => (live.get(sessionId) === session ? stoppedIfGone(sessionId, root) : false));
+        if (gone) {
+          const view = sessionView(sessionId);
+          return view === undefined ? refusal(404, "SESSION_NOT_FOUND", "the session ended while it rebuilt") : { ok: true, value: view };
+        }
+      }
       // The engine reports the build through `onBuild`, which follows it on the session's chain; this waits behind it.
       await session.engine.rebuild("rebuild");
       const view = await serial(sessionId, async () => sessionView(sessionId));
@@ -855,11 +891,13 @@ export function createWidgetDevSessions(
       }
       for (const stored of readDevSessions(dataDir())) {
         if (stored.status !== "live" || live.has(stored.sessionId)) continue;
-        try {
-          if (!statSync(stored.root).isDirectory()) throw new Error("not a folder");
-        } catch {
-          markStopped(stored.sessionId, "folder-gone");
-          process.stderr.write(`widget dev: ${stored.root} is gone, so its session was stopped; what it ran keeps running\n`);
+        // The folder is checked again as a start checks it (where its path resolves to now, for whoever started the
+        // session): what was allowed then, such as a root the person has since removed, is not taken as allowed now.
+        const checked = checkRoot(stored.root, { kind: stored.initiative?.kind ?? "person" });
+        if (!checked.ok) {
+          const gone = checked.code === "ROOT_NOT_FOUND" || checked.code === "ROOT_NOT_A_FOLDER";
+          markStopped(stored.sessionId, gone ? "folder-gone" : "root-refused");
+          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}), so its session was stopped; what it ran keeps running\n`);
           continue;
         }
         if (live.size >= WIDGET_DEV_LIVE_MAX) {

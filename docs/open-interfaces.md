@@ -637,9 +637,9 @@ name, and a name longer than 120 characters is shortened before its extension, w
 Install button and a notice's `update` call; no agent tool installs a package from a directory (the package tool lists,
 uninstalls, restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with
 `403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`
-([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It may watch only Clark's own
-widget workspace or a folder inside a project root the person configured themselves, and the policy decides its
-installs as Clark's own proposal.
+([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It watches Clark's own widget
+workspace (choosing another project folder is not available yet; see
+[#538](https://github.com/digitopvn/clarkcant/issues/538)), and the policy decides its installs as Clark's own proposal.
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
@@ -716,7 +716,7 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Start watching `root` (an absolute path on the node). Answers `201` with the session once its first build ran and was activated as far as the policy allows. With `conversationId`, the widget is placed there (pinned open) once a generation runs. Starting a folder that has a stopped session picks that session up again. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone` or `capacity`). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
+| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` or `root-refused`). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
 | `DELETE /widget-dev/sessions/:id` | Stop watching (`stopReason: "requested"`). The running generation stays installed and keeps rendering where it was placed. |
 | `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
@@ -737,15 +737,14 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
 - `400 ROOT_IN_DATA_FOLDER` refuses the node's data folder, any folder inside it, and any folder that holds it. The one
   exception is Clark's widget workspace, `<dataDir>/widget-workspace`.
 - A session the person starts on this route may watch any other local folder.
-- A session Clark starts with `develop_widget` may watch only two kinds of folder:
-  - the widget workspace, where Clark scaffolds a new widget;
-  - a folder inside a project root the person configured themselves, meaning a `workspace.roots` preference they
-    wrote in settings or onboarding.
-
-  The built-in default roots (the home folder and the drive the node runs from) do not count, and neither does a value
-  Clark wrote. The node has no registry of projects the person added apart from these roots. Any other folder is
-  refused with `403 ROOT_NOT_OWNED`, in the owner's language. The message tells the person they can start the session
-  themselves or add the project's folder to `workspace.roots`.
+- A session Clark starts with `develop_widget` watches the widget workspace, where Clark scaffolds a new widget. To
+  develop an existing project, copy its folder into the widget workspace. Any other folder is refused with
+  `403 ROOT_NOT_OWNED`, in the owner's language, and the message says exactly that.
+- Choosing another project folder for Clark to develop in is not available yet; it is tracked in
+  [#538](https://github.com/digitopvn/clarkcant/issues/538). The check would also accept a folder inside a
+  `workspace.roots` preference the person recorded themselves, but no setting, onboarding step or route records one
+  today, and the built-in default roots (the home folder and the drive the node runs from) and values Clark wrote do not
+  count.
 
 **Which packages.** A session runs only packages whose facets stay in the widget frame or are data (`isolated-ui` and
 `declarative`). A build of a package with a service, tools or native facet fails with a diagnostic coded
@@ -762,7 +761,15 @@ Each generation is named by the content digest of its files, copied into the pac
 alone (`<dataDir>/widget-dev/sessions.json`). No index, npm or Marketplace is involved, and nothing is published.
 
 **What is built.** A `node_modules` folder at the root is left out of the digest, the copy and the watch, in any letter
-case, as `.git` is. Built output such as `dist` is kept.
+case, as `.git` is. Built output such as `dist` is kept. A build whose files cannot be taken fails with a diagnostic
+code, and the running generation stays:
+
+- `FILES_TOO_LARGE`: the folder holds more than 5,000 files or 64 MiB. It stays refused until files are removed.
+- `FILES_LINK_REFUSED`: the folder holds a link the copy refuses, either a symbolic link or junction that points
+  outside it or a file with a second hard link. It stays refused until the link is removed or what it points to is
+  copied in.
+- `FILES_UNREADABLE`: the files could not be read or copied, for example because they changed during the copy. The next
+  save builds again.
 
 **Cleaning up.** After each install, the session removes what its superseded generations left behind: their generation
 records and their copies in the package cache. It keeps the generation that runs, any build waiting on a question, and
@@ -772,8 +779,15 @@ the newest superseded generation, which is the one a rollback returns to.
 node starts with no sessions; the file is never overwritten.
 
 **When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
-reading as live. This happens when the watcher fails, when the folder is gone after a restart, or when the node is
-already watching eight folders as it resumes.
+reading as live:
+
+- `watch-failed`: the watcher failed.
+- `folder-gone`: the folder was deleted or renamed. The node checks for the folder at least once a second and before
+  each build, because Windows reports nothing when a watched folder is deleted. The same reason applies when the folder
+  is missing after a restart.
+- `capacity`: the node is already watching eight folders as it resumes.
+- `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
+  whose folder is outside the widget workspace.
 
 **Consent.** The policy decides each install under a **consent scope** rather than the artifact. The scope is the
 package id together with everything the build binds about its reach:

@@ -85,7 +85,15 @@ describe("the widget dev status line", () => {
   });
 
   it("says a refusal in the person's language, never the node's English inside a translated line", () => {
-    for (const code of ["APPROVAL_DENIED", "APPROVAL_EXPIRED", "POLICY_REFUSED", "PACKAGE_LISTED", "PACKAGE_IN_OTHER_SESSION", "PACKAGE_INSTALLED_OTHERWISE"]) {
+    for (const code of [
+      "APPROVAL_DENIED",
+      "APPROVAL_EXPIRED",
+      "POLICY_REFUSED",
+      "PACKAGE_LISTED",
+      "PACKAGE_IN_OTHER_SESSION",
+      "PACKAGE_INSTALLED_OTHERWISE",
+      "INSTALL_NOT_ACTIVE",
+    ]) {
       const refused = view({ latest: generation(3), activation: { state: "refused", generation: 3, code, message: "English from the node." } });
       expect(widgetDevStatusLine(refused, vi).text, code).not.toContain("English from the node");
       expect(widgetDevStatusLine(refused, en).text, code).not.toContain("English from the node");
@@ -106,11 +114,20 @@ describe("the widget dev status line", () => {
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "folder-gone", running: undefined, activation: { state: "none" } }), en).text).toBe(
       "No longer watching the folder · no build runs yet. The folder is gone.",
     );
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), vi).text).toContain("hãy chép dự án vào đó");
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), en).text).toContain("copy the project there");
   });
 
   it("says a problem the host found in the person's language and the package's own words as written", () => {
     expect(widgetDevDiagnosticText({ code: "FACET_LANE_UNSUPPORTED", message: "facet tools:x runs as service" }, vi)).toContain("ngoài khung widget");
     expect(widgetDevDiagnosticText({ code: "FILES_UNREADABLE", message: "EBUSY" }, en)).toBe("The files could not be read for this build; the next save builds again.");
+    // A folder that is too large, or links out of itself, is not fixed by the next save alone: each says what to change.
+    const tooLarge = widgetDevDiagnosticText({ code: "FILES_TOO_LARGE", message: "ARTIFACT_TOO_LARGE" }, en);
+    expect(tooLarge).toContain("5,000 files or 64 MB");
+    expect(tooLarge).toContain("remove files");
+    expect(widgetDevDiagnosticText({ code: "FILES_TOO_LARGE", message: "x" }, vi)).toContain("hãy bớt tệp");
+    expect(widgetDevDiagnosticText({ code: "FILES_LINK_REFUSED", message: "ARTIFACT_SYMLINK_ESCAPE" }, en)).toContain("remove the link");
+    expect(widgetDevDiagnosticText({ code: "FILES_LINK_REFUSED", message: "x" }, vi)).toContain("hãy xoá liên kết");
     expect(widgetDevDiagnosticText({ message: "widget.json: not JSON" }, vi)).toBe("widget.json: not JSON");
   });
 });

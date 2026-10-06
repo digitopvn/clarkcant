@@ -44,9 +44,14 @@ export type WidgetDevDiagnostic = z.infer<typeof widgetDevDiagnosticSchema>;
  * - `FACET_LANE_UNSUPPORTED`: the package declares a facet that runs outside the widget frame (a service, tools or
  *   native facet). A dev session runs only `isolated-ui` and `declarative` facets; such a package is installed the
  *   ordinary way instead.
- * - `FILES_UNREADABLE`: the folder's files could not be read, digested or copied for this build.
+ * - `FILES_UNREADABLE`: the folder's files could not be read, digested or copied for this build, for example because
+ *   they changed while they were copied; the next save builds again.
+ * - `FILES_TOO_LARGE`: the folder holds more files or bytes than a dev build takes; it stays refused until the person
+ *   removes files (`node_modules` and `.git` at its top are not counted).
+ * - `FILES_LINK_REFUSED`: a symbolic link in the folder points outside it; it stays refused until the person removes
+ *   the link or copies its target into the folder.
  */
-export const WIDGET_DEV_DIAGNOSTIC_CODES = ["FACET_LANE_UNSUPPORTED", "FILES_UNREADABLE"] as const;
+export const WIDGET_DEV_DIAGNOSTIC_CODES = ["FACET_LANE_UNSUPPORTED", "FILES_UNREADABLE", "FILES_TOO_LARGE", "FILES_LINK_REFUSED"] as const;
 
 /** The facet lanes a dev session runs: the widget frame's own, and data the host reads without running it. */
 export const WIDGET_DEV_ALLOWED_ISOLATIONS = ["isolated-ui", "declarative"] as const;
@@ -204,10 +209,12 @@ export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
  *
  * - `requested`: somebody stopped it.
  * - `watch-failed`: the platform stopped reporting changes (the folder was removed or cannot be watched).
- * - `folder-gone`: the folder was not there when the node started again.
+ * - `folder-gone`: the folder was deleted or renamed while it was watched, or was not there when the node started again.
  * - `capacity`: the node already watched as many folders as it does at once when it started again.
+ * - `root-refused`: when the node started again, the folder was no longer one the session may watch (for example a
+ *   session Clark started whose folder is outside the widget workspace, or a folder now inside the data folder).
  */
-export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity"]);
+export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity", "root-refused"]);
 export type WidgetDevStopReason = z.infer<typeof widgetDevStopReasonSchema>;
 
 /** A session as the node reports it. */

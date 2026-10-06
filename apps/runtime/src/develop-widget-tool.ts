@@ -38,8 +38,14 @@ export function describeDevSession(view: WidgetDevSessionView): string {
   if (activation.state === "refused") lines.push(`Generation ${String(activation.generation)} was not run: ${activation.message} (${activation.code}).`);
   if (activation.state === "none") lines.push("No generation runs yet.");
   if (view.status === "stopped" && view.stopReason !== undefined && view.stopReason !== "requested") {
-    const why = { "watch-failed": "watching its folder failed", "folder-gone": "its folder is gone", capacity: "the node already watches as many folders as it can" }[view.stopReason];
-    lines.push(`It stopped watching because ${why}; start it again to resume.`);
+    const why = {
+      "watch-failed": "watching its folder failed",
+      "folder-gone": "its folder is gone",
+      capacity: "the node already watches as many folders as it can",
+      "root-refused": "its folder is no longer one it may watch",
+    }[view.stopReason];
+    const next = view.stopReason === "root-refused" ? "copy the project into the widget workspace and start a session there" : "start it again to resume";
+    lines.push(`It stopped watching because ${why}; ${next}.`);
   }
   if (view.latest?.delta.verdict === "wider") lines.push("The newest build asks to reach more than the one before it.");
   if (view.lastBuild?.ok === false) {
@@ -74,8 +80,8 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       "place puts its widget here again, stop ends watching (what runs keeps running). The folder must be inside your " +
       "widget workspace" +
       (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget,`) +
-      " or inside a project root the person added to their workspace.roots setting themselves; any other folder the " +
-      "person starts from their own app. Only widgets that render in the frame or are data are " +
+      ". To develop an existing project, have it copied into the widget workspace first; choosing another project " +
+      "folder for widget development is not available yet (digitopvn/clarkcant#538). Only widgets that render in the frame or are data are " +
       "developed this way: a package with a service, tools or a native part is refused.",
     parameters: {
       type: "object",

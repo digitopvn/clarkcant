@@ -196,8 +196,14 @@ export interface HostText {
      * execution policy ran it without asking: what it added, so a wider reach is never taken in silence.
      */
     devSessionWidened: (name: string, generation: number, added: string) => string;
-    /** Why Clark may not watch a folder for a widget dev session, and how the person can. */
+    /** Why Clark may not watch a folder for a widget dev session, and what the person can do instead. */
     devSessionRootNotOwned: (root: string, workspace: string) => string;
+    /** Why a widget dev session's build is not running: the person declined it in the inbox. */
+    devBuildDenied: string;
+    /** Why a widget dev session's build is not running: nobody answered the question about it in time. */
+    devBuildExpired: string;
+    /** Why a widget dev session's build is not running: the install was recorded, yet another generation runs. */
+    devBuildNotActive: string;
     /** A capability grant an install asks about separately. */
     grantCard: (ref: string, name: string, version: string) => string;
     /** A command's result when it printed nothing: a fact worth stating rather than an empty block. */
@@ -544,7 +550,10 @@ const VI: HostText = {
     devSessionWidened: (name, generation, added) =>
       `Bản dựng ${String(generation)} của ${name} được truy cập nhiều hơn bản trước (${added}). Chính sách thực thi của bạn cho phép cài mà không hỏi, nên bản này đang chạy; mọi thay đổi đã được ghi lại.`,
     devSessionRootNotOwned: (root, workspace) =>
-      `Clark chỉ phát triển widget trong không gian widget của mình (${workspace}) hoặc trong một thư mục gốc bạn đã tự thêm vào cài đặt workspace.roots; ${root} không thuộc chỗ nào trong đó, nên chưa có gì được bắt đầu. Bạn có thể tự bắt đầu phiên cho thư mục này từ ứng dụng, hoặc thêm thư mục dự án của nó vào workspace.roots rồi nhờ lại.`,
+      `Clark phát triển widget trong không gian widget của mình (${workspace}); ${root} nằm ngoài đó, nên chưa có gì được bắt đầu. Để phát triển dự án đó ở đây, hãy chép thư mục của nó vào không gian widget rồi nhờ lại. Việc chọn một thư mục dự án khác để phát triển widget hiện chưa có (đang được theo dõi tại digitopvn/clarkcant#538).`,
+    devBuildDenied: "bạn đã từ chối chạy bản dựng này, nên bản trước vẫn chạy",
+    devBuildExpired: "không ai trả lời câu hỏi về bản dựng này kịp lúc, nên bản trước vẫn chạy",
+    devBuildNotActive: "việc cài đặt đã được ghi lại, nhưng bản dựng này không phải bản đang chạy",
     grantCard: (ref, name, version) => `cấp quyền ${ref} cho ${name} ${version}`,
     noOutput: "Không có output.",
     truncated: "\n… (đã cắt bớt)",
@@ -821,7 +830,10 @@ const EN: HostText = {
     devSessionWidened: (name, generation, added) =>
       `Build ${String(generation)} of ${name} reaches more than the one before it (${added}). Your execution policy lets installs run without asking, so it is running now; the change is recorded.`,
     devSessionRootNotOwned: (root, workspace) =>
-      `Clark develops widgets only in its own widget workspace (${workspace}) or inside a folder you added to the workspace.roots setting yourself; ${root} is in neither, so nothing was started. You can start a session for this folder yourself from the app, or add its project folder to workspace.roots and ask again.`,
+      `Clark develops widgets in its own widget workspace (${workspace}); ${root} is outside it, so nothing was started. To develop that project here, copy its folder into the widget workspace and ask again. Choosing another project folder for widget development is not available yet (tracked in digitopvn/clarkcant#538).`,
+    devBuildDenied: "you declined to run this build, so the previous one keeps running",
+    devBuildExpired: "nobody answered the question about this build in time, so the previous one keeps running",
+    devBuildNotActive: "the install was recorded, but this build is not the one running",
     grantCard: (ref, name, version) => `grant ${ref} to ${name} ${version}`,
     noOutput: "No output.",
     truncated: "\n… (truncated)",

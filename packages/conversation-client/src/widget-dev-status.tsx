@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 
-import type { WidgetDevSessionView } from "@clarkcant/contracts";
+import { WIDGET_DEV_DIAGNOSTIC_CODES, type WidgetDevSessionView } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
@@ -38,6 +38,7 @@ const REFUSAL_CODES = [
   "PACKAGE_LISTED",
   "PACKAGE_IN_OTHER_SESSION",
   "PACKAGE_INSTALLED_OTHERWISE",
+  "INSTALL_NOT_ACTIVE",
 ] as const;
 
 /**
@@ -51,9 +52,8 @@ export function widgetDevRefusalReason(code: string, t: Translate): string {
 
 /** A problem the host found in a build (it carries a code), in the person's language; the package's own words as they are. */
 export function widgetDevDiagnosticText(diagnostic: { code?: string | undefined; message: string }, t: Translate): string {
-  if (diagnostic.code === "FACET_LANE_UNSUPPORTED") return t("shell.dev.diagnostic.FACET_LANE_UNSUPPORTED");
-  if (diagnostic.code === "FILES_UNREADABLE") return t("shell.dev.diagnostic.FILES_UNREADABLE");
-  return diagnostic.message;
+  const known = WIDGET_DEV_DIAGNOSTIC_CODES.find((candidate) => candidate === diagnostic.code);
+  return known === undefined ? diagnostic.message : t(`shell.dev.diagnostic.${known}`);
 }
 
 /** The one line the status says, and whether it is a notice (something is not current) rather than plain status. */

@@ -422,10 +422,16 @@ describe("a widget dev session", () => {
     expect(services.projects.roots().length).toBeGreaterThan(0);
     const unset = await toolFor(conversationId).execute({ action: "start", root });
     expect(unset.text).toContain("Not started");
-    expect(unset.text).toContain("workspace.roots");
-    // Said in the owner's language (Vietnamese by default), with how to start it themselves or add the project.
-    expect(unset.text).toContain("tự bắt đầu phiên cho thư mục này");
-    expect(hostText("en").approvals.devSessionRootNotOwned("/x", "/w")).toContain("start a session for this folder yourself");
+    expect(unset.text).toContain("widget-workspace");
+    // Said in the owner's language (Vietnamese by default), with only what works today: copy the project into the
+    // widget workspace. Choosing another folder is not offered, since nothing lets the person choose one yet.
+    expect(unset.text).toContain("hãy chép thư mục của nó vào không gian widget");
+    expect(unset.text).toContain("digitopvn/clarkcant#538");
+    expect(unset.text).not.toContain("workspace.roots");
+    const english = hostText("en").approvals.devSessionRootNotOwned("/x", "/w");
+    expect(english).toContain("copy its folder into the widget workspace");
+    expect(english).toContain("not available yet");
+    expect(english).not.toMatch(/workspace\.roots|yourself|from the app/);
 
     setRoots("agent");
     expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Not started");
@@ -596,5 +602,46 @@ describe("a widget dev session", () => {
     expect(views.filter((view) => view.status === "live")).toHaveLength(8);
     expect(views.find((view) => view.sessionId === "wdev_8")).toMatchObject({ status: "stopped", stopReason: "capacity" });
     expect(views.find((view) => view.sessionId === "wdev_gone")).toMatchObject({ status: "stopped", stopReason: "folder-gone" });
+  });
+
+  it("checks a resumed session's folder as a start would, for whoever started it", async () => {
+    const at = new Date().toISOString();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    const theirs = join(dir, "elsewhere", "clock");
+    for (const folder of [elsewhere, theirs]) mkdirSync(folder, { recursive: true });
+    writeDevSessions(join(dir, "node"), [
+      // Clark may not watch a folder outside its workspace and the person's roots, whatever the store says.
+      { sessionId: "wdev_clark", root: elsewhere, status: "live" as const, startedAt: at, initiative: { kind: "clark" as const } },
+      { sessionId: "wdev_person", root: theirs, status: "live" as const, startedAt: at, initiative: { kind: "person" as const } },
+      { sessionId: "wdev_data", root: join(dir, "node"), status: "live" as const, startedAt: at },
+    ]);
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+
+    const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
+    expect(views.find((view) => view.sessionId === "wdev_clark")).toMatchObject({ status: "stopped", stopReason: "root-refused" });
+    expect(views.find((view) => view.sessionId === "wdev_data")).toMatchObject({ status: "stopped", stopReason: "root-refused" });
+    expect(views.find((view) => view.sessionId === "wdev_person")).toMatchObject({ status: "live" });
+  });
+
+  it("stops as folder-gone, rather than building again, when the folder is deleted before a rebuild", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    expect(rebuilt.status).toBe(200);
+    expect(session(rebuilt)).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+  });
+
+  it("stops a watched session as folder-gone when its folder is deleted, though the platform may report nothing", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    // Bounded: the node looks for the folder at least once a second (`DEV_ENGINE_ROOT_CHECK_MS`), and on every change.
+    const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
   });
 });

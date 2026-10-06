@@ -2887,19 +2887,19 @@ never a value ([dev-resources.spec.ts](../packages/widget-cli/test/dev-resources
 
 #### Developing in the conversation
 
-The dev host simulates a node. To see the widget on the node itself, ask Clark to develop the folder ("develop the
-widget in ~/code/timer"), or call `POST /widget-dev/sessions`
+The dev host simulates a node. To see the widget on the node itself, ask Clark to develop a widget ("build me a timer
+widget"), or call `POST /widget-dev/sessions` as the owner
 ([open interfaces](open-interfaces.md#widget-dev-sessions)). The node watches the folder with the same build engine
 the dev host uses: every change that reads as a package becomes an immutable generation named by the digest of its
 files, is copied into the node's package cache and listed for this node alone, and is installed through the ordinary
 install path. Nothing goes through npm, the Marketplace or a directory index, and nothing is published. A root
 `node_modules` folder is left out of each build; built output such as `dist` is kept.
 
-Clark may develop a folder only in two places. One is its own widget workspace (`<dataDir>/widget-workspace`), where it
-scaffolds a new widget. The other is inside a project root you added to the `workspace.roots` setting yourself. The
-built-in default roots, your home folder and the drive the node runs from, do not count. To develop any other folder,
-start the session yourself from the app, or add its project folder to `workspace.roots`. The node's own data folder is never developed, and neither is a
-network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
+Clark develops widgets in its own widget workspace (`<dataDir>/widget-workspace`), where it scaffolds a new widget. To
+have Clark work on a widget project you already have, copy its folder into the widget workspace. Clark cannot be pointed
+at another project folder yet; choosing one is tracked in
+[#538](https://github.com/digitopvn/clarkcant/issues/538). The node's own data folder is never developed, and neither
+is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
 a native part is refused with a problem saying so; install that package the ordinary way.
 
 The widget appears in the conversation in the production frame, with the production sandbox, bridge, state and
@@ -2909,7 +2909,7 @@ it is not the newest, why: the new build failed (with the problems), it waits fo
 refused it. "Showing the last successful build" is said exactly when that is what the conversation shows.
 
 The execution policy decides each install as it decides any other. A session Clark started is decided as Clark's own
-proposal, so guarded mode asks before its first install, while a session you started yourself is your request. When the
+proposal, so guarded mode asks before its first install, while a session started on the owner's route is your request. When the
 mode asks, the first install is a question, and so is every build that changes what the package reaches: declared
 reach, resources, facet lanes, facets, permissions, or the capabilities it requests. A build that only changes code or UI
 reuses that answer and runs at once. A mode that does not ask runs every build. When such a build reaches more than the
@@ -2918,8 +2918,10 @@ inbox was already shown to you with that. A build is also refused when its packa
 node: a listed package, another session, or a package installed the ordinary way.
 
 Stopping a session stops watching the folder; the last build keeps running where it was placed. When the node stops
-watching on its own, the status beside the frame says why: the watcher failed, the folder is gone, or the node already
-watches as many folders as it can. Superseded builds are cleaned up as new ones install. The node keeps the build that
+watching on its own, the status beside the frame says why. The watcher may have failed, or the folder may have been
+deleted or renamed; the node checks for the folder every second, since Windows reports nothing. The node may already
+watch as many folders as it can. After a restart, the folder may no longer be one the session may watch. A build whose
+folder is too large, or holds a link out of it, says so and what to change. Superseded builds are cleaned up as new ones install. The node keeps the build that
 runs and the one a rollback returns to.
 
 ### test

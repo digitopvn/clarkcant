@@ -642,9 +642,10 @@ một tên dài hơn 120 ký tự được rút ngắn ở phần trước phầ
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói từ thư mục (tool quản lý
 gói chỉ liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
 `403 PERSON_ONLY`. Tool duy nhất của agent đi tới đường cài là `develop_widget`
-([phiên phát triển widget](#phiên-phát-triển-widget)). Tool này chỉ chạy trong một lượt do chính người dùng gửi. Nó chỉ
-được theo dõi không gian widget riêng của Clark hoặc một thư mục nằm trong thư mục gốc dự án mà chính người dùng đã cấu
-hình, và chính sách quyết định các lần cài của nó như đề xuất của chính Clark.
+([phiên phát triển widget](#phiên-phát-triển-widget)). Tool này chỉ chạy trong một lượt do chính người dùng gửi. Nó
+theo dõi không gian widget riêng của Clark (việc chọn một thư mục dự án khác hiện chưa có; xem
+[#538](https://github.com/digitopvn/clarkcant/issues/538)), và chính sách quyết định các lần cài của nó như đề xuất của
+chính Clark.
 
 Với một gói được liệt kê bằng đường dẫn trên máy này, node sao chép các tệp của nó vào bộ nhớ đệm gói
 (`<dataDir>/package-cache/local/<sha256>`) và tính digest của bản sao (`digestOfDirectory`, cùng digest mà một lần
@@ -720,7 +721,7 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Bắt đầu theo dõi `root` (đường dẫn tuyệt đối trên node). Trả `201` kèm phiên sau khi lần dựng đầu tiên đã chạy và đã được kích hoạt trong phạm vi chính sách cho phép. Có `conversationId` thì widget được đặt vào đó (ghim mở) ngay khi một generation chạy. Bắt đầu một thư mục đã có phiên bị dừng sẽ tiếp tục chính phiên đó. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone` hoặc `capacity`). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
+| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` hoặc `root-refused`). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
 | `DELETE /widget-dev/sessions/:id` | Dừng theo dõi (`stopReason: "requested"`). Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
 | `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
@@ -742,15 +743,14 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
 - `400 ROOT_IN_DATA_FOLDER` từ chối thư mục dữ liệu của node, mọi thư mục nằm trong nó và mọi thư mục chứa nó. Ngoại lệ
   duy nhất là không gian widget của Clark, `<dataDir>/widget-workspace`.
 - Một phiên người dùng bắt đầu trên route này được theo dõi mọi thư mục cục bộ khác.
-- Một phiên Clark bắt đầu bằng `develop_widget` chỉ được theo dõi hai loại thư mục:
-  - không gian widget, nơi Clark dựng khung một widget mới;
-  - một thư mục nằm trong thư mục gốc dự án mà chính người dùng đã cấu hình, tức tùy chọn `workspace.roots` do họ
-    ghi trong cài đặt hoặc khi bắt đầu dùng.
-
-  Các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) không được tính, và giá trị do Clark ghi cũng
-  không. Ngoài các thư mục gốc này, node không có danh sách dự án nào do người dùng thêm. Mọi thư mục khác bị từ chối với
-  `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy. Thông báo cho người dùng biết họ có thể tự bắt đầu phiên, hoặc thêm thư
-  mục của dự án vào `workspace.roots`.
+- Một phiên Clark bắt đầu bằng `develop_widget` theo dõi không gian widget, nơi Clark dựng khung một widget mới. Để phát
+  triển một dự án có sẵn, hãy chép thư mục của nó vào không gian widget. Mọi thư mục khác bị từ chối với
+  `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy, và thông báo nói đúng như vậy.
+- Việc chọn một thư mục dự án khác để Clark phát triển hiện chưa có; việc này được theo dõi tại
+  [#538](https://github.com/digitopvn/clarkcant/issues/538). Bước kiểm cũng sẽ chấp nhận một thư mục nằm trong tùy chọn
+  `workspace.roots` do chính người dùng ghi, nhưng hiện chưa có cài đặt, bước bắt đầu dùng hay route nào ghi tùy chọn
+  này, còn các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) và giá trị do Clark ghi đều không được
+  tính.
 
 **Gói nào.** Một phiên chỉ chạy các gói có facet nằm trong frame widget hoặc là dữ liệu (`isolated-ui` và
 `declarative`). Lần dựng một gói có facet dịch vụ, công cụ hoặc native sẽ lỗi với một chẩn đoán mang mã
@@ -768,7 +768,15 @@ cho riêng node này (`<dataDir>/widget-dev/sessions.json`). Không có index, n
 gì được phát hành.
 
 **Những gì được dựng.** Thư mục `node_modules` ở gốc bị loại khỏi digest, bản sao và việc theo dõi, với mọi kiểu chữ hoa
-thường, giống như `.git`. Đầu ra đã dựng như `dist` vẫn được giữ.
+thường, giống như `.git`. Đầu ra đã dựng như `dist` vẫn được giữ. Một lần dựng không lấy được các tệp sẽ lỗi với một
+mã chẩn đoán, và generation đang chạy vẫn giữ nguyên:
+
+- `FILES_TOO_LARGE`: thư mục chứa hơn 5.000 tệp hoặc 64 MiB. Lần dựng vẫn bị từ chối cho tới khi bớt tệp.
+- `FILES_LINK_REFUSED`: thư mục chứa một liên kết mà bước sao chép từ chối, tức một liên kết tượng trưng hoặc junction
+  trỏ ra ngoài thư mục, hoặc một tệp có liên kết cứng thứ hai. Lần dựng vẫn bị từ chối cho tới khi xoá liên kết hoặc
+  chép thứ nó trỏ tới vào thư mục.
+- `FILES_UNREADABLE`: không đọc hoặc sao chép được các tệp, chẳng hạn vì chúng thay đổi trong lúc sao chép. Lần lưu tiếp
+  theo sẽ dựng lại.
 
 **Dọn dẹp.** Sau mỗi lần cài, phiên xóa những gì các generation đã bị thay thế để lại: bản ghi generation và bản sao của
 chúng trong bộ nhớ đệm gói. Phiên giữ generation đang chạy, mọi bản dựng đang chờ một câu hỏi, và generation bị thay thế
@@ -778,8 +786,15 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 `sessions.json.unreadable-<thời điểm>` và node bắt đầu mà không có phiên nào; tệp không bao giờ bị ghi đè.
 
 **Khi việc theo dõi dừng.** Một phiên mà thư mục không còn theo dõi được sẽ được đánh dấu là đã dừng, kèm lý do, thay vì
-vẫn hiện là đang chạy. Điều này xảy ra khi bộ theo dõi lỗi, khi thư mục đã mất sau một lần khởi động lại, hoặc khi node
-đã theo dõi tám thư mục lúc tiếp tục các phiên.
+vẫn hiện là đang chạy:
+
+- `watch-failed`: bộ theo dõi bị lỗi.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên. Node kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng,
+  vì Windows không báo gì khi một thư mục đang được theo dõi bị xoá. Lý do này cũng dùng khi thư mục không còn sau một
+  lần khởi động lại.
+- `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
+- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
+  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
 
 **Sự đồng ý.** Chính sách quyết định mỗi lần cài theo một **phạm vi đồng ý** thay vì theo artifact. Phạm vi là id gói
 cùng mọi thứ bản dựng ràng buộc về phạm vi tiếp cận của nó:

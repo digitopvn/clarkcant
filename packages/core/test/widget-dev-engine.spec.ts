@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -239,6 +239,43 @@ describe("the dev engine", () => {
     // Closed, the folder is no longer held open: on Windows a watched folder cannot be removed.
     rmSync(root, { recursive: true });
     expect(existsSync(root)).toBe(false);
+  });
+
+  it("notices a watched folder that was deleted, though the platform may report nothing, and stops watching", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    await engine.ready;
+    expect(engine.watching()).toBe(true);
+
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    const deadline = Date.now() + 5_000;
+    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(gone).toBe(1);
+    expect(engine.watching()).toBe(false);
+    // Told once: the check stops with the watch.
+    await new Promise((done) => setTimeout(done, 150));
+    expect(gone).toBe(1);
+  });
+
+  it("names a folder over the size limit, and a link out of it, apart from files that could not be read", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    const tooSmall = startDevEngine({ root, watch: false, cacheRoot, limits: { maxFiles: 1, maxBytes: 1024 } });
+    engines.push(tooSmall);
+    expect((await tooSmall.ready).kind).toBe("failed");
+    expect(tooSmall.lastBuild()?.diagnostics).toEqual([expect.objectContaining({ code: "FILES_TOO_LARGE" })]);
+
+    const outside = tempDir("dev-engine-outside-");
+    writeFileSync(join(outside, "secret.txt"), "secret");
+    symlinkSync(outside, join(root, "linked"), "junction");
+    for (const engine of [engineFor(root, cacheRoot), engineFor(root)]) {
+      expect((await engine.ready).kind).toBe("failed");
+      expect(engine.lastBuild()?.diagnostics).toEqual([expect.objectContaining({ code: "FILES_LINK_REFUSED" })]);
+    }
   });
 
   it("reports a missing folder as a failed build rather than throwing", async () => {
