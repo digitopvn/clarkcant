@@ -27,6 +27,7 @@ Trước khi sửa UI/UX, đọc [DESIGN.vi.md](../DESIGN.vi.md) để giữ đ�
 11. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
 12. [Giao diện mở](open-interfaces.vi.md) ([English](open-interfaces.md)): API, MCP, WebSocket, CLI cho ứng dụng bên thứ ba và công cụ AI.
 13. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
+14. [Chuẩn bị signing cho Release CI](release-ci-signing-setup.vi.md): checklist maintainer cho SSL.com Authenticode, Apple Developer ID/notarization, Linux/Omarchy signing và release credentials của #508.
 
 Các JSON trong [examples](examples/) chỉ minh họa **contract riêng của app**, không phải wire protocol chính thức của Pi/MCP/A2A, cũng không phải cấu hình chạy được trước khi app được implement.
 

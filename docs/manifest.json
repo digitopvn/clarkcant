@@ -20,13 +20,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 7591,
-      "sha256": "a0140015631604ca3e634e9b7c21101b74256293a79698b167ef83a6c91a8dcc"
+      "bytes": 7789,
+      "sha256": "7905c51b7cc6628deb8ed309a801b299a41c25a6fa3682ad26b3a8c2b062449a"
     },
     {
       "path": "README.vi.md",
-      "bytes": 8329,
-      "sha256": "3cc22d962c27025183372917da377407257ef6305ff4a1a3c8c11d27058bda01"
+      "bytes": 8542,
+      "sha256": "c57395d03c5fdcaf951da927feb6e5e2d2a6d8e01ce5c5845d4a089baa56cadf"
     },
     {
       "path": "browser-computer-use.md",
@@ -172,6 +172,16 @@
       "path": "voice-live-provider.md",
       "bytes": 4497,
       "sha256": "42cefb8c498f1ec7c347ccc0ea6527acf5df89505f67b993c7a0b7e2ac004d1c"
+    },
+    {
+      "path": "release-ci-signing-setup.md",
+      "bytes": 10631,
+      "sha256": "360526675e9f56f76f42e88d7f0f06e1a470c9ac5859cbf85ced931157ac9cd8"
+    },
+    {
+      "path": "release-ci-signing-setup.vi.md",
+      "bytes": 11229,
+      "sha256": "e368c543abcb7ea25a49b9b522ed5f6ae6f3bb206bc06ff2dfa76f9e6aeb9766"
     }
   ]
 }

@@ -27,6 +27,7 @@ Before changing UI/UX, read [DESIGN.md](../DESIGN.md) to stay true to the intera
 11. [ADR-001 — Gemini Live for voice](research/adr-001-gemini-live-provider.md) and [P0.1 compatibility lock](research/compatibility-lock.md): the decision that replaces the blueprint, and the Pi SDK lifecycle as actually measured.
 12. [Open interfaces](open-interfaces.md) ([Tiếng Việt](open-interfaces.vi.md)): API, MCP, WebSocket, CLI for third-party applications and AI tools.
 13. [Changelog](CHANGELOG.md): old constraints that have been replaced.
+14. [Release CI signing setup](release-ci-signing-setup.md): maintainer checklist for SSL.com Authenticode, Apple Developer ID/notarization, Linux/Omarchy signing, and release credentials for #508.
 
 The JSON files in [examples](examples/) only illustrate **the app's own contracts**; they are not the official wire protocol of Pi/MCP/A2A, nor runnable configuration before the app is implemented.
 
