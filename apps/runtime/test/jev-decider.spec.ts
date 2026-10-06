@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Instant } from "@clarkcant/contracts";
+import { type Instant, redactSecrets } from "@clarkcant/contracts";
 import { migrate, openDatabase, upsertTask, type Database } from "@clarkcant/storage";
 
 import {
@@ -18,6 +18,7 @@ import {
   rankGapIsClear,
   decideRuntimeTarget,
   decideSearchResult,
+  decideTurnAction,
   searchDeciderFromEnv,
   searchDecisionBudget,
 } from "../src/jev-decider.ts";
@@ -426,6 +427,41 @@ describe("the selector's data-class ceiling", () => {
       classify,
     });
     expect(asked).toEqual([]);
+  });
+
+  describe("a credential that arrives JSON-escaped", () => {
+    // Assembled here so no scanner reads a literal credential in this file.
+    const value = ["hunter", "22x9", "Q7"].join("");
+    const escapedTexts = [
+      // A JSON text carried inside a JSON string, as a tool's answer quotes it.
+      `kết quả: ${JSON.stringify(JSON.stringify({ password: value }))}`,
+      // A name/value pair, as a parameter store answers.
+      `kết quả: ${JSON.stringify(JSON.stringify({ name: "api_key", value }))}`,
+    ];
+
+    it.each(escapedTexts)("is not sent as free text, though redaction does not see it: %s", async (text) => {
+      // The redaction shapes read the text as written, so the value survives them; the classifier reads it unescaped.
+      expect(redactSecrets(text)).toContain(value);
+      expect(selectorMayRead(text)).toBe(false);
+      // Fails closed: what is still above the ceiling after redaction is not sent at all.
+      expect(selectorText(text, 400)).toBe("");
+
+      const { recorded, bodies } = recordingBodies();
+      await decideTurnAction(deps(recorded), { text, runningMs: 5_000 });
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).not.toContain(value);
+      expect(JSON.parse(bodies[0]!).state.message).toBe("");
+    });
+
+    it.each(escapedTexts)("is never offered as a search result: %s", async (text) => {
+      const { recorded, bodies } = recordingBodies();
+      const outcome = await decideSearchResult(deps(recorded), {
+        query: "kết quả",
+        results: [close[0]!, { ...close[1]!, snippet: text }],
+      });
+      expect(outcome).toEqual({ status: "rank", reason: "fewer than two results may be shown to the decision provider" });
+      expect(bodies).toHaveLength(0);
+    });
   });
 
   it("leaves out a context candidate above the ceiling even when the caller did not label it", async () => {
