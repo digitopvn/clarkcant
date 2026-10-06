@@ -1215,8 +1215,9 @@ export interface RunTaskResult {
   /** Evidence the run actually produced. A run with none cannot succeed. */
   evidenceKinds: string[];
   /**
-   * The run's own words, or the host's when it had none to settle on. The latter are English and are what a peer that
-   * handed the task over is sent.
+   * The run's own words, or the host's when it had none to settle on. The host's are what a peer that handed the task
+   * over is sent, in the one language each was always written in: English for the conductor's own sentences, Vietnamese
+   * for a settlement on what the person recorded about its effects (`ReconciledSettlement.message`).
    */
   message: string;
   /** Present when `message` is the host's own words: the same thing as data, for the owner to be told in their language. */

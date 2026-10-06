@@ -14,7 +14,7 @@ import {
   type PeerEnvelope,
   type TaskRecord,
 } from "@clarkcant/contracts";
-import { createTask, registerCapability, startTaskHere, updateReadiness } from "@clarkcant/core";
+import { createTask, registerCapability, setPreference, startTaskHere, updateReadiness } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
 import { CONTROLLED_CODE_TASK } from "@clarkcant/project-work";
 import {
@@ -518,15 +518,30 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     await waitUntil(() => tasksOn(b)[0]?.state === "running", "the first task to be running on B");
     await b.stop();
     await signal(a, "note-2");
-    await waitUntil(() => tasksOn(a).filter((task) => task.state === "running").length === 2, "both tasks to be running for A");
-    const [unanswered, refused] = tasksOn(a);
+    await signal(a, "note-3");
+    await waitUntil(() => tasksOn(a).filter((task) => task.state === "running").length === 3, "all three tasks to be running for A");
+    const [unanswered, refused, refusedInEnglish] = tasksOn(a);
     const settle = settleUndeliveredTasks(a.services, () => new Date().toISOString() as Instant);
     const peerNodeId = identityOf(b).nodeId;
+    const toldAbout = (taskId: string | undefined) => {
+      const line = said(a, onA).find((text) => text.includes(`(task ${String(taskId)}):`));
+      const notice = oneRow<{ title: string; body: string }>(
+        a.services.runtime.db,
+        "SELECT title, body FROM notifications WHERE dedup_key = ?",
+        `worker:${String(taskId)}`,
+      );
+      return { line, title: notice?.title, body: notice?.body };
+    };
 
-    // The peer turned the hand-over down, so it never ran there: the task failed.
+    // The peer turned the hand-over down, so it never ran there: the task failed, and the owner is told only why, in
+    // their language (Vietnamese by default), title and body alike.
     settle({ messageId: "msg_refused", peerNodeId, kind: "delegate", taskId: String(refused?.taskId), refusedByPeer: true });
     expect(getTask(a.services.runtime.db, String(refused?.taskId))?.state).toBe("failed");
-    expect(said(a, onA).some((text) => text.startsWith(`Không xong (task ${String(refused?.taskId)})`) && text.includes("từ chối"))).toBe(true);
+    expect(toldAbout(refused?.taskId)).toEqual({
+      line: `Không xong (task ${String(refused?.taskId)}): ${peerNodeId} từ chối nhận việc này nên nó không chạy ở đó`,
+      title: "Việc chạy nền không xong",
+      body: `${peerNodeId} từ chối nhận việc này nên nó không chạy ở đó`,
+    });
 
     // A stop nobody answered may not have stopped anything: the outcome is unknown, and said so.
     const stopped = await call(a, `/tasks/${String(unanswered?.taskId)}/cancel`, { token: a.token });
@@ -534,6 +549,19 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     settle({ messageId: "msg_lost", peerNodeId, kind: "cancel.request", taskId: String(unanswered?.taskId), refusedByPeer: false });
     expect(getTask(a.services.runtime.db, String(unanswered?.taskId))?.state).toBe("uncertain");
     expect(said(a, onA).some((text) => text.includes(`(task ${String(unanswered?.taskId)})`) && text.includes("yêu cầu dừng"))).toBe(true);
+
+    // An owner who chose English is told the same refusal in English, with nothing of the success gate's wording.
+    setPreference(
+      { db: a.services.runtime.db, now: () => new Date().toISOString() as Instant },
+      { principalId: a.services.runtime.identity.ownerPrincipalId, key: "experience.language", scope: "global", value: "en", source: "user" },
+    );
+    settle({ messageId: "msg_refused_en", peerNodeId, kind: "delegate", taskId: String(refusedInEnglish?.taskId), refusedByPeer: true });
+    expect(getTask(a.services.runtime.db, String(refusedInEnglish?.taskId))?.state).toBe("failed");
+    expect(toldAbout(refusedInEnglish?.taskId)).toEqual({
+      line: `Did not finish (task ${String(refusedInEnglish?.taskId)}): ${peerNodeId} refused to take this, so it did not run there`,
+      title: "Background work did not finish",
+      body: `${peerNodeId} refused to take this, so it did not run there`,
+    });
 
     // A letter about a task already settled, or one some other node was running, changes nothing.
     settle({ messageId: "msg_again", peerNodeId, kind: "delegate", taskId: String(refused?.taskId), refusedByPeer: false });

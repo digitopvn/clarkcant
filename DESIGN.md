@@ -1217,22 +1217,21 @@ Use segmented controls, toggles and swatches:
 - Desktop: the desktop window's own shell page reads the same compiled tokens (`apps/desktop/src/appearance-tokens.css`,
   generated from Clark Default) and follows the system's light or dark; the conversation window is the same page as the
   web client, so a theme looks the same in normal, expanded, compact and Orb modes.
-- Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
-  `<html lang>`, and persists across reload and devices through the preference registry
-  (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no
-  cross-platform signal for "UI language" is reliable enough not to silently switch a Vietnamese
-  speaker's product language away from Vietnamese. Only default chrome (composer, timeline chrome,
-  settings, error copy, voice controls, marketplace headings) is translated; agent output is never
+- Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets `<html lang>`, and
+  persists across reload and devices through the preference registry (`experience.language`). Default is Vietnamese;
+  there is no "follow system" option, because no cross-platform signal for "UI language" is reliable enough not to
+  silently switch a Vietnamese speaker's product language away from Vietnamese. Only default chrome (composer,
+  timeline chrome, settings, error copy, voice controls, marketplace headings) is translated; agent output is never
   translated. The words the node itself writes for its owner are worded in this language when they are written, and
   never translated on the client. That covers the model note and other host cards, the rows and receipts an approved
   command or package call leaves, approval cards and the reason a task waits for one, how a task ended when the node
   wrote it (a refusal, a run with nothing to show, a stop, an answer recorded for an effect), inbox notices,
   start-screen suggestions, and the Tools tab's labels. Text the node did not write, such as an error or what a run
-  reported, is quoted as written rather than worded into the sentence. What is already written keeps its language: switching changes what is
-  written next, so an approval card asked before the switch keeps its wording, and so does that wording where the
-  notice of its expiry quotes it. Two kinds of text stay as written. Text a node sends to a paired node is
-  one, because that node's owner's language is not known. Labels and summaries authored by a package or extension are
-  the other: they are shown in their author's words.
+  reported, is quoted as written rather than worded into the sentence. What is already written keeps its language:
+  switching changes what is written next, so an approval card asked before the switch keeps its wording, and so does
+  that wording where the notice of its expiry quotes it. Two kinds of text stay as written. Text a node sends to a
+  paired node is one, because that node's owner's language is not known. Labels and summaries authored by a package or
+  extension are the other: they are shown in their author's words.
 - Theme Lab: Browse themes opens a temporary Gallery above Settings. Opening puts focus on the selected theme once;
   subsequent preview updates do not steal it. Picking in the Gallery previews production components locally, and
   Apply uses the same confirmed preference write as the main theme list. The last six choices are available as

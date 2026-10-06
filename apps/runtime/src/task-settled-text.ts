@@ -1,7 +1,7 @@
 import type { AppIntentLocale, DataClass } from "@clarkcant/contracts";
-import { type PolicyRefusal, type SuccessGateReason, type TaskSettleReason, quotedEffectIntent } from "@clarkcant/core";
+import type { PolicyRefusal, TaskSettleReason } from "@clarkcant/core";
 
-import { hostText } from "./host-text.ts";
+import { dispatchRefusalOwnerText, settleReasonOwnerText } from "./task-settled-owner-text.ts";
 import { dataClassTaskRefusal } from "./send-boundary.ts";
 
 /**
@@ -9,8 +9,8 @@ import { dataClassTaskRefusal } from "./send-boundary.ts";
  *
  * The dispatcher's sentence for a task is written from this in English (`dispatchRefusalMessage`): that is what the task's
  * evidence records and what a peer that handed the task over is sent, both unchanged. The owner of this node is told
- * the same thing in their own language (`taskSettledText`). Text from elsewhere — an error, a lease's own message — is
- * carried as `detail` and quoted, never blended into the sentence.
+ * the same thing in their own language (`taskSettledText`), where text from elsewhere — an error, a lease's own
+ * message — is quoted rather than blended into the sentence, and internal codes are left out.
  */
 export type DispatchRefusal =
   | { code: "stopped-before-start" }
@@ -39,11 +39,6 @@ export type DispatchRefusal =
 
 /** Every reason a settled task's host-written message stands for: the conductor's, or this node's dispatcher's. */
 export type TaskSettledReason = TaskSettleReason | DispatchRefusal;
-
-/** Text from elsewhere, set apart as a quotation. */
-function quoted(text: string): string {
-  return `“${text}”`;
-}
 
 /**
  * The dispatcher's sentence for a refusal, in English: what the task records and what a peer is sent. Kept word for
@@ -102,181 +97,24 @@ export function dispatchRefusalMessage(reason: DispatchRefusal): string {
   }
 }
 
-/** The same refusal, in Vietnamese. Quoted text stays as it was written. */
-function dispatchRefusalVi(reason: DispatchRefusal): string {
-  const never = "worker chưa hề được khởi động";
-  const settings = "Cài đặt → AI & Định tuyến";
-  switch (reason.code) {
-    case "stopped-before-start":
-      return "đã dừng trước khi có worker nào được khởi động cho việc này";
-    case "capability-busy":
-      return `capability ${reason.capabilityRef} đang bận trên node này (${reason.heldUntil === undefined ? (reason.detail === undefined ? "đang được dùng" : quoted(reason.detail)) : `một lần chạy khác giữ nó tới ${reason.heldUntil}`}); việc chưa được chạy và có thể thử lại`;
-    case "browser-not-asked":
-      return `đã từ chối: việc dùng trình duyệt chỉ chạy cho người đã yêu cầu nó trong cuộc trò chuyện, mà việc này không được bắt đầu như vậy; ${never}`;
-    case "browser-no-sites":
-      return `đã từ chối: việc này không mang danh sách trang web đã kiểm tra, nên không có trang nào nó được phép vào; ${never}`;
-    case "browser-sites-mismatch":
-      return `đã từ chối: các trang web việc này được kiểm tra không phải các trang mục tiêu của nó nêu ra; ${never}`;
-    case "unscoped-background":
-      return `đã từ chối: việc không ai yêu cầu trong cuộc trò chuyện này phải nêu thư mục hoặc repository nó được động vào, mà việc này không nêu cái nào, nên ${never}`;
-    case "root-not-owned":
-      return `đã từ chối: ${reason.path} không phải thư mục gốc mà node này quản lý, nên ${never}`;
-    case "data-class": {
-      const what = reason.unread
-        ? reason.checked === "model"
-          ? `không đọc được ${reason.model} được phép nhận những dữ liệu nào`
-          : "không đọc được các model mà node này có thể dùng cho worker được phép nhận những dữ liệu nào"
-        : reason.checked === "model"
-          ? `${reason.model} không được nhận dữ liệu ${reason.dataClass}`
-          : `${reason.model} không được nhận dữ liệu ${reason.dataClass}, và không model nào node này có thể dùng cho worker được nhận`;
-      const next = reason.unread
-        ? `hãy chạy lại việc; nếu vẫn lặp lại, kiểm tra hồ sơ của model trong ${settings}`
-        : `hãy chọn một model được nhận dữ liệu ${reason.dataClass} (chẳng hạn một model chạy trên máy này), hoặc cho phép ${reason.dataClass} với model đó trong ${settings}, rồi chạy lại việc`;
-      return `đã từ chối: việc này mang dữ liệu ${reason.dataClass}, và ${what}; không có gì được gửi tới model và ${never}; ${next}`;
-    }
-    case "no-model":
-      return `đã từ chối: node này chưa cấu hình model nào để làm việc này; ${never} và chưa có gì được làm`;
-    case "model-not-chosen":
-      return `đã từ chối: không chọn được model cho việc này (${quoted(reason.detail)}); ${never} và chưa có gì được làm`;
-    case "model-no-tools":
-      return `đã từ chối: model việc này sẽ chạy (${reason.model}) không gọi được công cụ, nên không dùng được trình duyệt; hãy chọn một model gọi được công cụ trong ${settings}; ${never} và chưa có gì được làm`;
-    case "policy-denied":
-      return `đã từ chối: ${policyRefusalVi(reason.refusal)}`;
-    case "no-worktree-place":
-      return `đã từ chối: node này không có chỗ cho worktree của việc, nên không thể làm việc trên một repository; ${never}`;
-    case "worktree-failed":
-      return `đã từ chối: không chuẩn bị được worktree cho việc này (${quoted(reason.detail)}); ${never}`;
-    case "no-browser":
-      return `đã từ chối: node này không cấp trình duyệt cho việc nào; ${never}`;
-    case "browser-policy-unknown":
-      return `đã từ chối: chính sách thực thi chưa được hỏi về việc này, vì node này không biết capability trình duyệt; ${never}`;
-    case "wall-clock":
-      return `đã hết thời gian cho phép (${hostText("vi").duration(reason.maxMs)}) trước khi worker xong; chưa có gì nó làm được xác minh; hãy tăng giới hạn của việc hoặc chạy lại`;
-    case "stopped-during-run":
-      return "đã dừng theo yêu cầu trước khi worker xong; chưa có gì nó làm được xác minh";
-    case "token-budget":
-      return `đã vượt giới hạn ${String(reason.maxTokens)} token (worker đã dùng ${String(reason.used)}); lần chạy đã diễn ra nhưng kết quả không được nhận, và có thể chạy lại với giới hạn cao hơn`;
-    case "worker-failed":
-      return `worker không chạy được: ${quoted(reason.detail)}`;
-    case "shutting-down":
-      return "node này đang tắt; việc chưa được chạy và có thể thử lại khi node chạy lại";
-    case "queue-full":
-      return `node này đã có ${String(reason.running)} worker đang chạy và ${String(reason.waiting)} việc đang chờ, là mức tối đa; việc chưa được chạy và có thể thử lại khi có một việc xong`;
-  }
-}
+/**
+ * Which family each conductor reason code belongs to, checked by the compiler: a code added to `TaskSettleReason` and
+ * missing here, or one here that is not a conductor code, fails to typecheck rather than being routed as a dispatcher's.
+ */
+const SETTLE_REASON_CODES = {
+  "task-missing": true,
+  "already-ended": true,
+  "no-evidence": true,
+  "stopped-unreported": true,
+  "finished-after-stop": true,
+  "effect-unsettled": true,
+  "not-accepted": true,
+  reconciled: true,
+} as const satisfies Record<TaskSettleReason["code"], true>;
 
-function policyRefusalVi(refusal: PolicyRefusal): string {
-  switch (refusal.code) {
-    case "prohibited":
-      return "node này chặn mọi thao tác có tác động, nên không loại nào được miễn";
-    case "rule":
-      return `một quy tắc trên máy này chặn ${hostText("vi").approvals.categoryEffect(refusal.category)}`;
-    case "unknown-mode":
-      return `chế độ thực thi ${quoted(refusal.mode)} không phải chế độ mà bản này biết`;
-  }
+function isSettleReason(reason: TaskSettledReason): reason is TaskSettleReason {
+  return Object.hasOwn(SETTLE_REASON_CODES, reason.code);
 }
-
-/** Why the success gate refused, in the owner's language. */
-function gateText(gate: SuccessGateReason, locale: AppIntentLocale): string {
-  if (locale === "en") {
-    switch (gate.kind) {
-      case "no-evidence":
-        return "no evidence recorded; a finished run is not by itself a successful outcome";
-      case "nothing-verified":
-        return "evidence was recorded but nothing was verified; the result must be reported as not-verified rather than as success";
-      case "contradicted":
-        return `evidence contradicts the expected outcome: ${quoted(gate.summary)}`;
-      case "effect-unsettled":
-        return `effect ${gate.effectId} is still ${gate.state}; reconcile it before reporting success`;
-    }
-  }
-  switch (gate.kind) {
-    case "no-evidence":
-      return "chưa có bằng chứng nào được ghi lại; một lần chạy kết thúc không tự nó là một kết quả thành công";
-    case "nothing-verified":
-      return "đã có bằng chứng nhưng chưa có gì được xác minh, nên kết quả được báo là chưa xác minh chứ không phải thành công";
-    case "contradicted":
-      return `bằng chứng trái với kết quả mong đợi: ${quoted(gate.summary)}`;
-    case "effect-unsettled":
-      return `thao tác ${gate.effectId} vẫn đang ở trạng thái ${gate.state}; cần đối chiếu nó trước khi báo thành công`;
-  }
-}
-
-/** A conductor reason, in the owner's language. What the run reported is quoted as it was written. */
-function settleReasonText(reason: TaskSettleReason, locale: AppIntentLocale): string {
-  const en = locale === "en";
-  switch (reason.code) {
-    case "task-missing":
-      return en ? "the task no longer exists" : "việc này không còn tồn tại";
-    case "already-ended":
-      return en ? "the task had already ended before its run reported" : "việc đã kết thúc trước khi lần chạy của nó báo lại";
-    case "no-evidence":
-      return en
-        ? "the run produced no evidence, so it is reported as failed rather than as success"
-        : "lần chạy không tạo ra bằng chứng nào, nên được báo là không xong chứ không phải thành công";
-    case "stopped-unreported":
-      return en ? "stopped on request; the run reported nothing" : "đã dừng theo yêu cầu; lần chạy không báo lại gì";
-    case "finished-after-stop": {
-      if (en) {
-        const done = reason.runSummary === undefined ? "an effect it started is unsettled" : `it reported ${quoted(reason.runSummary)}`;
-        return `the run finished after it was asked to stop (${done}); what it did is not confirmed`;
-      }
-      const done = reason.runSummary === undefined ? "một thao tác nó bắt đầu vẫn chưa ngã ngũ" : `nó báo ${quoted(reason.runSummary)}`;
-      return `lần chạy đã kết thúc sau khi được yêu cầu dừng (${done}); những gì nó làm chưa được xác nhận`;
-    }
-    case "effect-unsettled":
-      return en
-        ? `effect ${reason.effectId} is still ${reason.state}; the outcome is undetermined and must be reconciled`
-        : `thao tác ${reason.effectId} vẫn đang ở trạng thái ${reason.state}; kết quả chưa xác định và cần được đối chiếu`;
-    case "not-accepted": {
-      const gate = gateText(reason.gate, locale);
-      if (reason.runSummary === undefined) return gate;
-      return en ? `the run reported ${quoted(reason.runSummary)} — ${gate}` : `lần chạy báo ${quoted(reason.runSummary)} — ${gate}`;
-    }
-    case "reconciled":
-      return reconciledText(reason, locale);
-  }
-}
-
-function reconciledText(reason: Extract<TaskSettleReason, { code: "reconciled" }>, locale: AppIntentLocale): string {
-  const name = (intent: string): string => quotedEffectIntent({ intent }, locale);
-  const landed = reason.landed.map(name).join(", ");
-  if (locale === "en") {
-    if (reason.stopped) {
-      return reason.didNotLand !== undefined
-        ? `you confirmed ${name(reason.didNotLand)} did not take effect; the work stays stopped as you asked`
-        : `you confirmed ${landed} took effect before it stopped; the work stays stopped as you asked`;
-    }
-    if (reason.didNotLand !== undefined) return `you confirmed ${name(reason.didNotLand)} did not take effect`;
-    return reason.unverified
-      ? `you confirmed ${landed} took effect, but the run never verified the result of the work, so it cannot be reported as done`
-      : `you confirmed ${landed} took effect`;
-  }
-  if (reason.stopped) {
-    return reason.didNotLand !== undefined
-      ? `bạn xác nhận ${name(reason.didNotLand)} chưa có hiệu lực; việc vẫn dừng theo yêu cầu của bạn`
-      : `bạn xác nhận ${landed} đã có hiệu lực trước khi dừng; việc vẫn dừng theo yêu cầu của bạn`;
-  }
-  if (reason.didNotLand !== undefined) return `bạn xác nhận ${name(reason.didNotLand)} chưa có hiệu lực`;
-  return reason.unverified
-    ? `bạn xác nhận ${landed} đã có hiệu lực, nhưng lần chạy chưa xác minh được kết quả của việc nên chưa thể báo là xong`
-    : `bạn xác nhận ${landed} đã có hiệu lực`;
-}
-
-function isDispatchRefusal(reason: TaskSettledReason): reason is DispatchRefusal {
-  return !SETTLE_REASON_CODES.has(reason.code);
-}
-
-const SETTLE_REASON_CODES: ReadonlySet<string> = new Set<TaskSettleReason["code"]>([
-  "task-missing",
-  "already-ended",
-  "no-evidence",
-  "stopped-unreported",
-  "finished-after-stop",
-  "effect-unsettled",
-  "not-accepted",
-  "reconciled",
-]);
 
 /**
  * What a settled task's host-written message says, in the owner's language. Vietnamese when no language is named.
@@ -287,6 +125,5 @@ const SETTLE_REASON_CODES: ReadonlySet<string> = new Set<TaskSettleReason["code"
 export function taskSettledText(input: { message: string; reason?: TaskSettledReason }, locale: AppIntentLocale = "vi"): string {
   const { reason } = input;
   if (reason === undefined) return input.message;
-  if (isDispatchRefusal(reason)) return locale === "en" ? dispatchRefusalMessage(reason) : dispatchRefusalVi(reason);
-  return settleReasonText(reason, locale);
+  return isSettleReason(reason) ? settleReasonOwnerText(reason, locale) : dispatchRefusalOwnerText(reason, locale);
 }

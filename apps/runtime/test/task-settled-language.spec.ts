@@ -29,33 +29,91 @@ const AT = "2026-10-06T09:00:00.000Z" as Instant;
 /** Any letter only Vietnamese writes. */
 const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;
 
-const DISPATCH_REFUSALS: DispatchRefusal[] = [
-  { code: "stopped-before-start" },
-  { code: "capability-busy", capabilityRef: "project.file.read@1", heldUntil: AT },
-  { code: "capability-busy", capabilityRef: "project.file.read@1", detail: "lease store unavailable" },
-  { code: "browser-not-asked" },
-  { code: "browser-no-sites" },
-  { code: "browser-sites-mismatch" },
-  { code: "unscoped-background" },
-  { code: "root-not-owned", path: "/work/elsewhere" },
-  { code: "data-class", dataClass: "secret", model: "openai/gpt", checked: "model", unread: false },
-  { code: "data-class", dataClass: "secret", model: "openai/gpt", checked: "every-candidate", unread: true },
-  { code: "no-model" },
-  { code: "model-not-chosen", detail: "routing table is empty" },
-  { code: "model-no-tools", model: "local/tiny" },
-  { code: "policy-denied", refusal: { code: "prohibited" }, reason: "this node refuses every effect, so no category is exempt" },
-  { code: "policy-denied", refusal: { code: "rule", category: "communication" }, reason: "a rule refuses communication effects on this machine" },
-  { code: "policy-denied", refusal: { code: "unknown-mode", mode: "wild" }, reason: 'the execution mode "wild" is not one this build knows' },
-  { code: "no-worktree-place" },
-  { code: "worktree-failed", detail: "fatal: not a git repository" },
-  { code: "no-browser" },
-  { code: "browser-policy-unknown" },
-  { code: "wall-clock", maxMs: 90_000 },
-  { code: "stopped-during-run" },
-  { code: "token-budget", maxTokens: 1000, used: 1500 },
-  { code: "worker-failed", detail: "spawn ENOENT" },
-  { code: "shutting-down" },
-  { code: "queue-full", running: 4, waiting: 16 },
+const NEVER = "the worker was never started";
+
+/**
+ * Every dispatcher refusal, beside the English sentence the dispatcher wrote for it before the owner was told it in
+ * their own language — copied from the code as it stood, not computed — because that sentence is what the task records
+ * and what a peer is sent, and neither may change.
+ */
+const DISPATCH_REFUSALS: Array<[DispatchRefusal, string]> = [
+  [{ code: "stopped-before-start" }, "stopped before a worker was started for it"],
+  [
+    { code: "capability-busy", capabilityRef: "project.file.read@1", heldUntil: AT },
+    `capability project.file.read@1 is busy on this node (held by another run until ${AT}); the task was not run and can be retried`,
+  ],
+  [
+    { code: "capability-busy", capabilityRef: "project.file.read@1", detail: "lease store unavailable" },
+    "capability project.file.read@1 is busy on this node (lease store unavailable); the task was not run and can be retried",
+  ],
+  [
+    { code: "browser-not-asked" },
+    `refused: a browser task acts only for a person who asked for it in the conversation, and this one was not started that way; ${NEVER}`,
+  ],
+  [
+    { code: "browser-no-sites" },
+    `refused: the task carries no checked list of sites, so there is no site it could be allowed onto; ${NEVER}`,
+  ],
+  [{ code: "browser-sites-mismatch" }, `refused: the sites the task was checked for are not the sites its goal names; ${NEVER}`],
+  [
+    { code: "unscoped-background" },
+    "refused: work nobody asked for in this conversation has to name the folder or repository it may touch, and this task named none, so the worker was never started",
+  ],
+  [{ code: "root-not-owned", path: "/work/elsewhere" }, "refused: /work/elsewhere is not a root this node owns, so the worker was never started"],
+  [
+    { code: "data-class", dataClass: "secret", model: "openai/gpt", checked: "model", unread: false },
+    "refused: MODEL_DATA_CLASS_UNAVAILABLE: the task carries secret data, and openai/gpt may not receive secret data; nothing was sent to a model and the worker was never started; choose a model that may receive secret data (such as one that runs on this machine), or allow secret for that model in Settings → AI & Routing, and run the task again",
+  ],
+  [
+    { code: "data-class", dataClass: "secret", model: "openai/gpt", checked: "every-candidate", unread: true },
+    "refused: MODEL_DATA_CLASS_UNAVAILABLE: the task carries secret data, and what the models this node could start its worker on may receive could not be read; nothing was sent to a model and the worker was never started; run the task again; if this keeps happening, check the model's profile in Settings → AI & Routing",
+  ],
+  [{ code: "no-model" }, `refused: this node has no model configured to do the work; ${NEVER} and nothing was done`],
+  [
+    { code: "model-not-chosen", detail: "routing table is empty" },
+    `refused: the model for it could not be chosen (routing table is empty); ${NEVER} and nothing was done`,
+  ],
+  [
+    { code: "model-no-tools", model: "local/tiny" },
+    `refused: the model this task would run on (local/tiny) cannot call tools, so it could not use the browser; choose one that can in Settings → AI & Routing; ${NEVER} and nothing was done`,
+  ],
+  [
+    { code: "policy-denied", refusal: { code: "prohibited" }, reason: "this node refuses every effect, so no category is exempt" },
+    "refused: this node refuses every effect, so no category is exempt",
+  ],
+  [
+    { code: "policy-denied", refusal: { code: "rule", category: "communication" }, reason: "a rule refuses communication effects on this machine" },
+    "refused: a rule refuses communication effects on this machine",
+  ],
+  [
+    { code: "policy-denied", refusal: { code: "unknown-mode", mode: "wild" }, reason: 'the execution mode "wild" is not one this build knows' },
+    'refused: the execution mode "wild" is not one this build knows',
+  ],
+  [
+    { code: "no-worktree-place" },
+    `refused: this node keeps no place for task worktrees, so a repository cannot be worked on; ${NEVER}`,
+  ],
+  [{ code: "worktree-failed", detail: "fatal: not a git repository" }, `refused: fatal: not a git repository; ${NEVER}`],
+  [{ code: "no-browser" }, `refused: this node gives no task a browser; ${NEVER}`],
+  [
+    { code: "browser-policy-unknown" },
+    `refused: the execution policy was never asked about this task, because this node does not know the browser capability; ${NEVER}`,
+  ],
+  [
+    { code: "wall-clock", maxMs: 90_500 },
+    "the wall-clock budget of 90500 ms was exhausted before the worker finished; nothing it did was verified; raise the task's budget or re-run it",
+  ],
+  [{ code: "stopped-during-run" }, "stopped on request before the worker finished; nothing it did was verified"],
+  [
+    { code: "token-budget", maxTokens: 1000, used: 1500 },
+    "the token budget of 1000 was exceeded (the worker used 1500); the run already happened but is not accepted, and can be retried with a higher budget",
+  ],
+  [{ code: "worker-failed", detail: "spawn ENOENT" }, "the worker could not run: spawn ENOENT"],
+  [{ code: "shutting-down" }, "this node is shutting down; the task was not run and can be retried once the node is back"],
+  [
+    { code: "queue-full", running: 4, waiting: 16 },
+    "this node already has 4 task workers running and 16 waiting, which is its limit; the task was not run and can be retried once one finishes",
+  ],
 ];
 
 const SETTLE_REASONS: TaskSettleReason[] = [
@@ -78,34 +136,63 @@ const SETTLE_REASONS: TaskSettleReason[] = [
 ];
 
 describe("the host's sentence for a settled task", () => {
-  it("is the dispatcher's own English, word for word, for an owner who reads English", () => {
-    for (const reason of DISPATCH_REFUSALS) {
-      expect(taskSettledText({ message: dispatchRefusalMessage(reason), reason }, "en")).toBe(dispatchRefusalMessage(reason));
-    }
+  it("keeps the English a task records and a peer is sent, word for word, for every dispatcher refusal", () => {
+    for (const [reason, sentence] of DISPATCH_REFUSALS) expect(dispatchRefusalMessage(reason), reason.code).toBe(sentence);
   });
 
-  it("is Vietnamese for every reason when no language is named", () => {
-    for (const reason of [...DISPATCH_REFUSALS, ...SETTLE_REASONS]) {
+  it("is Vietnamese for every reason when no language is named, with no English sentence or raw state left in it", () => {
+    for (const reason of [...DISPATCH_REFUSALS.map(([refusal]) => refusal), ...SETTLE_REASONS]) {
       const text = taskSettledText({ message: "unused", reason });
       expect(text, reason.code).toMatch(VIETNAMESE_LETTER);
-      expect(text, reason.code).not.toMatch(/\b(refused|the worker|nothing was|the run|the task)\b/u);
+      expect(text, reason.code).not.toMatch(/\b(refused|the worker|nothing was|the run|the task|unknown|submitted|prepared)\b/u);
+      expect(text, reason.code).not.toContain("MODEL_DATA_CLASS_UNAVAILABLE");
     }
   });
 
-  it("has no Vietnamese in it for any reason when the owner reads English", () => {
-    for (const reason of [...DISPATCH_REFUSALS, ...SETTLE_REASONS]) {
+  it("has no Vietnamese, internal code or raw state in it for any reason when the owner reads English", () => {
+    for (const reason of [...DISPATCH_REFUSALS.map(([refusal]) => refusal), ...SETTLE_REASONS]) {
+      const text = taskSettledText({ message: "unused", reason }, "en");
       // An effect's own intent is quoted as written, and these intents are English.
-      expect(taskSettledText({ message: "unused", reason }, "en"), reason.code).not.toMatch(VIETNAMESE_LETTER);
+      expect(text, reason.code).not.toMatch(VIETNAMESE_LETTER);
+      expect(text, reason.code).not.toContain("MODEL_DATA_CLASS_UNAVAILABLE");
+      expect(text, reason.code).not.toMatch(/is still (unknown|submitted|prepared)\b/u);
     }
   });
 
-  it("quotes text it did not write instead of blending it in", () => {
-    expect(taskSettledText({ message: "", reason: { code: "worker-failed", detail: "spawn ENOENT" } })).toContain("“spawn ENOENT”");
+  it("quotes text the node did not write, in either language, instead of blending it in", () => {
+    const quotedDetails: Array<[DispatchRefusal, string]> = [
+      [{ code: "worker-failed", detail: "spawn ENOENT" }, "“spawn ENOENT”"],
+      [{ code: "model-not-chosen", detail: "routing table is empty" }, "“routing table is empty”"],
+      [{ code: "worktree-failed", detail: "fatal: not a git repository" }, "“fatal: not a git repository”"],
+      [{ code: "capability-busy", capabilityRef: "project.file.read@1", detail: "lease store unavailable" }, "“lease store unavailable”"],
+    ];
+    for (const [reason, quote] of quotedDetails) {
+      expect(taskSettledText({ message: "", reason }, "en"), reason.code).toContain(quote);
+      expect(taskSettledText({ message: "", reason }), reason.code).toContain(quote);
+    }
+    expect(taskSettledText({ message: "", reason: { code: "worker-failed", detail: "spawn ENOENT" } }, "en")).toBe(
+      "the worker could not run: “spawn ENOENT”",
+    );
     expect(
       taskSettledText({ message: "", reason: { code: "not-accepted", gate: { kind: "nothing-verified" }, runSummary: "ran the tests" } }, "en"),
     ).toContain("“ran the tests”");
     expect(taskSettledText({ message: "", reason: SETTLE_REASONS[11] as TaskSettleReason }, "en")).toBe(
       "you confirmed “git push origin HEAD” did not take effect; the work stays stopped as you asked",
+    );
+  });
+
+  it("states the same time budget in both languages", () => {
+    const reason: DispatchRefusal = { code: "wall-clock", maxMs: 90_500 };
+    expect(taskSettledText({ message: "", reason }, "en")).toContain("90.5 s");
+    expect(taskSettledText({ message: "", reason })).toContain("90,5 giây");
+  });
+
+  it("words an effect's state rather than naming it", () => {
+    expect(taskSettledText({ message: "", reason: { code: "effect-unsettled", effectId: "eff_1", state: "unknown" } }, "en")).toBe(
+      "action eff_1 has an unknown outcome; the outcome is undetermined and must be reconciled",
+    );
+    expect(taskSettledText({ message: "", reason: { code: "effect-unsettled", effectId: "eff_1", state: "submitted" } })).toBe(
+      "thao tác eff_1 đã được gửi đi nhưng chưa được xác nhận; kết quả chưa xác định và cần được đối chiếu",
     );
   });
 

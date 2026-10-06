@@ -442,7 +442,7 @@ const VI: HostText = {
     notStarted: (summary, because, error) =>
       summary === undefined
         ? `Lần chạy cho ${because} không bắt đầu được. Lỗi gặp phải: “${error}”. Lần này sẽ không chạy lại.`
-        : `"${summary}" không bắt đầu được cho ${because}. Lỗi gặp phải: “${error}”. Lần này sẽ không chạy lại; bản thân việc tự động vẫn được giữ nguyên.`,
+        : `“${summary}” không bắt đầu được cho ${because}. Lỗi gặp phải: “${error}”. Lần này sẽ không chạy lại; bản thân việc tự động vẫn được giữ nguyên.`,
     remind: (summary, message) => `Nhắc bạn — ${summary}: ${message}`,
     parked: (summary, because, reason, taskId) =>
       `Việc tự động "${summary}" đã khớp ${because}, nhưng đang chờ: ${reason}. Task ${taskId} sẽ tiếp tục khi có thứ chạy được nó.`,
@@ -713,7 +713,7 @@ const EN: HostText = {
     notStarted: (summary, because, error) =>
       summary === undefined
         ? `The run for ${because} could not start. The error was: “${error}”. It will not be retried.`
-        : `"${summary}" could not start for ${because}. The error was: “${error}”. This run will not be retried; the automation itself is kept as it is.`,
+        : `“${summary}” could not start for ${because}. The error was: “${error}”. This run will not be retried; the automation itself is kept as it is.`,
     remind: (summary, message) => `Reminder — ${summary}: ${message}`,
     parked: (summary, because, reason, taskId) =>
       `The automation "${summary}" matched ${because}, but is waiting: ${reason}. Task ${taskId} carries on once something can run it.`,
