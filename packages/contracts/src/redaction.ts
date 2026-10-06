@@ -58,8 +58,10 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   { label: "windows-path", pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g },
   // Bounded for the same reason as the scheme above: an unbounded local part is scanned to the end of the run from every
   // boundary inside it. RFC 5321 allows 64 characters before the `@` and 255 after; the local part is given twice that,
-  // because a mail system that accepts a longer one still delivers to it, and the bound only has to be finite.
-  { label: "email", pattern: /\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g },
+  // because a mail system that accepts a longer one still delivers to it, and the bound only has to be finite. A match
+  // starts only where a run of address characters starts, so each run is scanned once rather than from every boundary
+  // inside it.
+  { label: "email", pattern: /(?<![A-Za-z0-9._%+-])\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g },
   { label: "phone", pattern: /\b(?:\+?\d[\s-]?){9,}\b/g },
 ];
 

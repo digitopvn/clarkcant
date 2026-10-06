@@ -273,9 +273,10 @@ which prints a per-ceiling sweep. The numbers belong in a report before the defa
 được nêu tên (tối đa hai lô, nếu template làm đổi tập ứng viên), và không tốn lời gọi nào khi model đã
 nêu tên một template. Tìm kiếm chỉ tốn một lời gọi khi `decider = jev`, có ít nhất hai kết quả sát
 nhau, thứ hạng chưa tự tách chúng ra, và có ít nhất hai kết quả nằm trong trần data class của
-selector. Việc xét class của một kết quả không làm tìm kiếm chậm thêm: kết quả từ tìm kiếm theo từ
-khoá được xét trên chính văn bản mà tìm kiếm đã trả về, kết quả chỉ phía vector tìm thấy được đọc lại
-trong một truy vấn duy nhất, và chỉ những kết quả sắp được đưa cho selector mới được xét.
+selector. Việc xét class của các kết quả tốn thêm cho tìm kiếm nhiều nhất một lần đọc: kết quả từ tìm
+kiếm theo từ khoá được xét trên chính văn bản mà tìm kiếm đã trả về, các kết quả chỉ phía vector tìm
+thấy được đọc lại cùng nhau trong một truy vấn duy nhất, và chỉ những kết quả sắp được đưa cho selector
+mới được xét.
 
 **Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
 the home directory, and the system ignore list). Changing them needs no restart. What the selector

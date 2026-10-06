@@ -272,9 +272,9 @@ which prints a per-ceiling sweep. The numbers belong in a report before the defa
 at most, if the template changes the candidate set), and zero when the model names a template. Search
 costs one call only when `decider = jev`, at least two results are close, the ranking did not
 already separate them, and at least two results are within the selector's data-class ceiling.
-Judging a result's class adds no search cost: a lexical result is judged on the text the search
-already returned, results only the vector side found are read back in one query, and only the
-results about to be offered to the selector are judged.
+Judging a result's class costs the search at most one extra read: a lexical result is judged on the
+text the search already returned, results only the vector side found are read back together in one
+query, and only the results about to be offered to the selector are judged.
 
 **Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
 the home directory, and the system ignore list). Changing them needs no restart. What the selector

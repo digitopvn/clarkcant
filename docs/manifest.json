@@ -160,13 +160,13 @@
     },
     {
       "path": "mini-app/jev-configuration.md",
-      "bytes": 25871,
-      "sha256": "147c24d0dfbb00ee8091cb7a326385c3434823cfd559b689586ff467a9e54b58"
+      "bytes": 25900,
+      "sha256": "1b3a2ce732c1532006358f5a965f187f5f1073f08b1c1e453191967c5db49702"
     },
     {
       "path": "mini-app/jev-configuration.vi.md",
-      "bytes": 29142,
-      "sha256": "59b7d9abd821ec3a820f6195f32e23857d4b15b0d7a49c6fa98e1dbf7adb70d1"
+      "bytes": 29182,
+      "sha256": "96a28d4a78764e7321fda5704fdfe2f2464c07c639dc856ef8558658db6e8168"
     },
     {
       "path": "voice-live-provider.md",
