@@ -241,6 +241,35 @@ describe("the dev engine", () => {
     expect(existsSync(root)).toBe(false);
   });
 
+  it("builds a save made before the platform watcher was live, as on macOS where FSEvents starts late", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    let saved = false;
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      onBuild: (event) => built.push(event.kind),
+      // Runs inside the first build, after its digest and before `watch` is called: no platform reports this save.
+      baseline: () => {
+        if (!saved) {
+          saved = true;
+          writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved early</p>");
+        }
+        return undefined;
+      },
+    });
+    engines.push(engine);
+    expect((await engine.ready).kind).toBe("generation");
+    expect(engine.latest()?.generation.generation).toBe(1);
+
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(built).toEqual(["generation"]);
+  });
+
   it("notices a watched folder that was deleted, though the platform may report nothing, and stops watching", async () => {
     const root = tempDir("dev-engine-");
     writePackage(root, "<p>one</p>");

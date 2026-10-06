@@ -43,6 +43,12 @@ export const DEV_ENGINE_DEBOUNCE_MS = 150;
 /** How often a watched folder is checked to still be there, for a platform whose watcher does not say it went away. */
 export const DEV_ENGINE_ROOT_CHECK_MS = 1_000;
 /**
+ * How long after watching starts the folder is built once more, for a save the platform watcher could not see yet. On
+ * macOS, FSEvents starts watching asynchronously and reports only what happens after that, so a save right after the first
+ * build would otherwise be lost; inotify and Windows watch from the moment `watch` returns.
+ */
+export const DEV_ENGINE_WATCH_CATCH_UP_MS = 500;
+/**
  * Folders at the package root that are not the package: version control, and the author's installed dependencies, which
  * the package does not ship and which may hold thousands of files and links (a pnpm `node_modules` is junctions). Left
  * out of the digest, the snapshot and the watch alike, as `clark widget pack` leaves them out of the archive. `dist` is
@@ -364,10 +370,13 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   let watcher: FSWatcher | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let rootCheck: ReturnType<typeof setInterval> | undefined;
+  let catchUp: ReturnType<typeof setTimeout> | undefined;
   const debounceMs = options.debounceMs ?? DEV_ENGINE_DEBOUNCE_MS;
   const stopWatching = (): void => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
+    if (catchUp !== undefined) clearTimeout(catchUp);
+    catchUp = undefined;
     if (rootCheck !== undefined) clearInterval(rootCheck);
     rootCheck = undefined;
     watcher?.close();
@@ -420,6 +429,22 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       });
       rootCheck = setInterval(() => void rootStillThere(), options.rootCheckMs ?? DEV_ENGINE_ROOT_CHECK_MS);
       rootCheck.unref();
+      // A save made before the platform watcher was live is built here. Only news is reported: files that did not change
+      // build nothing new, and a folder that was already failing fails the same way, so where the watcher saw everything
+      // this is silent.
+      catchUp = setTimeout(() => {
+        catchUp = undefined;
+        if (closed || timer !== undefined || !rootStillThere()) return;
+        const before = last;
+        void enqueue("change").then(
+          (event) => {
+            const news = event.kind === "generation" || (event.kind === "failed" && before?.ok !== false);
+            if (!closed && news) options.onBuild?.(event);
+          },
+          (cause: unknown) => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause))),
+        );
+      }, DEV_ENGINE_WATCH_CATCH_UP_MS);
+      catchUp.unref();
     } catch (cause) {
       watcher = undefined;
       options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));
