@@ -7,6 +7,7 @@ import { echoesCommandReceipt } from "./command-receipts.ts";
 import { repeatsDrawnSurface } from "./surface-refs.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
+import { SurfaceViewScope } from "./surface-view-state.tsx";
 import { WorkStepsFold } from "./work-steps-fold.tsx";
 import { countsAsStep, foldWorkSteps, isWorkBlock } from "./work-steps.ts";
 
@@ -70,21 +71,27 @@ function TimelineMessageRowComponent({
   const shown = message.blocks
     .map((block, blockIndex) => ({ block, blockIndex }))
     .filter(({ blockIndex }) => !echoesCommandReceipt(message.blocks, blockIndex) && !repeatsDrawnSurface(message.blocks, blockIndex));
-  const draw = ({ block, blockIndex }: (typeof shown)[number]): ReactElement | null =>
-    renderBlock(block, blockIndex, renderSurface, blockActions, client, t, locale);
+  // Each block is its own surface for view state (`surface-view-state.tsx`): the message and the block's place in it,
+  // which a stored message never changes, so a block scrolled away and back finds the view it was left in.
+  const draw = ({ block, blockIndex }: (typeof shown)[number]): ReactElement | null => {
+    const drawn = renderBlock(block, blockIndex, renderSurface, blockActions, client, t, locale);
+    return drawn === null ? null : (
+      <SurfaceViewScope key={drawn.key ?? blockIndex} id={`${message.messageId}#${String(blockIndex)}`}>
+        {drawn}
+      </SurfaceViewScope>
+    );
+  };
   return (
     <TranscriptRow role={message.role} index={index} settled={settled}>
       {foldWorkSteps(shown, (entry) => isWorkBlock(entry.block), (entry) => countsAsStep(entry.block)).map((run) =>
         run.kind === "item" ? (
           draw(run.item)
         ) : (
-          <WorkStepsFold
-            key={`steps-${run.entries[0]!.item.blockIndex}`}
-            count={run.count}
-            failed={run.entries.filter((entry) => entry.item.block.status === "failed").length}
-          >
-            {run.entries.map((entry) => draw(entry.item))}
-          </WorkStepsFold>
+          <SurfaceViewScope key={`steps-${run.entries[0]!.item.blockIndex}`} id={`${message.messageId}#steps-${String(run.entries[0]!.item.blockIndex)}`}>
+            <WorkStepsFold count={run.count} failed={run.entries.filter((entry) => entry.item.block.status === "failed").length}>
+              {run.entries.map((entry) => draw(entry.item))}
+            </WorkStepsFold>
+          </SurfaceViewScope>
         ),
       )}
     </TranscriptRow>

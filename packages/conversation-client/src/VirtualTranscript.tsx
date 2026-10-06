@@ -1,0 +1,441 @@
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+  type RefObject,
+} from "react";
+
+import type { GatewayClient, Timeline } from "./api.ts";
+import type { BlockActions, SurfaceBlockRef } from "./blocks.tsx";
+import { distanceFromBottom, followScrollBehavior, followsBottom } from "./follow-bottom.ts";
+import { useT } from "./i18n/locale-context.tsx";
+import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
+import { computeTranscriptWindow, rowVisibility, sameTranscriptWindow, viewportTopFor, type TranscriptWindow } from "./transcript-window.ts";
+
+/** Rows mounted beyond each edge of the screen, in screens. */
+const OVERSCAN_SCREENS = 1;
+/** An older page is read once the top of the loaded history is this many screens away, or nearer. */
+const PREFETCH_SCREENS = 2;
+/** The screen height assumed before the transcript has been laid out once. */
+const FALLBACK_VIEWPORT_PX = 800;
+
+interface Anchor {
+  id: string;
+  /** The row's top, in pixels below the top of the screen; negative when it is partly scrolled past. */
+  offset: number;
+}
+
+export interface VirtualTranscriptProps {
+  messages: Timeline["messages"];
+  renderSurface: (props: SurfaceBlockRef) => ReactElement;
+  blockActions: BlockActions;
+  client: GatewayClient;
+  /** The row the notice Undo goes under, or -1; that row stays mounted while the Undo is offered. */
+  undoIndex: number;
+  undoRow: ReactNode;
+  scroller: RefObject<HTMLDivElement | null>;
+  /** Whether the reader is following the bottom (`use-turn-send.ts`). */
+  followBottom: RefObject<boolean>;
+  hasOlder: boolean;
+  olderLoading: boolean;
+  olderFailed: boolean;
+  loadOlder: () => Promise<void>;
+  /** Told which messages are mounted, whenever that changes, so only their presentation is read. */
+  onPresentChange: (messageIds: readonly string[]) => void;
+}
+
+/** The mounted row holding `node`, by its id. */
+function rowIdOf(node: Node | null, list: HTMLElement): string | undefined {
+  const element = node instanceof Element ? node : node?.parentElement;
+  const slot = element?.closest<HTMLElement>("[data-row-id]");
+  return slot !== null && slot !== undefined && list.contains(slot) ? slot.dataset.rowId : undefined;
+}
+
+function slotById(list: HTMLElement, id: string): HTMLElement | undefined {
+  for (const child of list.children) {
+    if (child instanceof HTMLElement && child.dataset.rowId === id) return child;
+  }
+  return undefined;
+}
+
+/** The first row on screen, and where its top is: what the reader is reading, which must not move under them. */
+function captureAnchor(scroller: HTMLElement, list: HTMLElement): Anchor | undefined {
+  const top = scroller.getBoundingClientRect().top;
+  let last: Anchor | undefined;
+  for (const child of list.children) {
+    if (!(child instanceof HTMLElement) || child.dataset.rowId === undefined) continue;
+    const rect = child.getBoundingClientRect();
+    last = { id: child.dataset.rowId, offset: rect.top - top };
+    if (rect.bottom > top + 1) return last;
+  }
+  return last;
+}
+
+/**
+ * The stored messages of the conversation, mounted around the screen.
+ *
+ * - **Window.** With more than a few dozen rows, only the rows within about a screen of what is visible are mounted
+ *   (`transcript-window.ts`); the rest are spacers of their measured height. The newest row, the row holding focus, a
+ *   row whose player is playing, the rows a selection spans, the row the Undo sits under and the row being read are
+ *   always mounted, so nothing a person is using is unmounted underneath them.
+ * - **Anchor.** What the reader is reading stays where it is: the first row on screen and its offset are kept, and
+ *   restored whenever rows are put in front of it or a row above it changes height. The browser's own scroll anchoring
+ *   is turned off on the scroller so the two never correct the same change twice.
+ * - **History.** Nearing the top of what is loaded reads the page before it, with no button to press. A read that
+ *   fails says so in place, keeps everything on screen, and offers to try again.
+ * - **Announcements.** The transcript is a polite live region. Rows mounted by scrolling, or put in front by an older
+ *   page, sit in an `aria-live="off"` wrapper, so a screen reader announces what arrived at the end of the
+ *   conversation and not every row that scrolled into the document.
+ * - **Motion.** A row enters with its animation once: in the first batch, or when it arrives at the end. A row mounted
+ *   again by scrolling back, or put in front by an older page, just appears.
+ *
+ * Memoised: a streamed reply renders the conversation on every delta, and none of that reaches the history.
+ */
+function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement {
+  const { messages, renderSurface, blockActions, client, undoIndex, undoRow, scroller, followBottom } = props;
+  const t = useT();
+  const ids = useMemo(() => messages.map((message) => message.messageId), [messages]);
+  const list = useRef<HTMLDivElement>(null);
+  /** Each row's height plus the gap after it, by id, measured while it was mounted and kept after it was not. */
+  const heights = useRef(new Map<string, number>());
+  const gap = useRef(0);
+  const anchor = useRef<Anchor | undefined>(undefined);
+  const [viewport, setViewport] = useState<{ anchor: Anchor | undefined; height: number }>(() => ({
+    anchor: undefined,
+    height: typeof window === "undefined" ? FALLBACK_VIEWPORT_PX : window.innerHeight,
+  }));
+  const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
+  const [playingIds, setPlayingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [selectionIds, setSelectionIds] = useState<readonly [string, string] | undefined>(undefined);
+
+  /*
+   * Which rows arrived at the end, and which enter with their animation.
+   *
+   * Kept across renders and decided once per row: deciding again would cut an animation short on the next render. A
+   * row the first render drew is part of the opening batch; one that came after the previous newest row arrived at the
+   * end, and is announced. A conversation that started empty (a first message being sent) announces its first rows.
+   */
+  const rendered = useRef<{ tail: string | undefined; any: boolean }>({ tail: undefined, any: false });
+  const opening = useRef<ReadonlySet<string> | undefined>(undefined);
+  const arrived = useRef(new Set<string>());
+  const enters = useRef(new Map<string, boolean>());
+  if (ids.length > 0) {
+    const previous = rendered.current;
+    if (!previous.any) {
+      opening.current = new Set(ids);
+    } else if (previous.tail === undefined) {
+      for (const id of ids) arrived.current.add(id);
+    } else {
+      const at = ids.lastIndexOf(previous.tail);
+      if (at >= 0) for (const id of ids.slice(at + 1)) arrived.current.add(id);
+    }
+  }
+  rendered.current = { tail: ids.at(-1), any: true };
+
+  const keep = useMemo(() => {
+    const indices = new Set<number>([ids.length - 1]);
+    if (undoIndex >= 0) indices.add(undoIndex);
+    const add = (id: string | undefined): void => {
+      if (id === undefined) return;
+      const index = ids.indexOf(id);
+      if (index >= 0) indices.add(index);
+    };
+    add(focusedId);
+    add(viewport.anchor?.id);
+    for (const id of playingIds) add(id);
+    if (selectionIds !== undefined) {
+      const from = ids.indexOf(selectionIds[0]);
+      const to = ids.indexOf(selectionIds[1]);
+      if (from >= 0 && to >= 0) for (let index = Math.min(from, to); index <= Math.max(from, to); index += 1) indices.add(index);
+    }
+    return indices;
+  }, [focusedId, ids, playingIds, selectionIds, undoIndex, viewport.anchor]);
+
+  const windowFor = useCallback(
+    (at: { anchor: Anchor | undefined; height: number }): TranscriptWindow =>
+      computeTranscriptWindow({
+        ids,
+        heights: heights.current,
+        viewportTop: viewportTopFor({ ids, heights: heights.current, anchor: at.anchor, viewportHeight: at.height }),
+        viewportHeight: at.height,
+        overscan: at.height * OVERSCAN_SCREENS,
+        keep,
+        gap: gap.current,
+      }),
+    [ids, keep],
+  );
+  const shown = windowFor(viewport);
+  const latest = useRef({ shown, windowFor, props });
+  latest.current = { shown, windowFor, props };
+
+  /** Put the row being read back where it was, and stay at the bottom when the reader is following it. */
+  const holdPlace = useCallback((): void => {
+    const node = scroller.current;
+    const rows = list.current;
+    if (node === null || rows === null) return;
+    const held = anchor.current;
+    const slot = held === undefined ? undefined : slotById(rows, held.id);
+    if (held !== undefined && slot !== undefined) {
+      const delta = slot.getBoundingClientRect().top - node.getBoundingClientRect().top - held.offset;
+      if (Math.abs(delta) >= 1) node.scrollTo({ top: node.scrollTop + delta, behavior: "instant" });
+    }
+    if (followBottom.current === true && distanceFromBottom(node) > 0) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+  }, [followBottom, scroller]);
+
+  /** Read the page before the loaded history when its top is near. */
+  const nearTop = useCallback((): void => {
+    const node = scroller.current;
+    const rows = list.current;
+    const current = latest.current.props;
+    if (node === null || rows === null || !current.hasOlder || current.olderLoading || current.olderFailed) return;
+    const above = node.getBoundingClientRect().top - rows.getBoundingClientRect().top;
+    if (above < PREFETCH_SCREENS * node.clientHeight) void current.loadOlder();
+  }, [scroller]);
+
+  /* Following the screen: the anchor on every scroll, the window only when the rows it mounts change. */
+  useEffect(() => {
+    const node = scroller.current;
+    if (node === null) return;
+    let frame = 0;
+    const sync = (): void => {
+      frame = 0;
+      const rows = list.current;
+      if (rows === null) return;
+      anchor.current = captureAnchor(node, rows);
+      const next = { anchor: anchor.current, height: node.clientHeight };
+      if (!sameTranscriptWindow(latest.current.windowFor(next), latest.current.shown)) setViewport(next);
+      nearTop();
+    };
+    const onScroll = (): void => {
+      if (frame === 0) frame = requestAnimationFrame(sync);
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    const resize = new ResizeObserver(onScroll);
+    resize.observe(node);
+    return () => {
+      node.removeEventListener("scroll", onScroll);
+      resize.disconnect();
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
+  }, [nearTop, scroller]);
+
+  /* Measuring rows: a row that changes height above the one being read must not move it. */
+  const measure = useMemo(
+    () =>
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver((entries) => {
+            let changed = false;
+            for (const entry of entries) {
+              const target = entry.target as HTMLElement;
+              const id = target.dataset.rowId;
+              if (id === undefined) continue;
+              const height = (entry.borderBoxSize[0]?.blockSize ?? target.getBoundingClientRect().height) + gap.current;
+              if (Math.abs((heights.current.get(id) ?? -1) - height) < 0.5) continue;
+              heights.current.set(id, height);
+              changed = true;
+            }
+            if (changed) holdPlace();
+          }),
+    [holdPlace],
+  );
+  useEffect(() => () => measure?.disconnect(), [measure]);
+  const observeRow = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element === null || measure === undefined) return undefined;
+      measure.observe(element);
+      return () => measure.unobserve(element);
+    },
+    [measure],
+  );
+
+  /* After every change to what is mounted: keep the place, report what is drawn, and read more history if near the top. */
+  const reported = useRef("");
+  useLayoutEffect(() => {
+    const rows = list.current;
+    if (rows !== null && gap.current === 0) {
+      const parsed = Number.parseFloat(getComputedStyle(rows).rowGap);
+      gap.current = Number.isFinite(parsed) ? parsed : 0;
+    }
+    holdPlace();
+    const mounted = new Set(shown.mounted.map((index) => ids[index]!));
+    // A row that left the document enters without animation if it comes back.
+    for (const id of enters.current.keys()) if (!mounted.has(id)) enters.current.set(id, false);
+    const present = [...mounted];
+    const key = present.join("\u0000");
+    if (key !== reported.current) {
+      reported.current = key;
+      props.onPresentChange(present);
+    }
+  });
+  useEffect(() => {
+    nearTop();
+  }, [nearTop, props.hasOlder, props.olderLoading, props.olderFailed, ids]);
+
+  /* The rows a person is using stay mounted: the focused one, one playing, and the ones a selection spans. */
+  useEffect(() => {
+    const rows = list.current;
+    if (rows === null) return;
+    const doc = rows.ownerDocument;
+    const onFocusIn = (event: FocusEvent): void => setFocusedId(rowIdOf(event.target as Node, rows));
+    const onFocusOut = (event: FocusEvent): void => {
+      if (!(event.relatedTarget instanceof Node) || !rows.contains(event.relatedTarget)) setFocusedId(undefined);
+    };
+    const playing = (event: Event): void => {
+      const id = rowIdOf(event.target as Node, rows);
+      if (id === undefined) return;
+      const on = event.type === "play" || event.type === "playing";
+      setPlayingIds((current) => {
+        if (current.has(id) === on) return current;
+        const next = new Set(current);
+        if (on) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    };
+    const onSelection = (): void => {
+      const selection = doc.getSelection();
+      const from = selection === null || selection.isCollapsed ? undefined : rowIdOf(selection.anchorNode, rows);
+      const to = selection === null || selection.isCollapsed ? undefined : rowIdOf(selection.focusNode, rows);
+      setSelectionIds((current) => {
+        if (from === undefined || to === undefined) return current === undefined ? current : undefined;
+        return current !== undefined && current[0] === from && current[1] === to ? current : [from, to];
+      });
+    };
+    rows.addEventListener("focusin", onFocusIn);
+    rows.addEventListener("focusout", onFocusOut);
+    for (const type of ["play", "playing", "pause", "ended", "emptied"]) rows.addEventListener(type, playing, true);
+    doc.addEventListener("selectionchange", onSelection);
+    return () => {
+      rows.removeEventListener("focusin", onFocusIn);
+      rows.removeEventListener("focusout", onFocusOut);
+      for (const type of ["play", "playing", "pause", "ended", "emptied"]) rows.removeEventListener(type, playing, true);
+      doc.removeEventListener("selectionchange", onSelection);
+    };
+  }, []);
+
+  const edge = props.olderFailed ? (
+    <div className="cc-history-edge" data-history="failed" role="status">
+      <span>{t("timeline.history.failed")}</span>
+      <button type="button" className="cc-action" onClick={() => void props.loadOlder()}>
+        {t("timeline.history.retry")}
+      </button>
+    </div>
+  ) : props.olderLoading ? (
+    <div className="cc-history-edge" data-history="loading" aria-live="off">
+      <span className="cc-freshness">{t("timeline.history.loading")}</span>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {edge}
+      <div className="cc-transcript-rows" ref={list} data-rows-total={ids.length} data-rows-mounted={shown.mounted.length}>
+        {shown.segments.map((segment) =>
+          segment.kind === "gap" ? (
+            <div
+              key={`gap-${ids[segment.from]!}`}
+              className="cc-transcript-gap"
+              data-visibility="suspended"
+              data-rows={segment.to - segment.from}
+              aria-hidden="true"
+              style={{ height: `${String(segment.height)}px` }}
+            />
+          ) : (
+            messages.slice(segment.from, segment.to).map((message, offset) => {
+              const index = segment.from + offset;
+              const id = message.messageId;
+              if (!enters.current.has(id)) {
+                enters.current.set(id, opening.current?.has(id) === true || arrived.current.has(id));
+              }
+              return (
+                <div
+                  key={id}
+                  ref={observeRow}
+                  className="cc-transcript-slot"
+                  data-row-id={id}
+                  data-visibility={rowVisibility(index, shown)}
+                  data-enter={enters.current.get(id) === true ? undefined : "none"}
+                  aria-live={arrived.current.has(id) ? undefined : "off"}
+                >
+                  <TimelineMessageRow
+                    message={message}
+                    index={index}
+                    renderSurface={renderSurface}
+                    blockActions={blockActions}
+                    client={client}
+                    settled
+                  />
+                  {index === undoIndex && undoRow}
+                </div>
+              );
+            })
+          ),
+        )}
+      </div>
+    </>
+  );
+}
+
+export const VirtualTranscript = memo(VirtualTranscriptComponent);
+
+/**
+ * "Jump to latest", while the reader is more than a screen above the bottom and something new arrived there.
+ *
+ * Not chrome: it appears only when there is something to go to, sits over the transcript rather than taking room in
+ * it, and goes away at the bottom. Returning to the bottom by any means resumes following it.
+ */
+export function JumpToLatest({ scroller, newest }: { scroller: RefObject<HTMLDivElement | null>; newest: string }): ReactElement | null {
+  const t = useT();
+  const [far, setFar] = useState(false);
+  const [unseen, setUnseen] = useState(false);
+  const atBottom = useRef(true);
+
+  useEffect(() => {
+    const node = scroller.current;
+    if (node === null) return;
+    const onScroll = (): void => {
+      atBottom.current = followsBottom(node);
+      setFar(distanceFromBottom(node) > node.clientHeight);
+      if (atBottom.current) setUnseen(false);
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, [scroller]);
+
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (!atBottom.current) setUnseen(true);
+  }, [newest]);
+
+  if (!far || !unseen) return null;
+  return (
+    <div className="cc-jump-latest-dock">
+      <button
+        type="button"
+        className="cc-chip cc-jump-latest"
+        data-jump-latest="true"
+        onClick={() => {
+          const node = scroller.current;
+          if (node === null) return;
+          node.scrollTo({ top: node.scrollHeight, behavior: followScrollBehavior(node) });
+          setUnseen(false);
+          // The button goes with the distance; focus goes to the conversation it brought the reader to.
+          node.focus({ preventScroll: true });
+        }}
+      >
+        {t("timeline.jumpToLatest")}
+      </button>
+    </div>
+  );
+}

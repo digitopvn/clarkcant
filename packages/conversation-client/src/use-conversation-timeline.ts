@@ -3,16 +3,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
 import { composedImageRefs } from "./mini-app-surface.tsx";
 import { mergeTimeline, olderPageCursor } from "./timeline-window.ts";
+import { PRESENTATION_RETENTION, instanceIdsOf, presentMessages, retainRecent } from "./presentation-retention.ts";
 import { useHostObjectUrls } from "./use-image-urls.ts";
 import type { ObjectUrls } from "./use-object-urls.ts";
 
-/** Every block in a timeline's messages, flattened. */
-function blocksOf(timeline: Timeline | undefined): Record<string, unknown>[] {
+/** Every block in these messages, flattened. */
+function blocksOf(messages: Timeline["messages"]): Record<string, unknown>[] {
   const blocks: Record<string, unknown>[] = [];
-  for (const message of timeline?.messages ?? []) {
+  for (const message of messages) {
     for (const block of message.blocks ?? []) blocks.push(block);
   }
   return blocks;
+}
+
+/**
+ * A list kept by `retainRecent` across renders.
+ *
+ * Written during render on purpose: the answer is a pure function of the last answer and the present list, and
+ * `retainRecent` given its own answer back answers the same, so a render that runs twice keeps the same list.
+ */
+function useRetained(present: readonly string[], budget: number): string[] {
+  const kept = useRef<string[]>([]);
+  const key = present.join("\u0000");
+  return useMemo(() => {
+    kept.current = retainRecent(kept.current, key === "" ? [] : key.split("\u0000"), budget);
+    return kept.current;
+  }, [budget, key]);
 }
 
 export interface ConversationTimelineState {
@@ -37,6 +53,11 @@ export interface ConversationTimelineState {
   olderFailed: boolean;
   /** Read the page just older than the held window and merge it in front. Resolves once it is merged or has failed. */
   loadOlder: () => Promise<void>;
+  /**
+   * The transcript says which messages it mounted. Pictures, datasets and composed presentations are read for those
+   * and for the pins, and a bounded number of recently drawn ones are kept (`PRESENTATION_RETENTION`).
+   */
+  reportPresent: (messageIds: readonly string[]) => void;
   instanceById: Map<string, Timeline["instances"][number]>;
   composedSnapshots: { snapshotId: string; instanceId: string | undefined }[];
   imageUrl: (imageRef: string) => string | undefined;
@@ -82,13 +103,18 @@ export function useConversationTimeline(
   const shownConversation = useRef(conversationId);
   shownConversation.current = conversationId;
   const [olderLoading, setOlderLoading] = useState(false);
+  /** The messages the transcript mounted, or undefined before it said: then the newest few count as drawn. */
+  const [presentIds, setPresentIds] = useState<readonly string[] | undefined>(undefined);
   const [olderFailed, setOlderFailed] = useState(false);
   const olderInFlight = useRef(false);
 
   const replaceTimeline = useCallback((next: Timeline | undefined) => {
     held.current = next;
     setTimeline(next);
-    if (next === undefined) setOlderFailed(false);
+    if (next === undefined) {
+      setOlderFailed(false);
+      setPresentIds(undefined);
+    }
   }, []);
 
   /**
@@ -170,15 +196,54 @@ export function useConversationTimeline(
     };
   }, [applyTimeline, client, initialConversationId]);
 
-  /* Resolve every dataset a visible widget references, and record its freshness. */
-  const datasetRefs = useMemo(() => {
+  const reportPresent = useCallback((messageIds: readonly string[]) => {
+    setPresentIds((current) =>
+      current !== undefined && current.join("\u0000") === messageIds.join("\u0000") ? current : [...messageIds],
+    );
+  }, []);
+
+  const instanceById = useMemo(() => {
+    const map = new Map<string, Timeline["instances"][number]>();
+    for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
+    return map;
+  }, [timeline]);
+
+  /** The messages drawn now, whose presentation is read. */
+  const drawn = useMemo(() => presentMessages(timeline, presentIds), [presentIds, timeline]);
+
+  /** The instances drawn now: those the drawn messages show, and every pin's. */
+  const drawnInstances = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of drawn) for (const id of instanceIdsOf(message)) ids.add(id);
+    for (const pin of timeline?.pins ?? []) ids.add(pin.instanceId);
+    const instances: Timeline["instances"] = [];
+    for (const id of ids) {
+      const instance = instanceById.get(id);
+      if (instance !== undefined) instances.push(instance);
+    }
+    return instances;
+  }, [drawn, instanceById, timeline]);
+
+  /* Resolve every dataset a drawn widget references, and record its freshness. */
+  const drawnDatasetRefs = useMemo(() => {
     const refs = new Set<string>();
-    for (const instance of timeline?.instances ?? []) {
+    for (const instance of drawnInstances) {
       const ref = instance.props.datasetRef;
       if (typeof ref === "string") refs.add(ref);
     }
-    return [...refs].sort().join(",");
-  }, [timeline]);
+    return [...refs].sort();
+  }, [drawnInstances]);
+  const keptDatasetRefs = useRetained(drawnDatasetRefs, PRESENTATION_RETENTION.datasets);
+  const datasetRefs = drawnDatasetRefs.join(",");
+
+  /* A dataset neither drawn nor among the recently drawn is let go; drawing it again reads it again. */
+  useEffect(() => {
+    const keep = new Set(keptDatasetRefs);
+    setDatasets((current) => {
+      if (Object.keys(current).every((id) => keep.has(id))) return current;
+      return Object.fromEntries(Object.entries(current).filter(([id]) => keep.has(id)));
+    });
+  }, [keptDatasetRefs]);
 
   useEffect(() => {
     if (datasetRefs === "") return;
@@ -215,12 +280,6 @@ export function useConversationTimeline(
   // Read once per timeline rather than per render: a streamed reply renders the conversation on every delta.
   const hasOlder = useMemo(() => olderPageCursor(timeline) !== undefined, [timeline]);
 
-  const instanceById = useMemo(() => {
-    const map = new Map<string, Timeline["instances"][number]>();
-    for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
-    return map;
-  }, [timeline]);
-
   /**
    * The snapshot behind every composed message, and only those with a bundle.
    *
@@ -230,7 +289,7 @@ export function useConversationTimeline(
    */
   const composedSnapshots = useMemo(() => {
     const entries: { snapshotId: string; instanceId: string | undefined }[] = [];
-    for (const block of blocksOf(timeline)) {
+    for (const block of blocksOf(drawn)) {
       if (block.type !== "surface") continue;
       const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
       const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;
@@ -247,7 +306,18 @@ export function useConversationTimeline(
       entries.push({ snapshotId, instanceId });
     }
     return entries;
-  }, [instanceById, timeline]);
+  }, [drawn, instanceById]);
+  const drawnSnapshotIds = useMemo(() => composedSnapshots.map((entry) => entry.snapshotId), [composedSnapshots]);
+  const keptSnapshotIds = useRetained(drawnSnapshotIds, PRESENTATION_RETENTION.snapshots);
+
+  /* A presentation neither drawn nor among the recently drawn is let go; it is immutable, so reading it again is safe. */
+  useEffect(() => {
+    const keep = new Set(keptSnapshotIds);
+    setSnapshots((current) => {
+      if (Object.keys(current).every((id) => keep.has(id))) return current;
+      return Object.fromEntries(Object.entries(current).filter(([id]) => keep.has(id)));
+    });
+  }, [keptSnapshotIds]);
 
   useEffect(() => {
     if (conversationId === undefined) return;
@@ -264,7 +334,7 @@ export function useConversationTimeline(
   }, [client, composedSnapshots, conversationId, snapshots]);
 
   /**
-   * Every picture and every player source any surface asks for, from the props it asks in.
+   * Every picture and every player source a drawn surface asks for, from the props it asks in.
    *
    * A single reference, a list of them, or the poster beside a video: a renderer cannot fetch, it
    * can only draw a URL it was handed, so whatever shape the request takes has to be recognised
@@ -285,7 +355,7 @@ export function useConversationTimeline(
       }
       if (Array.isArray(value)) for (const entry of value) collect(into, entry);
     };
-    for (const instance of timeline?.instances ?? []) {
+    for (const instance of drawnInstances) {
       const props = (instance as { props?: Record<string, unknown> }).props ?? {};
       collect(pictures, props.imageRef);
       collect(pictures, props.imageRefs);
@@ -297,9 +367,16 @@ export function useConversationTimeline(
       for (const ref of composedImageRefs(snapshots[entry.snapshotId]?.sections ?? [])) pictures.add(ref);
     }
     return { inlineImageRefs: [...pictures].sort(), playerRefs: [...players].sort() };
-  }, [composedSnapshots, snapshots, timeline]);
+  }, [composedSnapshots, drawnInstances, snapshots]);
 
-  const hostUrls = useHostObjectUrls(client, inlineImageRefs, playerRefs);
+  /*
+   * Pictures drawn a moment ago stay read, up to a budget, so scrolling back a little draws them at once. One that
+   * falls out of the budget leaves the list, and the set revokes its object URL. A player's source is listed only while
+   * drawn: its row stays mounted while it plays, and leaving the list forgets the request, so its bytes are read again
+   * only when it is about to be seen again.
+   */
+  const keptImageRefs = useRetained(inlineImageRefs, PRESENTATION_RETENTION.pictures);
+  const hostUrls = useHostObjectUrls(client, keptImageRefs, playerRefs);
   const imageUrl = hostUrls.get;
 
   return {
@@ -318,6 +395,7 @@ export function useConversationTimeline(
     olderLoading,
     olderFailed,
     loadOlder,
+    reportPresent,
     instanceById,
     composedSnapshots,
     imageUrl,

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactElement, type ReactNode, useId, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactElement, type ReactNode, useId, useMemo, useRef } from "react";
 
 import {
   type CompositionGraph,
@@ -21,6 +21,7 @@ import {
 import { type RendererDataset, resolveRenderer } from "./renderers.tsx";
 import { readableInstant } from "./blocks.tsx";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
+import { SurfaceViewScope, useSurfaceViewState } from "./surface-view-state.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -171,7 +172,9 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
   const t = useT();
   const locale = useLocale();
   const { view, onIntent, busy } = props;
-  const [state, setState] = useState<Record<string, Record<string, unknown>>>({});
+  // Each section's view, and the values the page applied below: the surface's own view state, so it is still there
+  // when the transcript row holding it is unmounted and mounted again (`surface-view-state.tsx`).
+  const [state, setState] = useSurfaceViewState<Record<string, Record<string, unknown>>>("sections", {});
   const sections = useMemo(() => orderSections(view.sections), [view.sections]);
   const readOnly = view.readOnly === true;
   const sectionById = useMemo(() => new Map(view.sections.map((section) => [section.sectionId, section])), [view.sections]);
@@ -202,7 +205,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
    */
   const graph = useMemo(() => surfaceGraph(view), [view.graph, view.sections]);
   const storedKey = JSON.stringify(view.graphState ?? null);
-  const [local, setLocal] = useState<{ storedKey: string; values: GraphValues } | undefined>();
+  const [local, setLocal] = useSurfaceViewState<{ storedKey: string; values: GraphValues } | undefined>("graph", undefined);
   const values: GraphValues =
     graph === undefined ? {} : local !== undefined && local.storedKey === storedKey ? local.values : graphValues(graph, view.graphState);
 
@@ -330,6 +333,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
             {section.textAlternative}
           </p>
         ) : (
+          <SurfaceViewScope id={section.sectionId}>
           <Renderer
             definitionId={section.definitionRef.id}
             props={section.props}
@@ -372,6 +376,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
                   },
                 })}
           />
+          </SurfaceViewScope>
         )}
         {action !== undefined && availability !== "denied" && (
           <span className="cc-freshness" data-section-action={action.actionBindingId}>
@@ -473,7 +478,11 @@ function tabLabel(node: LayoutNode): string {
  */
 function LayoutTabs(props: LayoutTreeProps & { node: LayoutContainerNode }): ReactElement {
   const { node, sections, region } = props;
-  const [selected, setSelected] = useState(0);
+  // Named by what the strip holds, so two strips in one surface keep their own choice.
+  const [selected, setSelected] = useSurfaceViewState(
+    `tabs:${node.children.map((child) => (child.kind === "widget" ? child.sectionId : tabLabel(child))).join("|")}`,
+    0,
+  );
   const base = useId();
   const strip = useRef<HTMLDivElement>(null);
 
@@ -532,7 +541,7 @@ function LayoutTabs(props: LayoutTreeProps & { node: LayoutContainerNode }): Rea
 
 /** A section that starts open or closed, as the tree says, and then belongs to the reader. */
 function LayoutCollapsible(props: { label: string; open: boolean; children: ReactNode }): ReactElement {
-  const [open, setOpen] = useState(props.open);
+  const [open, setOpen] = useSurfaceViewState(`collapsible:${props.label}`, props.open);
   return (
     <details
       className="cc-layout-collapsible"
