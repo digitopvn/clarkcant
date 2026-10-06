@@ -382,12 +382,19 @@ beforeEach(() => {
   originalPath = process.env.PATH;
 });
 
-afterEach(() => {
+afterEach(async () => {
   automation.stop();
+  // A run goes on after it reports, taking its worktree away with a `git worktree remove` that runs in the checkout and
+  // outlives the worktree's folder. It ends before the node closes under it and its folder is removed, which Windows
+  // refuses while that git still has the checkout as its working directory.
+  const current = dispatcher as TaskDispatcher | undefined;
+  if (current !== undefined) {
+    await waitUntil(() => (current.runningCount() === 0 && current.queuedCount() === 0 ? true : undefined), 30_000);
+  }
   process.env.PATH = originalPath;
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-});
+}, 40_000);
 
 describe("a labelled issue becomes a draft pull request", () => {
   it("fixes, tests, commits, pushes and opens the pull request in the task's own worktree, and says so", async () => {
