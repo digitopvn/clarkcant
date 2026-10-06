@@ -19,7 +19,7 @@ Trước khi sửa UI/UX, đọc [DESIGN.vi.md](../DESIGN.vi.md) để giữ đ�
 3. [Distributed runtime](distributed-runtime.vi.md): cài VPS, pairing, remote delegation, disconnect/recovery.
 4. [Widgets & extensions](widgets-and-extensions.vi.md): rich catalog, agent-defined actions, custom mini-apps, pin và lifecycle.
 5. [Widget developer standard](widget-development.vi.md): authoring contract, SDK UX, conformance, package/publish flow và directory metadata.
-6. [Cài đặt](installation.vi.md): installer cross-platform, onboarding tương tác, Docker và VPS có HTTPS. [Integration & onboarding](integration-onboarding.vi.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
+6. [Cài đặt](installation.vi.md): installer cross-platform, onboarding tương tác, Docker và VPS có HTTPS. [Integration & onboarding](integration-onboarding.vi.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu. [Phát hành](releases.vi.md): một phiên bản Clark, SemVer từ Conventional Commits, kênh stable/beta, dữ liệu ghi chú phát hành và changelog; [ký phát hành](release-signing.vi.md) cho maintainer; [ADR-003](research/adr-003-desktop-packaging.vi.md) cho đề xuất đóng gói.
 7. [Browser & Computer Use](browser-computer-use.vi.md): core/pack boundary, driver, node targeting và takeover.
 8. [Implementation plan](implementation-plan.vi.md): dependencies, work packages, gates, acceptance scenarios.
 9. [Research & decisions](research-and-decisions.vi.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
