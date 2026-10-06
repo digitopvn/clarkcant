@@ -241,7 +241,7 @@ function writeProbePackage(): void {
   writeFileSync(
     join(root, "service", "server.mjs"),
     `
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, writeFileSync } from "node:fs";
 let buffer = "";
 const waiting = new Map();
 let next = 1;
@@ -277,7 +277,12 @@ async function run(id, args) {
     }
   }
   const late = await Promise.all(detached);
-  if (answered) writeFileSync(args.report, JSON.stringify({ results, detached: late }));
+  // Written aside and renamed into place: the test reads the report as soon as it exists, and a file written where it
+  // is read exists, empty, before its bytes are in it.
+  if (answered) {
+    writeFileSync(args.report + ".partial", JSON.stringify({ results, detached: late }));
+    renameSync(args.report + ".partial", args.report);
+  }
   else send({ id, result: { content: [{ type: "text", text: JSON.stringify([...results, ...late]) }] } });
 }
 async function handle(message) {
