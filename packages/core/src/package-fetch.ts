@@ -451,15 +451,22 @@ export async function snapshotLocalPackage(input: {
   cacheRoot: string;
   limits: { maxFiles: number; maxBytes: number };
   expectedDigest?: string;
+  /**
+   * Names left out at the package root, in any letter case, besides `.git`: a development folder's `node_modules`,
+   * say, which its package does not ship and which may hold links the snapshot refuses. Left out of the copy, the
+   * listings and the digest alike, so the digest stays the digest of the copy.
+   */
+  excludeRootNames?: readonly string[];
 }): Promise<SnapshotOutcome> {
   const snapshotsRoot = join(input.cacheRoot, "local");
+  const leftOut = new Set([".git", ...(input.excludeRootNames ?? [])].map((name) => name.toLowerCase()));
   const tempDest = join(snapshotsRoot, `.tmp-${fingerprint(`${input.path}#${String(Date.now())}#${String(Math.random())}`)}`);
   const tempContained = containedOrRefuse(input.cacheRoot, tempDest);
   if (!tempContained.ok) return { ok: false, code: "CACHE_ESCAPE", message: tempContained.message };
   const source = resolve(input.path);
 
   try {
-    const listed = await listPackageTree(source, input.limits);
+    const listed = await listPackageTree(source, input.limits, leftOut);
     if (!listed.ok) return listed;
 
     await inCache(`could not create ${snapshotsRoot}`, () => mkdir(snapshotsRoot, { recursive: true }));
@@ -476,7 +483,7 @@ export async function snapshotLocalPackage(input: {
       };
     }
     if (input.expectedDigest === undefined) {
-      const after = await listPackageTree(source, input.limits);
+      const after = await listPackageTree(source, input.limits, leftOut);
       if (!after.ok || !sameTree(listed.tree, after.tree)) {
         return { ok: false, code: "LOCAL_SOURCE_CHANGED", message: `the files at ${input.path} changed while they were being copied` };
       }
@@ -530,6 +537,8 @@ const sameNode = (a: { dev: bigint; ino: bigint }, b: { dev: bigint; ino: bigint
 async function listPackageTree(
   root: string,
   limits: { maxFiles: number; maxBytes: number },
+  /** Lower-case names left out at the root (`.git`, and whatever the caller adds). */
+  leftOut: ReadonlySet<string>,
 ): Promise<{ ok: true; tree: ListedTree } | SnapshotRefused> {
   const rootStat = await lstat(root, { bigint: true });
   if (rootStat.isSymbolicLink()) {
@@ -570,8 +579,8 @@ async function listPackageTree(
     if (escapedAfter !== undefined) return escapedAfter;
 
     for (const name of names) {
-      // `.git` only at the root, in any letter case: Windows and macOS treat `.GIT` as the same folder.
-      if (relParts.length === 0 && name.toLowerCase() === ".git") continue;
+      // `.git` (and the caller's names) only at the root, in any letter case: Windows and macOS treat `.GIT` as `.git`.
+      if (relParts.length === 0 && leftOut.has(name.toLowerCase())) continue;
       const full = join(folder, name);
       const childRel = [...relParts, name].join("/");
       const stat = await lstatIfPresent(full);
@@ -724,7 +733,7 @@ async function writeAll(out: FileHandle, bytes: Buffer): Promise<void> {
 /** The digest of a snapshot folder already in the cache, or undefined when it cannot be read as one. */
 async function digestOfSnapshot(path: string, limits: { maxFiles: number; maxBytes: number }): Promise<string | undefined> {
   try {
-    const listed = await listPackageTree(path, limits);
+    const listed = await listPackageTree(path, limits, new Set([".git"]));
     if (!listed.ok) return undefined;
     const digested = await copyAndDigest(listed.tree, undefined, limits);
     return digested.ok ? digested.digest : undefined;

@@ -1,4 +1,4 @@
-import { MACHINE_SURFACE_ORIGINS, type TurnOrigin, type WidgetDevSessionView } from "@clarkcant/contracts";
+import { type TurnOrigin, type WidgetDevSessionView } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
@@ -7,9 +7,10 @@ import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
  * "Work on the widget in ~/widgets/timer with me": a live widget authoring session from the conversation.
  *
  * The same session registry `/widget-dev/sessions` drives, so a sentence, a voice command and the HTTP API start one
- * thing. Starting installs the folder's package through the node's install path, so the execution policy decides it
- * like any install and the inbox asks when the policy asks; a turn a machine surface sent cannot start, rebuild or place
- * one, as it cannot call the routes that do.
+ * thing. Starting installs the folder's package through the node's install path. A session started here is Clark's
+ * initiative: its installs are decided as Clark's own proposal (a mode that asks before what the person did not ask for
+ * by name asks), and it may watch only the person's project folders or Clark's widget workspace. Only a turn the person
+ * sent can start, rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
  */
 
 export interface DevelopWidgetToolDeps {
@@ -36,6 +37,10 @@ export function describeDevSession(view: WidgetDevSessionView): string {
   }
   if (activation.state === "refused") lines.push(`Generation ${String(activation.generation)} was not run: ${activation.message} (${activation.code}).`);
   if (activation.state === "none") lines.push("No generation runs yet.");
+  if (view.status === "stopped" && view.stopReason !== undefined && view.stopReason !== "requested") {
+    const why = { "watch-failed": "watching its folder failed", "folder-gone": "its folder is gone", capacity: "the node already watches as many folders as it can" }[view.stopReason];
+    lines.push(`It stopped watching because ${why}; start it again to resume.`);
+  }
   if (view.latest?.delta.verdict === "wider") lines.push("The newest build asks to reach more than the one before it.");
   if (view.lastBuild?.ok === false) {
     const problems = view.lastBuild.diagnostics.map((entry) => `${entry.path === undefined ? "" : `${entry.path}: `}${entry.message}`);
@@ -46,7 +51,17 @@ export function describeDevSession(view: WidgetDevSessionView): string {
   return lines.join("\n");
 }
 
+/** Where Clark may scaffold a new widget, when the node runs sessions. */
+function workspaceOf(deps: DevelopWidgetToolDeps): string | undefined {
+  try {
+    return deps.sessions()?.workspace();
+  } catch {
+    return undefined;
+  }
+}
+
 export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefinition {
+  const workspace = workspaceOf(deps);
   return {
     name: "develop_widget",
     label: "Phát triển widget trực tiếp trong cuộc trò chuyện",
@@ -56,7 +71,11 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       "that still reads as a package rebuilds it, and the widget reloads in place. A save that does not read as a package " +
       "keeps the last good build on screen and reports what is wrong. A build that asks to reach more is decided by the " +
       "execution policy again, and may wait for the person in the inbox. status reports a session, rebuild builds now, " +
-      "place puts its widget here again, stop ends watching (what runs keeps running).",
+      "place puts its widget here again, stop ends watching (what runs keeps running). The folder must be one of the " +
+      "person's project folders or your widget workspace" +
+      (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget`) +
+      "; any other folder the person starts from their own app. Only widgets that render in the frame or are data are " +
+      "developed this way: a package with a service, tools or a native part is refused.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -75,8 +94,9 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       const sessions = deps.sessions();
       if (sessions === undefined) return { text: "This node is not running widget dev sessions. Nothing was started." };
       const origin = deps.origin?.();
-      if (INSTALLS.includes(action as Action) && origin !== undefined && MACHINE_SURFACE_ORIGINS.includes(origin)) {
-        return { text: "A widget dev session installs code, so only the person can start, rebuild or place one, from their own app. Nothing was done." };
+      // Only the person's own turn installs: a machine surface, an automation or a peer starts nothing here.
+      if (INSTALLS.includes(action as Action) && origin !== undefined && origin !== "person") {
+        return { text: "A widget dev session installs code, so only a turn the person sent can start, rebuild or place one. Nothing was done." };
       }
       const widgetId = typeof params.widgetId === "string" && params.widgetId.trim() !== "" ? params.widgetId.trim() : undefined;
 
@@ -87,14 +107,19 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
          * The session places its widget in this conversation itself, once a generation runs: at once when the policy lets
          * the first build run, or later, when the person approves it in the inbox, which no turn is waiting for.
          */
-        const started = await sessions.start({ root, conversationId: deps.conversationId, ...(widgetId === undefined ? {} : { widgetId }) });
+        const started = await sessions.start({
+          root,
+          conversationId: deps.conversationId,
+          initiative: { kind: "clark", ...(origin === undefined ? {} : { origin }) },
+          ...(widgetId === undefined ? {} : { widgetId }),
+        });
         return { text: started.ok ? describeDevSession(started.value) : `Not started: ${started.message}` };
       }
 
       const sessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
       if (sessionId === "") return { text: "Name the session by the id start returned." };
       if (action === "status") {
-        const view = await sessions.get(sessionId);
+        const view = sessions.get(sessionId);
         return { text: view === undefined ? `There is no widget dev session ${sessionId} on this node.` : describeDevSession(view) };
       }
       if (action === "rebuild") {

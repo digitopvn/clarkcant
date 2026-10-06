@@ -29,9 +29,27 @@ export const widgetDevDiagnosticSchema = z.strictObject({
   severity: z.enum(["error", "warning"]),
   /** Where the problem was found, relative to the package root, when the reader named a file. */
   path: z.string().min(1).max(400).optional(),
+  /**
+   * The node's own reason, as a code a client words in the person's language, when the node rather than the package's
+   * reader found the problem (`WIDGET_DEV_DIAGNOSTIC_CODES`). Absent, `message` is the reader's own words.
+   */
+  code: z.string().regex(/^[A-Z][A-Z0-9_]{0,59}$/).optional(),
   message: z.string().min(1).max(1000),
 });
 export type WidgetDevDiagnostic = z.infer<typeof widgetDevDiagnosticSchema>;
+
+/**
+ * The diagnostics the node words itself.
+ *
+ * - `FACET_LANE_UNSUPPORTED`: the package declares a facet that runs outside the widget frame (a service, tools or
+ *   native facet). A dev session runs only `isolated-ui` and `declarative` facets; such a package is installed the
+ *   ordinary way instead.
+ * - `FILES_UNREADABLE`: the folder's files could not be read, digested or copied for this build.
+ */
+export const WIDGET_DEV_DIAGNOSTIC_CODES = ["FACET_LANE_UNSUPPORTED", "FILES_UNREADABLE"] as const;
+
+/** The facet lanes a dev session runs: the widget frame's own, and data the host reads without running it. */
+export const WIDGET_DEV_ALLOWED_ISOLATIONS = ["isolated-ui", "declarative"] as const;
 
 const listChange = <T extends z.ZodType>(item: T) =>
   z.strictObject({ added: z.array(item).max(DEV_DELTA_LIST_MAX), removed: z.array(item).max(DEV_DELTA_LIST_MAX) });
@@ -181,10 +199,23 @@ export const widgetDevActivationSchema = z.discriminatedUnion("state", [
 ]);
 export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
 
+/**
+ * Why a session stopped watching its folder.
+ *
+ * - `requested`: somebody stopped it.
+ * - `watch-failed`: the platform stopped reporting changes (the folder was removed or cannot be watched).
+ * - `folder-gone`: the folder was not there when the node started again.
+ * - `capacity`: the node already watched as many folders as it does at once when it started again.
+ */
+export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity"]);
+export type WidgetDevStopReason = z.infer<typeof widgetDevStopReasonSchema>;
+
 /** A session as the node reports it. */
 export const widgetDevSessionViewSchema = z.strictObject({
   sessionId: z.string().min(1).max(200),
+  /** `live` exactly while the node watches the folder; a watcher that failed reads as `stopped` with its reason. */
   status: z.enum(["live", "stopped"]),
+  stopReason: widgetDevStopReasonSchema.optional(),
   /** The package folder on this node. */
   root: z.string().min(1).max(1000),
   packageId: z.string().min(1).max(160).optional(),

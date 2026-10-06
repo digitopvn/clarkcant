@@ -40,6 +40,16 @@ import { readPackage } from "./widget-package.ts";
 export const DEV_ENGINE_LIMITS = { maxFiles: 5_000, maxBytes: 64 * 1024 * 1024 } as const;
 /** How long the watcher waits after the last change before it builds, so a save that writes several files builds once. */
 export const DEV_ENGINE_DEBOUNCE_MS = 150;
+/**
+ * Folders at the package root that are not the package: version control, and the author's installed dependencies, which
+ * the package does not ship and which may hold thousands of files and links (a pnpm `node_modules` is junctions). Left
+ * out of the digest, the snapshot and the watch alike, as `clark widget pack` leaves them out of the archive. `dist` is
+ * not left out: a built widget's entry may live there.
+ */
+export const DEV_ENGINE_EXCLUDED_ROOT_NAMES = [".git", "node_modules"] as const;
+
+const isExcludedRootName = (name: string): boolean =>
+  (DEV_ENGINE_EXCLUDED_ROOT_NAMES as readonly string[]).includes(name.toLowerCase());
 
 /** The listing publisher for a package that names none: a development listing on this node, said as such. */
 const LOCAL_PUBLISHER = { id: "local-development", sourceUrl: "local", license: "UNLICENSED" } as const;
@@ -85,6 +95,11 @@ export interface DevEngineOptions {
   onBuild?: (event: DevEngineEvent) => void;
   /** Told when the watcher itself fails (the folder was removed, the platform cannot watch it). */
   onWatchError?: (error: Error) => void;
+  /**
+   * The facet lanes a build may declare. A package with a facet in any other lane is a failed build
+   * (`FACET_LANE_UNSUPPORTED`), not a generation. Absent, every lane builds: the standalone dev host runs none of them.
+   */
+  allowedIsolations?: readonly string[];
 }
 
 export interface DevEngine {
@@ -101,21 +116,53 @@ export interface DevEngine {
   close(): void;
 }
 
+/** What a scope reads from the manifest, beyond the listing. */
+type ScopeManifest = Pick<PackageManifest, "requestedCapabilities" | "facets">;
+
+/** Manifests of snapshots already read, by snapshot path. A snapshot is content-addressed, so its manifest never changes. */
+const scopeManifests = new Map<string, ScopeManifest>();
+const SCOPE_MANIFESTS_MAX = 256;
+
+function scopeManifestOf(listing: DirectoryEntry): ScopeManifest | null {
+  if (listing.source.kind !== "local") return null;
+  const path = listing.source.path;
+  const known = scopeManifests.get(path);
+  if (known !== undefined) return known;
+  let read: ScopeManifest | null;
+  try {
+    const pkg = readPackage(path);
+    read = pkg.problems.length === 0 ? pkg.manifest : null;
+  } catch {
+    read = null;
+  }
+  // Only a manifest that was read is kept: a snapshot that could not be read now may be readable later.
+  if (read === null) return null;
+  if (scopeManifests.size >= SCOPE_MANIFESTS_MAX) scopeManifests.delete(scopeManifests.keys().next().value ?? "");
+  scopeManifests.set(path, read);
+  return read;
+}
+
 /**
- * The consent a dev session's installs are decided under: the package, and everything a listing binds about what it may
- * reach (declared reach, resource request, facet lanes, device, filesystem and network permissions).
+ * The consent a dev session's installs are decided under: the package, and everything it binds about what it may
+ * reach — declared reach, resource request, device, filesystem and network permissions, the capabilities it requests,
+ * and each facet by kind, id and lane.
  *
  * Two generations with the same scope differ only in code that runs inside what the person already allowed, so one
- * decision covers both; any change to the scope, wider or narrower, is a different question. Read from the listing alone,
- * so the inbox and the decide route compute it from what they show.
+ * decision covers both; any change to the scope, wider or narrower, is a different question. The capabilities and facets
+ * are read from the manifest of the snapshot the listing names (or the one given), which is immutable, so the install,
+ * the inbox and the decide route all compute the same scope for the same listing. A listing whose manifest cannot be read
+ * has a scope of its own, so nothing granted for a readable one covers it.
  */
-export function devConsentScopeOf(listing: DirectoryEntry): string {
+export function devConsentScopeOf(listing: DirectoryEntry, manifest?: ScopeManifest): string {
+  const read = manifest ?? scopeManifestOf(listing);
   const body = {
     packageId: listing.packageId,
     reach: listing.declaredReach === undefined ? null : canonicalReach(listing.declaredReach),
     resources: listing.resources ?? null,
     isolations: listing.isolations.map((entry) => `${entry.facetKind}:${entry.isolation}`).sort(),
     permissions: [...listing.permissionsSummary].sort(),
+    requestedCapabilities: read === null ? null : [...new Set(read.requestedCapabilities)].sort(),
+    facets: read === null ? null : read.facets.map((facet) => `${facet.kind}:${facet.id}:${facet.isolation}`).sort(),
   };
   return `widget-dev-scope:sha256:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -140,12 +187,12 @@ export function devDiagnosticOf(root: string, problem: string, severity: WidgetD
   return { severity, path: path.slice(0, 400), message };
 }
 
-/** The bytes a package's files hold, `.git` left out as the digest leaves it out. */
+/** The bytes a package's files hold, the excluded root folders left out as the digest leaves them out. */
 function sizeOf(root: string): number {
   let total = 0;
   const visit = (directory: string, depth: number): void => {
     for (const name of readdirSync(directory)) {
-      if (depth === 0 && name.toLowerCase() === ".git") continue;
+      if (depth === 0 && isExcludedRootName(name)) continue;
       const path = join(directory, name);
       const stat = lstatSync(path, { throwIfNoEntry: false });
       if (stat === undefined) continue;
@@ -163,7 +210,8 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   const root = resolve(options.root);
   const limits = options.limits ?? DEV_ENGINE_LIMITS;
   const now = options.now ?? (() => new Date().toISOString());
-  const records: DevGenerationRecord[] = [];
+  // Only the newest generation is kept: older ones are named in their build records and the caller's own state.
+  let newest: DevGenerationRecord | undefined;
   let last: WidgetDevBuild | undefined;
   let closed = false;
 
@@ -183,6 +231,21 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     if (pkg.problems.length > 0) {
       return { ok: false, diagnostics: pkg.problems.map((problem) => devDiagnosticOf(folder, problem)) };
     }
+    const allowed = options.allowedIsolations;
+    if (allowed !== undefined) {
+      const outside = pkg.manifest.facets.filter((facet) => !allowed.includes(facet.isolation));
+      if (outside.length > 0) {
+        return {
+          ok: false,
+          diagnostics: outside.map((facet) => ({
+            severity: "error" as const,
+            path: "clarkcant.json",
+            code: "FACET_LANE_UNSUPPORTED",
+            message: `facet ${facet.kind}:${facet.id} runs as ${facet.isolation}, outside the widget frame; a widget dev session runs only ${allowed.join(" and ")} facets, so install this package the ordinary way`,
+          })),
+        };
+      }
+    }
     const widgetIds = pkg.facets.map((facet) => facet.definition.id);
     if (widgetIds.length === 0) {
       return {
@@ -201,23 +264,32 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     let digest: string;
     try {
       if (options.cacheRoot === undefined) {
-        const digested = digestOfDirectory(root, { exclude: [".git"], excludeAnyCase: true, limits });
-        if (!digested.ok) return fail(trigger, [{ severity: "error", message: `the files could not be digested: ${digested.message}` }]);
+        const digested = digestOfDirectory(root, { exclude: DEV_ENGINE_EXCLUDED_ROOT_NAMES, excludeAnyCase: true, limits });
+        if (!digested.ok) {
+          return fail(trigger, [{ severity: "error", code: "FILES_UNREADABLE", message: `the files could not be digested: ${digested.message}` }]);
+        }
         digest = digested.digest;
       } else {
-        const snapshot = await snapshotLocalPackage({ path: root, cacheRoot: options.cacheRoot, limits });
+        const snapshot = await snapshotLocalPackage({
+          path: root,
+          cacheRoot: options.cacheRoot,
+          limits,
+          excludeRootNames: DEV_ENGINE_EXCLUDED_ROOT_NAMES,
+        });
         if (!snapshot.ok) {
           // Files that changed while they were copied are not a broken package: the next change event builds them again.
-          return fail(trigger, [{ severity: "error", message: `the files could not be copied for this build (${snapshot.code}): ${snapshot.message}` }]);
+          return fail(trigger, [
+            { severity: "error", code: "FILES_UNREADABLE", message: `the files could not be copied for this build (${snapshot.code}): ${snapshot.message}` },
+          ]);
         }
         folder = snapshot.artifact.path;
         digest = snapshot.artifact.digest;
       }
     } catch (cause) {
-      return fail(trigger, [{ severity: "error", message: `the files could not be read: ${messageOf(cause)}` }]);
+      return fail(trigger, [{ severity: "error", code: "FILES_UNREADABLE", message: `the files could not be read: ${messageOf(cause)}` }]);
     }
 
-    const previous = records.at(-1);
+    const previous = newest;
     if (previous !== undefined && previous.generation.digest === digest) {
       last = { ok: true, at: now(), trigger, generation: previous.generation.generation, diagnostics: [] };
       return { kind: "unchanged", build: last };
@@ -255,7 +327,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         digest,
       }),
     });
-    records.push(record);
+    newest = record;
     last = { ok: true, at: generation.builtAt, trigger, generation: generation.generation, diagnostics: [] };
     return { kind: "generation", record, build: last };
   };
@@ -284,7 +356,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     try {
       watcher = watch(root, { recursive: true }, (_event, filename) => {
         const name = typeof filename === "string" ? filename : "";
-        if ((name.split(/[\\/]/)[0] ?? "").toLowerCase() === ".git") return;
+        if (isExcludedRootName(name.split(/[\\/]/)[0] ?? "")) return;
         if (timer !== undefined) clearTimeout(timer);
         timer = setTimeout(() => {
           timer = undefined;
@@ -313,7 +385,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   return {
     root,
     ready,
-    latest: () => records.at(-1),
+    latest: () => newest,
     lastBuild: () => last,
     rebuild: async (trigger = "rebuild") => {
       const event = await enqueue(trigger);

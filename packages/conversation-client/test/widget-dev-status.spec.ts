@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { WidgetDevGeneration, WidgetDevSessionView } from "@clarkcant/contracts";
 
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
-import { widgetDevStatusLine } from "../src/widget-dev-status.tsx";
+import { widgetDevDiagnosticText, widgetDevRefusalReason, widgetDevStatusLine } from "../src/widget-dev-status.tsx";
 
 /**
  * What the host says beside a widget dev session's frame. "Last successful build" is said exactly when the node says the
@@ -82,5 +82,35 @@ describe("the widget dev status line", () => {
     });
     expect(widgetDevStatusLine(nothing, en)).toEqual({ text: "The build failed — nothing has run yet.", notice: true });
     expect(widgetDevStatusLine(view({ status: "stopped" }), en).text).toBe("No longer watching the folder · build 2 keeps running.");
+  });
+
+  it("says a refusal in the person's language, never the node's English inside a translated line", () => {
+    for (const code of ["APPROVAL_DENIED", "APPROVAL_EXPIRED", "POLICY_REFUSED", "PACKAGE_LISTED", "PACKAGE_IN_OTHER_SESSION", "PACKAGE_INSTALLED_OTHERWISE"]) {
+      const refused = view({ latest: generation(3), activation: { state: "refused", generation: 3, code, message: "English from the node." } });
+      expect(widgetDevStatusLine(refused, vi).text, code).not.toContain("English from the node");
+      expect(widgetDevStatusLine(refused, en).text, code).not.toContain("English from the node");
+    }
+    const unknown = view({ latest: generation(3), activation: { state: "refused", generation: 3, code: "SOMETHING_NEW", message: "English from the node." } });
+    expect(widgetDevStatusLine(unknown, vi).text).toBe("Bản dựng 3 không được chạy: máy đã từ chối (SOMETHING_NEW). Đang hiện bản dựng 2.");
+    expect(widgetDevRefusalReason("PACKAGE_IN_OTHER_SESSION", en)).toBe("another development session uses this package id.");
+  });
+
+  it("says why a session stopped watching when the person did not stop it", () => {
+    const capacity = view({ status: "stopped", stopReason: "capacity" });
+    expect(widgetDevStatusLine(capacity, en)).toEqual({
+      text: "No longer watching the folder · build 2 keeps running. This machine already watches as many folders as it can; stop another session, then start this one again.",
+      notice: true,
+    });
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "watch-failed" }), vi).text).toContain("Việc theo dõi thư mục bị lỗi");
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "requested" }), en).notice).toBe(false);
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "folder-gone", running: undefined, activation: { state: "none" } }), en).text).toBe(
+      "No longer watching the folder · no build runs yet. The folder is gone.",
+    );
+  });
+
+  it("says a problem the host found in the person's language and the package's own words as written", () => {
+    expect(widgetDevDiagnosticText({ code: "FACET_LANE_UNSUPPORTED", message: "facet tools:x runs as service" }, vi)).toContain("ngoài khung widget");
+    expect(widgetDevDiagnosticText({ code: "FILES_UNREADABLE", message: "EBUSY" }, en)).toBe("The files could not be read for this build; the next save builds again.");
+    expect(widgetDevDiagnosticText({ message: "widget.json: not JSON" }, vi)).toBe("widget.json: not JSON");
   });
 });

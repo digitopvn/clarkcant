@@ -5,8 +5,10 @@ import { z } from "zod";
 
 import {
   directoryEntrySchema,
+  turnOriginSchema,
   widgetDevBuildSchema,
   widgetDevGenerationSchema,
+  widgetDevStopReasonSchema,
   type DirectoryEntry,
 } from "@clarkcant/contracts";
 import { directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
@@ -30,10 +32,25 @@ const storedGenerationSchema = z.strictObject({
   listing: directoryEntrySchema,
 });
 
+/** The most sessions one node keeps, live and stopped. */
+export const WIDGET_DEV_STORE_MAX = 256;
+/** The most snapshot digests one session remembers making, so it can remove the ones nothing runs any more. */
+export const WIDGET_DEV_SNAPSHOTS_MAX = 64;
+
 export const storedDevSessionSchema = z.strictObject({
   sessionId: z.string().min(1).max(200),
   root: z.string().min(1).max(1000),
   status: z.enum(["live", "stopped"]),
+  stopReason: widgetDevStopReasonSchema.optional(),
+  /**
+   * Who started the session, which is whose intent its installs carry out: the person on their own surface, or Clark
+   * during a turn (with the turn's origin), whose installs the policy decides as Clark's own proposal.
+   */
+  initiative: z
+    .discriminatedUnion("kind", [z.strictObject({ kind: z.literal("person") }), z.strictObject({ kind: z.literal("clark"), origin: turnOriginSchema.optional() })])
+    .optional(),
+  /** Snapshot digests this session made in the package cache, so the ones nothing runs or waits on can be removed. */
+  snapshots: z.array(z.string().min(1).max(120)).max(WIDGET_DEV_SNAPSHOTS_MAX).optional(),
   startedAt: z.iso.datetime({ offset: false }),
   conversationId: z.string().min(1).max(200).optional(),
   widgetId: z.string().min(1).max(160).optional(),
@@ -59,10 +76,18 @@ export const storedDevSessionSchema = z.strictObject({
 });
 export type StoredDevSession = z.infer<typeof storedDevSessionSchema>;
 
-const storeSchema = z.strictObject({ version: z.literal(1), sessions: z.array(storedDevSessionSchema).max(256) });
+const storeSchema = z.strictObject({ version: z.literal(1), sessions: z.array(storedDevSessionSchema).max(WIDGET_DEV_STORE_MAX) });
 
 export function widgetDevStoreDir(dataDir: string): string {
   return join(dataDir, "widget-dev");
+}
+
+/**
+ * The folder Clark owns for widgets it scaffolds itself. Besides the person's project folders, it is the one place a
+ * session Clark starts may watch; nothing else under the data folder may be developed.
+ */
+export function widgetWorkspaceDir(dataDir: string): string {
+  return join(dataDir, "widget-workspace");
 }
 
 function storePath(dataDir: string): string {
@@ -70,14 +95,31 @@ function storePath(dataDir: string): string {
 }
 
 /**
- * The stored sessions. A missing file is no sessions. A file that does not parse is reported once per read and read as
+ * A store file that cannot be read as one is moved aside under a name of its own, so the next write starts a new file
+ * instead of overwriting what may be recovered by hand. Said once, with where it went.
+ */
+function setAside(path: string, why: string): void {
+  const aside = `${path}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  try {
+    renameSync(path, aside);
+    process.stderr.write(`widget dev: the session store ${why}; it was moved to ${aside} and the node starts with no sessions\n`);
+  } catch (cause) {
+    process.stderr.write(
+      `widget dev: the session store ${why}, and it could not be moved aside (${cause instanceof Error ? cause.message : String(cause)}); read as empty\n`,
+    );
+  }
+}
+
+/**
+ * The stored sessions. A missing file is no sessions. A file that does not parse is moved aside (`setAside`) and read as
  * none, rather than throwing out of every directory read on the node: the installed generations stay installed, and only
  * their dev listings are missing until a session writes the file again.
  */
 export function readDevSessions(dataDir: string): StoredDevSession[] {
+  const path = storePath(dataDir);
   let raw: string;
   try {
-    raw = readFileSync(storePath(dataDir), "utf8");
+    raw = readFileSync(path, "utf8");
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
     process.stderr.write(`widget dev: could not read the session store: ${cause instanceof Error ? cause.message : String(cause)}\n`);
@@ -87,12 +129,12 @@ export function readDevSessions(dataDir: string): StoredDevSession[] {
   try {
     json = JSON.parse(raw);
   } catch (cause) {
-    process.stderr.write(`widget dev: the session store is not JSON (${cause instanceof Error ? cause.message : String(cause)}); read as empty\n`);
+    setAside(path, `is not JSON (${cause instanceof Error ? cause.message : String(cause)})`);
     return [];
   }
   const parsed = storeSchema.safeParse(json);
   if (!parsed.success) {
-    process.stderr.write(`widget dev: the session store does not match its schema; read as empty\n`);
+    setAside(path, "does not match its schema");
     return [];
   }
   return parsed.data.sessions;

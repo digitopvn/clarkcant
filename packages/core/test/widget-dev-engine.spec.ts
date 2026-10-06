@@ -168,6 +168,79 @@ describe("the dev engine", () => {
     expect(engine.latest()?.listing.source).not.toEqual(first?.listing.source);
   });
 
+  it("leaves installed dependencies out of the digest, the snapshot and the watch, and keeps built output in", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    mkdirSync(join(root, "node_modules", "left-pad"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "left-pad", "index.js"), "module.exports = 1;");
+    mkdirSync(join(root, "dist"), { recursive: true });
+    writeFileSync(join(root, "dist", "bundle.js"), "export {};");
+    const engine = engineFor(root, cacheRoot);
+    await engine.ready;
+    const first = engine.latest();
+    const snapshot = first === undefined ? "" : (cachedLocalSnapshotPath(cacheRoot, first.generation.digest) ?? "");
+
+    expect(existsSync(join(snapshot, "node_modules"))).toBe(false);
+    expect(existsSync(join(snapshot, "dist", "bundle.js"))).toBe(true);
+    // A dependency reinstalled is not a new build; built output that changed is.
+    writeFileSync(join(root, "node_modules", "left-pad", "index.js"), "module.exports = 2;");
+    expect((await engine.rebuild("change")).kind).toBe("unchanged");
+    writeFileSync(join(root, "dist", "bundle.js"), "export const x = 1;");
+    expect((await engine.rebuild("change")).kind).toBe("generation");
+  });
+
+  it("refuses a facet that runs outside the widget frame when only framed lanes are allowed", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>", {
+      facets: [
+        ...manifest().facets,
+        {
+          kind: "tools",
+          id: "com.example.dev.service",
+          entry: "service/server.mjs",
+          isolation: "service",
+          protocol: "mcp-stdio",
+          capabilities: [{ tool: "list_items", ref: "com.example.dev.items.list@1", summary: "List the items", effectCategory: "read" }],
+        } as unknown as PackageManifest["facets"][number],
+      ],
+    });
+    mkdirSync(join(root, "service"), { recursive: true });
+    writeFileSync(join(root, "service", "server.mjs"), "export {};");
+    const engine = startDevEngine({ root, watch: false, allowedIsolations: ["isolated-ui", "declarative"] });
+    engines.push(engine);
+    const first = await engine.ready;
+
+    expect(first.kind).toBe("failed");
+    expect(engine.latest()).toBeUndefined();
+    expect(engine.lastBuild()?.diagnostics).toEqual([expect.objectContaining({ code: "FACET_LANE_UNSUPPORTED", path: "clarkcant.json" })]);
+    // The same folder builds where every lane is allowed (the standalone dev host).
+    const anyLane = engineFor(root);
+    expect((await anyLane.ready).kind).toBe("generation");
+  });
+
+  it("watches the folder for real, builds a saved change, and lets go of the folder when closed", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, onBuild: (event) => built.push(event.kind) });
+    engines.push(engine);
+    await engine.ready;
+    expect(engine.watching()).toBe(true);
+
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved</p>");
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(built).toContain("generation");
+
+    engine.close();
+    expect(engine.watching()).toBe(false);
+    // Closed, the folder is no longer held open: on Windows a watched folder cannot be removed.
+    rmSync(root, { recursive: true });
+    expect(existsSync(root)).toBe(false);
+  });
+
   it("reports a missing folder as a failed build rather than throwing", async () => {
     const root = join(tempDir("dev-engine-"), "missing");
     const engine = engineFor(root);
@@ -198,6 +271,25 @@ describe("the dev consent scope", () => {
     expect(devConsentScopeOf(second.listing)).toBe(devConsentScopeOf(first.listing));
     expect(devConsentScopeOf(third.listing)).not.toBe(devConsentScopeOf(first.listing));
     expect(devConsentScopeOf(first.listing)).toMatch(/^widget-dev-scope:sha256:[0-9a-f]{64}$/);
+  });
+
+  it("changes when the package asks for another capability or moves a facet, read from the snapshot", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    const engine = engineFor(root, cacheRoot);
+    await engine.ready;
+    const first = engine.latest();
+    writePackage(root, "<p>one</p>", { requestedCapabilities: ["notes.write@1"] });
+    await engine.rebuild("change");
+    const second = engine.latest();
+
+    if (first === undefined || second === undefined) throw new Error("expected two generations");
+    // The listing alone does not carry the capability; the scope reads it from the immutable snapshot.
+    expect(devConsentScopeOf(second.listing)).not.toBe(devConsentScopeOf(first.listing));
+    expect(devConsentScopeOf(second.listing)).toBe(devConsentScopeOf(second.listing, second.manifest));
+    const moved = manifest({ facets: [{ ...manifest().facets[0], isolation: "declarative" } as PackageManifest["facets"][number]] });
+    expect(devConsentScopeOf(first.listing, moved)).not.toBe(devConsentScopeOf(first.listing, first.manifest));
   });
 });
 

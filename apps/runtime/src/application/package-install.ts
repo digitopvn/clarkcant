@@ -51,6 +51,7 @@ import {
   resolveLocalSource,
   snapshotLocalPackage,
   type CoordinationDeps,
+  type ExecutionIntent,
 } from "@clarkcant/core";
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
@@ -429,6 +430,12 @@ export async function installPackage(
      * the listing being installed, so a caller cannot name a scope it was not given.
      */
     consentScope?: string;
+    /**
+     * Whose intent the install carries out. Absent is the person asking for this named package on their own surface.
+     * A widget dev session Clark started passes `proposed` (with the turn's origin): Clark chose to install, so the
+     * policy decides it as Clark's own proposal rather than as the person's request.
+     */
+    intent?: ExecutionIntent;
   } = {},
 ): Promise<PackageInstallOutcome> {
   const { runtime, conductor } = deps;
@@ -592,11 +599,11 @@ export async function installPackage(
     policy,
     action: { kind: "effect", category: "local-write", operationDigest },
     /*
-     * True, unlike a command the model proposed: installing *this named package* is what the person asked for,
-     * which is exactly the case Autonomous exists to run without a second question. Guarded and Ask still apply,
-     * because the decision is the policy's to make, not this route's.
+     * By default the person's: installing *this named package* is what the person asked for, which is exactly the case
+     * Autonomous exists to run without a second question. Guarded and Ask still apply, because the decision is the
+     * policy's to make, not this route's. A caller acting on Clark's own proposal says so (`options.intent`).
      */
-    intent: { kind: "interactive" },
+    intent: options.intent ?? { kind: "interactive" },
   });
   /*
    * The question the policy asked has been answered by the person, so it is not asked again: `ask` becomes the
@@ -806,7 +813,11 @@ export async function installPackage(
     requested: manifestRequestedCapabilities,
     riskTier: computedRiskTier,
     policy,
-    intent: { kind: "interactive" },
+    /*
+     * The install's own intent, except where the person approved this install: the question they answered named the
+     * package and (for a dev session's scope) the capabilities it requests, so their answer is their request.
+     */
+    intent: approved === undefined ? (options.intent ?? { kind: "interactive" }) : { kind: "interactive" },
     artifactDigest: operationDigest,
   });
 

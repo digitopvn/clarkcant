@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { widgetDevSessionCreateSchema } from "@clarkcant/contracts";
+import { PERSON_ONLY_REFUSAL, machineSurfaceOf, widgetDevSessionCreateSchema } from "@clarkcant/contracts";
 
 import type { WidgetDevResult, WidgetDevSessions } from "../application/widget-dev-sessions.ts";
-import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
  * Live widget authoring sessions (`application/widget-dev-sessions.ts`), over HTTP.
@@ -16,9 +16,10 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   POST   /widget-dev/sessions/:id/rebuild  build the folder now
  *   POST   /widget-dev/sessions/:id/place    place the running widget in a conversation (`{ conversationId, widgetId? }`)
  *
- * Starting, rebuilding and placing install the folder's package, so a machine surface cannot call them
- * (`isPersonOnlyRoute`); it asks Clark, whose `develop_widget` the execution policy decides. Reading and stopping are
- * reachable everywhere.
+ * Starting, rebuilding and placing install the folder's package, so a machine surface cannot call them: the gateways
+ * refuse them (`isPersonOnlyRoute`), and this route refuses them again for any request a machine surface marked
+ * (`machineSurfaceOf`), whichever way it arrived. A machine surface asks Clark instead, and a turn it sent starts no
+ * session. Reading and stopping are reachable everywhere; reading changes nothing.
  */
 export interface WidgetDevRouteDeps {
   services: { widgetDev?: WidgetDevSessions | undefined };
@@ -45,10 +46,14 @@ export async function handleWidgetDevRoutes(deps: WidgetDevRouteDeps): Promise<G
   const method = request.method.toUpperCase();
   const sessionId = segments[2];
   if (sessionId !== undefined && !SESSION_ID.test(sessionId)) return fail(404, "SESSION_NOT_FOUND", "there is no such widget dev session on this node");
+  const personOnly = (): GatewayResponse | undefined =>
+    machineSurfaceOf(request.headers[SURFACE_HEADER]) === undefined ? undefined : fail(403, PERSON_ONLY_REFUSAL.code, PERSON_ONLY_REFUSAL.message);
 
   if (segments.length === 2) {
-    if (method === "GET") return json(200, { sessions: await sessions.list() });
+    if (method === "GET") return json(200, { sessions: sessions.list() });
     if (method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "use GET or POST");
+    const refused = personOnly();
+    if (refused !== undefined) return refused;
     const body = readJson(request);
     if (!body.ok) return body.response;
     const parsed = widgetDevSessionCreateSchema.safeParse(body.value);
@@ -66,7 +71,7 @@ export async function handleWidgetDevRoutes(deps: WidgetDevRouteDeps): Promise<G
   if (sessionId === undefined) return undefined;
   if (segments.length === 3) {
     if (method === "GET") {
-      const view = await sessions.get(sessionId);
+      const view = sessions.get(sessionId);
       return view === undefined ? fail(404, "SESSION_NOT_FOUND", "there is no such widget dev session on this node") : json(200, view);
     }
     if (method === "DELETE") return answer(await sessions.stop(sessionId));
@@ -75,11 +80,13 @@ export async function handleWidgetDevRoutes(deps: WidgetDevRouteDeps): Promise<G
 
   if (segments.length === 4 && segments[3] === "rebuild") {
     if (method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "use POST");
-    return answer(await sessions.rebuild(sessionId));
+    return personOnly() ?? answer(await sessions.rebuild(sessionId));
   }
 
   if (segments.length === 4 && segments[3] === "place") {
     if (method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "use POST");
+    const refused = personOnly();
+    if (refused !== undefined) return refused;
     const body = readJson(request);
     if (!body.ok) return body.response;
     const parsed = placeSchema.safeParse(body.value);

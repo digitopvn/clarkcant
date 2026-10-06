@@ -30,29 +30,53 @@ type Translate = (key: MessageKey) => string;
 const fill = (text: string, values: Record<string, string | number>): string =>
   Object.entries(values).reduce((out, [key, value]) => out.replaceAll(`{${key}}`, String(value)), text);
 
+/** Refusal codes the node uses for a session's builds, each said in the person's language. */
+const REFUSAL_CODES = [
+  "APPROVAL_DENIED",
+  "APPROVAL_EXPIRED",
+  "POLICY_REFUSED",
+  "PACKAGE_LISTED",
+  "PACKAGE_IN_OTHER_SESSION",
+  "PACKAGE_INSTALLED_OTHERWISE",
+] as const;
+
+/**
+ * Why a build was not run, in the person's language. The node's own message is English, so a code this surface knows is
+ * said from its catalogue, and any other is named by its code rather than shown as English inside a translated line.
+ */
+export function widgetDevRefusalReason(code: string, t: Translate): string {
+  const known = REFUSAL_CODES.find((candidate) => candidate === code);
+  return known === undefined ? fill(t("shell.dev.reason.other"), { code }) : t(`shell.dev.reason.${known}`);
+}
+
+/** A problem the host found in a build (it carries a code), in the person's language; the package's own words as they are. */
+export function widgetDevDiagnosticText(diagnostic: { code?: string | undefined; message: string }, t: Translate): string {
+  if (diagnostic.code === "FACET_LANE_UNSUPPORTED") return t("shell.dev.diagnostic.FACET_LANE_UNSUPPORTED");
+  if (diagnostic.code === "FILES_UNREADABLE") return t("shell.dev.diagnostic.FILES_UNREADABLE");
+  return diagnostic.message;
+}
+
 /** The one line the status says, and whether it is a notice (something is not current) rather than plain status. */
 export function widgetDevStatusLine(view: WidgetDevSessionView, t: Translate): { text: string; notice: boolean } {
   const running = view.running?.generation;
   const latest = view.latest?.generation ?? running ?? 0;
-  if (running === undefined) {
-    if (view.lastBuild?.ok === false) return { text: t("shell.dev.failedNothing"), notice: true };
-    if (view.activation.state === "awaiting-approval") {
-      return { text: fill(t("shell.dev.awaiting"), { latest: view.activation.generation, generation: "—" }), notice: true };
-    }
-    if (view.activation.state === "refused") {
-      return { text: fill(t("shell.dev.refused"), { latest: view.activation.generation, reason: view.activation.message, generation: "—" }), notice: true };
-    }
-    return { text: fill(t("shell.dev.current"), { generation: latest }), notice: false };
+  if (view.status === "stopped") {
+    const base = running === undefined ? t("shell.dev.stoppedNothing") : fill(t("shell.dev.stopped"), { generation: running });
+    const reason = view.stopReason === undefined || view.stopReason === "requested" ? undefined : t(`shell.dev.stopReason.${view.stopReason}`);
+    return reason === undefined ? { text: base, notice: false } : { text: `${base} ${reason}`, notice: true };
   }
-  if (view.lastBuild?.ok === false) return { text: fill(t("shell.dev.failed"), { generation: running }), notice: true };
+  const shown = running ?? "—";
+  if (view.lastBuild?.ok === false) {
+    return { text: running === undefined ? t("shell.dev.failedNothing") : fill(t("shell.dev.failed"), { generation: running }), notice: true };
+  }
   if (view.activation.state === "awaiting-approval") {
-    return { text: fill(t("shell.dev.awaiting"), { latest: view.activation.generation, generation: running }), notice: true };
+    return { text: fill(t("shell.dev.awaiting"), { latest: view.activation.generation, generation: shown }), notice: true };
   }
   if (view.activation.state === "refused") {
-    return { text: fill(t("shell.dev.refused"), { latest: view.activation.generation, reason: view.activation.message, generation: running }), notice: true };
+    const reason = widgetDevRefusalReason(view.activation.code, t);
+    return { text: fill(t("shell.dev.refused"), { latest: view.activation.generation, reason, generation: shown }), notice: true };
   }
-  if (view.status === "stopped") return { text: fill(t("shell.dev.stopped"), { generation: running }), notice: false };
-  return { text: fill(t("shell.dev.current"), { generation: running }), notice: view.showingLastKnownGood };
+  return { text: fill(t("shell.dev.current"), { generation: running ?? latest }), notice: running !== undefined && view.showingLastKnownGood };
 }
 
 export interface WidgetDevStatusProps {
@@ -130,7 +154,7 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
               <li key={`${String(index)}:${problem.path ?? ""}`}>
                 {problem.path === undefined ? "" : <code>{problem.path}</code>}
                 {problem.path === undefined ? "" : ": "}
-                {problem.message}
+                {widgetDevDiagnosticText(problem, t)}
               </li>
             ))}
             {more > 0 && <li>{fill(t("shell.dev.more"), { count: more })}</li>}
