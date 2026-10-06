@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
 
+import { chromiumTestArgs } from "../../../tools/chromium-test-args.ts";
 import { startDevHost, type DevHost } from "../src/dev-host.ts";
 import { serviceStatus } from "../src/service-simulator.ts";
 
@@ -45,7 +46,7 @@ describe("service simulator in Chromium", () => {
   it("delivers loading, readiness, offline refusal, fixture results, malformed refusal, and restart recovery", async () => {
     const packageRoot = `${process.cwd()}/apps/web/e2e/fixtures/notes-service`;
     host = await startDevHost({ root: packageRoot, port: 0, watchFiles: false });
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
     const page = await browser.newPage();
     const requests: string[] = [];
     const diagnostics: string[] = [];
