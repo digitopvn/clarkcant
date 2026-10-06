@@ -309,13 +309,13 @@ function clipUnits(text, max) {
  */
 export const HOST_SECRET_PATTERNS = Object.freeze([
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?:[A-Za-z0-9+/=:,\t \r\n-]|\\[nr])*?-----END [A-Z ]*PRIVATE KEY-----|(?:[\t \r\n]|\\[nr])*[A-Za-z0-9+/=]{40,}(?:(?:[\t \r\n]|\\[nr])+[A-Za-z0-9+/=]{16,})*)/g,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?:[A-Za-z0-9+/=:,\t \r\n]|-(?!----)|\\[nr])*?-----END [A-Z ]*PRIVATE KEY-----|(?:[\t \r\n]|\\[nr])*[A-Za-z0-9+/=]{40,}(?:(?:[\t \r\n]|\\[nr])+[A-Za-z0-9+/=]{16,})*)/g,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g,
   /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g,
   /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
-  /\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi,
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi,
+  /\bAuthorization["']?\s*:\s*["']?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi,
+  /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g,
   /\b(?:sk|pk|rk|ghp|gho|npm|xox[baprs]|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi,
   /(?<![A-Za-z0-9])(?:access_token|refresh_token|client_secret|secret_access_key|api[_-]?key|password)["']?\s*[:=]\s*["']?(?![A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(|(?:string|number|boolean|undefined|null)\b|\$\{|<|\{\{)[^"'\s,}]{6,}/gi,
@@ -324,7 +324,7 @@ export const HOST_SECRET_PATTERNS = Object.freeze([
   /\b[A-Fa-f0-9]{32,}\b/g,
   /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
   /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g,
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g,
   /\b(?:\+?\d[\s-]?){9,}\b/g,
 ]);
 

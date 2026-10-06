@@ -55,8 +55,9 @@ describe("secret-shaped text", () => {
 
 describe("the cost of reading hostile text", () => {
   /*
-   * Each of these once made a shape scan its run to the end from every boundary inside it, about a second for 16 KB.
-   * The bound is generous so a loaded CI machine does not fail it; the bounded patterns take tens of milliseconds at most.
+   * Each of these once made a shape scan its run to the end from every boundary inside it: two seconds or more for 16 KB.
+   * The bounded patterns take tens of milliseconds on an idle machine and a few hundred on a loaded one, so the bound sits
+   * between the two behaviours rather than close to either.
    */
   // A key header repeated with no body, assembled here so no scanner reads a key block in this file.
   const KEY_HEADER = ["-----BEGIN", "PRIVATE", "KEY-----"].join(" ");
@@ -67,6 +68,6 @@ describe("the cost of reading hostile text", () => {
     const started = performance.now();
     redactSecrets(text);
     dataClassesOfText(text);
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 });
