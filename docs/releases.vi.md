@@ -93,11 +93,11 @@ Màn hình này cho thấy phiên bản và kênh đang cài cùng ghi chú chu�
 bộ chọn kênh, vì chưa có dịch vụ cập nhật.
 
 **Giới hạn của bản chạy từ mã nguồn.** Bản ghi nhúng được ghi khi một bản phát hành được lên kế hoạch, và phần đóng
-dấu không bao giờ được commit ngược lại. Vì vậy một bản checkout mang bản ghi của baseline hoặc bản phát hành gần nhất,
-trong khi mã của nó có thể đã mới hơn. Với kênh `source`, thẻ, `/changelog` và model đều nêu commit và ngày mà ghi chú
-dừng lại (`notesCover` trong view), và nói rằng bản checkout có thể có thay đổi mới hơn chưa được liệt kê. Khi bản ghi
-mới nhất vẫn là baseline, "Ghi chú phát hành đầy đủ" trỏ tới lịch sử commit tính đến commit đó, vì chưa có bản phát
-hành nào. Bản checkout không tự so với `HEAD` của nó: image Docker hay một cây thư mục được sao chép không có lịch sử git
+dấu không bao giờ được commit ngược lại. Vì vậy một bản checkout mang bản ghi baseline đã được commit, trong khi mã của
+nó có thể đã mới hơn. Với kênh `source`, thẻ, `/changelog` và model đều nêu commit và ngày mà ghi chú dừng lại
+(`notesCover` trong view), và nói rằng bản checkout có thể có thay đổi mới hơn không được liệt kê. Khi bản ghi mới nhất
+vẫn là baseline, liên kết có nhãn "Toàn bộ lịch sử thay đổi" và mở lịch sử commit tính đến commit đó, vì chưa có bản
+phát hành nào. Bản checkout không tự so với `HEAD` của nó: image Docker hay một cây thư mục được sao chép không có lịch sử git
 để so sánh.
 
 ## Workflow phát hành

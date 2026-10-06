@@ -94,11 +94,11 @@ The view shows the installed version and channel and the canonical notes. It has
 and no channel selector, because there is no update service yet.
 
 **Limitation of a build run from source.** The embedded record is written when a release is planned, and the stamp
-is never committed back. A checkout therefore carries the record of its last baseline or release, while its code may
-be ahead of it. For the `source` channel, the card, `/changelog` and the model all name the commit and date the notes
-reach (`notesCover` in the view), and say that the checkout may include later changes that are not listed. While the
-newest record is the baseline, "Full release notes" links to the commit history up to that commit, because no release
-has been published yet. A source checkout does not compare itself with its own `HEAD`: a Docker image or a copied tree
+is never committed back. A checkout therefore carries the committed baseline record, while its code may be ahead of
+it. For the `source` channel, the card, `/changelog` and the model all name the commit and date the notes reach
+(`notesCover` in the view), and say that the checkout may include later changes that are not listed. While the newest
+record is the baseline, the link reads "Full change history" and opens the commit history up to that commit, because no
+release has been published yet. A source checkout does not compare itself with its own `HEAD`: a Docker image or a copied tree
 has no git history to compare against.
 
 ## The release workflow
