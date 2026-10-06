@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Instant } from "@clarkcant/contracts";
+import { MODEL_NOTE_VERSION, systemCardBlockSchema, type Instant } from "@clarkcant/contracts";
 
 import { modelReplyCard, type ModelTurnReply } from "../src/conductor.ts";
 
@@ -46,6 +46,25 @@ describe("the model reply card", () => {
     expect(detail.endsWith(withheldNote)).toBe(true);
     const stopped = modelReplyCard(deps, { ...reply, withheldNote, stopped: true }, AT);
     expect(JSON.stringify(stopped)).not.toContain("AGENTS.md");
+  });
+
+  it("carries the elapsed time and the fallback as typed fields, the same in either language", () => {
+    const fellBack = { ...reply, elapsedMs: 900.4, fallback: { from: "anthropic/claude-opus-5-5", reason: "HTTP 400" } };
+    for (const locale of ["vi", "en"] as const) {
+      const card = modelReplyCard(deps, fellBack, AT, locale);
+      const parsed = systemCardBlockSchema.safeParse(card);
+      expect(parsed.success).toBe(true);
+      expect((card as { modelNote?: unknown }).modelNote).toEqual({
+        version: MODEL_NOTE_VERSION,
+        elapsedMs: 900,
+        fallback: { from: "anthropic/claude-opus-5-5" },
+      });
+      // The readable row shows the very figure the typed field holds, so a reader can tell the row by its value.
+      expect(JSON.stringify((card as { fields?: unknown }).fields)).toContain('"900 ms"');
+    }
+    expect((modelReplyCard(deps, reply, AT) as { modelNote?: unknown }).modelNote).toEqual({ version: MODEL_NOTE_VERSION, elapsedMs: 900 });
+    // A stopped reply names no fallback, as its title does not.
+    expect((modelReplyCard(deps, { ...fellBack, stopped: true }, AT) as { modelNote?: { fallback?: unknown } }).modelNote?.fallback).toBeUndefined();
   });
 });
 

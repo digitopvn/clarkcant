@@ -7,6 +7,7 @@ import {
   ProjectPickerCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
+  readModelNote,
   readableElapsed,
   renderBlock,
 } from "../src/blocks.tsx";
@@ -262,6 +263,61 @@ describe("the model answer note", () => {
     expect(fellBack?.props as Record<string, unknown>).toMatchObject({ "data-fallback": "true" });
     expect(textOf(findAll(fellBack, "className").find((node) => node.type === "summary"))).toContain("dự phòng");
     expect(SystemCardBlock({ block: note })?.props as Record<string, unknown>).not.toHaveProperty("data-fallback");
+  });
+
+  describe("reads the typed note rather than the rows' labels", () => {
+    /** A note written in a language the client has no labels for: only the typed field can say what it holds. */
+    const typed = {
+      ...note,
+      title: "Answered by a fallback model",
+      fields: [
+        { label: "Chosen", value: "anthropic/claude-opus-5-5" },
+        { label: "Provider", value: "deepseek" },
+        { label: "Model", value: "deepseek-v4-flash" },
+        { label: "Duration", value: "17681 ms" },
+      ],
+      modelNote: { version: 1, elapsedMs: 17681, fallback: { from: "anthropic/claude-opus-5-5" } },
+    };
+    const summaryOf = (element: ReturnType<typeof SystemCardBlock>): string =>
+      textOf(findAll(element, "className").find((node) => node.type === "summary"));
+
+    it("takes the elapsed time and the fallback from the typed field, in the interface's language", () => {
+      const english = SystemCardBlock({ block: typed, t: (key) => MESSAGES_EN[key], locale: "en" });
+      expect(english?.props as Record<string, unknown>).toMatchObject({ "data-fallback": "true" });
+      expect(summaryOf(english)).toContain("17.7 s");
+      // The time row is the one the typed figure wrote, so it is folded into the line and not shown twice.
+      expect(textOf(english)).not.toContain("17681 ms");
+      // The chosen model stays readable once the note is opened.
+      expect(textOf(english)).toContain("anthropic/claude-opus-5-5");
+
+      const vietnamese = SystemCardBlock({ block: typed });
+      expect(summaryOf(vietnamese)).toContain("17,7 giây");
+    });
+
+    it("draws no fallback when the typed note names none, whatever the rows say", () => {
+      const plain = SystemCardBlock({
+        block: { ...typed, fields: [...note.fields, { label: "Model đã chọn", value: "x" }], modelNote: { version: 1, elapsedMs: 1042 } },
+      });
+      expect(plain?.props as Record<string, unknown>).not.toHaveProperty("data-fallback");
+    });
+
+    it("falls back on the labels for a note of a version it does not know, or a malformed one", () => {
+      for (const modelNote of [{ version: 2, elapsedMs: 5 }, { version: 1, elapsedMs: "5" }, { version: 1, elapsedMs: -1 }, "x"]) {
+        const element = SystemCardBlock({
+          block: { ...note, fields: [...note.fields, { label: "Model đã chọn", value: "x" }], modelNote },
+        });
+        expect(element?.props as Record<string, unknown>).toMatchObject({ "data-fallback": "true" });
+        expect(summaryOf(element)).toContain("1 giây");
+      }
+    });
+
+    it("parses the typed field strictly", () => {
+      expect(readModelNote({ version: 1, elapsedMs: 10 })).toEqual({ elapsedMs: 10 });
+      expect(readModelNote({ version: 1, elapsedMs: 10, fallback: { from: "a/b" } })).toEqual({ elapsedMs: 10, fallbackFrom: "a/b" });
+      expect(readModelNote({ version: 1, elapsedMs: 10, fallback: { from: "" } })).toEqual({ elapsedMs: 10 });
+      expect(readModelNote(undefined)).toBeUndefined();
+      expect(readModelNote({ elapsedMs: 10 })).toBeUndefined();
+    });
   });
 
   it("still says a turn failed, at full size", () => {

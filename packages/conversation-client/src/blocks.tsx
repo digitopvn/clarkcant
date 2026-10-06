@@ -371,6 +371,22 @@ export function readableInstant(value: string, locale: string, now: Date = new D
 }
 
 /**
+ * The typed facts of a model note (`modelNote` on a connection card, version 1): how long the answer took and, when a
+ * fallback answered, which model was chosen. Anything else — a record written before the field existed, or a version
+ * this client does not know — reads as absent, and the card falls back on its readable rows.
+ */
+export function readModelNote(value: unknown): { elapsedMs: number; fallbackFrom?: string } | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const note = value as Record<string, unknown>;
+  if (note.version !== 1) return undefined;
+  const elapsedMs = note.elapsedMs;
+  if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs) || elapsedMs < 0) return undefined;
+  const fallback = typeof note.fallback === "object" && note.fallback !== null ? (note.fallback as Record<string, unknown>) : undefined;
+  const from = typeof fallback?.from === "string" && fallback.from !== "" ? fallback.from : undefined;
+  return from === undefined ? { elapsedMs } : { elapsedMs, fallbackFrom: from };
+}
+
+/**
  * Host-owned system card.
  *
  * `owner` must be `"host"`. A card that claims host ownership without it is refused
@@ -380,9 +396,12 @@ export function readableInstant(value: string, locale: string, now: Date = new D
 export function SystemCardBlock({
   block,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   t?: (key: MessageKey) => string;
+  /** The interface language, for the figures the card formats itself; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
 
@@ -404,25 +423,34 @@ export function SystemCardBlock({
       const field = fields.find((entry) => entry.label === label);
       return typeof field?.value === "string" ? field.value : undefined;
     };
-    // The node writes these fields in the person's interface language, so the card's own labels say which one it is in;
-    // the elapsed time is read in that same language, because this block is drawn without hooks.
-    const english = valueOf("Time") !== undefined;
-    const elapsed = english ? valueOf("Time") : valueOf("Thời gian");
-    const summary = [
-      valueOf("Provider"),
-      valueOf("Model"),
-      elapsed === undefined
-        ? undefined
-        : english
-          ? readableElapsed(elapsed, "en", MESSAGES_EN["settings.ai.turnCap.seconds"])
-          : readableElapsed(elapsed, "vi", MESSAGES_VI["settings.ai.turnCap.seconds"]),
-    ].filter(
-      (value): value is string => value !== undefined,
-    );
-    const rest = fields.filter((field) => !["Provider", "Model", "Thời gian", "Time"].includes(String(field.label)));
+    // The typed note says how long the answer took and whether a fallback gave it. Its readable time row is the one
+    // whose value the note's figure wrote, so it is told apart without reading its label.
+    const note = readModelNote(block.modelNote);
+    let elapsedText: string | undefined;
+    let isElapsedRow: (field: Record<string, unknown>) => boolean;
     // Answered by a fallback rather than the model the person chose: the one line says so in a warning tone, because a
     // different model answering is a fact the person should notice without opening anything.
-    const fellBack = valueOf("Model đã chọn") !== undefined || valueOf("Chosen model") !== undefined;
+    let fellBack: boolean;
+    if (note !== undefined) {
+      elapsedText = readableDuration(note.elapsedMs, locale, t("settings.ai.turnCap.seconds"));
+      isElapsedRow = (field) => field.value === `${String(note.elapsedMs)} ms`;
+      fellBack = note.fallbackFrom !== undefined;
+    } else {
+      // A record written before the typed note: its rows are in the language the node wrote them in, so the card's
+      // own labels say which one it is, and the elapsed time is read in that same language.
+      const english = valueOf("Time") !== undefined;
+      const elapsed = english ? valueOf("Time") : valueOf("Thời gian");
+      elapsedText =
+        elapsed === undefined
+          ? undefined
+          : english
+            ? readableElapsed(elapsed, "en", MESSAGES_EN["settings.ai.turnCap.seconds"])
+            : readableElapsed(elapsed, "vi", MESSAGES_VI["settings.ai.turnCap.seconds"]);
+      isElapsedRow = (field) => field.label === "Time" || field.label === "Thời gian";
+      fellBack = valueOf("Model đã chọn") !== undefined || valueOf("Chosen model") !== undefined;
+    }
+    const summary = [valueOf("Provider"), valueOf("Model"), elapsedText].filter((value): value is string => value !== undefined);
+    const rest = fields.filter((field) => field.label !== "Provider" && field.label !== "Model" && !isElapsedRow(field));
     return (
       <details
         className="cc-model-note"
@@ -1937,7 +1965,7 @@ export function renderBlock(
       // passes whether or not the dispatcher hands it anything.
       return <ArtifactBlock key={index} block={block} t={t} locale={locale} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
-      return <SystemCardBlock key={index} block={block} t={t} />;
+      return <SystemCardBlock key={index} block={block} t={t} locale={locale} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "question-card":
