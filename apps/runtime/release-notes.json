@@ -1,0 +1,624 @@
+{
+  "schemaVersion": 1,
+  "build": {
+    "version": "0.2.1",
+    "channel": "source"
+  },
+  "source": "https://github.com/digitopvn/clarkcant/releases",
+  "releases": [
+    {
+      "version": "0.2.1",
+      "kind": "baseline",
+      "date": "2026-10-06",
+      "previousVersion": null,
+      "commitRange": {
+        "from": null,
+        "to": "806c39686b2b531a4671f519e7d8072041b2a494"
+      },
+      "notes": "## 0.2.1 (2026-10-06)\n\n### Features\n\n* **browser:** drive the browser pack from tasks so a lost submit becomes an unknown effect ([#344](https://github.com/digitopvn/clarkcant/issues/344)) ([67476d9](https://github.com/digitopvn/clarkcant/commit/67476d9cb70297023cb810b14ef8fe6f87766a0c))\n* **contracts:** versioned project instructions contract, and recorded background routing fallbacks ([#459](https://github.com/digitopvn/clarkcant/issues/459)) ([e6f8fc3](https://github.com/digitopvn/clarkcant/commit/e6f8fc34f5432fccbb97ab8e63b4e431c7c54b14))\n* **conversation:** delete conversations through person-owned policy ([#365](https://github.com/digitopvn/clarkcant/issues/365)) ([b9c4985](https://github.com/digitopvn/clarkcant/commit/b9c4985f1d62f3417429e99a138a440ecd8d2ac5))\n* **conversation:** read player bytes only when a player is near the screen or played ([#416](https://github.com/digitopvn/clarkcant/issues/416)) ([710bdca](https://github.com/digitopvn/clarkcant/commit/710bdca7c0fc4251f065b8b7b98673d455485c2a)), closes [#403](https://github.com/digitopvn/clarkcant/issues/403)\n* **conversation:** slash commands answered with command cards ([#480](https://github.com/digitopvn/clarkcant/issues/480)) ([186628e](https://github.com/digitopvn/clarkcant/commit/186628e262f07d3ae4794c26e46475714f294ca8))\n* **delegation:** bring back the files a handed-over task wrote ([#309](https://github.com/digitopvn/clarkcant/issues/309)) ([080b99b](https://github.com/digitopvn/clarkcant/commit/080b99ba84d52015f90aab4a74d7fdfca0935bdc))\n* **directory:** read index entries tolerantly and say what was left out ([#438](https://github.com/digitopvn/clarkcant/issues/438)) ([7ad77ad](https://github.com/digitopvn/clarkcant/commit/7ad77ad753fd573a7c75370c4ede4e9b0911ef5a))\n* **effects:** let the person record what an unknown effect did ([#303](https://github.com/digitopvn/clarkcant/issues/303)) ([44705ce](https://github.com/digitopvn/clarkcant/commit/44705ce86d171ca7f7d6b016f1cfcaf880c87cf1))\n* **examples:** make three reference apps npm-ready pilot packages ([#473](https://github.com/digitopvn/clarkcant/issues/473)) ([0ba87b6](https://github.com/digitopvn/clarkcant/commit/0ba87b696229713d7d53309a1b74428c8dc335fa)), closes [#451](https://github.com/digitopvn/clarkcant/issues/451)\n* **inbox:** act on a notice from any surface, and open a notification on its item ([#342](https://github.com/digitopvn/clarkcant/issues/342)) ([a299d33](https://github.com/digitopvn/clarkcant/commit/a299d33f4222abfa507c532fe180f0171b3ee39c))\n* **inbox:** act on what a notice is about from the notice itself ([#307](https://github.com/digitopvn/clarkcant/issues/307)) ([bfdc76f](https://github.com/digitopvn/clarkcant/commit/bfdc76f8e8624938c95ce6adfc00ceec732c4d23))\n* **inbox:** copy a notice's details from its overflow menu ([#352](https://github.com/digitopvn/clarkcant/issues/352)) ([7006721](https://github.com/digitopvn/clarkcant/commit/7006721252c1f44d6d6ff58c8ae176af35d1fdb9))\n* **maps:** set the tile policy from Settings and through Clark ([#421](https://github.com/digitopvn/clarkcant/issues/421)) ([8306b80](https://github.com/digitopvn/clarkcant/commit/8306b807295467b8df35223a05da14c9f7b9018d)), closes [#404](https://github.com/digitopvn/clarkcant/issues/404) [#427](https://github.com/digitopvn/clarkcant/issues/427)\n* **nodelink:** tell a sender what a peer can run for it before handing work over ([#306](https://github.com/digitopvn/clarkcant/issues/306)) ([15cb13a](https://github.com/digitopvn/clarkcant/commit/15cb13a233be39ee9c86aa2358e27b3f6f661d39))\n* **packages:** run a local package from a snapshot taken at install ([#422](https://github.com/digitopvn/clarkcant/issues/422)) ([dbbe266](https://github.com/digitopvn/clarkcant/commit/dbbe266f66daa0b240330596022ad951bd4185fe))\n* **packages:** show what an update adds to a package's reach before it is applied ([#428](https://github.com/digitopvn/clarkcant/issues/428)) ([e63cbc8](https://github.com/digitopvn/clarkcant/commit/e63cbc8442eb8615830d79b9962bb536dbd6cd8d))\n* **policy:** record who started each turn and let the person opt in to asking ([#446](https://github.com/digitopvn/clarkcant/issues/446)) ([a09d220](https://github.com/digitopvn/clarkcant/commit/a09d2206f4180395a42e8d4c10bc8dcb83ca0b69))\n* **runtime:** answer on a fallback model when the chosen one refuses a turn ([#467](https://github.com/digitopvn/clarkcant/issues/467)) ([c340af4](https://github.com/digitopvn/clarkcant/commit/c340af4dc77088a4b1c21edbbb7c4454827007ca))\n* **runtime:** carry a tool's structured result to callers under the data-class guard ([#490](https://github.com/digitopvn/clarkcant/issues/490)) ([9238855](https://github.com/digitopvn/clarkcant/commit/92388558653748ad70f489dd64f5a4587f81d236))\n* **runtime:** data-class routing, conditional instructions and a session reuse policy for the context planner ([#455](https://github.com/digitopvn/clarkcant/issues/455)) ([f040f48](https://github.com/digitopvn/clarkcant/commit/f040f48c84ddbc8f42e5fafc3d98f384bb76e9dc))\n* **runtime:** decide machine-surface widget artifact writes by execution policy ([#443](https://github.com/digitopvn/clarkcant/issues/443)) ([e1c19cb](https://github.com/digitopvn/clarkcant/commit/e1c19cb0628d7d80abb2f8808effb14fedfd18ce))\n* **runtime:** focus context on the message being answered, and measure tool disclosure ([#447](https://github.com/digitopvn/clarkcant/issues/447)) ([7048018](https://github.com/digitopvn/clarkcant/commit/704801880a758fecdb6ed51a3b58f078a36ca8a2)), closes [#433](https://github.com/digitopvn/clarkcant/issues/433)\n* **runtime:** grant resource profiles and broker service egress and browser tokens ([#381](https://github.com/digitopvn/clarkcant/issues/381)) ([faad9c8](https://github.com/digitopvn/clarkcant/commit/faad9c89ca5cc2655b146cf94f42c2c068cc14b7))\n* **runtime:** hold a model's data-class ceiling as a hard send boundary ([#485](https://github.com/digitopvn/clarkcant/issues/485)) ([838f874](https://github.com/digitopvn/clarkcant/commit/838f874ced0be7064566ce91be8ccfe442d19181))\n* **runtime:** provider-neutral decision layer with Cloudflare Clef as an explicit second provider ([#487](https://github.com/digitopvn/clarkcant/issues/487)) ([528da09](https://github.com/digitopvn/clarkcant/commit/528da097a02704c9987178bc0cdb760d1a0b8b14))\n* **runtime:** run long package capabilities as durable jobs widgets follow ([#377](https://github.com/digitopvn/clarkcant/issues/377)) ([67bf537](https://github.com/digitopvn/clarkcant/commit/67bf537c9fdaf2d36b5a5fa050cf37af4e23b4ec))\n* **tasks:** run dispatched task workers on the node's configured model ([#348](https://github.com/digitopvn/clarkcant/issues/348)) ([86123db](https://github.com/digitopvn/clarkcant/commit/86123db7980ead74bd01ed8d4e5090f25f2da996))\n* **themes:** add production Theme Lab and author CLI ([#368](https://github.com/digitopvn/clarkcant/issues/368)) ([4ca6198](https://github.com/digitopvn/clarkcant/commit/4ca61989a57468683533f9faff8db5b202250670))\n* **themes:** give a theme a host-owned look beyond colour ([#347](https://github.com/digitopvn/clarkcant/issues/347)) ([2a0127b](https://github.com/digitopvn/clarkcant/commit/2a0127b309494f75b5ec1ae0afa1651bea7912c8))\n* **themes:** separate the theme from the colour scheme and add the appearance compiler ([#304](https://github.com/digitopvn/clarkcant/issues/304)) ([d65153b](https://github.com/digitopvn/clarkcant/commit/d65153b985d59c939029b67e5d3ec62cc89afcdd)), closes [#201](https://github.com/digitopvn/clarkcant/issues/201)\n* **themes:** serve package themes and restyle the page in place ([#305](https://github.com/digitopvn/clarkcant/issues/305)) ([8eaf8b2](https://github.com/digitopvn/clarkcant/commit/8eaf8b295e2a71a30113a19b542e2fce7177e028)), closes [#201](https://github.com/digitopvn/clarkcant/issues/201)\n* **themes:** ship Pixel Arcade and Neo Brutalism references ([#371](https://github.com/digitopvn/clarkcant/issues/371)) ([6884045](https://github.com/digitopvn/clarkcant/commit/6884045655adaf9a4aacdc6f3e207ee6e31e0a2c))\n* **ui:** a calmer, more finished conversation, settings and desktop window ([#474](https://github.com/digitopvn/clarkcant/issues/474)) ([aefdaa6](https://github.com/digitopvn/clarkcant/commit/aefdaa6159334f268f33606d9fe855eff2cac5a7))\n* **voice:** perform a spoken press of an offered action through the session's page ([#457](https://github.com/digitopvn/clarkcant/issues/457)) ([cf1a9f8](https://github.com/digitopvn/clarkcant/commit/cf1a9f836c20cc9ce8b9bbecf95cfbb6d8219829))\n* **widget-cli:** inspect semantic state and composition events ([#376](https://github.com/digitopvn/clarkcant/issues/376)) ([1218166](https://github.com/digitopvn/clarkcant/commit/121816699eef3b930f0c40245c4cc30126bfb29d)), closes [#335](https://github.com/digitopvn/clarkcant/issues/335)\n* **widget-cli:** pack widget packages as verified npm archives ([#465](https://github.com/digitopvn/clarkcant/issues/465)) ([1ed1f04](https://github.com/digitopvn/clarkcant/commit/1ed1f04040c4a0e4d1943c21c0b073da5e47453e))\n* **widget-cli:** simulate service readiness in dev host ([#375](https://github.com/digitopvn/clarkcant/issues/375)) ([61ce486](https://github.com/digitopvn/clarkcant/commit/61ce486cd65e52e4528e74548ec3a475c9dc1ebc)), closes [#334](https://github.com/digitopvn/clarkcant/issues/334)\n* **widget-tooling:** build, smoke and release the author CLI and SDK as npm packages ([#472](https://github.com/digitopvn/clarkcant/issues/472)) ([230bfc8](https://github.com/digitopvn/clarkcant/commit/230bfc85d0bbf5f10c7402f0c8d0ab31e1f84e3e)), closes [#450](https://github.com/digitopvn/clarkcant/issues/450)\n* **widgets:** add a map over an offline basemap, with tiles only under a host tile policy ([#398](https://github.com/digitopvn/clarkcant/issues/398)) ([e91b9c3](https://github.com/digitopvn/clarkcant/commit/e91b9c37edb01bce2f3cd3be4d794e983275e8ee))\n* **widgets:** add area and scatter charts ([#331](https://github.com/digitopvn/clarkcant/issues/331)) ([a187a96](https://github.com/digitopvn/clarkcant/commit/a187a9604cea902d2d1868f57fa07dc8a129c029))\n* **widgets:** add bounded kanban board ([#373](https://github.com/digitopvn/clarkcant/issues/373)) ([ed22b8c](https://github.com/digitopvn/clarkcant/commit/ed22b8ca5f342364a8492e93044322186b3a574c))\n* **widgets:** add bounded tree hierarchy view ([#372](https://github.com/digitopvn/clarkcant/issues/372)) ([1e40a3c](https://github.com/digitopvn/clarkcant/commit/1e40a3c9f5ea8a0ff58b88c53ff4333d78b8675e))\n* **widgets:** add code, diff and file viewers the model can place ([#288](https://github.com/digitopvn/clarkcant/issues/288)) ([3c099e0](https://github.com/digitopvn/clarkcant/commit/3c099e04bde281a5ba02304dfa15e29ec801f540))\n* **widgets:** add status, progress and details cards the model can place ([#286](https://github.com/digitopvn/clarkcant/issues/286)) ([62568d3](https://github.com/digitopvn/clarkcant/commit/62568d38ccb5701046b945805de3767dd5baf6ca))\n* **widgets:** add the activity timeline (canvas.timeline@1) ([#353](https://github.com/digitopvn/clarkcant/issues/353)) ([acc0605](https://github.com/digitopvn/clarkcant/commit/acc060543a9c28e292687847196fae7ab54711cf)), closes [#347](https://github.com/digitopvn/clarkcant/issues/347)\n* **widgets:** add the audio player and document preview under a media content policy ([#399](https://github.com/digitopvn/clarkcant/issues/399)) ([4427581](https://github.com/digitopvn/clarkcant/commit/4427581a1b7f7b23cc9b5e27979c1ce3e7b2b912))\n* **widgets:** add the reference AI image generator with brokered provider jobs ([#392](https://github.com/digitopvn/clarkcant/issues/392)) ([52b9bc3](https://github.com/digitopvn/clarkcant/commit/52b9bc3866b1cd7f40c4d4657089008bb5f8f11a))\n* **widgets:** add the reference media render tool with streamed service file input ([#390](https://github.com/digitopvn/clarkcant/issues/390)) ([cf45244](https://github.com/digitopvn/clarkcant/commit/cf4524455243522b63e523694f0dc8743453b4b3))\n* **widgets:** add the reference spreadsheet and tab-separated files ([#384](https://github.com/digitopvn/clarkcant/issues/384)) ([c76a93e](https://github.com/digitopvn/clarkcant/commit/c76a93eb89810d0e16f98049236e13caf0e0f716))\n* **widgets:** add the reference text editor and the pure-ui template ([#383](https://github.com/digitopvn/clarkcant/issues/383)) ([b2c1868](https://github.com/digitopvn/clarkcant/commit/b2c1868d0db7dce56a2e29e8c084634b8f8878e2))\n* **widgets:** add week and agenda views to the calendar ([#339](https://github.com/digitopvn/clarkcant/issues/339)) ([b4bdd38](https://github.com/digitopvn/clarkcant/commit/b4bdd3803d14d0cff53573429a88830bac156d79))\n* **widgets:** connected-app template and fake connector proving one capability across UI, agent and voice ([#394](https://github.com/digitopvn/clarkcant/issues/394)) ([79d7927](https://github.com/digitopvn/clarkcant/commit/79d7927fc7b1bf13c8660354d21389e993d17bf5))\n* **widgets:** draw diagrams and graphs without executing script ([#396](https://github.com/digitopvn/clarkcant/issues/396)) ([c50a5ff](https://github.com/digitopvn/clarkcant/commit/c50a5ffab186d716e94ff14cf74041e2f977b55f))\n* **widgets:** expose a public document host without runtime authority ([#453](https://github.com/digitopvn/clarkcant/issues/453)) ([d603b7c](https://github.com/digitopvn/clarkcant/commit/d603b7c9055438d6dade3802ca439fe3ac608fb2))\n* **widgets:** follow host appearance without remounting ([#367](https://github.com/digitopvn/clarkcant/issues/367)) ([b589e90](https://github.com/digitopvn/clarkcant/commit/b589e906fe995f283417977966501417b90a5580))\n* **widgets:** hold files by reference through an ArtifactRef broker ([#345](https://github.com/digitopvn/clarkcant/issues/345)) ([4bcff63](https://github.com/digitopvn/clarkcant/commit/4bcff63c3b65760f64df2c984f3ce1c558c18802))\n* **widgets:** keep media selection and playback state, and allow local video ([#378](https://github.com/digitopvn/clarkcant/issues/378)) ([605d8d3](https://github.com/digitopvn/clarkcant/commit/605d8d382f1db9b4e534115a7fa37d00d419e32c)), closes [#329](https://github.com/digitopvn/clarkcant/issues/329)\n* **widgets:** let a widget propose the name of a file it attaches ([#412](https://github.com/digitopvn/clarkcant/issues/412)) ([1a66824](https://github.com/digitopvn/clarkcant/commit/1a66824c885fd31ba617e4e2e326e49ebc105861)), closes [#395](https://github.com/digitopvn/clarkcant/issues/395)\n* **widgets:** let Clark perform an action an isolated widget offers ([#440](https://github.com/digitopvn/clarkcant/issues/440)) ([d8e5031](https://github.com/digitopvn/clarkcant/commit/d8e5031440018bd7d01e87c2803af476405cf65c))\n* **widgets:** let place_widget bind a button to the widget's own package capability ([#456](https://github.com/digitopvn/clarkcant/issues/456)) ([2c86797](https://github.com/digitopvn/clarkcant/commit/2c867973081859ac1a3cd417663b8557da63223b)), closes [#445](https://github.com/digitopvn/clarkcant/issues/445)\n* **widgets:** run invoke, agent and workflow action bindings within their limits ([#338](https://github.com/digitopvn/clarkcant/issues/338)) ([9b4e11a](https://github.com/digitopvn/clarkcant/commit/9b4e11ae6846063017bbc5f1790bc7e411c7f897))\n* **widgets:** write a player's playback state through a state-only action variant ([#420](https://github.com/digitopvn/clarkcant/issues/420)) ([a2d7b13](https://github.com/digitopvn/clarkcant/commit/a2d7b13d14f7874853f76c8e7d76605263ee5328))\n\n### Bug Fixes\n\n* **contracts:** classify a credential inside JSON carried as text ([#500](https://github.com/digitopvn/clarkcant/issues/500)) ([b70a8af](https://github.com/digitopvn/clarkcant/commit/b70a8af9e8d7ab6f647b65fb831ac1ba99c8cb74)), closes [#493](https://github.com/digitopvn/clarkcant/issues/493)\n* **contracts:** keep marketplace-results cards from search_directory, and log a dropped host card ([#418](https://github.com/digitopvn/clarkcant/issues/418)) ([d341ee6](https://github.com/digitopvn/clarkcant/commit/d341ee64a6dc692f23e310d965f4ee04344e9fac)), closes [#413](https://github.com/digitopvn/clarkcant/issues/413) [#413](https://github.com/digitopvn/clarkcant/issues/413) [#424](https://github.com/digitopvn/clarkcant/issues/424)\n* **contracts:** stop reading dated model ids as phone numbers ([#504](https://github.com/digitopvn/clarkcant/issues/504)) ([3b1cc8f](https://github.com/digitopvn/clarkcant/commit/3b1cc8fae0986866d81bb470563c5b5c8b202411)), closes [#503](https://github.com/digitopvn/clarkcant/issues/503)\n* **conversation:** keep a keyboard board move when the node's view arrives mid-move; settle the timeline tap ([#439](https://github.com/digitopvn/clarkcant/issues/439)) ([84b441c](https://github.com/digitopvn/clarkcant/commit/84b441c6b6391bbf9676c5258626257c88a6d6a6))\n* **conversation:** mark the approval continuation as host-written instead of a user bubble ([#478](https://github.com/digitopvn/clarkcant/issues/478)) ([ca6d7b3](https://github.com/digitopvn/clarkcant/commit/ca6d7b3d6d9b76eb69faa8f0fb2c39a8330ece85)), closes [#477](https://github.com/digitopvn/clarkcant/issues/477)\n* **conversation:** send a slash command typed in full when Enter is pressed with the list open ([#486](https://github.com/digitopvn/clarkcant/issues/486)) ([4d1d0ba](https://github.com/digitopvn/clarkcant/commit/4d1d0ba15389e703398d0a57606e710dded1f171))\n* **marketplace:** keep a result's source, risk lane and digest apart ([#361](https://github.com/digitopvn/clarkcant/issues/361)) ([b11e345](https://github.com/digitopvn/clarkcant/commit/b11e3456805e8a2074d8a7050e067b6ea4ae2443))\n* name the running model in turn failures, keep the inbox bell, draw a still avatar ([#466](https://github.com/digitopvn/clarkcant/issues/466)) ([952bf6b](https://github.com/digitopvn/clarkcant/commit/952bf6bc1d70d14a106824f11ddc69d0ae78be6d))\n* **nodelink:** skip a message given up on so later ones still reach the peer ([#293](https://github.com/digitopvn/clarkcant/issues/293)) ([e04032b](https://github.com/digitopvn/clarkcant/commit/e04032b7ac55b0c0d96065351b3e294156465894))\n* **packages:** approve an inbox install for a package listed by a local path ([#408](https://github.com/digitopvn/clarkcant/issues/408)) ([ee8fd63](https://github.com/digitopvn/clarkcant/commit/ee8fd63e5d9c9da9ea56c11651095248846330b5))\n* **packages:** install a local-path listing from the Install button without a client digest ([#414](https://github.com/digitopvn/clarkcant/issues/414)) ([11be20c](https://github.com/digitopvn/clarkcant/commit/11be20cbc8d31fb8d3f91097f54b61b21dddd8b3))\n* **packages:** install a package again after it was uninstalled ([#410](https://github.com/digitopvn/clarkcant/issues/410)) ([13e8bf4](https://github.com/digitopvn/clarkcant/commit/13e8bf4218320e9af5656ed6d396385206c0d6e6))\n* **packages:** let the person decide an install their policy asks about ([#354](https://github.com/digitopvn/clarkcant/issues/354)) ([ac50790](https://github.com/digitopvn/clarkcant/commit/ac507906870ea74e8252177e87ecf6887d3692b6))\n* **packages:** reach every declared widget when uninstalling or restoring ([#295](https://github.com/digitopvn/clarkcant/issues/295)) ([734b0e2](https://github.com/digitopvn/clarkcant/commit/734b0e23c7c15f3ff0e756aea2c67f12c3b4e562))\n* **runtime:** encode the test certificate serial as a minimal positive DER INTEGER ([#442](https://github.com/digitopvn/clarkcant/issues/442)) ([dcf1266](https://github.com/digitopvn/clarkcant/commit/dcf12668b9e8ee2d46bcbc3377aaf5d6a5e2a9da))\n* **runtime:** fit ask_user, request_secret, run_command and approval cards to their bounds ([#437](https://github.com/digitopvn/clarkcant/issues/437)) ([4b4c1c3](https://github.com/digitopvn/clarkcant/commit/4b4c1c3f981d18d605734f8dc264f578f292a369))\n* **runtime:** hold decision calls to the selector's data classes and bound the shared call path ([#501](https://github.com/digitopvn/clarkcant/issues/501)) ([fbd4c3d](https://github.com/digitopvn/clarkcant/commit/fbd4c3df07f94f7300efdc09ab0782fe949ae8dc))\n* **runtime:** keep a key typed into /login out of what the provider says back ([#483](https://github.com/digitopvn/clarkcant/issues/483)) ([bb9de4b](https://github.com/digitopvn/clarkcant/commit/bb9de4b194b45e46985e58d9d588474f698ce79d))\n* **runtime:** keep Podman's service containers to the same read-only root and no stdout log as Docker's ([#435](https://github.com/digitopvn/clarkcant/issues/435)) ([610e6d0](https://github.com/digitopvn/clarkcant/commit/610e6d0bd649e7ed35da7e9856da10a3afa36bdd))\n* **runtime:** keep tool activity on the live turn after a model handoff ([#458](https://github.com/digitopvn/clarkcant/issues/458)) ([4368e5e](https://github.com/digitopvn/clarkcant/commit/4368e5ed3631645424cc74d0d76aceaf00dca520)), closes [#448](https://github.com/digitopvn/clarkcant/issues/448)\n* **runtime:** one update offer per package, and no Pi SDK update notices ([#476](https://github.com/digitopvn/clarkcant/issues/476)) ([56fcb6d](https://github.com/digitopvn/clarkcant/commit/56fcb6d64cccd8fb41a94afc77e9cca81a2aa25f))\n* **runtime:** stop on Windows the command a shell started after the kill ([#287](https://github.com/digitopvn/clarkcant/issues/287)) ([51cb3b8](https://github.com/digitopvn/clarkcant/commit/51cb3b8ed26fb737322ae609b3c1e0e40c957747))\n* **runtime:** tell the sender a task refused before its worker started did not run ([#388](https://github.com/digitopvn/clarkcant/issues/388)) ([4e94257](https://github.com/digitopvn/clarkcant/commit/4e9425739319f414987b9e99e361f76582df85e0))\n* **runtime:** word the remaining host text in the owner's language, and type the model note ([#502](https://github.com/digitopvn/clarkcant/issues/502)) ([806c396](https://github.com/digitopvn/clarkcant/commit/806c39686b2b531a4671f519e7d8072041b2a494)), closes [#475](https://github.com/digitopvn/clarkcant/issues/475)\n* **runtime:** write host conversation text in the interface language ([#488](https://github.com/digitopvn/clarkcant/issues/488)) ([e0c3ea5](https://github.com/digitopvn/clarkcant/commit/e0c3ea5ddd510629b5ee115835817d3290d14468))\n* **services:** claim a ref once the package that held it is gone ([#291](https://github.com/digitopvn/clarkcant/issues/291)) ([f056b73](https://github.com/digitopvn/clarkcant/commit/f056b7306590a4c0e2c6e1a7672c7bb620db44b8))\n* **services:** refuse a package input schema whose pattern could stall the node ([#290](https://github.com/digitopvn/clarkcant/issues/290)) ([aa80aab](https://github.com/digitopvn/clarkcant/commit/aa80aab5e81e82c50edaf4e0bfe294d7873bcc13))\n* **services:** run package services under rootless Docker ([#289](https://github.com/digitopvn/clarkcant/issues/289)) ([da82bd8](https://github.com/digitopvn/clarkcant/commit/da82bd84c08f0af7135674aff1488289e98fb566))\n* **storage:** refuse a migration list whose versions leave a gap ([#330](https://github.com/digitopvn/clarkcant/issues/330)) ([d7033d4](https://github.com/digitopvn/clarkcant/commit/d7033d4992cc6df5271d42b90b4890d393686b43))\n* **tasks:** refuse a browser task no configured model can do with tools ([#351](https://github.com/digitopvn/clarkcant/issues/351)) ([97420ca](https://github.com/digitopvn/clarkcant/commit/97420ca8e587868c8f7825ffc30b2bf6b5ce8acc))\n* **web:** keep checking the node after a failed first health check ([#411](https://github.com/digitopvn/clarkcant/issues/411)) ([e99ba53](https://github.com/digitopvn/clarkcant/commit/e99ba53076410da716f17ab94f1fc0b6e6389795)), closes [#389](https://github.com/digitopvn/clarkcant/issues/389)\n* **widget-cli:** start the clark bin with node on every platform ([#393](https://github.com/digitopvn/clarkcant/issues/393)) ([7e77eb4](https://github.com/digitopvn/clarkcant/commit/7e77eb4fbae63a2b4ce5d3d4de6fabee5347f24a))\n* **widgets:** load a frame again after its URL's grant lapsed ([#292](https://github.com/digitopvn/clarkcant/issues/292)) ([b63e904](https://github.com/digitopvn/clarkcant/commit/b63e904ce2718b91bf7ac908045941d15970ea0d))\n* **workflows:** name the run's deadline when a step's own timeout fires first ([#360](https://github.com/digitopvn/clarkcant/issues/360)) ([b27a404](https://github.com/digitopvn/clarkcant/commit/b27a40498183c1029ad17d9d32994425b6f49e99))\n\n### Performance Improvements\n\n* **conversation:** read an attachment card's bytes only when it is downloaded ([#423](https://github.com/digitopvn/clarkcant/issues/423)) ([eb95115](https://github.com/digitopvn/clarkcant/commit/eb9511555a5645d68ae2460d883b819523563d5b))\n\n### Distribution\n\n* **pi-adapter:** upgrade the Pi SDK to 1.0.2 ([#479](https://github.com/digitopvn/clarkcant/issues/479)) ([c63dafc](https://github.com/digitopvn/clarkcant/commit/c63dafc895f9c15a802f1eacbfaead192ccbe852))\n\n### Code Refactoring\n\n* **pi-adapter:** change a session's tools only through the public Pi 1.0 API ([#482](https://github.com/digitopvn/clarkcant/issues/482)) ([444ad06](https://github.com/digitopvn/clarkcant/commit/444ad066b838ece8001fe110e1da11564fb77a8f))\n* **runtime:** change model at a turn boundary in the same Pi session when the data-class ceiling allows ([#489](https://github.com/digitopvn/clarkcant/issues/489)) ([561f255](https://github.com/digitopvn/clarkcant/commit/561f255781616c442ec0fd5577c5aedb838a2c28))\n\n\n355 earlier changes are not listed here; see https://github.com/digitopvn/clarkcant/commits/806c39686b2b531a4671f519e7d8072041b2a494.",
+      "entries": [
+        {
+          "kind": "fix",
+          "summary": "word the remaining host text in the owner's language, and type the model note (#502)",
+          "scope": "runtime",
+          "commit": "806c39686b2b"
+        },
+        {
+          "kind": "fix",
+          "summary": "stop reading dated model ids as phone numbers (#504)",
+          "scope": "contracts",
+          "commit": "3b1cc8fae098"
+        },
+        {
+          "kind": "fix",
+          "summary": "hold decision calls to the selector's data classes and bound the shared call path (#501)",
+          "scope": "runtime",
+          "commit": "fbd4c3df07f9"
+        },
+        {
+          "kind": "fix",
+          "summary": "classify a credential inside JSON carried as text (#500)",
+          "scope": "contracts",
+          "commit": "b70a8af9e8d7"
+        },
+        {
+          "kind": "feature",
+          "summary": "provider-neutral decision layer with Cloudflare Clef as an explicit second provider (#487)",
+          "scope": "runtime",
+          "commit": "528da097a027"
+        },
+        {
+          "kind": "feature",
+          "summary": "carry a tool's structured result to callers under the data-class guard (#490)",
+          "scope": "runtime",
+          "commit": "923885586537"
+        },
+        {
+          "kind": "other",
+          "summary": "change model at a turn boundary in the same Pi session when the data-class ceiling allows (#489)",
+          "scope": "runtime",
+          "commit": "561f25578161"
+        },
+        {
+          "kind": "fix",
+          "summary": "write host conversation text in the interface language (#488)",
+          "scope": "runtime",
+          "commit": "e0c3ea5ddd51"
+        },
+        {
+          "kind": "feature",
+          "summary": "hold a model's data-class ceiling as a hard send boundary (#485)",
+          "scope": "runtime",
+          "commit": "838f874ced0b"
+        },
+        {
+          "kind": "fix",
+          "summary": "send a slash command typed in full when Enter is pressed with the list open (#486)",
+          "scope": "conversation",
+          "commit": "4d1d0ba15389"
+        },
+        {
+          "kind": "other",
+          "summary": "change a session's tools only through the public Pi 1.0 API (#482)",
+          "scope": "pi-adapter",
+          "commit": "444ad066b838"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep a key typed into /login out of what the provider says back (#483)",
+          "scope": "runtime",
+          "commit": "bb9de4b194b4"
+        },
+        {
+          "kind": "feature",
+          "summary": "slash commands answered with command cards (#480)",
+          "scope": "conversation",
+          "commit": "186628e262f0"
+        },
+        {
+          "kind": "feature",
+          "summary": "a calmer, more finished conversation, settings and desktop window (#474)",
+          "scope": "ui",
+          "commit": "aefdaa615933"
+        },
+        {
+          "kind": "feature",
+          "summary": "answer on a fallback model when the chosen one refuses a turn (#467)",
+          "scope": "runtime",
+          "commit": "c340af4dc770"
+        },
+        {
+          "kind": "other",
+          "summary": "upgrade the Pi SDK to 1.0.2 (#479)",
+          "scope": "pi-adapter",
+          "commit": "c63dafc895f9"
+        },
+        {
+          "kind": "fix",
+          "summary": "name the running model in turn failures, keep the inbox bell, draw a still avatar (#466)",
+          "commit": "952bf6bc1d70"
+        },
+        {
+          "kind": "fix",
+          "summary": "one update offer per package, and no Pi SDK update notices (#476)",
+          "scope": "runtime",
+          "commit": "56fcb6d64ccc"
+        },
+        {
+          "kind": "fix",
+          "summary": "mark the approval continuation as host-written instead of a user bubble (#478)",
+          "scope": "conversation",
+          "commit": "ca6d7b3d6d9b"
+        },
+        {
+          "kind": "feature",
+          "summary": "build, smoke and release the author CLI and SDK as npm packages (#472)",
+          "scope": "widget-tooling",
+          "commit": "230bfc85d0bb"
+        },
+        {
+          "kind": "feature",
+          "summary": "make three reference apps npm-ready pilot packages (#473)",
+          "scope": "examples",
+          "commit": "0ba87b696229"
+        },
+        {
+          "kind": "feature",
+          "summary": "pack widget packages as verified npm archives (#465)",
+          "scope": "widget-cli",
+          "commit": "1ed1f04040c4"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep tool activity on the live turn after a model handoff (#458)",
+          "scope": "runtime",
+          "commit": "4368e5ed3631"
+        },
+        {
+          "kind": "feature",
+          "summary": "perform a spoken press of an offered action through the session's page (#457)",
+          "scope": "voice",
+          "commit": "cf1a9f836c20"
+        },
+        {
+          "kind": "feature",
+          "summary": "versioned project instructions contract, and recorded background routing fallbacks (#459)",
+          "scope": "contracts",
+          "commit": "e6f8fc34f543"
+        },
+        {
+          "kind": "feature",
+          "summary": "let place_widget bind a button to the widget's own package capability (#456)",
+          "scope": "widgets",
+          "commit": "2c8679730818"
+        },
+        {
+          "kind": "feature",
+          "summary": "data-class routing, conditional instructions and a session reuse policy for the context planner (#455)",
+          "scope": "runtime",
+          "commit": "f040f48c84dd"
+        },
+        {
+          "kind": "feature",
+          "summary": "expose a public document host without runtime authority (#453)",
+          "scope": "widgets",
+          "commit": "d603b7c90554"
+        },
+        {
+          "kind": "feature",
+          "summary": "decide machine-surface widget artifact writes by execution policy (#443)",
+          "scope": "runtime",
+          "commit": "e1c19cb0628d"
+        },
+        {
+          "kind": "feature",
+          "summary": "focus context on the message being answered, and measure tool disclosure (#447)",
+          "scope": "runtime",
+          "commit": "704801880a75"
+        },
+        {
+          "kind": "feature",
+          "summary": "let Clark perform an action an isolated widget offers (#440)",
+          "scope": "widgets",
+          "commit": "d8e503144001"
+        },
+        {
+          "kind": "feature",
+          "summary": "record who started each turn and let the person opt in to asking (#446)",
+          "scope": "policy",
+          "commit": "a09d2206f418"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep Podman's service containers to the same read-only root and no stdout log as Docker's (#435)",
+          "scope": "runtime",
+          "commit": "610e6d0bd649"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep a keyboard board move when the node's view arrives mid-move; settle the timeline tap (#439)",
+          "scope": "conversation",
+          "commit": "84b441c6b639"
+        },
+        {
+          "kind": "feature",
+          "summary": "read index entries tolerantly and say what was left out (#438)",
+          "scope": "directory",
+          "commit": "7ad77ad753fd"
+        },
+        {
+          "kind": "fix",
+          "summary": "fit ask_user, request_secret, run_command and approval cards to their bounds (#437)",
+          "scope": "runtime",
+          "commit": "4b4c1c3f981d"
+        },
+        {
+          "kind": "fix",
+          "summary": "encode the test certificate serial as a minimal positive DER INTEGER (#442)",
+          "scope": "runtime",
+          "commit": "dcf12668b9e8"
+        },
+        {
+          "kind": "fix",
+          "summary": "tell the sender a task refused before its worker started did not run (#388)",
+          "scope": "runtime",
+          "commit": "4e9425739319"
+        },
+        {
+          "kind": "fix",
+          "summary": "read an attachment card's bytes only when it is downloaded (#423)",
+          "scope": "conversation",
+          "commit": "eb9511555a56"
+        },
+        {
+          "kind": "feature",
+          "summary": "write a player's playback state through a state-only action variant (#420)",
+          "scope": "widgets",
+          "commit": "a2d7b13d14f7"
+        },
+        {
+          "kind": "feature",
+          "summary": "show what an update adds to a package's reach before it is applied (#428)",
+          "scope": "packages",
+          "commit": "e63cbc8442eb"
+        },
+        {
+          "kind": "feature",
+          "summary": "run a local package from a snapshot taken at install (#422)",
+          "scope": "packages",
+          "commit": "dbbe266f66da"
+        },
+        {
+          "kind": "feature",
+          "summary": "set the tile policy from Settings and through Clark (#421)",
+          "scope": "maps",
+          "commit": "8306b8072954"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep marketplace-results cards from search_directory, and log a dropped host card (#418)",
+          "scope": "contracts",
+          "commit": "d341ee64a6dc"
+        },
+        {
+          "kind": "feature",
+          "summary": "read player bytes only when a player is near the screen or played (#416)",
+          "scope": "conversation",
+          "commit": "710bdca7c0fc"
+        },
+        {
+          "kind": "fix",
+          "summary": "install a local-path listing from the Install button without a client digest (#414)",
+          "scope": "packages",
+          "commit": "11be20cbc8d3"
+        },
+        {
+          "kind": "feature",
+          "summary": "let a widget propose the name of a file it attaches (#412)",
+          "scope": "widgets",
+          "commit": "1a66824c885f"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep checking the node after a failed first health check (#411)",
+          "scope": "web",
+          "commit": "e99ba5307641"
+        },
+        {
+          "kind": "fix",
+          "summary": "install a package again after it was uninstalled (#410)",
+          "scope": "packages",
+          "commit": "13e8bf421832"
+        },
+        {
+          "kind": "fix",
+          "summary": "approve an inbox install for a package listed by a local path (#408)",
+          "scope": "packages",
+          "commit": "ee8fd63e5d9c"
+        },
+        {
+          "kind": "feature",
+          "summary": "connected-app template and fake connector proving one capability across UI, agent and voice (#394)",
+          "scope": "widgets",
+          "commit": "79d7927fc7b1"
+        },
+        {
+          "kind": "feature",
+          "summary": "add the audio player and document preview under a media content policy (#399)",
+          "scope": "widgets",
+          "commit": "4427581a1b7f"
+        },
+        {
+          "kind": "feature",
+          "summary": "add a map over an offline basemap, with tiles only under a host tile policy (#398)",
+          "scope": "widgets",
+          "commit": "e91b9c37edb0"
+        },
+        {
+          "kind": "feature",
+          "summary": "draw diagrams and graphs without executing script (#396)",
+          "scope": "widgets",
+          "commit": "c50a5ffab186"
+        },
+        {
+          "kind": "feature",
+          "summary": "add the reference media render tool with streamed service file input (#390)",
+          "scope": "widgets",
+          "commit": "cf4524455243"
+        },
+        {
+          "kind": "feature",
+          "summary": "add the reference AI image generator with brokered provider jobs (#392)",
+          "scope": "widgets",
+          "commit": "52b9bc3866b1"
+        },
+        {
+          "kind": "feature",
+          "summary": "add the reference spreadsheet and tab-separated files (#384)",
+          "scope": "widgets",
+          "commit": "c76a93eb8981"
+        },
+        {
+          "kind": "fix",
+          "summary": "start the clark bin with node on every platform (#393)",
+          "scope": "widget-cli",
+          "commit": "7e77eb4fbae6"
+        },
+        {
+          "kind": "feature",
+          "summary": "add the reference text editor and the pure-ui template (#383)",
+          "scope": "widgets",
+          "commit": "b2c1868d0db7"
+        },
+        {
+          "kind": "feature",
+          "summary": "grant resource profiles and broker service egress and browser tokens (#381)",
+          "scope": "runtime",
+          "commit": "faad9c89ca5c"
+        },
+        {
+          "kind": "feature",
+          "summary": "keep media selection and playback state, and allow local video (#378)",
+          "scope": "widgets",
+          "commit": "605d8d382f1d"
+        },
+        {
+          "kind": "feature",
+          "summary": "run long package capabilities as durable jobs widgets follow (#377)",
+          "scope": "runtime",
+          "commit": "67bf537c9fda"
+        },
+        {
+          "kind": "feature",
+          "summary": "inspect semantic state and composition events (#376)",
+          "scope": "widget-cli",
+          "commit": "121816699eef"
+        },
+        {
+          "kind": "feature",
+          "summary": "simulate service readiness in dev host (#375)",
+          "scope": "widget-cli",
+          "commit": "61ce486cd65e"
+        },
+        {
+          "kind": "feature",
+          "summary": "add bounded kanban board (#373)",
+          "scope": "widgets",
+          "commit": "ed22b8ca5f34"
+        },
+        {
+          "kind": "feature",
+          "summary": "add bounded tree hierarchy view (#372)",
+          "scope": "widgets",
+          "commit": "1e40a3c9f5ea"
+        },
+        {
+          "kind": "feature",
+          "summary": "ship Pixel Arcade and Neo Brutalism references (#371)",
+          "scope": "themes",
+          "commit": "6884045655ad"
+        },
+        {
+          "kind": "feature",
+          "summary": "add production Theme Lab and author CLI (#368)",
+          "scope": "themes",
+          "commit": "4ca61989a574"
+        },
+        {
+          "kind": "feature",
+          "summary": "follow host appearance without remounting (#367)",
+          "scope": "widgets",
+          "commit": "b589e906fe99"
+        },
+        {
+          "kind": "feature",
+          "summary": "delete conversations through person-owned policy (#365)",
+          "scope": "conversation",
+          "commit": "b9c4985f1d62"
+        },
+        {
+          "kind": "fix",
+          "summary": "keep a result's source, risk lane and digest apart (#361)",
+          "scope": "marketplace",
+          "commit": "b11e3456805e"
+        },
+        {
+          "kind": "fix",
+          "summary": "name the run's deadline when a step's own timeout fires first (#360)",
+          "scope": "workflows",
+          "commit": "b27a40498183"
+        },
+        {
+          "kind": "fix",
+          "summary": "let the person decide an install their policy asks about (#354)",
+          "scope": "packages",
+          "commit": "ac507906870e"
+        },
+        {
+          "kind": "feature",
+          "summary": "copy a notice's details from its overflow menu (#352)",
+          "scope": "inbox",
+          "commit": "7006721252c1"
+        },
+        {
+          "kind": "feature",
+          "summary": "add the activity timeline (canvas.timeline@1) (#353)",
+          "scope": "widgets",
+          "commit": "acc060543a9c"
+        },
+        {
+          "kind": "feature",
+          "summary": "give a theme a host-owned look beyond colour (#347)",
+          "scope": "themes",
+          "commit": "2a0127b30949"
+        },
+        {
+          "kind": "fix",
+          "summary": "refuse a browser task no configured model can do with tools (#351)",
+          "scope": "tasks",
+          "commit": "97420ca8e587"
+        },
+        {
+          "kind": "feature",
+          "summary": "hold files by reference through an ArtifactRef broker (#345)",
+          "scope": "widgets",
+          "commit": "4bcff63c3b65"
+        },
+        {
+          "kind": "feature",
+          "summary": "run dispatched task workers on the node's configured model (#348)",
+          "scope": "tasks",
+          "commit": "86123db7980e"
+        },
+        {
+          "kind": "feature",
+          "summary": "act on a notice from any surface, and open a notification on its item (#342)",
+          "scope": "inbox",
+          "commit": "a299d33f4222"
+        },
+        {
+          "kind": "feature",
+          "summary": "add week and agenda views to the calendar (#339)",
+          "scope": "widgets",
+          "commit": "b4bdd3803d14"
+        },
+        {
+          "kind": "feature",
+          "summary": "add area and scatter charts (#331)",
+          "scope": "widgets",
+          "commit": "a187a9604cea"
+        },
+        {
+          "kind": "feature",
+          "summary": "drive the browser pack from tasks so a lost submit becomes an unknown effect (#344)",
+          "scope": "browser",
+          "commit": "67476d9cb702"
+        },
+        {
+          "kind": "feature",
+          "summary": "run invoke, agent and workflow action bindings within their limits (#338)",
+          "scope": "widgets",
+          "commit": "9b4e11ae6846"
+        },
+        {
+          "kind": "feature",
+          "summary": "bring back the files a handed-over task wrote (#309)",
+          "scope": "delegation",
+          "commit": "080b99ba84d5"
+        },
+        {
+          "kind": "feature",
+          "summary": "serve package themes and restyle the page in place (#305)",
+          "scope": "themes",
+          "commit": "8eaf8b295e2a"
+        },
+        {
+          "kind": "feature",
+          "summary": "separate the theme from the colour scheme and add the appearance compiler (#304)",
+          "scope": "themes",
+          "commit": "d65153b985d5"
+        },
+        {
+          "kind": "feature",
+          "summary": "tell a sender what a peer can run for it before handing work over (#306)",
+          "scope": "nodelink",
+          "commit": "15cb13a233be"
+        },
+        {
+          "kind": "feature",
+          "summary": "act on what a notice is about from the notice itself (#307)",
+          "scope": "inbox",
+          "commit": "bfdc76f8e862"
+        },
+        {
+          "kind": "fix",
+          "summary": "refuse a migration list whose versions leave a gap (#330)",
+          "scope": "storage",
+          "commit": "d7033d4992cc"
+        },
+        {
+          "kind": "feature",
+          "summary": "let the person record what an unknown effect did (#303)",
+          "scope": "effects",
+          "commit": "44705ce86d17"
+        },
+        {
+          "kind": "feature",
+          "summary": "add code, diff and file viewers the model can place (#288)",
+          "scope": "widgets",
+          "commit": "3c099e04bde2"
+        },
+        {
+          "kind": "feature",
+          "summary": "add status, progress and details cards the model can place (#286)",
+          "scope": "widgets",
+          "commit": "62568d38ccb5"
+        },
+        {
+          "kind": "fix",
+          "summary": "run package services under rootless Docker (#289)",
+          "scope": "services",
+          "commit": "da82bd84c08f"
+        },
+        {
+          "kind": "fix",
+          "summary": "skip a message given up on so later ones still reach the peer (#293)",
+          "scope": "nodelink",
+          "commit": "e04032b7ac55"
+        },
+        {
+          "kind": "fix",
+          "summary": "reach every declared widget when uninstalling or restoring (#295)",
+          "scope": "packages",
+          "commit": "734b0e23c7c1"
+        },
+        {
+          "kind": "fix",
+          "summary": "claim a ref once the package that held it is gone (#291)",
+          "scope": "services",
+          "commit": "f056b7306590"
+        },
+        {
+          "kind": "fix",
+          "summary": "refuse a package input schema whose pattern could stall the node (#290)",
+          "scope": "services",
+          "commit": "aa80aab5e81e"
+        },
+        {
+          "kind": "fix",
+          "summary": "load a frame again after its URL's grant lapsed (#292)",
+          "scope": "widgets",
+          "commit": "b63e904ce271"
+        },
+        {
+          "kind": "fix",
+          "summary": "stop on Windows the command a shell started after the kill (#287)",
+          "scope": "runtime",
+          "commit": "51cb3b8ed26f"
+        }
+      ],
+      "omittedEntries": 355,
+      "artifacts": []
+    }
+  ]
+}

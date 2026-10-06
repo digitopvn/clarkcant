@@ -1,6 +1,6 @@
 {
   "name": "@clarkcant/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "The clarkcant command: ask Clark, read conversations and bridge MCP over stdio, all through a node's open gateway.",
   "license": "Apache-2.0",

@@ -65,6 +65,7 @@ export * from "./declared-reach.ts";
 export * from "./reach-change.ts";
 export * from "./composer-references.ts";
 export * from "./slash-commands.ts";
+export * from "./release-notes.ts";
 export * from "./app-intents.ts";
 export * from "./conversation-deletion.ts";
 export * from "./surfaces.ts";
