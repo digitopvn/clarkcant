@@ -105,6 +105,36 @@ function forecastResult(city, shape) {
       const note = `db ${["pass", "word"].join("")}="${["hunter", "22x"].join("")}"`;
       return { content: shape === "quoted-secret" ? [{ type: "text", text }] : [], structuredContent: { city, celsius: 31, note } };
     }
+    case "json-text-secret":
+      // No structured value: the credential is in JSON the server wrote into its text, inside a string of that JSON.
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ city, response: JSON.stringify({ db: { [["pass", "word"].join("")]: ["hunter", "22x"].join("") } }) }),
+          },
+        ],
+      };
+    case "json-text-fields":
+      // A credential written across a name field and a value field of JSON text.
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ city, fields: [{ name: ["pass", "word"].join(""), value: ["hunter", "22x"].join("") }] }),
+          },
+        ],
+      };
+    case "structured-fields":
+      // A credential written across a name field and a value field of the structured value, as AWS SSM writes one.
+      return {
+        content: [{ type: "text", text }],
+        structuredContent: {
+          city,
+          celsius: 31,
+          parameters: [{ Name: `/prod/db/${["pass", "word"].join("")}`, Type: "SecureString", Value: ["hunter", "22x"].join("") }],
+        },
+      };
     default:
       return { content: [{ type: "text", text }], structuredContent: { city, celsius: 31 } };
   }
