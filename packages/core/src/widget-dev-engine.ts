@@ -1,0 +1,329 @@
+import { createHash } from "node:crypto";
+import { lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+
+import {
+  WIDGET_DEV_DIAGNOSTICS_MAX,
+  canonicalReach,
+  compareDevReach,
+  type DirectoryEntry,
+  type PackageManifest,
+  type WidgetDevBuild,
+  type WidgetDevDiagnostic,
+  type WidgetDevGeneration,
+  type WidgetDevTrigger,
+} from "@clarkcant/contracts";
+
+import { directoryEntryOf } from "./directory-entry-of.ts";
+import { digestOfDirectory, snapshotLocalPackage } from "./package-fetch.ts";
+import { readPackage } from "./widget-package.ts";
+
+/**
+ * The one engine behind live widget authoring: watch a package folder, read it the way the node reads a package, and
+ * turn each change into either an immutable generation or a failed build with diagnostics.
+ *
+ * `clark widget dev` and a conversation's dev session both run on it, so a change the standalone dev host shows is
+ * exactly the change the conversation shows, read by the same reader (`readPackage`) and named by the same digest a
+ * node's snapshot of the files carries.
+ *
+ * Nothing here runs package code or decides anything: a generation is a description of files. Activating one is the
+ * caller's business. The dev host serves the folder itself; a node installs the generation through its one install path
+ * and execution policy.
+ *
+ * Given a `cacheRoot`, each generation is also copied into the node's content-addressed package cache
+ * (`snapshotLocalPackage`) and listed from that copy, so what the node installs, serves and asks about is those exact
+ * bytes even while the author keeps editing. A failed build never replaces the last good generation: `latest()` keeps
+ * returning it, and the build record says what failed, so a caller can show the last working version labelled as such.
+ */
+
+/** The files and bytes a package folder may hold for the engine to digest it; the node bounds its own reads the same way. */
+export const DEV_ENGINE_LIMITS = { maxFiles: 5_000, maxBytes: 64 * 1024 * 1024 } as const;
+/** How long the watcher waits after the last change before it builds, so a save that writes several files builds once. */
+export const DEV_ENGINE_DEBOUNCE_MS = 150;
+
+/** The listing publisher for a package that names none: a development listing on this node, said as such. */
+const LOCAL_PUBLISHER = { id: "local-development", sourceUrl: "local", license: "UNLICENSED" } as const;
+
+/** A generation with what the node needs to activate it. */
+export interface DevGenerationRecord {
+  generation: WidgetDevGeneration;
+  manifest: PackageManifest;
+  /** The directory entry that lists this generation's files by their digest, as `clark widget publish` would. */
+  listing: DirectoryEntry;
+}
+
+export type DevEngineEvent =
+  | { kind: "generation"; record: DevGenerationRecord; build: WidgetDevBuild }
+  | { kind: "unchanged"; build: WidgetDevBuild }
+  | { kind: "failed"; build: WidgetDevBuild };
+
+type DeltaManifest = Pick<PackageManifest, "facets" | "requestedCapabilities" | "permissions" | "resources">;
+
+export interface DevEngineOptions {
+  root: string;
+  /**
+   * The node's package cache. When given, each generation is a snapshot there and its listing names the snapshot; when
+   * not, the listing names the folder itself (the standalone dev host, which serves the folder).
+   */
+  cacheRoot?: string;
+  limits?: { maxFiles: number; maxBytes: number };
+  /** Watch the folder and build on change. Off for a caller that drives `rebuild` itself. */
+  watch?: boolean;
+  debounceMs?: number;
+  now?: () => string;
+  /**
+   * The manifest of what runs now, which a new generation's delta is compared with. Defaults to the newest generation:
+   * the dev host serves every generation, while a node may still run an older one that is waiting on a decision.
+   */
+  baseline?: () => DeltaManifest | undefined;
+  /**
+   * How many generations this folder already had, so a session resumed after a restart keeps counting rather than
+   * naming a second generation 1.
+   */
+  generationsBefore?: number;
+  /** Told about every build the watcher or `rebuild` ran, including ones that produced nothing new. */
+  onBuild?: (event: DevEngineEvent) => void;
+  /** Told when the watcher itself fails (the folder was removed, the platform cannot watch it). */
+  onWatchError?: (error: Error) => void;
+}
+
+export interface DevEngine {
+  readonly root: string;
+  /** The first build, which runs before anything is watched. */
+  readonly ready: Promise<DevEngineEvent>;
+  /** The newest successful generation. */
+  latest(): DevGenerationRecord | undefined;
+  lastBuild(): WidgetDevBuild | undefined;
+  /** Build now, after any build already running. */
+  rebuild(trigger?: WidgetDevTrigger): Promise<DevEngineEvent>;
+  /** Whether the folder is being watched: false after `close`, after a watch failure, or when watching was not asked for. */
+  watching(): boolean;
+  close(): void;
+}
+
+/**
+ * The consent a dev session's installs are decided under: the package, and everything a listing binds about what it may
+ * reach (declared reach, resource request, facet lanes, device, filesystem and network permissions).
+ *
+ * Two generations with the same scope differ only in code that runs inside what the person already allowed, so one
+ * decision covers both; any change to the scope, wider or narrower, is a different question. Read from the listing alone,
+ * so the inbox and the decide route compute it from what they show.
+ */
+export function devConsentScopeOf(listing: DirectoryEntry): string {
+  const body = {
+    packageId: listing.packageId,
+    reach: listing.declaredReach === undefined ? null : canonicalReach(listing.declaredReach),
+    resources: listing.resources ?? null,
+    isolations: listing.isolations.map((entry) => `${entry.facetKind}:${entry.isolation}`).sort(),
+    permissions: [...listing.permissionsSummary].sort(),
+  };
+  return `widget-dev-scope:sha256:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
+}
+
+/** Whether an operation digest is a dev session's consent scope rather than an artifact digest. */
+export function isDevConsentScope(operationDigest: string): boolean {
+  return operationDigest.startsWith("widget-dev-scope:");
+}
+
+function capped(diagnostics: WidgetDevDiagnostic[]): Pick<WidgetDevBuild, "diagnostics" | "diagnosticsMore"> {
+  const more = diagnostics.length - WIDGET_DEV_DIAGNOSTICS_MAX;
+  return { diagnostics: diagnostics.slice(0, WIDGET_DEV_DIAGNOSTICS_MAX), ...(more > 0 ? { diagnosticsMore: more } : {}) };
+}
+
+/** A reader problem as a diagnostic, with the file it names made relative to the package when it names one. */
+export function devDiagnosticOf(root: string, problem: string, severity: WidgetDevDiagnostic["severity"] = "error"): WidgetDevDiagnostic {
+  const message = problem.trim().slice(0, 1000) || "the package could not be read";
+  const named = /^(.+?\.(?:json|html|js|mjs|css|ts|tsx)):\s/.exec(message)?.[1];
+  if (named === undefined) return { severity, message };
+  const inside = relative(root, resolve(root, named));
+  const path = inside.startsWith("..") ? named : inside.split(sep).join("/");
+  return { severity, path: path.slice(0, 400), message };
+}
+
+/** The bytes a package's files hold, `.git` left out as the digest leaves it out. */
+function sizeOf(root: string): number {
+  let total = 0;
+  const visit = (directory: string, depth: number): void => {
+    for (const name of readdirSync(directory)) {
+      if (depth === 0 && name.toLowerCase() === ".git") continue;
+      const path = join(directory, name);
+      const stat = lstatSync(path, { throwIfNoEntry: false });
+      if (stat === undefined) continue;
+      if (stat.isDirectory()) visit(path, depth + 1);
+      else if (stat.isFile()) total += stat.size;
+    }
+  };
+  visit(root, 0);
+  return total;
+}
+
+const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
+
+export function startDevEngine(options: DevEngineOptions): DevEngine {
+  const root = resolve(options.root);
+  const limits = options.limits ?? DEV_ENGINE_LIMITS;
+  const now = options.now ?? (() => new Date().toISOString());
+  const records: DevGenerationRecord[] = [];
+  let last: WidgetDevBuild | undefined;
+  let closed = false;
+
+  const fail = (trigger: WidgetDevTrigger, diagnostics: WidgetDevDiagnostic[]): DevEngineEvent => {
+    last = { ok: false, at: now(), trigger, ...capped(diagnostics) };
+    return { kind: "failed", build: last };
+  };
+
+  /** Read a folder as a package: its manifest and widget ids, or what is wrong with it. */
+  const read = (folder: string): { ok: true; manifest: PackageManifest; widgetIds: string[] } | { ok: false; diagnostics: WidgetDevDiagnostic[] } => {
+    let pkg: ReturnType<typeof readPackage>;
+    try {
+      pkg = readPackage(folder);
+    } catch (cause) {
+      return { ok: false, diagnostics: [devDiagnosticOf(folder, messageOf(cause))] };
+    }
+    if (pkg.problems.length > 0) {
+      return { ok: false, diagnostics: pkg.problems.map((problem) => devDiagnosticOf(folder, problem)) };
+    }
+    const widgetIds = pkg.facets.map((facet) => facet.definition.id);
+    if (widgetIds.length === 0) {
+      return {
+        ok: false,
+        diagnostics: [{ severity: "error", path: "clarkcant.json", message: "the package declares no widget facet, so there is nothing to show" }],
+      };
+    }
+    return { ok: true, manifest: pkg.manifest, widgetIds };
+  };
+
+  const build = async (trigger: WidgetDevTrigger): Promise<DevEngineEvent> => {
+    const source = read(root);
+    if (!source.ok) return fail(trigger, source.diagnostics);
+
+    let folder = root;
+    let digest: string;
+    try {
+      if (options.cacheRoot === undefined) {
+        const digested = digestOfDirectory(root, { exclude: [".git"], excludeAnyCase: true, limits });
+        if (!digested.ok) return fail(trigger, [{ severity: "error", message: `the files could not be digested: ${digested.message}` }]);
+        digest = digested.digest;
+      } else {
+        const snapshot = await snapshotLocalPackage({ path: root, cacheRoot: options.cacheRoot, limits });
+        if (!snapshot.ok) {
+          // Files that changed while they were copied are not a broken package: the next change event builds them again.
+          return fail(trigger, [{ severity: "error", message: `the files could not be copied for this build (${snapshot.code}): ${snapshot.message}` }]);
+        }
+        folder = snapshot.artifact.path;
+        digest = snapshot.artifact.digest;
+      }
+    } catch (cause) {
+      return fail(trigger, [{ severity: "error", message: `the files could not be read: ${messageOf(cause)}` }]);
+    }
+
+    const previous = records.at(-1);
+    if (previous !== undefined && previous.generation.digest === digest) {
+      last = { ok: true, at: now(), trigger, generation: previous.generation.generation, diagnostics: [] };
+      return { kind: "unchanged", build: last };
+    }
+    // What the generation is, read from the bytes it names: the copy, when there is one, since the folder may have moved on.
+    const copy = folder === root ? source : read(folder);
+    if (!copy.ok) return fail(trigger, copy.diagnostics);
+
+    const manifest = copy.manifest;
+    const publisher = manifest.publisher;
+    const generation: WidgetDevGeneration = Object.freeze({
+      generation: (previous?.generation.generation ?? options.generationsBefore ?? 0) + 1,
+      packageId: manifest.id,
+      version: manifest.version,
+      digest,
+      builtAt: now(),
+      trigger,
+      widgetIds: copy.widgetIds,
+      delta: compareDevReach(options.baseline === undefined ? previous?.manifest : options.baseline(), manifest),
+      warnings: [],
+    });
+    let sizeBytes = 0;
+    try {
+      sizeBytes = sizeOf(folder);
+    } catch {
+      // Descriptive only; a listing whose size could not be summed still names its bytes by digest.
+    }
+    const record: DevGenerationRecord = Object.freeze({
+      generation,
+      manifest,
+      listing: directoryEntryOf(manifest, {
+        source: { kind: "local", path: folder },
+        publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
+        sizeBytes,
+        digest,
+      }),
+    });
+    records.push(record);
+    last = { ok: true, at: generation.builtAt, trigger, generation: generation.generation, diagnostics: [] };
+    return { kind: "generation", record, build: last };
+  };
+
+  // Builds run one at a time, in order: a change that lands during a build is built after it.
+  let queue: Promise<DevEngineEvent> = build("start");
+  const ready = queue;
+  const enqueue = (trigger: WidgetDevTrigger): Promise<DevEngineEvent> => {
+    queue = queue.then(
+      () => build(trigger),
+      () => build(trigger),
+    );
+    return queue;
+  };
+
+  let watcher: FSWatcher | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const debounceMs = options.debounceMs ?? DEV_ENGINE_DEBOUNCE_MS;
+  const stopWatching = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    watcher?.close();
+    watcher = undefined;
+  };
+  if (options.watch !== false) {
+    try {
+      watcher = watch(root, { recursive: true }, (_event, filename) => {
+        const name = typeof filename === "string" ? filename : "";
+        if ((name.split(/[\\/]/)[0] ?? "").toLowerCase() === ".git") return;
+        if (timer !== undefined) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = undefined;
+          if (closed) return;
+          void enqueue("change").then(
+            (event) => {
+              if (!closed) options.onBuild?.(event);
+            },
+            (cause: unknown) => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause))),
+          );
+        }, debounceMs);
+        timer.unref();
+      });
+      // The watcher never keeps a process alive by itself: the dev host's server or the node does that.
+      watcher.unref();
+      watcher.on("error", (error) => {
+        stopWatching();
+        options.onWatchError?.(error);
+      });
+    } catch (cause) {
+      watcher = undefined;
+      options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));
+    }
+  }
+
+  return {
+    root,
+    ready,
+    latest: () => records.at(-1),
+    lastBuild: () => last,
+    rebuild: async (trigger = "rebuild") => {
+      const event = await enqueue(trigger);
+      if (!closed) options.onBuild?.(event);
+      return event;
+    },
+    watching: () => watcher !== undefined && !closed,
+    close: () => {
+      closed = true;
+      stopWatching();
+    },
+  };
+}
