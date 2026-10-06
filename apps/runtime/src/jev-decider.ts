@@ -236,7 +236,15 @@ export interface SearchDecisionInput {
      */
     dataClass?: DataClass;
   }[];
+  /**
+   * The class of a result's whole record, asked only for a result that is about to be offered: after the rank gap and
+   * the call refusal, and no further down the list than the offer needs. Used when a result carries no `dataClass`.
+   */
+  classify?: (result: { ref: string; source: string; snippet: string }) => DataClass;
 }
+
+/** How many search results the selector is offered at most. */
+const MAX_OFFERED_RESULTS = 10;
 
 export type SearchDecision =
   | { status: "chosen"; ref: string; confidence: number | undefined; margin: number | undefined; model: string }
@@ -799,11 +807,15 @@ export async function decideSearchResult(
    * Snippets are the user's own history. A result is offered only when the whole record it was cut from is within what
    * the selector may be shown - judged on that record, because a value split at the snippet's edge no longer matches
    * its shape - and what is offered is redacted and clipped. Only the first few are offered. A result left out keeps
-   * its ranked place; one the selector chooses moves ahead of it, as in the context planner.
+   * its ranked place; one the selector chooses moves ahead of it, as in the context planner. Classifying a record can
+   * cost a read, so it happens only here and stops once enough results are eligible.
    */
-  const offered = input.results
-    .filter((result) => selectorMayOffer({ text: result.snippet, dataClass: result.dataClass }))
-    .slice(0, 10);
+  const offered: SearchDecisionInput["results"][number][] = [];
+  for (const result of input.results) {
+    if (offered.length === MAX_OFFERED_RESULTS) break;
+    const dataClass = result.dataClass ?? input.classify?.(result);
+    if (selectorMayOffer({ text: result.snippet, ...(dataClass === undefined ? {} : { dataClass }) })) offered.push(result);
+  }
   if (offered.length < 2) {
     return { status: "rank", reason: "fewer than two results may be shown to the decision provider" };
   }

@@ -392,6 +392,42 @@ describe("the selector's data-class ceiling", () => {
     expect(bodies).toHaveLength(0);
   });
 
+  it("classifies a record only when a result is about to be offered, and no further than the offer needs", async () => {
+    const many = Array.from({ length: 50 }, (_unused, index) => ({
+      ref: `msg_${String(index)}`,
+      snippet: `sửa lỗi đăng nhập lần ${String(index)}`,
+      score: -0.000002,
+      source: "message",
+    }));
+    const asked: string[] = [];
+    const classify = (result: { ref: string }) => {
+      asked.push(result.ref);
+      return "internal" as const;
+    };
+
+    // A clear rank gap decides alone, and a refused call is never prepared: neither classifies anything.
+    const clear = [{ ...many[0]!, score: -5 }, ...many.slice(1)];
+    await decideSearchResult(deps(recordingBodies().recorded), { query: "lỗi", results: clear, classify });
+    await decideSearchResult(deps(recordingBodies().recorded, { enabled: false }), { query: "lỗi", results: many, classify });
+    expect(asked).toEqual([]);
+
+    // Ten eligible results are all the selector is offered, so classifying stops at the tenth.
+    const { recorded, bodies } = recordingBodies();
+    await decideSearchResult(deps(recorded), { query: "lỗi", results: many, classify });
+    expect(asked).toEqual(many.slice(0, 10).map((result) => result.ref));
+    expect(bodies[0]).toContain("result:msg_9");
+    expect(bodies[0]).not.toContain("result:msg_10");
+
+    // A result carrying its own class is not asked about again.
+    asked.length = 0;
+    await decideSearchResult(deps(recordingBodies().recorded), {
+      query: "lỗi",
+      results: many.map((result) => ({ ...result, dataClass: "internal" as const })),
+      classify,
+    });
+    expect(asked).toEqual([]);
+  });
+
   it("leaves out a context candidate above the ceiling even when the caller did not label it", async () => {
     const { recorded, bodies } = recordingBodies();
     await decideContextFocus(deps(recorded), {

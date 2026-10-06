@@ -13,7 +13,7 @@ import {
   type HistoryHit,
   type HistorySource,
   getSessionFile,
-  historyEntry,
+  historyEntryTexts,
   historyIndexSize,
   indexHistory,
   recentHistory,
@@ -165,6 +165,17 @@ const DEFAULT_LIMIT = 10;
  * day and would outrank the real match.
  */
 export function rankSessions(deps: SessionSearchDeps, request: SessionSearchRequest): SessionSearchOutcome {
+  return rankWithStoredTexts(deps, request).outcome;
+}
+
+/**
+ * The ranked outcome and the whole stored text of each result, keyed `source:ref`. The text stays beside the outcome
+ * rather than in it: the outcome is what callers see, and the text is only what a result's class is judged on.
+ */
+function rankWithStoredTexts(
+  deps: SessionSearchDeps,
+  request: SessionSearchRequest,
+): { outcome: SessionSearchOutcome; texts: Map<string, string> } {
   const parsed: TemporalParseResult =
     request.useTemporal === false
       ? { kind: "none", rest: request.text }
@@ -189,14 +200,18 @@ export function rankSessions(deps: SessionSearchDeps, request: SessionSearchRequ
         });
 
   const truncated = hits.length > limit;
+  const kept = hits.slice(0, limit);
   return {
-    searched: parsed.rest,
-    temporal: summariseTemporal(parsed),
-    results: hits.slice(0, limit).map(toHit),
-    truncated,
-    indexSize: historyIndexSize(deps.db, deps.principalId),
-    rankedBy: "bm25",
-    mode: "rank",
+    outcome: {
+      searched: parsed.rest,
+      temporal: summariseTemporal(parsed),
+      results: kept.map(toHit),
+      truncated,
+      indexSize: historyIndexSize(deps.db, deps.principalId),
+      rankedBy: "bm25",
+      mode: "rank",
+    },
+    texts: new Map(kept.map((hit) => [entryKey(hit), hit.text])),
   };
 }
 
@@ -211,18 +226,37 @@ export async function searchSessions(
   deps: SessionSearchDeps,
   request: SessionSearchRequest,
 ): Promise<SessionSearchOutcome> {
+  return (await searchWithStoredClasses(deps, request)).outcome;
+}
+
+/** A search's outcome, and the class of each of its results' whole stored record, judged at most once per result. */
+async function searchWithStoredClasses(
+  deps: SessionSearchDeps,
+  request: SessionSearchRequest,
+): Promise<{ outcome: SessionSearchOutcome; dataClassOf: StoredDataClassOf }> {
+  const lexical = rankWithStoredTexts(deps, request);
   // The vector half runs before any decision, because a decision has to be made about the results
   // the user will actually see. When it is off — no extension, no model, or the flag unset — the
   // lexical answer passes through untouched and carries the reason it was alone.
   const fused = await applySemanticFusion(
     deps,
     request,
-    rankSessions(deps, request),
+    lexical.outcome,
     deps.semantic?.distanceCeiling === undefined
       ? {}
       : { distanceCeiling: deps.semantic.distanceCeiling },
   );
   const ranked: SessionSearchOutcome = { ...fused.outcome, semantic: fused.semantic };
+  const dataClassOf = storedDataClassReader(deps, lexical.texts, ranked.results);
+  return { outcome: await decideAmongRanked(deps, request, ranked, dataClassOf), dataClassOf };
+}
+
+async function decideAmongRanked(
+  deps: SessionSearchDeps,
+  request: SessionSearchRequest,
+  ranked: SessionSearchOutcome,
+  dataClassOf: StoredDataClassOf,
+): Promise<SessionSearchOutcome> {
   const mode = deps.deciderMode ?? "rank";
 
   if (mode !== "jev" || deps.decider === undefined || ranked.results.length < 2) {
@@ -231,8 +265,8 @@ export async function searchSessions(
 
   const recordedProvider = recordedDecisionProvider(deps.decider.jev.config);
   const provider = recordedProvider === undefined ? {} : { provider: recordedProvider };
-  // Each result carries the class of its whole stored record, so the decider leaves out one the selector may not be
-  // shown before anything is sent, rather than the tool filtering it after the provider already read its snippet.
+  // The decider asks for the class of a result's whole stored record before offering it, so one the selector may not be
+  // shown is left out before anything is sent, rather than the tool filtering it after the provider already read it.
   const decision = await decideSearchResult(deps.decider, {
     query: request.text,
     results: ranked.results.map((hit) => ({
@@ -240,8 +274,8 @@ export async function searchSessions(
       snippet: hit.snippet,
       score: hit.score,
       source: hit.source,
-      dataClass: storedDataClass(deps, hit),
     })),
+    classify: dataClassOf,
   });
 
   if (decision.status === "chosen") {
@@ -284,13 +318,45 @@ export async function searchSessions(
   };
 }
 
+/** The class of a search result's whole stored record. */
+type StoredDataClassOf = (hit: { source: string; ref: string; snippet: string }) => DataClass;
+
+function entryKey(entry: { source: string; ref: string }): string {
+  return `${entry.source}:${entry.ref}`;
+}
+
 /**
  * The class of a result, classified on the whole stored entry before redaction: what decides is what the stored text
- * is, not the window a snippet happens to cut from it or what redaction leaves. An entry no longer stored falls back to
- * its snippet.
+ * is, not the window a snippet happens to cut from it or what redaction leaves.
+ *
+ * A lexical hit's text came back with the search, so classifying it reads nothing. A result only the vector side found
+ * has no text yet; the first time one is asked about, every such result in the list is read in one query, so the cost
+ * is one read of the table at most, never one per result. Each result is classified once, however many callers ask.
+ * An entry no longer stored falls back to its snippet.
  */
-function storedDataClass(deps: SessionSearchDeps, hit: SessionSearchHit): DataClass {
-  return dataClassOfText(historyEntry(deps.db, { principalId: deps.principalId, source: hit.source, ref: hit.ref })?.text ?? hit.snippet);
+function storedDataClassReader(
+  deps: SessionSearchDeps,
+  lexicalTexts: ReadonlyMap<string, string>,
+  results: readonly SessionSearchHit[],
+): StoredDataClassOf {
+  const texts = new Map(lexicalTexts);
+  const classes = new Map<string, DataClass>();
+  let readTheRest = false;
+  return (hit) => {
+    const key = entryKey(hit);
+    const known = classes.get(key);
+    if (known !== undefined) return known;
+    if (!texts.has(key) && !readTheRest) {
+      readTheRest = true;
+      const missing = results.filter((result) => !texts.has(entryKey(result)));
+      for (const [found, text] of historyEntryTexts(deps.db, { principalId: deps.principalId, entries: missing })) {
+        texts.set(found, text);
+      }
+    }
+    const dataClass = dataClassOfText(texts.get(key) ?? hit.snippet);
+    classes.set(key, dataClass);
+    return dataClass;
+  };
 }
 
 function recentWithinWindow(
@@ -605,11 +671,11 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
       const query = typeof params.query === "string" ? params.query : "";
       if (query.trim() === "") return { text: "No query was given." };
       const limit = typeof params.limit === "number" && params.limit > 0 ? Math.min(params.limit, 20) : 5;
-      const searched = await searchSessions(deps, { text: query, limit });
-      // The reading model's own limit, on the same per-record class the decision used.
+      const { outcome: searched, dataClassOf } = await searchWithStoredClasses(deps, { text: query, limit });
+      // The reading model's own limit, on the same per-record class the decision used, judged once for both.
       const allowed = deps.allowed?.();
       const results =
-        allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(storedDataClass(deps, hit)));
+        allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(dataClassOf(hit)));
       const withheld = searched.results.length - results.length;
       const withheldNote =
         withheld === 0 ? "" : `\n[${String(withheld)} kết quả bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;
