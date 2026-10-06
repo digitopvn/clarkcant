@@ -614,4 +614,57 @@ describe("the search deadline", () => {
     expect(byCloudflare.mode).toBe("jev");
     expect(byCloudflare.decider).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
   });
+
+  /** Records every request and declines to choose, so the search falls back to its ranking. */
+  const recordingDecider = (): { transport: JevTransport; bodies: string[] } => {
+    const bodies: string[] = [];
+    const transport: JevTransport = async (request) => {
+      bodies.push(JSON.stringify(request.body));
+      return { status: 529, body: undefined };
+    };
+    return { transport, bodies };
+  };
+  const budget = () => ({ deadlineAt: Date.now() + 2000, timeoutMs: 2000 });
+  // The address sits far from the match, so the snippet cut from this message carries none of it.
+  const filler = Array.from({ length: 80 }, (_unused, index) => `mục${String(index)}`).join(" ");
+
+  it("leaves a result whose stored record is above the selector's ceiling out of the decision request", async () => {
+    seed("sửa lỗi đăng nhập token hết hạn", "msg_login_a", "2026-09-16T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
+    seed(`sửa lỗi đăng nhập ${filler} liên hệ duy@example.com`, "msg_login_mail", "2026-09-14T02:00:00.000Z");
+    const { transport, bodies } = recordingDecider();
+
+    const outcome = await searchSessions(
+      { ...search, decider: { jev: { config: config(), transport }, budget }, deciderMode: "jev" },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+
+    // The confidential record is still a search result; it is only never shown to the decision provider.
+    expect(outcome.results.map((hit) => hit.ref)).toContain("msg_login_mail");
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) {
+      expect(body).not.toContain("msg_login_mail");
+      expect(body).not.toContain("mục1");
+    }
+    expect(bodies[0]).toContain("result:msg_login_a");
+    expect(bodies[0]).toContain("result:msg_login_b");
+  });
+
+  it("does not call the decision provider when fewer than two results may be shown to it", async () => {
+    // Three results a keyword search cannot separate, two of them carrying an address.
+    seed("sửa lỗi đăng nhập gửi duy@example.com", "msg_mail_a", "2026-09-16T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập hỏi an@example.com", "msg_mail_c", "2026-09-14T02:00:00.000Z");
+    const { transport, bodies } = recordingDecider();
+
+    const outcome = await searchSessions(
+      { ...search, decider: { jev: { config: config(), transport }, budget }, deciderMode: "jev" },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+
+    expect(bodies).toHaveLength(0);
+    expect(outcome.mode).toBe("rank");
+    expect(outcome.decider?.reason).toBe("fewer than two results may be shown to the decision provider");
+    expect(outcome.results).toHaveLength(3);
+  });
 });

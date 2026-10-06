@@ -1,4 +1,4 @@
-import { redactSecrets } from "@clarkcant/contracts";
+import type { DataClass } from "@clarkcant/contracts";
 
 import {
   type JevBudget,
@@ -11,7 +11,7 @@ import {
   createJevBudget,
   jevCallRefusal,
 } from "./jev-selector.ts";
-import { sanitizeIntent } from "./mini-app-candidates.ts";
+import { sanitizeIntent, selectorMayOffer, selectorText } from "./mini-app-candidates.ts";
 import { describeRuntimeCandidate, type RuntimeCandidate } from "./runtime-candidates.ts";
 
 /**
@@ -162,7 +162,8 @@ export async function decideRuntimeTarget(
 
   const criteria: Record<string, string | null> = {};
   for (const candidate of live.slice(0, 12)) {
-    criteria[candidate.id] = describeRuntimeCandidate(candidate);
+    // A candidate may describe itself, so its description is free text and is held to the selector's ceiling.
+    criteria[candidate.id] = selectorText(describeRuntimeCandidate(candidate), 300);
   }
 
   // One budget for the whole decision, built now rather than at boot and shared by every call this
@@ -224,7 +225,17 @@ export async function decideRuntimeTarget(
 
 export interface SearchDecisionInput {
   query: string;
-  results: readonly { ref: string; snippet: string; score: number; source: string }[];
+  results: readonly {
+    ref: string;
+    snippet: string;
+    score: number;
+    source: string;
+    /**
+     * The class of the whole record the snippet was cut from. Absent means the snippet is classified on its own, which
+     * can miss a value the cut split; a caller that holds the record should always pass it.
+     */
+    dataClass?: DataClass;
+  }[];
 }
 
 export type SearchDecision =
@@ -270,8 +281,9 @@ export async function decideProject(
     // Directory names and markers are filesystem text the user never wrote for a third party, so the
     // whole description goes through the same redaction as every other payload field. `relPath` stays
     // relative, which is what the plan allows and what keeps an absolute home path out of the request.
-    criteria[candidate.id] = redactSecrets(
+    criteria[candidate.id] = selectorText(
       `${candidate.name} (${candidate.kind}${markers === "" ? "" : `, ${markers}`}) ở ~/${candidate.relPath}`,
+      400,
     );
   }
 
@@ -279,13 +291,13 @@ export async function decideProject(
 
   const outcome = await askChoice(deps.jev, {
     state: {
-      intent: redactSecrets(input.intent).slice(0, 300),
+      intent: selectorText(input.intent, 300),
       // The directory name is the one free-text field here, and it is filesystem text the user wrote
       // for themselves rather than for a third party. Redacting only the criteria would leave the
       // same name travelling verbatim in the state beside it.
       candidates: offered.map((candidate) => ({
         id: candidate.id,
-        name: redactSecrets(candidate.name),
+        name: selectorText(candidate.name, 200),
         kind: candidate.kind,
       })),
     },
@@ -405,7 +417,7 @@ export async function guardOperation(deps: DecideDeps, input: OperationGuardInpu
       "Quyết định xem operation này có nên chạy trên máy của người dùng hay không.",
       "Chỉ được chọn thu hẹp hoặc từ chối; không có lựa chọn nào mở rộng phạm vi.",
       "`clarify` chỉ dùng khi bản thân việc này mơ hồ (nhiều đối tượng đều hợp lệ), không dùng để xin phép.",
-      redactSecrets(input.instructions.trim()).slice(0, 1_500),
+      selectorText(input.instructions.trim(), 1_500),
     ]
       .filter((line) => line !== "")
       .join("\n"),
@@ -597,7 +609,7 @@ export async function decideTurnAction(
 
   const outcome = await askChoice(deps.jev, {
     state: {
-      message: redactSecrets(input.text).slice(0, 400),
+      message: selectorText(input.text, 400),
       runningForSeconds: String(Math.max(0, Math.round(input.runningMs / 1000))),
     },
     instructions:
@@ -646,23 +658,26 @@ export const CONTEXT_FOCUS_TOP_K = 8;
  *
  * Asked by the context planner only when its own ranking is too close to call. The answer reorders: the chosen
  * candidate goes first and every other one stays where it was, so a wrong answer costs a position, never a record.
- * Texts are redacted and clipped before they leave the node, and candidates are offered by position rather than by id.
+ * A candidate more sensitive than the selector may be shown is never offered; the rest are redacted and clipped before
+ * they leave the node, and candidates are offered by position rather than by id.
  */
 export async function decideContextFocus(
   deps: DecideDeps,
-  input: { query: string; candidates: readonly { id: string; text: string }[] },
+  input: { query: string; candidates: readonly { id: string; text: string; sensitivity?: DataClass }[] },
 ): Promise<{ status: "chosen"; id: string; confidence: number; model: string } | { status: "rank"; reason: string }> {
-  const offered = input.candidates.slice(0, CONTEXT_FOCUS_TOP_K);
+  const offered = input.candidates
+    .filter((candidate) => selectorMayOffer({ text: candidate.text, dataClass: candidate.sensitivity }))
+    .slice(0, CONTEXT_FOCUS_TOP_K);
   if (offered.length < 2) return { status: "rank", reason: "there was nothing to choose between" };
   const refused = jevCallRefusal(deps.jev.config);
   if (refused !== undefined) return { status: "rank", reason: refused };
 
   const criteria: Record<string, string | null> = {};
   offered.forEach((candidate, index) => {
-    criteria[`item:${String(index)}`] = redactSecrets(candidate.text).replace(/\s+/g, " ").slice(0, 200);
+    criteria[`item:${String(index)}`] = selectorText(candidate.text.replace(/\s+/g, " "), 200);
   });
   const outcome = await askChoice(deps.jev, {
-    state: { message: redactSecrets(input.query).slice(0, 300) },
+    state: { message: selectorText(input.query, 300) },
     instructions:
       "Which of these remembered notes or earlier messages matters most for answering the message? Choose none if none of them does.",
     criteria,
@@ -699,7 +714,7 @@ export async function decideToolFamily(
   const criteria: Record<string, string | null> = {};
   for (const name of names) criteria[`family:${name}`] = input.families[name] ?? null;
   const outcome = await askChoice(deps.jev, {
-    state: { message: redactSecrets(input.text).slice(0, 400) },
+    state: { message: selectorText(input.text, 400) },
     instructions:
       "Which kind of tool will answering this message most likely need? Choose none if it needs no tool or more than one kind.",
     criteria,
@@ -780,18 +795,27 @@ export async function decideSearchResult(
   const refused = jevCallRefusal(deps.jev.config);
   if (refused !== undefined) return { status: "rank", reason: refused };
 
-  // Snippets are the user's own history, so they are redacted before they leave the node and only
-  // the first few results are offered.
-  const offered = input.results.slice(0, 10);
+  /*
+   * Snippets are the user's own history. A result is offered only when the whole record it was cut from is within what
+   * the selector may be shown - judged on that record, because a value split at the snippet's edge no longer matches
+   * its shape - and what is offered is redacted and clipped. Only the first few are offered. A result left out keeps
+   * its ranked place; one the selector chooses moves ahead of it, as in the context planner.
+   */
+  const offered = input.results
+    .filter((result) => selectorMayOffer({ text: result.snippet, dataClass: result.dataClass }))
+    .slice(0, 10);
+  if (offered.length < 2) {
+    return { status: "rank", reason: "fewer than two results may be shown to the decision provider" };
+  }
   const criteria: Record<string, string | null> = {};
   for (const result of offered) {
-    criteria[`result:${result.ref}`] = redactSecrets(result.snippet).slice(0, 200);
+    criteria[`result:${result.ref}`] = selectorText(result.snippet, 200);
   }
 
   const budget = deps.budget();
 
   const choice = await askChoice(deps.jev, {
-    state: { query: redactSecrets(input.query).slice(0, 300) },
+    state: { query: selectorText(input.query, 300) },
     instructions: "Which of these earlier records is the one the question is about? Choose none if none of them is.",
     criteria,
     questionId: "result",
@@ -825,7 +849,7 @@ export async function decideSearchResult(
   // means "do not guess".
   const noul = await askNoul(deps.jev, {
     state: {
-      query: redactSecrets(input.query).slice(0, 300),
+      query: selectorText(input.query, 300),
       resultCount: offered.length,
     },
     instructions:

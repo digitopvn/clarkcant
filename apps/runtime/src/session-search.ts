@@ -231,6 +231,8 @@ export async function searchSessions(
 
   const recordedProvider = recordedDecisionProvider(deps.decider.jev.config);
   const provider = recordedProvider === undefined ? {} : { provider: recordedProvider };
+  // Each result carries the class of its whole stored record, so the decider leaves out one the selector may not be
+  // shown before anything is sent, rather than the tool filtering it after the provider already read its snippet.
   const decision = await decideSearchResult(deps.decider, {
     query: request.text,
     results: ranked.results.map((hit) => ({
@@ -238,6 +240,7 @@ export async function searchSessions(
       snippet: hit.snippet,
       score: hit.score,
       source: hit.source,
+      dataClass: storedDataClass(deps, hit),
     })),
   });
 
@@ -279,6 +282,15 @@ export async function searchSessions(
       reason: decision.status === "rank" ? decision.reason : "the selector chose a result that was not in the ranked list",
     },
   };
+}
+
+/**
+ * The class of a result, classified on the whole stored entry before redaction: what decides is what the stored text
+ * is, not the window a snippet happens to cut from it or what redaction leaves. An entry no longer stored falls back to
+ * its snippet.
+ */
+function storedDataClass(deps: SessionSearchDeps, hit: SessionSearchHit): DataClass {
+  return dataClassOfText(historyEntry(deps.db, { principalId: deps.principalId, source: hit.source, ref: hit.ref })?.text ?? hit.snippet);
 }
 
 function recentWithinWindow(
@@ -594,14 +606,10 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
       if (query.trim() === "") return { text: "No query was given." };
       const limit = typeof params.limit === "number" && params.limit > 0 ? Math.min(params.limit, 20) : 5;
       const searched = await searchSessions(deps, { text: query, limit });
-      /*
-       * Classified on the whole stored entry, before redaction: what decides is what the stored text is, not the window
-       * a snippet happens to cut from it or what redaction leaves. An entry no longer stored falls back to its snippet.
-       */
+      // The reading model's own limit, on the same per-record class the decision used.
       const allowed = deps.allowed?.();
-      const classOf = (hit: SessionSearchHit): DataClass =>
-        dataClassOfText(historyEntry(deps.db, { principalId: deps.principalId, source: hit.source, ref: hit.ref })?.text ?? hit.snippet);
-      const results = allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(classOf(hit)));
+      const results =
+        allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(storedDataClass(deps, hit)));
       const withheld = searched.results.length - results.length;
       const withheldNote =
         withheld === 0 ? "" : `\n[${String(withheld)} kết quả bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;

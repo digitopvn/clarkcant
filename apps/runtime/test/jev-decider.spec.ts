@@ -12,6 +12,7 @@ import {
   SEARCH_DECISION_TIMEOUT_MS,
   SEARCH_TOTAL_BUDGET_MS,
   buildDecider,
+  decideContextFocus,
   decideProject,
   decisionTimeoutMsFromEnv,
   rankGapIsClear,
@@ -21,6 +22,7 @@ import {
   searchDecisionBudget,
 } from "../src/jev-decider.ts";
 import { type JevConfig, type JevTelemetry, type JevTransport, createJevBudget } from "../src/jev-selector.ts";
+import { selectorMayRead, selectorText } from "../src/mini-app-candidates.ts";
 import {
   createFindRuntimeTool,
   filterRuntimeCandidates,
@@ -340,6 +342,81 @@ describe("search decisions", () => {
     });
     expect(outcome.status).toBe("rank");
     expect(recorded.calls).toBe(0);
+  });
+});
+
+describe("the selector's data-class ceiling", () => {
+  /** Records each request body and declines to choose. */
+  function recordingBodies(): { recorded: Recorded; bodies: string[] } {
+    const bodies: string[] = [];
+    const recorded: Recorded = {
+      calls: 0,
+      telemetry: [],
+      transport: async (request) => {
+        recorded.calls += 1;
+        bodies.push(JSON.stringify(request.body));
+        return { status: 529, body: undefined };
+      },
+    };
+    return { recorded, bodies };
+  }
+
+  const close = [
+    { ref: "msg_a", snippet: "sửa lỗi đăng nhập", score: -0.000002, source: "message" },
+    { ref: "msg_b", snippet: "thêm nhãn trục cho biểu đồ", score: -0.00000199, source: "message" },
+  ];
+
+  it("leaves out a search result whose whole record is above the ceiling, though its snippet looks harmless", async () => {
+    const { recorded, bodies } = recordingBodies();
+    const results = [
+      ...close,
+      { ref: "msg_far", snippet: "lỗi thanh toán ở cổng", score: -0.00000198, source: "message", dataClass: "confidential" as const },
+    ];
+    await decideSearchResult(deps(recorded), { query: "lỗi", results });
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) {
+      expect(body).not.toContain("msg_far");
+      expect(body).not.toContain("thanh toán");
+    }
+    expect(bodies[0]).toContain("result:msg_a");
+  });
+
+  it("classifies a snippet on its own when no class for its record was given", async () => {
+    const { recorded, bodies } = recordingBodies();
+    const outcome = await decideSearchResult(deps(recorded), {
+      query: "lỗi",
+      results: [close[0]!, { ...close[1]!, snippet: "gửi báo cáo cho duy@example.com" }],
+    });
+    // One result left is no choice, so nothing is sent.
+    expect(outcome).toEqual({ status: "rank", reason: "fewer than two results may be shown to the decision provider" });
+    expect(bodies).toHaveLength(0);
+  });
+
+  it("leaves out a context candidate above the ceiling even when the caller did not label it", async () => {
+    const { recorded, bodies } = recordingBodies();
+    await decideContextFocus(deps(recorded), {
+      query: "báo cáo tuần",
+      candidates: [
+        { id: "memory:a", text: "báo cáo tuần gửi vào thứ sáu" },
+        { id: "memory:b", text: "báo cáo tuần dùng mẫu mới" },
+        { id: "memory:c", text: "báo cáo tuần gửi cho duy@example.com" },
+        { id: "memory:d", text: "báo cáo tuần có bảng chi phí", sensitivity: "confidential" },
+      ],
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("item:1");
+    expect(bodies[0]).not.toContain("item:2");
+    expect(bodies[0]).not.toContain("example.com");
+    expect(bodies[0]).not.toContain("chi phí");
+  });
+
+  it("redacts a shape that only the cut created, so free text is within the ceiling when it is sent", () => {
+    // Ten digits running on into letters are not a phone number; cut after the digits, they are.
+    const text = "gọi 0912345678abc";
+    expect(selectorMayRead(text)).toBe(true);
+    expect(selectorMayRead(text.slice(0, 14))).toBe(false);
+    expect(selectorText(text, 14)).toBe("gọi [redacted]");
+    expect(selectorMayRead(selectorText(text, 14))).toBe(true);
   });
 });
 
