@@ -2879,7 +2879,14 @@ trong ~/code/timer"), hoặc gọi `POST /widget-dev/sessions`
 ([giao diện mở](open-interfaces.vi.md#phiên-phát-triển-widget)). Node theo dõi thư mục bằng cùng build engine mà dev host
 dùng: mỗi thay đổi đọc được thành một gói trở thành một generation bất biến mang tên theo digest các tệp của nó, được sao
 chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Không có gì
-đi qua npm, Marketplace hay một directory index, và không có gì được phát hành.
+đi qua npm, Marketplace hay một directory index, và không có gì được phát hành. Thư mục `node_modules` ở gốc bị loại khỏi
+mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
+
+Clark chỉ được phát triển một thư mục khi nó nằm trong một thư mục dự án của bạn (tùy chọn `workspace.roots`) hoặc trong
+không gian widget riêng của Clark (`<dataDir>/widget-workspace`), nơi Clark dựng khung một widget mới. Để phát triển bất
+kỳ thư mục nào khác trên máy, hãy tự bắt đầu phiên từ ứng dụng. Thư mục dữ liệu của chính node không bao giờ được phát
+triển, và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
+dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
 
 Widget hiện trong cuộc hội thoại bằng frame của bản chính thức, với đúng sandbox, bridge, state và migration của bản
 chính thức. Một generation mới chỉ mount lại frame; instance và state của nó được giữ, và state đi qua các migration của
@@ -2887,11 +2894,19 @@ chính gói khi phiên bản thay đổi. Cạnh frame, host nói bản dựng n
 bản dựng mới bị lỗi (kèm các lỗi), nó đang chờ người dùng trong hộp thư, hoặc chính sách đã từ chối nó. Câu "đang hiện bản
 dựng thành công gần nhất" được nói đúng khi đó là thứ cuộc hội thoại đang hiện.
 
-Chính sách thực thi quyết định mỗi lần cài như mọi lần cài khác. Lần cài đầu tiên, và mỗi lần dựng làm đổi những gì gói
-tiếp cận (reach đã khai báo, tài nguyên, lane của facet, quyền), là một câu hỏi khi chế độ của người dùng yêu cầu hỏi;
-một lần dựng chỉ đổi mã hay UI dùng lại câu trả lời đó và chạy ngay. Một chế độ không hỏi thì chạy mọi lần dựng, và một
-lần dựng tiếp cận nhiều hơn lần trước được báo trong cuộc hội thoại, không bao giờ âm thầm. Dừng một phiên là dừng theo
-dõi thư mục; bản dựng cuối vẫn chạy ở nơi nó đã được đặt.
+Chính sách thực thi quyết định mỗi lần cài như mọi lần cài khác. Một phiên do Clark bắt đầu được quyết định như đề xuất
+của chính Clark, nên chế độ có kiểm soát hỏi trước lần cài đầu tiên của nó; còn phiên do bạn tự bắt đầu là yêu cầu của
+bạn. Khi chế độ yêu cầu hỏi, lần cài đầu tiên là một câu hỏi, và mỗi lần dựng làm đổi những gì gói tiếp cận cũng vậy:
+reach đã khai báo, tài nguyên, lane của facet, các facet, quyền, hoặc các capability gói yêu cầu. Một lần dựng chỉ đổi mã
+hay UI dùng lại câu trả lời đó và chạy ngay. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp
+cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
+đã duyệt trong hộp thư thì đã được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một
+thứ khác trên node: một gói đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
+
+Dừng một phiên là dừng theo dõi thư mục; bản dựng cuối vẫn chạy ở nơi nó đã được đặt. Khi node tự dừng theo dõi, dòng
+trạng thái cạnh frame nói lý do: bộ theo dõi bị lỗi, thư mục không còn nữa, hoặc node đã theo dõi số thư mục tối đa. Các
+bản dựng đã bị thay thế được dọn dẹp khi bản mới được cài. Node giữ bản dựng đang chạy và bản mà thao tác quay lại bản
+trước sẽ trở về.
 
 ### test
 
@@ -3182,7 +3197,9 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
 - Phiên phát triển widget trong cuộc hội thoại (§16, "Phát triển trong cuộc hội thoại"): một build engine dùng chung với
   dev host, generation bất biến, giữ bản dựng tốt gần nhất, lần cài do chính sách quyết định theo một phạm vi đồng ý gắn
-  với phạm vi tiếp cận, chỉ mount lại frame, và trạng thái bản dựng do host sở hữu. Ghim một widget đang phát triển đã
+  với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng thư mục dự án và không gian widget và được quyết định như đề
+  xuất của Clark, chỉ facet frame và dữ liệu, dọn dẹp các bản dựng đã bị thay thế, chỉ mount lại frame, và trạng thái
+  bản dựng do host sở hữu. Ghim một widget đang phát triển đã
   chạy được; tách một widget cách ly ra cửa sổ riêng, cùng các điều khiển fixture, viewport, theme và reduced motion của
   dev host đặt cạnh một frame trên node, thì chưa có.
 - State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).

@@ -636,8 +636,9 @@ name, and a name longer than 120 characters is shortened before its extension, w
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
 Install button and a notice's `update` call; no agent tool installs a package from a directory (the package tool lists,
 uninstalls, restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with
-`403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`, for a folder the person names
-in their own conversation ([widget dev sessions](#widget-dev-sessions)); it is refused in a turn a machine surface sent.
+`403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`
+([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It may watch only the person's
+project folders or Clark's own widget workspace, and the policy decides its installs as Clark's own proposal.
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
@@ -714,25 +715,80 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Start watching `root` (an absolute path on the node). Answers `201` with the session once its first build ran and was activated as far as the policy allows. With `conversationId`, the widget is placed there (pinned open) once a generation runs. Starting a folder that has a stopped session picks that session up again. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood` and `placed`. |
-| `DELETE /widget-dev/sessions/:id` | Stop watching. The running generation stays installed and keeps rendering where it was placed. |
+| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone` or `capacity`). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
+| `DELETE /widget-dev/sessions/:id` | Stop watching (`stopReason: "requested"`). The running generation stays installed and keeps rendering where it was placed. |
 | `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
 
 Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS` (eight live sessions per node), `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`
-and `409 NOT_PLACED` for a place with nothing running, a widget the package does not declare, or a widget that cannot be
-placed, and `503 WIDGET_DEV_UNAVAILABLE` on a node that is not running sessions.
+`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` and
+`503 WIDGET_DEV_UNAVAILABLE`:
+
+- `409 TOO_MANY_SESSIONS` is for a ninth live session on the node, or for a store that already holds 256 sessions that
+  all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
+- `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
+  does not declare, or a widget that cannot be placed.
+- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions.
+
+**Which folders.** `root` is resolved to its real path (symbolic links and junctions followed) before it is checked:
+
+- `400 ROOT_NOT_LOCAL` refuses a Windows network share or device path (`\\host\share`, `\\?\…`, `\\.\…`).
+- `400 ROOT_IN_DATA_FOLDER` refuses the node's data folder, any folder inside it, and any folder that holds it. The one
+  exception is Clark's widget workspace, `<dataDir>/widget-workspace`.
+- A session the person starts on this route may watch any other local folder.
+- A session Clark starts with `develop_widget` may watch only the person's project folders (the `workspace.roots`
+  preference, by default the home folder and the drive the node runs from) or the widget workspace, where Clark
+  scaffolds a new widget. Any other folder is refused with `403 ROOT_NOT_OWNED`, and the person can start it themselves.
+
+**Which packages.** A session runs only packages whose facets stay in the widget frame or are data (`isolated-ui` and
+`declarative`). A build of a package with a service, tools or native facet fails with a diagnostic coded
+`FACET_LANE_UNSUPPORTED`; install such a package the ordinary way. A session's build is also refused, with nothing
+installed or listed, when its package id belongs to something else on the node:
+
+- `PACKAGE_LISTED`: the configured directory lists the same id and version.
+- `PACKAGE_IN_OTHER_SESSION`: another session develops the id, or still runs a build of it.
+- `PACKAGE_INSTALLED_OTHERWISE`: the id is installed from elsewhere.
+
+These codes appear as `activation.state: "refused"` with the code.
 
 Each generation is named by the content digest of its files, copied into the package cache, and listed for this node
-alone (`<dataDir>/widget-dev/sessions.json`); no index, npm or Marketplace is involved, and nothing is published. The
-policy decides each install under a **consent scope** rather than the artifact: the package id together with everything
-the listing binds about its reach (declared reach, resources, facet lanes, permissions). The install question in
-`GET /inbox` carries that scope as its `operationDigest`, and is decided on the ordinary
+alone (`<dataDir>/widget-dev/sessions.json`). No index, npm or Marketplace is involved, and nothing is published.
+
+**What is built.** A `node_modules` folder at the root is left out of the digest, the copy and the watch, in any letter
+case, as `.git` is. Built output such as `dist` is kept.
+
+**Cleaning up.** After each install, the session removes what its superseded generations left behind: their generation
+records and their copies in the package cache. It keeps the generation that runs, any build waiting on a question, and
+the newest superseded generation, which is the one a rollback returns to.
+
+**The store.** If `sessions.json` cannot be read, it is moved aside as `sessions.json.unreadable-<time>` and the
+node starts with no sessions; the file is never overwritten.
+
+**When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
+reading as live. This happens when the watcher fails, when the folder is gone after a restart, or when the node is
+already watching eight folders as it resumes.
+
+**Consent.** The policy decides each install under a **consent scope** rather than the artifact. The scope is the
+package id together with everything the build binds about its reach:
+
+- declared reach and resources;
+- facet lanes, and each facet by kind, id and lane;
+- permissions;
+- the capabilities the package requests.
+
+The install question in `GET /inbox` carries that scope as its `operationDigest`, and is decided on the ordinary
 `POST /packages/approvals/:id/decision` with it. A later build with the same scope installs on that approval without a
-second question; a build whose scope changed, wider or narrower, is a new question, and the generation before it keeps
-running meanwhile. A mode that does not ask runs every build, as it runs any install; when such a build reaches more
-than the one before it, the node says so in the session's conversation with what it added. Every install is recorded
+second question. A build whose scope changed, wider or narrower, is a new question, and the generation before it keeps
+running meanwhile.
+
+Whose intent an install carries out depends on who started the session:
+
+- A session the person starts on this route installs as their request.
+- A session Clark starts with `develop_widget` installs as Clark's own proposal. Guarded mode asks before it unless a
+  rule allows local writes, ask mode asks, and autonomous mode runs it.
+
+A mode that does not ask runs every build, as it runs any install. When such a build reaches more than the one before
+it and nobody was asked, the node says so in the session's conversation with what it added. Every install is recorded
 like any other (`effect.executed`, with the exact files).
 
 A build that does not read as a package (a broken manifest, a widget definition that does not parse, no widget facet)
@@ -744,9 +800,13 @@ The live read of a widget that runs a session's generation, `GET /conversations/
 the frame) when a new generation runs; the instance, its state and its migrations are the ordinary ones. The widget
 code is never told it is in a session.
 
-`POST /widget-dev/sessions`, `/:id/rebuild` and `/:id/place` install code, so the WebSocket relay, `clarkcant api` and
-MCP refuse them with `403 PERSON_ONLY`; reading and stopping a session stay reachable everywhere. In the conversation,
-Clark's `develop_widget` tool (`start`, `status`, `rebuild`, `place`, `stop`) drives the same sessions.
+`POST /widget-dev/sessions`, `/:id/rebuild` and `/:id/place` install code. The WebSocket relay, `clarkcant api` and MCP
+refuse them with `403 PERSON_ONLY`, and so does the route itself for any request a machine surface marked. Reading and
+stopping a session stay reachable everywhere.
+
+In the conversation, Clark's `develop_widget` tool (`start`, `status`, `rebuild`, `place`, `stop`) drives the same
+sessions. It starts, rebuilds or places only in a turn the person sent; a turn a machine surface, an automation or a
+peer sent does none of these.
 
 The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes a body the route validates with
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); anything outside it is `400 INVALID_SCHEMA`, and so is

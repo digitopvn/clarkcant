@@ -2892,7 +2892,14 @@ widget in ~/code/timer"), or call `POST /widget-dev/sessions`
 ([open interfaces](open-interfaces.md#widget-dev-sessions)). The node watches the folder with the same build engine
 the dev host uses: every change that reads as a package becomes an immutable generation named by the digest of its
 files, is copied into the node's package cache and listed for this node alone, and is installed through the ordinary
-install path. Nothing goes through npm, the Marketplace or a directory index, and nothing is published.
+install path. Nothing goes through npm, the Marketplace or a directory index, and nothing is published. A root
+`node_modules` folder is left out of each build; built output such as `dist` is kept.
+
+Clark may develop a folder only when it is in one of your project folders (the `workspace.roots` preference) or in its
+own widget workspace (`<dataDir>/widget-workspace`), where it scaffolds a new widget. To develop any other folder on the
+machine, start the session yourself from the app. The node's own data folder is never developed, and neither is a
+network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
+a native part is refused with a problem saying so; install that package the ordinary way.
 
 The widget appears in the conversation in the production frame, with the production sandbox, bridge, state and
 migrations. A new generation remounts only the frame; the instance and its state stay, and the state goes through the
@@ -2900,11 +2907,19 @@ package's own migrations when the version changes. Beside the frame, the host sa
 it is not the newest, why: the new build failed (with the problems), it waits for the person in the inbox, or the policy
 refused it. "Showing the last successful build" is said exactly when that is what the conversation shows.
 
-The execution policy decides each install as it decides any other. The first install, and every build that changes
-what the package reaches (declared reach, resources, facet lanes, permissions), is a question when the person's mode
-asks; a build that only changes code or UI reuses that answer and runs at once. A mode that does not ask runs every
-build, and a build that reaches more than the one before it is announced in the conversation, never silently.
-Stopping a session stops watching the folder; the last build keeps running where it was placed.
+The execution policy decides each install as it decides any other. A session Clark started is decided as Clark's own
+proposal, so guarded mode asks before its first install, while a session you started yourself is your request. When the
+mode asks, the first install is a question, and so is every build that changes what the package reaches: declared
+reach, resources, facet lanes, facets, permissions, or the capabilities it requests. A build that only changes code or UI
+reuses that answer and runs at once. A mode that does not ask runs every build. When such a build reaches more than the
+one before it, and nobody was asked about it, the conversation says so with what it added; a build you approved in the
+inbox was already shown to you with that. A build is also refused when its package id belongs to something else on the
+node: a listed package, another session, or a package installed the ordinary way.
+
+Stopping a session stops watching the folder; the last build keeps running where it was placed. When the node stops
+watching on its own, the status beside the frame says why: the watcher failed, the folder is gone, or the node already
+watches as many folders as it can. Superseded builds are cleaned up as new ones install. The node keeps the build that
+runs and the one a rollback returns to.
 
 ### test
 
@@ -3193,8 +3208,9 @@ This section states which parts of the document already have code, so that nobod
   simulator, and accessibility audit. The frame uses the host's actual sandbox (`allow-scripts`, no
   `allow-same-origin`), and the server refuses any path outside the package.
 - Widget dev sessions in the conversation (§16, "Developing in the conversation"): one build engine shared with the dev
-  host, immutable generations, last-known-good, policy-decided installs under a reach-bound consent scope, frame-only
-  remount, and host-owned build status. Pinning a dev widget works; detaching an isolated widget into its own window,
+  host, immutable generations, last-known-good, policy-decided installs under a reach-bound consent scope, Clark-started
+  sessions confined to project folders and the widget workspace and decided as Clark's proposal, frame and data facets
+  only, cleanup of superseded builds, frame-only remount, and host-owned build status. Pinning a dev widget works; detaching an isolated widget into its own window,
   and the dev host's fixture, viewport, theme and reduced-motion controls beside a node frame, are not yet available.
 - Durable state for isolated widgets, declarative host-run migrations, and `ephemeralStateKeys` (§15).
 - Remove / restore / roll back a package from Settings and via `manage_package` in the conversation; data is kept.
