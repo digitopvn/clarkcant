@@ -22,7 +22,7 @@ import type { CommandToolDeps } from "../src/node-tools.ts";
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { ownedResources } from "../src/preflight.ts";
 import { listRunningCommands } from "../src/run-command.ts";
-import { createTaskDispatcher } from "../src/task-dispatch.ts";
+import { createTaskDispatcher, type TaskDispatcher, type TaskDispatcherDeps } from "../src/task-dispatch.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "../src/worker-process.ts";
 
 /**
@@ -45,14 +45,24 @@ const AUTOMATION: IntentOrigin = {
   allowedCategories: ["read", "local-write"],
 };
 
-let cleanup: (() => void)[] = [];
+let cleanup: (() => void | Promise<void>)[] = [];
 
-afterEach(() => {
-  // Taken first, so a step that throws never leaves its siblings to run again after the next test.
+afterEach(async () => {
+  // Taken first, so a step that throws never leaves its siblings to run again after the next test. Every step runs even
+  // when one before it threw, so a stuck run still has its node closed and its folders removed; the first error is the
+  // one reported.
   const steps = cleanup.reverse();
   cleanup = [];
-  for (const step of steps) step();
-});
+  let failed: { cause: unknown } | undefined;
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (cause) {
+      failed ??= { cause };
+    }
+  }
+  if (failed !== undefined) throw failed.cause;
+}, 40_000);
 
 function tempDir(prefix: string): string {
   const path = mkdtempSync(join(tmpdir(), prefix));
@@ -147,12 +157,33 @@ function commandDeps(fallback: string): CommandToolDeps {
   };
 }
 
-async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<void> {
+async function waitUntil(condition: () => boolean, timeoutMs: number, describe?: () => string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!condition()) {
-    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    if (Date.now() > deadline) throw new Error(describe?.() ?? `condition not met within ${timeoutMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+/**
+ * A dispatcher whose runs end before the test's node and folders go.
+ *
+ * A run goes on after it reports: it takes its worktrees away with `git worktree remove`, run in the repository. The
+ * worktree's folder is gone from disk before that git has exited, and the repository is still its working directory
+ * until it does. Removing the repository then is refused on Windows, and closing the node under a run that is still
+ * writing its lease fails it. Cleanup runs in reverse, so this wait comes before both.
+ */
+function dispatcherFor(deps: TaskDispatcherDeps): TaskDispatcher {
+  const dispatcher = createTaskDispatcher(deps);
+  cleanup.push(() =>
+    waitUntil(
+      () => dispatcher.runningCount() === 0 && dispatcher.queuedCount() === 0,
+      30_000,
+      () =>
+        `the dispatcher still has ${String(dispatcher.runningCount())} running / ${String(dispatcher.queuedCount())} queued runs after 30 s`,
+    ),
+  );
+  return dispatcher;
 }
 
 describe("work nobody asked for in the conversation names what it may touch", () => {
@@ -163,7 +194,7 @@ describe("work nobody asked for in the conversation names what it may touch", ()
     let workerStarted = false;
     const settled: { outcome: string; message: string }[] = [];
 
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -199,7 +230,7 @@ describe("work nobody asked for in the conversation names what it may touch", ()
     let brief: Parameters<typeof runWorkerProcess>[0] | undefined;
     const settled: string[] = [];
 
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -236,7 +267,7 @@ describe("work nobody asked for in the conversation names what it may touch", ()
     let workerStarted = false;
     const settled: string[] = [];
 
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -260,7 +291,7 @@ describe("work nobody asked for in the conversation names what it may touch", ()
     let brief: Parameters<typeof runWorkerProcess>[0] | undefined;
     const settled: string[] = [];
 
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -318,7 +349,7 @@ describe("a repository is worked on in the task's own worktree", () => {
     const settled: { outcome: string; message: string }[] = [];
     const kept: string[] = [];
     let givenRoots: readonly string[] = [];
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -345,8 +376,9 @@ describe("a repository is worked on in the task's own worktree", () => {
     expect(git(repo, ["log", "-1", "--format=%s", "main"])).toBe("initial");
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
     expect(readFileSync(join(repo, "readme.txt"), "utf8")).toBe("a person's unsaved thought\n");
-    // A clean worktree is taken away when the task ends — after it settles, so it is waited for — and its branch stays.
-    await waitUntil(() => !existsSync(givenRoots[0] ?? "") || kept.length > 0, 10_000);
+    // A clean worktree is taken away when the task ends — after it settles, so the run's end is waited for — and its
+    // branch stays. Not the folder's disappearance: git removes the folder before it has finished and exited.
+    await waitUntil(() => !dispatcher.holds(task.taskId), 10_000);
     expect(existsSync(givenRoots[0] ?? "")).toBe(false);
     expect(kept).toEqual([]);
   }, 40_000);
@@ -369,7 +401,7 @@ describe("a repository is worked on in the task's own worktree", () => {
     const settled: { outcome: string; message: string }[] = [];
     const kept: string[] = [];
     let given: { read: readonly string[]; write: readonly string[] } = { read: [], write: [] };
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -402,7 +434,7 @@ describe("a repository is worked on in the task's own worktree", () => {
       expect(readFileSync(join(repo, "readme.txt"), "utf8")).toBe("a person's unsaved thought\n");
     }
     // Both clean worktrees go when the task ends, and so does the task's folder that held them.
-    await waitUntil(() => !existsSync(join(worktreesDir, task.taskId)) || kept.length > 0, 10_000);
+    await waitUntil(() => !dispatcher.holds(task.taskId), 10_000);
     expect(kept).toEqual([]);
     expect(existsSync(join(worktreesDir, task.taskId))).toBe(false);
   }, 30_000);
@@ -418,7 +450,7 @@ describe("a repository is worked on in the task's own worktree", () => {
     let workerStarted = false;
     const settled: string[] = [];
 
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
@@ -450,7 +482,7 @@ describe("stopping a task stops the commands its worker started on the host", ()
     let release: ((cause: Error) => void) | undefined;
     const settled: string[] = [];
 
-    const dispatcher = createTaskDispatcher({
+    const dispatcher = dispatcherFor({
       conductor,
       projectRoots: () => [owned],
       ownedRoots: () => [owned],
