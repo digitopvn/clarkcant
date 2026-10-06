@@ -2885,6 +2885,27 @@ on a node, whichever button is chosen. The engine's capacity is not simulated. A
 answers `TOKEN_PROVIDER_UNAVAILABLE`. Every answer says it was simulated, and the log names the provider and outcome,
 never a value ([dev-resources.spec.ts](../packages/widget-cli/test/dev-resources.spec.ts)).
 
+#### Developing in the conversation
+
+The dev host simulates a node. To see the widget on the node itself, ask Clark to develop the folder ("develop the
+widget in ~/code/timer"), or call `POST /widget-dev/sessions`
+([open interfaces](open-interfaces.md#widget-dev-sessions)). The node watches the folder with the same build engine
+the dev host uses: every change that reads as a package becomes an immutable generation named by the digest of its
+files, is copied into the node's package cache and listed for this node alone, and is installed through the ordinary
+install path. Nothing goes through npm, the Marketplace or a directory index, and nothing is published.
+
+The widget appears in the conversation in the production frame, with the production sandbox, bridge, state and
+migrations. A new generation remounts only the frame; the instance and its state stay, and the state goes through the
+package's own migrations when the version changes. Beside the frame, the host says which build is on screen and, when
+it is not the newest, why: the new build failed (with the problems), it waits for the person in the inbox, or the policy
+refused it. "Showing the last successful build" is said exactly when that is what the conversation shows.
+
+The execution policy decides each install as it decides any other. The first install, and every build that changes
+what the package reaches (declared reach, resources, facet lanes, permissions), is a question when the person's mode
+asks; a build that only changes code or UI reuses that answer and runs at once. A mode that does not ask runs every
+build, and a build that reaches more than the one before it is announced in the conversation, never silently.
+Stopping a session stops watching the folder; the last build keeps running where it was placed.
+
 ### test
 
 Runs the conformance suite.
@@ -3171,6 +3192,10 @@ This section states which parts of the document already have code, so that nobod
   option), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, and accessibility audit. The frame uses the host's actual sandbox (`allow-scripts`, no
   `allow-same-origin`), and the server refuses any path outside the package.
+- Widget dev sessions in the conversation (§16, "Developing in the conversation"): one build engine shared with the dev
+  host, immutable generations, last-known-good, policy-decided installs under a reach-bound consent scope, frame-only
+  remount, and host-owned build status. Pinning a dev widget works; detaching an isolated widget into its own window,
+  and the dev host's fixture, viewport, theme and reduced-motion controls beside a node frame, are not yet available.
 - Durable state for isolated widgets, declarative host-run migrations, and `ephemeralStateKeys` (§15).
 - Remove / restore / roll back a package from Settings and via `manage_package` in the conversation; data is kept.
 - Pending capability questions are answered in Settings (host-owned; the model cannot approve them). The frame only
@@ -3193,7 +3218,8 @@ This section states which parts of the document already have code, so that nobod
   path on this machine also carries `contentDigest`, the digest of its files when they were listed, which the button sends
   back so the install is refused if the files changed since; the row then shows that they changed and offers a new
   search instead of the same Install. The install copies the files into the package cache and the package runs from that
-  copy, so later edits to the path change nothing until it is installed again; the live editing loop is `clark widget dev`.
+  copy, so later edits to the path change nothing until it is installed again; the live editing loop is `clark widget dev`
+  or a widget dev session in the conversation (§16).
   A row also repeats the listing's `declaredReach` (what installing lets the package reach) and `widgetAppearance` claims, under the
   same schemas as the directory entry, so the row shows them before the Install press. A card that does not match its
   contract is left out of the reply and the node logs `host card dropped` with the card type and the failing field

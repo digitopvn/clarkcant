@@ -634,8 +634,10 @@ percent-encoded UTF-8 in `filename*`. Bidi controls are dropped from both, a per
 name, and a name longer than 120 characters is shortened before its extension, which is always kept.
 
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
-Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
-restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
+Install button and a notice's `update` call; no agent tool installs a package from a directory (the package tool lists,
+uninstalls, restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with
+`403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`, for a folder the person names
+in their own conversation ([widget dev sessions](#widget-dev-sessions)); it is refused in a turn a machine surface sent.
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
@@ -701,6 +703,51 @@ decided in time is settled as expired by the node's periodic sweep, which leaves
 installed. Every outcome (`asked`, `installed`, `denied`, `expired`, `refused` or `failed`, with its code) is recorded
 as a `package.install-approval` event.
 
+### Widget dev sessions
+
+A live authoring session for a widget package in a folder on this node: the folder is watched, each change that reads
+as a package becomes an immutable generation, and the generation is installed through the same install path as above
+and shown in the conversation in the production widget frame. Shapes are `widgetDevSessionViewSchema` and
+`widgetDevSessionCreateSchema` (`packages/contracts/src/widget-dev-session.ts`).
+
+| Route | What it does |
+|---|---|
+| `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Start watching `root` (an absolute path on the node). Answers `201` with the session once its first build ran and was activated as far as the policy allows. With `conversationId`, the widget is placed there (pinned open) once a generation runs. Starting a folder that has a stopped session picks that session up again. |
+| `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
+| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood` and `placed`. |
+| `DELETE /widget-dev/sessions/:id` | Stop watching. The running generation stays installed and keeps rendering where it was placed. |
+| `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
+| `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
+
+Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
+`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS` (eight live sessions per node), `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`
+and `409 NOT_PLACED` for a place with nothing running, a widget the package does not declare, or a widget that cannot be
+placed, and `503 WIDGET_DEV_UNAVAILABLE` on a node that is not running sessions.
+
+Each generation is named by the content digest of its files, copied into the package cache, and listed for this node
+alone (`<dataDir>/widget-dev/sessions.json`); no index, npm or Marketplace is involved, and nothing is published. The
+policy decides each install under a **consent scope** rather than the artifact: the package id together with everything
+the listing binds about its reach (declared reach, resources, facet lanes, permissions). The install question in
+`GET /inbox` carries that scope as its `operationDigest`, and is decided on the ordinary
+`POST /packages/approvals/:id/decision` with it. A later build with the same scope installs on that approval without a
+second question; a build whose scope changed, wider or narrower, is a new question, and the generation before it keeps
+running meanwhile. A mode that does not ask runs every build, as it runs any install; when such a build reaches more
+than the one before it, the node says so in the session's conversation with what it added. Every install is recorded
+like any other (`effect.executed`, with the exact files).
+
+A build that does not read as a package (a broken manifest, a widget definition that does not parse, no widget facet)
+produces no generation: `lastBuild.ok` is `false` with up to 32 `diagnostics`, the running generation keeps running,
+and `showingLastKnownGood` is `true`. The same is true while a newer build waits for the person or was refused.
+
+The live read of a widget that runs a session's generation, `GET /conversations/:id/widgets/:instanceId/live`, carries
+`development: { sessionId }`, and its `frame.document` names the generation, so a client remounts the frame (and only
+the frame) when a new generation runs; the instance, its state and its migrations are the ordinary ones. The widget
+code is never told it is in a session.
+
+`POST /widget-dev/sessions`, `/:id/rebuild` and `/:id/place` install code, so the WebSocket relay, `clarkcant api` and
+MCP refuse them with `403 PERSON_ONLY`; reading and stopping a session stay reachable everywhere. In the conversation,
+Clark's `develop_widget` tool (`start`, `status`, `rebuild`, `place`, `stop`) drives the same sessions.
+
 The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes a body the route validates with
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); anything outside it is `400 INVALID_SCHEMA`, and so is
 an `invocationId` starting with `view-state:`, which is reserved for the node's own records. An optional `variant`
@@ -752,7 +799,8 @@ part of the stable description and may change.
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
-raised), deciding a package capability, installing a package (`POST /packages/install`) or deciding an install the
+raised), deciding a package capability, installing a package (`POST /packages/install`, or a widget dev session's
+`POST /widget-dev/sessions`, `/rebuild` and `/place`) or deciding an install the
 person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, reporting what a widget's frame did with an action Clark asked it to perform (`POST /app-intents/widget-perform/{performId}`), trusting a paired peer,
 issuing a grant, asking for a browser token for a frame
 (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a

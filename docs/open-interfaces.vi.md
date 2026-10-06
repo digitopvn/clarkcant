@@ -639,9 +639,11 @@ phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi c
 một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
 
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
-của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
-liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
-`403 PERSON_ONLY`.
+của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói từ thư mục (tool quản lý
+gói chỉ liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
+`403 PERSON_ONLY`. Tool duy nhất của agent đi tới đường cài là `develop_widget`, cho một thư mục mà chính người dùng nêu
+trong cuộc hội thoại của họ ([phiên phát triển widget](#phiên-phát-triển-widget)); nó bị từ chối trong một lượt do bề
+mặt máy gửi tới.
 
 Với một gói được liệt kê bằng đường dẫn trên máy này, node sao chép các tệp của nó vào bộ nhớ đệm gói
 (`<dataDir>/package-cache/local/<sha256>`) và tính digest của bản sao (`digestOfDirectory`, cùng digest mà một lần
@@ -706,6 +708,51 @@ generationId, state, pendingCapabilities, deniedCapabilities }`. Quyết định
 báo rằng chưa có gì được cài. Mọi kết quả (`asked`, `installed`, `denied`, `expired`, `refused` hoặc `failed`, kèm mã)
 đều được ghi thành một sự kiện `package.install-approval`.
 
+### Phiên phát triển widget
+
+Một phiên soạn trực tiếp cho một gói widget nằm trong một thư mục trên node này: thư mục được theo dõi, mỗi thay đổi đọc
+được thành một gói trở thành một generation bất biến, và generation đó được cài qua đúng đường cài ở trên rồi hiện trong
+cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng dữ liệu là `widgetDevSessionViewSchema` và
+`widgetDevSessionCreateSchema` (`packages/contracts/src/widget-dev-session.ts`).
+
+| Route | Tác dụng |
+|---|---|
+| `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Bắt đầu theo dõi `root` (đường dẫn tuyệt đối trên node). Trả `201` kèm phiên sau khi lần dựng đầu tiên đã chạy và đã được kích hoạt trong phạm vi chính sách cho phép. Có `conversationId` thì widget được đặt vào đó (ghim mở) ngay khi một generation chạy. Bắt đầu một thư mục đã có phiên bị dừng sẽ tiếp tục chính phiên đó. |
+| `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
+| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood` và `placed`. |
+| `DELETE /widget-dev/sessions/:id` | Dừng theo dõi. Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
+| `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
+| `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
+
+Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
+`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS` (tám phiên đang chạy mỗi node), `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`
+và `409 NOT_PLACED` cho lần đặt khi chưa có gì chạy, khi gói không khai báo widget đó, hoặc khi widget không đặt được, và
+`503 WIDGET_DEV_UNAVAILABLE` trên node không chạy phiên phát triển.
+
+Mỗi generation được đặt tên theo digest nội dung các tệp của nó, được sao chép vào bộ nhớ đệm gói và chỉ được liệt kê
+cho riêng node này (`<dataDir>/widget-dev/sessions.json`); không có index, npm hay Marketplace nào tham gia, và không có
+gì được phát hành. Chính sách quyết định mỗi lần cài theo một **phạm vi đồng ý** thay vì theo artifact: id gói cùng mọi
+thứ listing ràng buộc về phạm vi tiếp cận của nó (reach đã khai báo, tài nguyên, lane của facet, quyền). Câu hỏi cài trong
+`GET /inbox` mang phạm vi đó làm `operationDigest`, và được quyết định bằng
+`POST /packages/approvals/:id/decision` thông thường với giá trị đó. Một lần dựng sau có cùng phạm vi được cài theo
+approval đó mà không hỏi lần hai; một lần dựng có phạm vi đã đổi, rộng hơn hay hẹp hơn, là một câu hỏi mới, và
+generation trước nó vẫn chạy trong lúc chờ. Một chế độ không hỏi thì chạy mọi lần dựng, như với mọi lần cài; khi một lần
+dựng như vậy tiếp cận nhiều hơn lần trước, node nói điều đó trong cuộc hội thoại của phiên kèm những gì nó thêm vào. Mỗi
+lần cài được ghi lại như mọi lần cài khác (`effect.executed`, kèm đúng các tệp).
+
+Một lần dựng không đọc được thành gói (manifest hỏng, định nghĩa widget không parse được, không có facet widget) không
+tạo generation nào: `lastBuild.ok` là `false` kèm tối đa 32 `diagnostics`, generation đang chạy vẫn chạy, và
+`showingLastKnownGood` là `true`. Điều này cũng đúng khi một lần dựng mới hơn đang chờ người dùng hoặc đã bị từ chối.
+
+Lần đọc trực tiếp của một widget đang chạy generation của một phiên, `GET /conversations/:id/widgets/:instanceId/live`,
+mang `development: { sessionId }`, và `frame.document` của nó nêu tên generation, nên client mount lại frame (và chỉ
+frame) khi một generation mới chạy; instance, state và migration của nó là những thứ thông thường. Mã widget không bao
+giờ được cho biết nó đang ở trong một phiên.
+
+`POST /widget-dev/sessions`, `/:id/rebuild` và `/:id/place` cài mã, nên relay WebSocket, `clarkcant api` và MCP từ chối
+chúng với `403 PERSON_ONLY`; đọc và dừng một phiên vẫn gọi được ở mọi nơi. Trong cuộc hội thoại, tool `develop_widget`
+của Clark (`start`, `status`, `rebuild`, `place`, `stop`) điều khiển cùng các phiên đó.
+
 Lời gọi action của widget, `POST /conversations/{id}/widgets/{instanceId}/actions`, nhận một body được route kiểm bằng
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); body nằm ngoài schema nhận `400 INVALID_SCHEMA`, và một
 `invocationId` bắt đầu bằng `view-state:` cũng vậy, vì tiền tố này dành riêng cho bản ghi của chính node. Một `variant`
@@ -757,7 +804,8 @@ có thể thay đổi.
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
-chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`) hoặc quyết định một lần
+chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`, hoặc `POST /widget-dev/sessions`,
+`/rebuild` và `/place` của một phiên phát triển widget) hoặc quyết định một lần
 cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, báo cáo frame của widget đã làm gì với một hành động Clark nhờ nó thực hiện (`POST /app-intents/widget-perform/{performId}`), tin cậy một peer đã ghép cặp, cấp
 grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
 của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
