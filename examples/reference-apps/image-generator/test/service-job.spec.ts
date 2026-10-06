@@ -182,6 +182,8 @@ beforeEach(async () => {
     supervisor: createWorkSupervisor(),
     artifactBroker: broker,
     report: (_conversationId, text) => notices.push(text),
+    // The assertions below read the ending in English; the owner's language is the job host's concern, tested there.
+    language: () => "en",
   });
   logs.length = 0;
   audit.length = 0;
