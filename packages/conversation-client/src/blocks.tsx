@@ -3,11 +3,16 @@ import { useEffect, useState, type ReactElement } from "react";
 import {
   attachmentRefSchema,
   commandCardSchema,
+  feedbackCardSchema,
   modelNoteSchema,
   referenceBlockSchema,
   referenceToken,
   type AttachmentRef,
   type CommandCardAction,
+  type DiagnosticLine,
+  type FeedbackDraft,
+  type FeedbackPublication,
+  type FeedbackRequestInput,
   type ProviderSignInView,
 } from "@clarkcant/contracts";
 
@@ -21,6 +26,7 @@ import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
+import { FeedbackCardBlock } from "./feedback-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
@@ -687,7 +693,28 @@ export interface BlockActions {
   /** The person's answer to what a sign-in asks. Sent to the node and dropped from the card at once. */
   onSignInAnswer?: (input: { key: string; signInId: string; value: string }) => void;
   onSignInCancel?: (input: { key: string; signInId: string }) => void;
+  /**
+   * The Feedback Composer's Preview (`feedback-card`): prepare the report and show the issue exactly as it would be
+   * filed. Nothing is filed. Absent in a snapshot, where the composer is drawn as a record.
+   */
+  onFeedbackPreview?: (input: { cardId: string; request: FeedbackRequestInput }) => void;
+  /**
+   * Create issue on the composer, or Check again / Try again on a result: the person's own decision to file, through
+   * the person-only publish route. With `reportId` it publishes that report (which first finds out what an earlier
+   * attempt came to); with `request` it prepares the report first, unless the preview already did for the same words.
+   */
+  onFeedbackCreate?: (input: { cardId: string; request?: FeedbackRequestInput; reportId?: string }) => void;
+  /** What each feedback card's press came to, keyed by card id. */
+  feedback?: Readonly<Record<string, FeedbackCardState>>;
 }
+
+/** Where a press on a feedback card stands. The outcome itself arrives as a new result card in the transcript. */
+export type FeedbackCardState =
+  | { status: "preparing" }
+  | { status: "prepared"; requestKey: string; draft: FeedbackDraft; diagnostics: DiagnosticLine[] }
+  | { status: "publishing" }
+  | { status: "done"; publication: FeedbackPublication }
+  | { status: "failed"; message: string };
 
 /** What one press on a command card came to. */
 export type CommandActionState =
@@ -2008,6 +2035,13 @@ export function renderBlock(
       const card = commandCardSchema.safeParse(block);
       return card.success ? (
         <CommandCardBlock key={index} block={card.data} t={t} {...(actions === undefined ? {} : { actions })} />
+      ) : null;
+    }
+    case "feedback-card": {
+      // Read through the contract, like the command card: a card that does not match it draws nothing.
+      const card = feedbackCardSchema.safeParse(block);
+      return card.success ? (
+        <FeedbackCardBlock key={index} block={card.data} t={t} {...(actions === undefined ? {} : { actions })} />
       ) : null;
     }
     case "terminal-session-card":

@@ -74,6 +74,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "packages" && third === "connection")
       );
     case 4:
+      // POST /feedback/reports/:id/publish: filing a report on GitHub with the person's token, from the Feedback Composer's
+      // Create issue. A machine surface that wants a report filed asks Clark, whose `report_feedback` is decided by the
+      // execution policy like any other external write.
+      if (first === "feedback" && second === "reports" && fourth === "publish") return true;
       // POST /packages/approvals/:id/decision: a capability for an installed generation, or an install the policy asked about
       return first === "packages" && second === "approvals" && fourth === "decision";
     case 5:
@@ -103,7 +107,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, filing a product report from the composer, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
 
 /**

@@ -36,7 +36,7 @@ export function deleteConversationRows(db: Database, id: string, artifactInstanc
   ]) db.prepare(sql).run(id);
   // Saved memories are independent user resources; remove only conversation-scoped memory.
   db.prepare("DELETE FROM memory_records WHERE conversation_id = ? AND scope = 'conversation'").run(id);
-  for (const table of ["tasks", "pins", "messages", "conversation_authority", "surface_compositions", "widget_semantic_state", "session_files", "history_fts", "work_runs", "jobs", "notifications", "peer_allowances", "commands"]) {
+  for (const table of ["tasks", "pins", "messages", "conversation_authority", "surface_compositions", "widget_semantic_state", "session_files", "history_fts", "work_runs", "jobs", "notifications", "peer_allowances", "commands", "feedback_reports"]) {
     db.prepare(`DELETE FROM ${table} WHERE conversation_id = ?`).run(id);
   }
   // Events are the append-only audit/replication sequence, not the conversation's mutable storage.

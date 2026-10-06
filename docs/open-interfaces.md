@@ -202,6 +202,47 @@ and append-only audit/replication history remain. The client starts a fresh conv
 network reply means the result is unknown, so reload before retrying. MCP, the WebSocket relay and `clarkcant api`
 refuse the delete route and confirmation with `403 PERSON_ONLY`; agent app intents cannot delete either.
 
+### Product reports
+
+A bug report or a feature request about ClarkCant itself is filed from the conversation, to the canonical repository
+`digitopvn/clarkcant` only: the target comes from trusted configuration, and no request field can aim it elsewhere.
+`/report` alone (or with only a kind) summons the Feedback Composer, a host-owned `feedback-card`: Bug or Feature, the
+person's words, and "What will be shared" one disclosure away. `/report bug ...`, `/report feature ...` (also `lỗi`,
+`tính năng`), a sentence to Clark and voice all reach the same service through the model tool `report_feedback`.
+
+| Method | Path | Body and answer |
+|---|---|---|
+| POST | `/feedback/reports` | `{ request, conversationId? }` — `201 { draft, diagnostics }`. Prepares and keeps a draft; nothing is filed |
+| GET | `/feedback/reports/{reportId}` | `{ draft, status, publication? }` |
+| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId }` — `{ publication, eligibility?, messageId, timeline }`, with the result card written into the conversation. **Person-only** |
+
+`request` is `{ kind: "bug" | "feature", description, source, includeDiagnostics?, title?, subsystem?, bug?, feature?,
+evidence?, error?, philosophy? }`. Sections nobody spoke to are left out of the issue, and a reproduction nobody gave
+reads "Not known yet." Safe diagnostics are shared by default and can be turned off: the ClarkCant version, OS and
+architecture, runtime, locale and input mode, subsystem, provider and model, and an error as a redacted 300-character
+excerpt with a 12-hex fingerprint. No transcript, system prompt, file, environment variable, raw log, home path or
+credential is collected, and every outbound text passes the shared secret redaction with the home directory replaced
+by `~`. A feature carries a philosophy fit (`aligned`, `aligned-with-constraints`, `material-conflict`); the host's
+rules and the model's reading are combined and the stricter stands, and a conflict is still filed as asked.
+
+Before filing, open issues and issues closed in the last 90 days are searched. A strong match on an open issue (the same
+error fingerprint, or nearly the same title and description) makes the publish a comment on that issue instead of a new
+one. `publication.status` is `published` only after GitHub is read back holding the report's hidden marker
+`<!-- clark-report:rpt_... -->`. A write whose answer never arrived is `unknown`: publishing again first looks for the
+marker, and sends again only once GitHub's own list shows it absent at least two minutes after the attempt, never while
+GitHub cannot be checked. The other statuses are `failed` (with `retryable`), `needs-access` (no `github_token`; with
+`manualUrl`, GitHub's prefilled new-issue page), `approval-required` and `refused`. The write is an `external-write`
+effect in the action ledger. The person's Create issue is their decision; `/report bug ...`, a sentence and voice are
+decided by the execution policy, which may ask with a host approval card or refuse. The token is the GitHub credential
+the person set for signal sources, read through the secret broker as consumer `feedback:github`.
+
+A published report carries `eligibility`: whether Clark may handle the issue. The checks are the repository, open
+state, epic (`suggestion: "plan-split"`), assignees, in-progress, `external-gate` and `blocked` labels, open pull
+requests, claim comments, open blockers named in the body, Clark's own unfinished work, and a philosophy conflict. In
+this build every report ends `eligible: false` with `code: "handling-unavailable"`, because the canonical background
+execution backend (#402) and the release contract (#508) it needs are not available; nothing offers a Handle button. A
+node started with `CC_GITHUB_FIXTURE=1` files to an in-process GitHub instead, for the browser suite.
+
 A signal is how anything outside the conversation tells the node that something happened: a CI run, a script, a
 service of your own. It is recorded before anything is matched, then answered against the standing requests the person
 set up by saying "when X happens, do Y" to Clark. A topic is dotted lower-case words (`build.finished`); the payload is
@@ -756,7 +797,8 @@ raised), deciding a package capability, installing a package (`POST /packages/in
 person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, reporting what a widget's frame did with an action Clark asked it to perform (`POST /app-intents/widget-perform/{performId}`), trusting a paired peer,
 issuing a grant, asking for a browser token for a frame
 (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a
-machine client would be asking for a credential to keep), and recording whether an action whose outcome nobody saw took effect
+machine client would be asking for a credential to keep), publishing a product report (`POST /feedback/reports/{reportId}/publish`; filing to GitHub on the person's behalf is
+their decision), and recording whether an action whose outcome nobody saw took effect
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for

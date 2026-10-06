@@ -123,6 +123,7 @@ import {
   runApprovedCapability,
 } from "../application/capability-invoke.ts";
 import { isMapTilePolicyPayload, runApprovedMapTilePolicy } from "../application/map-tile-policy.ts";
+import { deniedFeedbackLabel, isFeedbackPublishPayload, runApprovedFeedbackPublish } from "../application/product-feedback.ts";
 import {
   deniedWidgetArtifactWriteLabel,
   isWidgetArtifactWritePayload,
@@ -160,7 +161,18 @@ import { exportTableCsv } from "./table-export.ts";
  */
 export type ConversationServices = Pick<
   NodeServices,
-  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl" | "widgetPerforms" | "providerAuth"
+  | "runtime"
+  | "conductor"
+  | "search"
+  | "jev"
+  | "projects"
+  | "projectSessions"
+  | "turnControl"
+  | "hostControl"
+  | "widgetPerforms"
+  | "providerAuth"
+  | "currentModel"
+  | "feedbackGithub"
 >;
 
 /** What the conversation routes need. */
@@ -2102,6 +2114,7 @@ export async function decideApprovalForNode(
   const tilePolicyChange = isMapTilePolicyPayload(payload);
   const artifactWrite = isWidgetArtifactWritePayload(payload);
   const widgetPerform = isWidgetPerformPayload(payload);
+  const feedbackPublish = isFeedbackPublishPayload(payload);
   const locale = preferredAppIntentLocale({ db: services.runtime.db, now: () => input.at }, services.runtime.identity.ownerPrincipalId);
   if (input.decision === "denied") {
     if (artifactWrite) recordDeniedWidgetArtifactWrite(services, { payload, approvalId: input.approvalId, at: input.at });
@@ -2110,7 +2123,9 @@ export async function decideApprovalForNode(
     const say = hostText(locale).tasks;
     const refused = tilePolicyChange
       ? say.refusedTilePolicy
-      : artifactWrite
+      : feedbackPublish
+        ? deniedFeedbackLabel(locale)
+        : artifactWrite
         ? deniedWidgetArtifactWriteLabel(services, input.at)
         : widgetPerform
           ? locale === "en"
@@ -2136,6 +2151,40 @@ export async function decideApprovalForNode(
       at: input.at,
     });
     return { ok: true };
+  }
+
+  if (feedbackPublish) {
+    // A product report Clark prepared, which the policy asked the person about: the draft is hashed again against the
+    // digest the decision covered, then filed through the same service every other way of reporting uses.
+    const filed = await runApprovedFeedbackPublish(services, {
+      payload,
+      expectedDigest: decided.approval.operationDigest,
+      approvalId: input.approvalId,
+      conversationId: input.conversationId,
+      at: () => input.at,
+    });
+    if (!filed.ok) {
+      // The approval is spent; the card is answered so it does not keep offering Approve.
+      appendHostReply(services, {
+        conversationId: input.conversationId,
+        blocks: [{ type: "text", format: "plain", content: filed.message, streaming: false }],
+        at: input.at,
+      });
+      return { ok: false, code: filed.code, message: filed.message };
+    }
+    appendHostReply(services, { conversationId: input.conversationId, blocks: filed.blocks, at: input.at });
+    appendAuditEvent(services.runtime.db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "approval",
+      summary: filed.description,
+      outcome: "done",
+      ref: input.approvalId,
+      ...askedByRecord,
+      at: input.at,
+    });
+    return { ok: true, outcome: filed.description };
   }
 
   if (tilePolicyChange) {

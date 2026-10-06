@@ -149,6 +149,11 @@ export default defineConfig({
                */
               CC_UPDATE_CHECK_FIXTURE: "1",
               /*
+               * `CC_GITHUB_FIXTURE` files product reports (`/report`, the Feedback Composer) to an in-process GitHub, so
+               * the report journey never reaches the real repository and needs no token.
+               */
+              CC_GITHUB_FIXTURE: "1",
+              /*
                * Every variable `apps/runtime/src/readiness.ts` counts as a configured credential, blanked. Playwright
                * starts this node with the developer's shell environment underneath `env`, so a provider key exported
                * locally made the node report a credential CI's node does not have, and the credentials specs failed

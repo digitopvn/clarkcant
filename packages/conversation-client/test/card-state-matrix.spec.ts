@@ -1,4 +1,4 @@
-import { HOST_OWNED_BLOCK_TYPES } from "@clarkcant/contracts";
+import { feedbackCardSchema, HOST_OWNED_BLOCK_TYPES } from "@clarkcant/contracts";
 
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +10,8 @@ import {
   TaskProgressCardBlock,
   type BlockActions,
 } from "../src/blocks.tsx";
+import { FeedbackResult } from "../src/feedback-card.tsx";
+import { MESSAGES_EN, type MessageKey } from "../src/i18n/messages.ts";
 import { findAll } from "./block-helpers.ts";
 
 /**
@@ -47,6 +49,23 @@ const QUESTION = { type: "question-card", owner: "host", questionId: "q_1", prom
 const TASK = { type: "task-progress-card", owner: "host", cardId: "c1", taskId: "task_1", goal: "sửa lỗi", status: "working", steps: [], startedAt: "2026-09-19T17:00:00.000Z", updatedAt: "2026-09-19T17:00:00.000Z", cancellable: true };
 const SESSION = { type: "browser-session-card", owner: "host", cardId: "c2", sessionId: "cs_1", label: "đang mở form", driver: "agent", status: "running", leaseEpoch: 0, updatedAt: "2026-09-19T17:00:00.000Z" };
 const DIFF = { type: "code-diff-card", owner: "host", cardId: "c3", summary: "Sửa một tệp", files: [], truncated: true, updatedAt: "2026-09-19T17:00:00.000Z" };
+const REPORT_AT = "2026-10-06T09:00:00.000Z";
+const REPORT_BASE = {
+  type: "feedback-card",
+  owner: "host",
+  cardId: "c4",
+  stage: "result",
+  repository: "digitopvn/clarkcant",
+  kind: "bug",
+  diagnostics: [],
+  reportId: "rpt_1",
+  title: "bug: voice stops",
+  publication: { status: "unknown", reportId: "rpt_1", reason: "GitHub did not answer" },
+  updatedAt: REPORT_AT,
+};
+// Read through the contract, as the transcript does, so the fixture cannot drift from what a node writes.
+const REPORT = feedbackCardSchema.parse(REPORT_BASE);
+const t = (key: MessageKey): string => MESSAGES_EN[key];
 const ARTIFACT = { type: "artifact", artifactId: "art_1", mimeType: "application/pdf", sizeBytes: 20480, digest: "sha256:abc", label: "báo cáo.pdf" };
 
 /**
@@ -72,6 +91,7 @@ const MATRIX: Record<(typeof HOST_OWNED_BLOCK_TYPES)[number], { applicable: read
   "computer-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: the preview permission is never cached, because a cached yes is a claim nobody granted" },
   "terminal-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: a terminal is a live process on the node; once the node forgets it the card says so instead of showing an old screen as current" },
   "command-card": { applicable: ["empty", "read-only", "live", "error"], reason: "loading/cached/offline: a command card is what the node held when the command ran; what a press then did is drawn beside the row, never written into the card" },
+  "feedback-card": { applicable: ["empty", "live", "read-only", "error"], reason: "loading/cached/offline: a result is what GitHub was read back holding when the card was written; checking again writes a new card instead of refreshing this one" },
   "marketplace-results": { applicable: ["empty", "error", "read-only", "unavailable"], reason: "live/cached: a result is what a directory said when it was asked, and the card names that directory instead of presenting a listing as current" },
 };
 
@@ -138,6 +158,43 @@ describe("the states that do exist for these cards", () => {
     // The reason and whom it belongs to, because the fix is something the user has to do.
     expect(String(notice?.props.children)).toContain("hệ điều hành");
     expect((card?.props as Record<string, unknown>)["data-control-preview"]).toBe("needs-permission");
+  });
+
+  it("offers Check again on a report whose outcome is unknown, and nothing at all in a snapshot", () => {
+    const live = FeedbackResult({ block: REPORT, t, actions: { onFeedbackCreate: () => {} } });
+    const snapshot = FeedbackResult({ block: REPORT, t });
+
+    expect(findAll(live, "data-feedback-check")).toHaveLength(1);
+    expect(findAll(snapshot, "data-feedback-check")).toHaveLength(0);
+  });
+
+  it("states why Clark cannot handle a filed issue, and offers no control for it", () => {
+    const card = FeedbackResult({
+      block: feedbackCardSchema.parse({
+        ...REPORT_BASE,
+        publication: {
+          status: "published",
+          reportId: "rpt_1",
+          mode: "created",
+          issue: { number: 901, title: "bug: voice stops", state: "open", url: "https://github.com/digitopvn/clarkcant/issues/901" },
+          confirmedAt: REPORT_AT,
+        },
+        eligibility: {
+          eligible: false,
+          code: "handling-unavailable",
+          reason: "the canonical background execution backend (#402) is not available yet",
+          blockers: [{ number: 402, url: "https://github.com/digitopvn/clarkcant/issues/402" }],
+        },
+      }),
+      t,
+      actions: { onFeedbackCreate: () => {} },
+    });
+
+    expect(findAll(card, "data-feedback-eligibility")).toHaveLength(1);
+    expect(findAll(card, "data-feedback-issue")).toHaveLength(1);
+    // A published report has nothing to retry, and handling is reported, never offered.
+    expect(findAll(card, "data-feedback-check")).toHaveLength(0);
+    expect(findAll(card, "data-feedback-retry")).toHaveLength(0);
   });
 
   it("publishes a marker for every action a card offers, so nothing is reachable only by guessing coordinates", () => {

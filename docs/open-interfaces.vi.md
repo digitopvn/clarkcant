@@ -205,6 +205,48 @@ và lịch sử kiểm toán/đồng bộ chỉ ghi thêm vẫn còn. Client ch�
 mạng nghĩa là chưa rõ kết quả, nên tải lại trước khi thử lại. MCP, relay WebSocket và `clarkcant api` từ chối route xoá
 cùng route xác nhận bằng `403 PERSON_ONLY`; app intent do agent yêu cầu cũng không được xoá.
 
+### Báo lỗi và đề xuất tính năng
+
+Báo lỗi hoặc đề xuất tính năng cho chính ClarkCant được gửi từ hội thoại, và chỉ tới repo chuẩn `digitopvn/clarkcant`:
+đích đến lấy từ cấu hình tin cậy, không trường nào trong yêu cầu đổi được nó. `/report` một mình (hoặc chỉ kèm loại)
+gọi Feedback Composer, một `feedback-card` do host sở hữu: Lỗi hay Tính năng, lời của người dùng, và mục "Những gì sẽ
+được chia sẻ" mở ra khi cần. `/report bug ...`, `/report feature ...` (hoặc `lỗi`, `tính năng`), một câu nói với Clark
+và giọng nói đều đi tới cùng một service qua công cụ model `report_feedback`.
+
+| Method | Path | Body và phản hồi |
+|---|---|---|
+| POST | `/feedback/reports` | `{ request, conversationId? }` — `201 { draft, diagnostics }`. Chuẩn bị và lưu bản nháp; chưa gửi gì |
+| GET | `/feedback/reports/{reportId}` | `{ draft, status, publication? }` |
+| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId }` — `{ publication, eligibility?, messageId, timeline }`, kèm thẻ kết quả ghi vào hội thoại. **Chỉ người dùng** |
+
+`request` là `{ kind: "bug" | "feature", description, source, includeDiagnostics?, title?, subsystem?, bug?, feature?,
+evidence?, error?, philosophy? }`. Phần nào không ai nói tới thì bị bỏ khỏi issue, và bước tái hiện không ai đưa ra
+được ghi "Not known yet." Chẩn đoán an toàn được chia sẻ mặc định và có thể tắt: phiên bản ClarkCant, hệ điều hành và
+kiến trúc, runtime, ngôn ngữ và cách nhập, phần liên quan, provider và model, cùng lỗi dưới dạng trích đoạn 300 ký tự
+đã che bí mật với dấu vân 12 ký tự hex. Không thu thập transcript, system prompt, tệp, biến môi trường, log thô, đường
+dẫn thư mục home hay thông tin đăng nhập, và mọi văn bản gửi ra ngoài đều qua bộ che bí mật dùng chung, thư mục home
+được thay bằng `~`. Đề xuất tính năng kèm mức phù hợp triết lý (`aligned`, `aligned-with-constraints`,
+`material-conflict`); luật của host và đánh giá của model được kết hợp, mức chặt hơn được giữ, và yêu cầu xung đột vẫn
+được gửi đúng như người dùng nói.
+
+Trước khi gửi, các issue đang mở và issue đóng trong 90 ngày gần nhất được tìm. Khớp mạnh với một issue đang mở (cùng
+dấu vân lỗi, hoặc gần như cùng tiêu đề và mô tả) thì bình luận vào issue đó thay vì tạo issue mới.
+`publication.status` chỉ là `published` sau khi đọc lại GitHub và thấy dấu ẩn `<!-- clark-report:rpt_... -->` của báo
+cáo. Lần ghi không nhận được phản hồi là `unknown`: gửi lại sẽ tìm dấu trước, và chỉ gửi lần nữa khi danh sách của
+chính GitHub cho thấy không có nó ít nhất hai phút sau lần thử, không bao giờ gửi khi chưa kiểm tra được GitHub. Các
+trạng thái khác là `failed` (kèm `retryable`), `needs-access` (chưa có `github_token`; kèm `manualUrl`, trang tạo issue
+của GitHub đã điền sẵn), `approval-required` và `refused`. Lần ghi là một hiệu ứng `external-write` trong sổ hiệu ứng.
+Nút Create issue của người dùng là quyết định của họ; `/report bug ...`, câu nói và giọng nói do policy thực thi quyết
+định, policy có thể hỏi bằng thẻ duyệt của host hoặc từ chối. Token là thông tin đăng nhập GitHub người dùng đã đặt cho
+nguồn signal, đọc qua secret broker với consumer `feedback:github`.
+
+Báo cáo đã gửi kèm `eligibility`: Clark có được tự xử lý issue hay không. Các kiểm tra gồm repo, trạng thái mở, epic
+(`suggestion: "plan-split"`), người được giao, nhãn in-progress, `external-gate` và `blocked`, pull request đang mở,
+bình luận nhận việc, issue chặn còn mở được nêu trong nội dung, việc dở dang của chính Clark, và xung đột triết lý.
+Trong bản này mọi báo cáo đều kết thúc `eligible: false` với `code: "handling-unavailable"`, vì backend chạy nền chuẩn
+(#402) và hợp đồng phát hành (#508) mà nó cần chưa có; không có nút Handle nào. Node khởi động với `CC_GITHUB_FIXTURE=1`
+gửi tới một GitHub trong tiến trình thay vì repo thật, dành cho bộ test trình duyệt.
+
 Signal là cách mọi thứ bên ngoài hội thoại báo cho node biết một việc vừa xảy ra: một lần chạy CI, một script, một
 dịch vụ của riêng bạn. Signal được ghi lại trước khi đối chiếu bất cứ thứ gì, rồi mới đối chiếu với những yêu cầu lâu
 dài mà người dùng đã đặt bằng cách nói với Clark "khi X xảy ra thì làm Y". Topic là các từ chữ thường nối bằng dấu
@@ -760,7 +802,8 @@ của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành 
 chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`) hoặc quyết định một lần
 cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, báo cáo frame của widget đã làm gì với một hành động Clark nhờ nó thực hiện (`POST /app-intents/widget-perform/{performId}`), tin cậy một peer đã ghép cặp, cấp
 grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
-của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
+của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), gửi một báo cáo sản phẩm
+(`POST /feedback/reports/{reportId}/publish`; gửi lên GitHub thay người dùng là quyết định của họ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang

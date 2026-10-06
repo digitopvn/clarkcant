@@ -600,6 +600,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           channel: turn.channel,
           origin: turn.origin,
         },
+        // "Report this bug" or "I wish Clark could…": the same report service `/report` and the composer use.
+        feedback: {
+          services: deps.services,
+          conversationId: turn.conversationId,
+          channel: turn.channel,
+          origin: turn.origin,
+        },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.

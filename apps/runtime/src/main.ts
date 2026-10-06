@@ -237,6 +237,15 @@ async function main(): Promise<void> {
    * The frame-grant lifetime a browser journey can shorten, only when its gate is on. Absent, the node mints every grant
    * with the production lifetime and has no route that could change it.
    */
+  /*
+   * An in-process GitHub for product reports, only when its gate is on, so the report journey files somewhere that is
+   * not the real repository. Absent, reports go to ClarkCant's repository with the person's own token.
+   */
+  if (fixtureGates.github) {
+    const github = fixtures?.createFakeGithub();
+    if (github !== undefined) services.feedbackGithub = github;
+    process.stderr.write("product reports: FIXTURE GitHub loaded — reports are kept in this process, not filed (CC_GITHUB_FIXTURE=1)\n");
+  }
   if (fixtureGates.frameGrant) {
     const frameGrant = fixtures?.createFrameGrantFixture();
     if (frameGrant !== undefined) services.frameGrantFixture = frameGrant;

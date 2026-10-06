@@ -66,6 +66,7 @@ import {
 } from "./widget-perform-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { createMapTilesTool, type MapTilesToolDeps } from "./map-tiles-tool.ts";
+import { createFeedbackTool, type FeedbackToolDeps } from "./feedback-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
 import { type ActOnNoticeToolDeps, createActOnNoticeTool } from "./act-on-notice-tool.ts";
 import { type InspectUiDeps, createInspectUiTool } from "./inspect-ui-tool.ts";
@@ -262,6 +263,11 @@ export function createNodeTools(input: {
    */
   mapTiles?: MapTilesToolDeps;
   /**
+   * Product reports (`feedback-tool.ts`): a bug report or a feature request about ClarkCant, filed through the one
+   * service `/report` and the Feedback Composer use. Absent means `report_feedback` is not registered.
+   */
+  feedback?: FeedbackToolDeps;
+  /**
    * Who asked for the turn these tools run in (`TurnOrigin`), read at call time. Given to the command and terminal
    * tools, which share the node-wide command deps and so cannot carry a turn's value of their own.
    */
@@ -337,6 +343,7 @@ export function createNodeTools(input: {
     ...(input.automations === undefined ? [] : createAutomationTools(input.automations)),
     ...(input.browserTasks === undefined ? [] : [createBrowserTaskTool(input.browserTasks)]),
     ...(input.mapTiles === undefined ? [] : [createMapTilesTool(input.mapTiles)]),
+    ...(input.feedback === undefined ? [] : [createFeedbackTool(input.feedback)]),
   ];
 }
 

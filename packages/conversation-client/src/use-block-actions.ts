@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CommandCardAction, ProviderSignInView } from "@clarkcant/contracts";
+import type { CommandCardAction, FeedbackRequestInput, ProviderSignInView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -9,6 +9,7 @@ import type {
   BlockActions,
   CommandActionState,
   ControlSessionActionState,
+  FeedbackCardState,
   PackageInstallState,
   QuestionOutcome,
   TaskStopState,
@@ -500,6 +501,59 @@ export function useBlockActions({
     [client, followSignIn, setError],
   );
 
+  /**
+   * The Feedback Composer and its results, keyed by card id. Preview prepares the report and keeps the draft beside the
+   * words it was made from; Create issue publishes that draft when the words are unchanged, and prepares again when they
+   * are not. The outcome is the node's: a result card in the timeline, never a state this hook invents.
+   */
+  const [feedback, setFeedback] = useState<Record<string, FeedbackCardState>>({});
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  const settleFeedback = useCallback(
+    (cardId: string, state: FeedbackCardState) => setFeedback((current) => ({ ...current, [cardId]: state })),
+    [],
+  );
+  const failFeedback = useCallback(
+    (cardId: string, error: unknown) =>
+      settleFeedback(cardId, { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
+    [settleFeedback, t],
+  );
+
+  const previewFeedback = useCallback(
+    ({ cardId, request }: { cardId: string; request: FeedbackRequestInput }) => {
+      settleFeedback(cardId, { status: "preparing" });
+      void client.prepareFeedback(request, conversationId).then(
+        (prepared) => settleFeedback(cardId, { status: "prepared", requestKey: JSON.stringify(request), ...prepared }),
+        (error: unknown) => failFeedback(cardId, error),
+      );
+    },
+    [client, conversationId, failFeedback, settleFeedback],
+  );
+
+  const createFeedback = useCallback(
+    ({ cardId, request, reportId }: { cardId: string; request?: FeedbackRequestInput; reportId?: string }) => {
+      if (conversationId === undefined) return;
+      const previous = feedbackRef.current[cardId];
+      settleFeedback(cardId, { status: "publishing" });
+      const reportOf = async (): Promise<string> => {
+        if (reportId !== undefined) return reportId;
+        if (request === undefined) throw new Error(t("commandCard.failed"));
+        if (previous?.status === "prepared" && previous.requestKey === JSON.stringify(request)) return previous.draft.reportId;
+        return (await client.prepareFeedback(request, conversationId)).draft.reportId;
+      };
+      void reportOf()
+        .then((id) => client.publishFeedback(id, conversationId))
+        .then(
+          (result) => {
+            applyTimeline(result.timeline);
+            settleFeedback(cardId, { status: "done", publication: result.publication });
+          },
+          (error: unknown) => failFeedback(cardId, error),
+        );
+    },
+    [applyTimeline, client, conversationId, failFeedback, settleFeedback, t],
+  );
+
   return useMemo<BlockActions>(
     () => ({
       onApprovalDecide: decideApproval,
@@ -548,8 +602,14 @@ export function useBlockActions({
       signIns,
       onSignInAnswer: answerSignIn,
       onSignInCancel: cancelSignIn,
+      ...(conversationId === undefined ? {} : { onFeedbackPreview: previewFeedback, onFeedbackCreate: createFeedback }),
+      feedback,
     }),
     [
+      conversationId,
+      createFeedback,
+      feedback,
+      previewFeedback,
       answerSignIn,
       cancelSignIn,
       commandAction,

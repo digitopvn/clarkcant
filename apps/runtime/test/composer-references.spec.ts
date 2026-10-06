@@ -10,7 +10,7 @@ import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcan
 import { dismissNotification, getNotification, messagesSince, recordNotification, upsertProject } from "@clarkcant/storage";
 
 import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
-import { MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
+import { COMPOSER_SUGGESTIONS_MAX, MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -331,8 +331,9 @@ describe("the picker", () => {
     const all = await suggest("/", "");
     expect(all.status).toBe(200);
     const body = all.body as ComposerSuggestionsResponse;
-    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"]);
-    expect(refsOf(body.suggestions)[1]).toEqual(reviewRef);
+    // Every command, then as many skills as the rows leave room for; typing narrows to the rest.
+    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"].slice(0, COMPOSER_SUGGESTIONS_MAX));
+    expect(referenceRows(body.suggestions).every((row) => row.ref.kind === "skill")).toBe(true);
     // A command row writes the command, not a reference.
     expect(body.suggestions[0]).toMatchObject({ kind: "command", command: "new", trigger: "/" });
     expect(body.suggestions[0]).not.toHaveProperty("ref");
@@ -342,6 +343,7 @@ describe("the picker", () => {
 
     const narrowed = (await suggest("/", "rev")).body as ComposerSuggestionsResponse;
     expect(narrowed.suggestions.map((row) => row.label)).toEqual(["review"]);
+    expect(refsOf(narrowed.suggestions)[0]).toEqual(reviewRef);
   });
 
   it("offers projects and titled conversations after an at sign, leaving out the one being written in", async () => {
