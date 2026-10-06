@@ -55,7 +55,8 @@ import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { signalTree, stopTree } from "./process-tree.ts";
 import { stopCommandsForTask } from "./run-command.ts";
-import { dataClassTaskRefusal, enforceSendBoundary, isDataClassUnavailable, modelName } from "./send-boundary.ts";
+import { enforceSendBoundary, isDataClassUnavailable, modelName } from "./send-boundary.ts";
+import { type DispatchRefusal, type TaskSettledReason, dispatchRefusalMessage } from "./task-settled-text.ts";
 import {
   BROWSER_CAPABILITY,
   type TaskBrowserAdmission,
@@ -244,7 +245,10 @@ export interface TaskDispatcherDeps {
     taskId: string;
     conversationId: string;
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled";
+    /** What the task records and a peer that handed it over is sent: the run's words, or the host's in English. */
     message: string;
+    /** Present when `message` is the host's own words, so the owner can be told it in their language. */
+    reason?: TaskSettledReason;
     /** Whether a worker was started for it; false for a task refused before one existed. Absent means it was. */
     ran?: boolean;
     outputs?: readonly TaskOutputFile[];
@@ -311,7 +315,7 @@ export interface TaskDispatcherDeps {
 /** What a run may touch, decided from the task before a worker exists. */
 type RootPlan =
   | { ok: true; read: string[]; write: string[]; repositories: string[]; scoped: boolean }
-  | { ok: false; refusal: string };
+  | { ok: false; refusal: DispatchRefusal };
 
 export interface TaskDispatcher {
   /**
@@ -585,12 +589,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
    * Fail a task whose run produced nothing to accept, through the same state machine a finished run goes through.
    * `ran` says whether a worker was started for it: most refusals come before one exists, and those say so.
    */
-  const refuse = async (job: QueuedRun, refusal: string, ran = false): Promise<void> => {
+  const refuse = async (job: QueuedRun, reason: DispatchRefusal, ran = false): Promise<void> => {
+    const refusal = dispatchRefusalMessage(reason);
     const outcome = await runDispatchedTask(deps.conductor, {
       taskId: job.taskId,
       collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
     });
-    settle(job, outcome.outcome, refusal, ran);
+    settle(job, outcome.outcome, refusal, ran, undefined, reason);
   };
 
   const pump = (): void => {
@@ -610,7 +615,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     if (task === undefined || isTerminal(task.state)) return;
     // Asked to stop while it waited for a slot: it never gets a worker, and the stop is confirmed by the refusal.
     if (task.state === "cancel_requested") {
-      await refuse(job, "stopped before a worker was started for it");
+      await refuse(job, { code: "stopped-before-start" });
       return;
     }
     reported.delete(job.taskId);
@@ -643,13 +648,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       // run produced nothing" case that machine already knows how to fail, and the refusal reason is
       // reported to the conversation with the words this dispatcher actually used, not the generic
       // gate message.
-      const held = lease.code === "LEASE_HELD" ? `held by another run until ${lease.expiresAt}` : lease.message;
-      const refusal = `capability ${job.capabilityRef} is busy on this node (${held}); the task was not run and can be retried`;
-      const outcome = await runDispatchedTask(deps.conductor, {
-        taskId: job.taskId,
-        collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
+      await refuse(job, {
+        code: "capability-busy",
+        capabilityRef: job.capabilityRef,
+        ...(lease.code === "LEASE_HELD" ? { heldUntil: lease.expiresAt } : { detail: lease.message }),
       });
-      settle(job, outcome.outcome, refusal, false);
       return;
     }
 
@@ -665,17 +668,17 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     if (browsing) {
       const origin = task.origin;
       const sites = origin?.kind === "interactive" ? (origin.sites ?? []) : [];
-      const refusal =
+      const refusal: DispatchRefusal | undefined =
         origin?.kind !== "interactive"
-          ? "a browser task acts only for a person who asked for it in the conversation, and this one was not started that way"
+          ? { code: "browser-not-asked" }
           : sites.length === 0
-            ? "the task carries no checked list of sites, so there is no site it could be allowed onto"
+            ? { code: "browser-no-sites" }
             : browserGoalUrls(task.goal).some(hasUserinfo) || !sameSites(browserTaskOrigins(task.goal), sites)
-              ? "the sites the task was checked for are not the sites its goal names"
+              ? { code: "browser-sites-mismatch" }
               : undefined;
       if (refusal !== undefined) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
-        await refuse(job, `refused: ${refusal}; the worker was never started`);
+        await refuse(job, refusal);
         return;
       }
       browserSites = sites;
@@ -702,20 +705,20 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         if (isDataClassUnavailable(cause)) {
           releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
           recordModelRefusal(job, cause.model, cause.dataClass);
-          await refuse(
-            job,
-            dataClassTaskRefusal({ dataClass: cause.dataClass, model: cause.model, checked: "every-candidate", unread: cause.unread }),
-          );
+          await refuse(job, {
+            code: "data-class",
+            dataClass: cause.dataClass,
+            model: cause.model,
+            checked: "every-candidate",
+            unread: cause.unread === true,
+          });
           return;
         }
-        reason = `the model for it could not be chosen (${cause instanceof Error ? cause.message : String(cause)})`;
+        reason = cause instanceof Error ? cause.message : String(cause);
       }
       if (launch === undefined) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
-        await refuse(
-          job,
-          `refused: ${reason ?? "this node has no model configured to do the work"}; the worker was never started and nothing was done`,
-        );
+        await refuse(job, reason === undefined ? { code: "no-model" } : { code: "model-not-chosen", detail: reason });
         return;
       }
       /*
@@ -725,10 +728,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
        */
       if (browsing && launch.toolCalls === false) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
-        await refuse(
-          job,
-          `refused: the model this task would run on (${launch.model.provider}/${launch.model.id}) cannot call tools, so it could not use the browser; choose one that can in Settings → AI & Routing; the worker was never started and nothing was done`,
-        );
+        await refuse(job, { code: "model-no-tools", model: `${launch.model.provider}/${launch.model.id}` });
         return;
       }
     }
@@ -773,12 +773,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
         if (policyDecision.kind === "deny") {
           releaseLease(coordination, lease.lease.leaseId);
-          const refusal = `refused: ${policyDecision.reason}`;
-          const outcome = await runDispatchedTask(deps.conductor, {
-            taskId: job.taskId,
-            collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
-          });
-          settle(job, outcome.outcome, refusal, false);
+          await refuse(job, { code: "policy-denied", refusal: policyDecision.refusal, reason: policyDecision.reason });
           return;
         }
 
@@ -819,7 +814,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           if (!parked.ok) {
             // Stopped before it could park: this dispatcher holds it, so the stop is confirmed here, not left waiting.
             if (getTask(deps.conductor.db, job.taskId)?.state === "cancel_requested") {
-              await refuse(job, "stopped before a worker was started for it");
+              await refuse(job, { code: "stopped-before-start" });
             }
             return;
           }
@@ -864,14 +859,14 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     for (const repository of plan.repositories) {
       const made =
         deps.worktreesDir === undefined
-          ? ({ ok: false, message: "this node keeps no place for task worktrees, so a repository cannot be worked on" } as const)
+          ? ({ ok: false, refusal: { code: "no-worktree-place" } } as const)
           : await ensureManagedWorktree({ repoPath: repository, worktreesDir: deps.worktreesDir(), taskId: job.taskId });
       if (!made.ok) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
         // The repositories before this one already have their worktree. None was worked in, so a clean one goes now
         // rather than at the next boot; the branch stays, with anything an earlier run of the task committed.
         await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
-        await refuse(job, `refused: ${made.message}; the worker was never started`);
+        await refuse(job, "refusal" in made ? made.refusal : { code: "worktree-failed", detail: made.message });
         return;
       }
       worktrees.push(made.worktree);
@@ -888,15 +883,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       const host = deps.browser?.();
       const principalId = deps.ownerPrincipalId?.();
       // Without an owner there is no policy to decide a click by; without a registered capability the gate never ran.
-      const refusal =
-        host === undefined || principalId === undefined
-          ? "this node gives no task a browser"
-          : admission === undefined
-            ? "the execution policy was never asked about this task, because this node does not know the browser capability"
-            : undefined;
-      if (host === undefined || principalId === undefined || admission === undefined || refusal !== undefined) {
+      if (host === undefined || principalId === undefined || admission === undefined) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
-        await refuse(job, `refused: ${refusal ?? "no browser"}; the worker was never started`);
+        await refuse(job, host === undefined || principalId === undefined ? { code: "no-browser" } : { code: "browser-policy-unknown" });
         return;
       }
       openedBrowser = createTaskBrowserBroker({
@@ -959,8 +948,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             stopEffectsOf(job.taskId);
           }, maxWallClockMs);
     wallClockTimer?.unref();
-    const wallClockRefusal = (): string =>
-      `the wall-clock budget of ${String(maxWallClockMs)} ms was exhausted before the worker finished; nothing it did was verified; raise the task's budget or re-run it`;
+    // Only ever called once the timer above fired, which it does only with a budget set.
+    const wallClockRefusal = (): DispatchRefusal => ({ code: "wall-clock", maxMs: maxWallClockMs ?? 0 });
 
     // The worker stops itself at the token budget as it goes, rather than only being told afterwards that it ran over:
     // the task's own ceiling, else the node's worker budget.
@@ -994,10 +983,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         if (!check.ok) {
           recordModelRefusal(job, modelName(launch.model), check.dataClass);
           // Only the model the worker launched on is checked here, so only it is named.
-          await refuse(
-            job,
-            dataClassTaskRefusal({ dataClass: check.dataClass, model: modelName(launch.model), checked: "model", unread: !read }),
-          );
+          await refuse(job, { code: "data-class", dataClass: check.dataClass, model: modelName(launch.model), checked: "model", unread: !read });
           return;
         }
       }
@@ -1082,8 +1068,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
       if (stopping.has(job.taskId)) {
         journal((j) => j.taskEnded(job.taskId, "stopped"));
-        const refusal = "stopped on request before the worker finished; nothing it did was verified";
-        await refuse(job, refusal, true);
+        await refuse(job, { code: "stopped-during-run" }, true);
         return;
       }
 
@@ -1093,8 +1078,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       const tokensUsed = result.usage?.tokens;
       if (maxTokens !== undefined && tokensUsed !== undefined && tokensUsed > maxTokens) {
         journal((j) => j.taskEnded(job.taskId, "failed"));
-        const refusal = `the token budget of ${String(maxTokens)} was exceeded (the worker used ${String(tokensUsed)}); the run already happened but is not accepted, and can be retried with a higher budget`;
-        await refuse(job, refusal, true);
+        await refuse(job, { code: "token-budget", maxTokens, used: tokensUsed }, true);
         return;
       }
 
@@ -1109,7 +1093,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
       journal((j) => j.taskEnded(job.taskId, outcome.outcome === "succeeded" ? "done" : "failed"));
       const outputs = grantedOutputs(result.outputs ?? [], write);
-      settle(job, outcome.outcome, outcome.message, true, outputs);
+      settle(job, outcome.outcome, outcome.message, true, outputs, outcome.reason);
     } catch (cause) {
       // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,
       // so this is the path most stops actually take. It settles the task through the state machine like every
@@ -1119,15 +1103,15 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       await browser?.idle();
       const stopped = stopping.has(job.taskId);
       journal((j) => j.taskEnded(job.taskId, wallClockExceeded ? "failed" : stopped ? "stopped" : "failed"));
-      const refusal = wallClockExceeded
+      const refusal: DispatchRefusal = wallClockExceeded
         ? wallClockRefusal()
         : stopped
-          ? "stopped on request before the worker finished; nothing it did was verified"
-          : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`;
+          ? { code: "stopped-during-run" }
+          : { code: "worker-failed", detail: cause instanceof Error ? cause.message : String(cause) };
       try {
         await refuse(job, refusal, true);
       } catch {
-        settle(job, "failed", refusal, true);
+        settle(job, "failed", dispatchRefusalMessage(refusal), true, undefined, refusal);
       }
     } finally {
       if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
@@ -1226,9 +1210,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (task.origin !== undefined && task.origin.kind !== "interactive") {
         return {
           ok: false,
-          refusal:
-            "refused: work nobody asked for in this conversation has to name the folder or repository it may touch, " +
-            "and this task named none, so the worker was never started",
+          refusal: { code: "unscoped-background" },
         };
       }
       const roots = [...deps.projectRoots()];
@@ -1249,7 +1231,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     if (outsideOwnership !== undefined) {
       return {
         ok: false,
-        refusal: `refused: ${outsideOwnership} is not a root this node owns, so the worker was never started`,
+        refusal: { code: "root-not-owned", path: outsideOwnership },
       };
     }
     return plan;
@@ -1261,6 +1243,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     message: string,
     ran: boolean,
     outputs?: readonly TaskOutputFile[],
+    reason?: TaskSettledReason,
   ): void {
     // Every path reports here straight after `runDispatchedTask` wrote the run's settlement, so from now on nothing this
     // run does can settle the task: an answer to one of its effects has to settle it itself.
@@ -1272,6 +1255,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       conversationId: task.conversationId,
       outcome,
       message,
+      ...(reason === undefined ? {} : { reason }),
       ran,
       ...(outputs === undefined || outputs.length === 0 ? {} : { outputs }),
     });
@@ -1288,14 +1272,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         ...(input.authorizedByApprovalId === undefined ? {} : { authorizedByApprovalId: input.authorizedByApprovalId }),
       };
       if (closing) {
-        void refuse(job, "this node is shutting down; the task was not run and can be retried once the node is back");
+        void refuse(job, { code: "shutting-down" });
         return false;
       }
       if (running >= maxConcurrent && queue.length >= maxQueued) {
-        void refuse(
-          job,
-          `this node already has ${String(running)} task workers running and ${String(queue.length)} waiting, which is its limit; the task was not run and can be retried once one finishes`,
-        );
+        void refuse(job, { code: "queue-full", running, waiting: queue.length });
         return false;
       }
       queue.push({ ...job, queuedAt: at() });
@@ -1313,14 +1294,14 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
       // A queued task is failed with a reason rather than dropped: dropped, it would stay `dispatched` with nothing
       // behind it, which is the state this module exists to end.
-      for (const job of queue.splice(0)) void refuse(job, "stopped before a worker was started for it");
+      for (const job of queue.splice(0)) void refuse(job, { code: "stopped-before-start" });
       return stopped;
     },
     stop(taskId) {
       const queuedAt = queue.findIndex((job) => job.taskId === taskId);
       if (queuedAt >= 0) {
         const [job] = queue.splice(queuedAt, 1);
-        if (job !== undefined) void refuse(job, "stopped before a worker was started for it");
+        if (job !== undefined) void refuse(job, { code: "stopped-before-start" });
         return true;
       }
       if (!active.has(taskId)) return false;

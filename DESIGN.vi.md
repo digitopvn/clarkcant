@@ -1209,19 +1209,20 @@ Dùng segmented controls, toggles và swatches:
 - Desktop: trang shell riêng của cửa sổ desktop đọc cùng các token đã biên dịch (`apps/desktop/src/appearance-tokens.css`,
   sinh từ Clark Default) và theo chế độ sáng hay tối của hệ thống; cửa sổ hội thoại chính là trang của web client, nên
   theme trông giống nhau ở các chế độ thường, mở rộng, thu gọn và Orb.
-- Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
-  `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
-  (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có
-  tín hiệu "ngôn ngữ UI" đa nền tảng nào đủ tin cậy để khỏi âm thầm đổi ngôn ngữ sản phẩm của người
-  nói tiếng Việt sang ngôn ngữ khác. Chỉ chrome mặc định (composer, chrome của timeline, settings,
-  thông báo lỗi, điều khiển giọng nói, tiêu đề marketplace) được dịch; output của agent không bao giờ
-  bị dịch. Lời node tự viết cho chủ của nó được viết bằng ngôn ngữ này ngay lúc ghi, và không bao giờ dịch ở client.
-  Điều đó gồm ghi chú model và các thẻ khác của host, dòng và biên nhận mà một lệnh hay lời gọi package đã duyệt để
-  lại, thẻ xin duyệt và lý do một việc đang chờ duyệt, thông báo trong hộp thư, gợi ý ở màn hình bắt đầu, và nhãn
-  trong tab Công cụ. Những gì đã viết giữ ngôn ngữ của nó: đổi ngôn ngữ chỉ đổi những gì được viết sau đó, nên một
-  thẻ xin duyệt đã hỏi trước khi đổi giữ nguyên lời của nó, kể cả khi thông báo hết hạn trích lại lời đó. Hai loại nội dung
-  được giữ nguyên như khi viết. Một là nội dung một node gửi sang node đã ghép
-  cặp, vì không biết ngôn ngữ của chủ node đó. Hai là nhãn và mô tả do package hoặc extension tự viết: chúng hiện
+- Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt `<html lang>`, và được giữ
+  qua reload và giữa các thiết bị nhờ preference registry (`experience.language`). Mặc định là tiếng Việt; không có
+  tuỳ chọn "theo hệ thống", vì không có tín hiệu "ngôn ngữ UI" đa nền tảng nào đủ tin cậy để khỏi âm thầm đổi ngôn ngữ
+  sản phẩm của người nói tiếng Việt sang ngôn ngữ khác. Chỉ chrome mặc định (composer, chrome của timeline, settings,
+  thông báo lỗi, điều khiển giọng nói, tiêu đề marketplace) được dịch; output của agent không bao giờ bị dịch. Lời
+  node tự viết cho chủ của nó được viết bằng ngôn ngữ này ngay lúc ghi, và không bao giờ dịch ở client. Điều đó gồm
+  ghi chú model và các thẻ khác của host, dòng và biên nhận mà một lệnh hay lời gọi package đã duyệt để lại, thẻ xin
+  duyệt và lý do một việc đang chờ duyệt, việc kết thúc ra sao khi chính node viết điều đó (một lần từ chối, một lần
+  chạy không có gì để báo, một lần dừng, một câu trả lời đã ghi cho một thao tác), thông báo trong hộp thư, gợi ý ở
+  màn hình bắt đầu, và nhãn trong tab Công cụ. Nội dung node không tự viết, như một lỗi hay điều một lần chạy đã báo,
+  được trích nguyên văn chứ không được diễn đạt lại vào câu. Những gì đã viết giữ ngôn ngữ của nó: đổi ngôn ngữ chỉ
+  đổi những gì được viết sau đó, nên một thẻ xin duyệt đã hỏi trước khi đổi giữ nguyên lời của nó, kể cả khi thông báo
+  hết hạn trích lại lời đó. Hai loại nội dung được giữ nguyên như khi viết. Một là nội dung một node gửi sang node đã
+  ghép cặp, vì không biết ngôn ngữ của chủ node đó. Hai là nhãn và mô tả do package hoặc extension tự viết: chúng hiện
   đúng lời của tác giả.
 - Theme Lab: Duyệt chủ đề mở Gallery tạm thời phía trên Cài đặt. Lúc mở, tiêu điểm được đặt vào theme đang chọn một
   lần; những cập nhật xem trước sau đó không lấy lại tiêu điểm. Chọn trong Gallery chỉ xem trước component sản phẩm

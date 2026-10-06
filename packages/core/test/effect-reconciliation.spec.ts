@@ -187,7 +187,12 @@ describe("the task an answer settles", () => {
 
     const result = answer(effectId, "failed");
 
-    expect(result.ok && result.settlement).toEqual({ outcome: "failed", message: "bạn xác nhận “git push origin HEAD” chưa có hiệu lực" });
+    expect(result.ok && result.settlement).toEqual({
+      outcome: "failed",
+      message: "bạn xác nhận “git push origin HEAD” chưa có hiệu lực",
+      // The same answer as data, so the owner is told it in their own language.
+      reason: { code: "reconciled", stopped: false, didNotLand: "git push origin HEAD — /work/repo", landed: [], unverified: false },
+    });
     expect(getTask(deps.db, taskId)?.state).toBe("failed");
   });
 
