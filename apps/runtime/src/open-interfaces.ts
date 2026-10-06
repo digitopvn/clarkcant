@@ -178,9 +178,9 @@ export function openApiDocument(): Record<string, unknown> {
           parameters: [{ name: "since", in: "query", required: false, schema: { type: "string", maxLength: 40 } }],
           responses: {
             ...refusals,
-            "200": ok("ChangelogView: { installed, since?, releases, source }"),
-            "400": ok("INVALID_SCHEMA: since is not a version"),
-            "503": ok("CHANGELOG_UNAVAILABLE: the build carries no readable release notes"),
+            "200": ok("ChangelogView: { installed, since?, notesCover?, releases, source }"),
+            "400": refusal("INVALID_SCHEMA: since is not a version"),
+            "503": refusal("CHANGELOG_UNAVAILABLE: the build carries no readable release notes"),
           },
         },
       },

@@ -4,7 +4,6 @@ import type { ChangelogView } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import { ChangelogList } from "../changelog-card.tsx";
-import { fillMessage } from "../i18n/fill-message.ts";
 import { useT } from "../i18n/locale-context.tsx";
 
 /**
@@ -17,7 +16,7 @@ import { useT } from "../i18n/locale-context.tsx";
 export function ChangelogSettings({ client }: { client: GatewayClient }): ReactElement {
   const t = useT();
   const [view, setView] = useState<ChangelogView | undefined>(undefined);
-  const [problem, setProblem] = useState<string | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -25,11 +24,13 @@ export function ChangelogSettings({ client }: { client: GatewayClient }): ReactE
       (answer) => {
         if (live) {
           setView(answer);
-          setProblem(undefined);
+          setFailed(false);
         }
       },
-      (cause: unknown) => {
-        if (live) setProblem(cause instanceof Error ? cause.message : String(cause));
+      () => {
+        // The cause (a status code, a contract mismatch) is nothing a person can act on; the sentence says what failed,
+        // what is untouched and where else the notes can be read.
+        if (live) setFailed(true);
       },
     );
     return () => {
@@ -38,12 +39,12 @@ export function ChangelogSettings({ client }: { client: GatewayClient }): ReactE
   }, [client]);
 
   return (
-    <section className="cc-panel-section" data-changelog-settings="true" aria-busy={view === undefined && problem === undefined}>
+    <section className="cc-panel-section" data-changelog-settings="true" aria-busy={view === undefined && !failed}>
       <h3>{t("settings.changelog.heading")}</h3>
       <p className="cc-panel-note">{t("settings.changelog.intro")}</p>
-      {problem !== undefined ? (
+      {failed ? (
         <p className="cc-panel-note" role="alert" data-changelog-problem="true">
-          {fillMessage(t("settings.changelog.failed"), { reason: problem })}
+          {t("settings.changelog.failed")}
         </p>
       ) : view === undefined ? (
         <p className="cc-panel-note" role="status">

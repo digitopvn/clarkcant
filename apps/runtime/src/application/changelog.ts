@@ -29,6 +29,9 @@ import {
 
 export const RELEASE_NOTES_FILE = new URL("../../release-notes.json", import.meta.url);
 
+/** Where the change history can still be read when this build's notes cannot: the canonical repository's history. */
+export const CHANGELOG_FALLBACK_URL = "https://github.com/digitopvn/clarkcant/commits/main";
+
 export type ReleaseHistoryRead = { ok: true; history: ReleaseHistory } | { ok: false; reason: string };
 
 let embedded: ReleaseHistoryRead | undefined;
@@ -103,10 +106,28 @@ export function readChangelog(
       entries: release.entries,
       omittedEntries: release.omittedEntries,
     }));
+  const newest = history.releases[0];
+  const notesCover =
+    history.build.channel === "source" && newest !== undefined ? { commit: newest.commitRange.to, date: newest.date } : undefined;
   return {
     ok: true,
-    view: { installed: history.build, ...(since === undefined ? {} : { since }), releases, source: history.source },
+    view: {
+      installed: history.build,
+      ...(since === undefined ? {} : { since }),
+      ...(notesCover === undefined ? {} : { notesCover }),
+      releases,
+      source: history.source,
+    },
   };
+}
+
+/**
+ * What the notes of a build run from source reach, in English for the model and the slash answer's plain text: the
+ * record is written at release time, so the checkout may hold later changes the notes do not list.
+ */
+export function describeSourceCoverage(view: ChangelogView): string | undefined {
+  if (view.notesCover === undefined) return undefined;
+  return `These notes go up to commit ${view.notesCover.commit.slice(0, 7)} (${view.notesCover.date}); this checkout may include later changes that are not listed.`;
 }
 
 /** The view as a host-owned card in the conversation. */
@@ -134,6 +155,10 @@ export function describeChangelog(view: ChangelogView): string {
       "There is no update service yet: do not offer to update Clark or switch channels.",
     "The card with these notes is already shown to the user.",
   ];
+  const coverage = describeSourceCoverage(view);
+  if (coverage !== undefined) {
+    lines.push(`${coverage} Say so when the user asks what is new; do not present these notes as everything this checkout contains.`);
+  }
   if (view.releases.length === 0) {
     lines.push(
       view.since === undefined

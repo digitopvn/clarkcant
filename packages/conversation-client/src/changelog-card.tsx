@@ -50,6 +50,11 @@ export function ChangelogList({ view, t }: { view: ChangelogView; t: Translate }
   return (
     <div className="cc-card-stack" data-installed-version={view.installed.version} data-installed-channel={view.installed.channel}>
       <p className="cc-list-title">{installed}</p>
+      {view.notesCover === undefined ? null : (
+        <p className="cc-list-subtitle" data-changelog-covers={view.notesCover.commit}>
+          {fillMessage(t("changelog.sourceCoverage"), { commit: view.notesCover.commit.slice(0, 7), date: view.notesCover.date })}
+        </p>
+      )}
       {view.since === undefined ? null : (
         <p className="cc-list-subtitle" data-changelog-since={view.since}>
           {fillMessage(t("changelog.since"), { version: view.since })}

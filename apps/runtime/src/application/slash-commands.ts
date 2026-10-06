@@ -17,7 +17,7 @@ import { conversationLabel } from "../composer-suggestions.ts";
 import { startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { nodeWork } from "../work-supervisor.ts";
-import { changelogCard, readChangelog } from "./changelog.ts";
+import { CHANGELOG_FALLBACK_URL, changelogCard, readChangelog } from "./changelog.ts";
 
 /**
  * The host's answers to the composer's slash commands.
@@ -200,15 +200,24 @@ function changelogAnswer(services: SlashServices, argument: string, say: Say, at
         }
       : {
           text: say(
-            `Không đọc được ghi chú phát hành đi kèm bản này: ${answer.message}. Không có gì bị thay đổi.`,
-            `Could not read the release notes that came with this build: ${answer.message}. Nothing was changed.`,
+            `Không đọc được ghi chú phát hành đi kèm bản này: ${answer.message}. Không có gì bị thay đổi: hội thoại và cài đặt vẫn nguyên, Clark vẫn chạy bình thường. ` +
+              `Chạy lại bước cài đặt (hoặc cập nhật bản checkout) sẽ khôi phục tệp ghi chú; trong lúc đó, lịch sử thay đổi có tại ${CHANGELOG_FALLBACK_URL}.`,
+            `Could not read the release notes that came with this build: ${answer.message}. Nothing was changed: your conversation and settings are as they were, and Clark keeps working. ` +
+              `Running setup again (or updating the checkout) restores the notes file; until then, the change history is at ${CHANGELOG_FALLBACK_URL}.`,
           ),
         };
   }
   const { view } = answer;
+  const coverage =
+    view.notesCover === undefined
+      ? ""
+      : say(
+          ` Ghi chú này dừng ở commit ${view.notesCover.commit.slice(0, 7)} (${view.notesCover.date}); bản checkout này có thể có thay đổi mới hơn chưa được liệt kê.`,
+          ` These notes go up to commit ${view.notesCover.commit.slice(0, 7)} (${view.notesCover.date}); this checkout may include later changes that are not listed.`,
+        );
   const installed =
     view.installed.channel === "source"
-      ? say(`Bạn đang chạy Clark ${view.installed.version} từ mã nguồn.`, `You are running Clark ${view.installed.version} from source.`)
+      ? say(`Bạn đang chạy Clark ${view.installed.version} từ mã nguồn.`, `You are running Clark ${view.installed.version} from source.`) + coverage
       : say(
           `Bạn đang dùng Clark ${view.installed.version}, kênh ${view.installed.channel}.`,
           `You are on Clark ${view.installed.version}, ${view.installed.channel} channel.`,

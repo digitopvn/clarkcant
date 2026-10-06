@@ -17,6 +17,7 @@ import {
 } from "../src/application/changelog.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createNodeTools } from "../src/node-tools.ts";
+import { openApiDocument } from "../src/open-interfaces.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createShowChangelogTool } from "../src/show-changelog-tool.ts";
 
@@ -112,6 +113,40 @@ describe("readChangelog", () => {
 
   it("refuses a value that is not a version rather than reading it as everything", () => {
     expect(readChangelog({ since: "yesterday" }, fixture)).toMatchObject({ ok: false, code: "invalid-version" });
+  });
+
+  it("says, for a build run from source, which commit its notes reach and that the checkout may be ahead", () => {
+    const source = parseReleaseHistory(
+      JSON.stringify({
+        schemaVersion: 1,
+        build: { version: "0.2.1", channel: "source" },
+        source: `https://github.com/digitopvn/clarkcant/commits/${RANGE.from}`,
+        releases: [
+          {
+            version: "0.2.1",
+            kind: "baseline",
+            date: "2026-10-01",
+            previousVersion: null,
+            commitRange: { from: null, to: RANGE.from },
+            notes: "history",
+            entries: [{ kind: "fix", summary: "keep the queued message", commit: "a448d3e4a448" }],
+            omittedEntries: 0,
+            artifacts: [],
+          },
+        ],
+      }),
+    );
+    // Asked "since" the newest version, the list is empty, and the coverage is still said.
+    const answer = readChangelog({ since: "0.2.1" }, () => source);
+    expect(answer.ok && answer.view.notesCover).toEqual({ commit: RANGE.from, date: "2026-10-01" });
+    if (!answer.ok) return;
+    expect(describeChangelog(answer.view)).toContain(
+      "These notes go up to commit 806c396 (2026-10-01); this checkout may include later changes that are not listed.",
+    );
+    // A published build is what its notes describe, so it carries no coverage note.
+    const stable = readChangelog({}, fixture);
+    expect(stable.ok && stable.view.notesCover).toBeUndefined();
+    expect(stable.ok && describeChangelog(stable.view)).not.toContain("later changes");
   });
 
   it("says the notes are unavailable when the build carries none", () => {
@@ -210,7 +245,24 @@ describe("/changelog and GET /changelog", () => {
     expect(card?.owner).toBe("host");
     expect(changelogCardSchema.safeParse(card).success).toBe(true);
     const said = messages.at(-1)?.blocks.find((block) => block.type === "text");
-    expect(said !== undefined && "content" in said ? String(said.content) : "").toMatch(/Clark \d+\.\d+\.\d+/);
+    const text = said !== undefined && "content" in said ? String(said.content) : "";
+    expect(text).toMatch(/Clark \d+\.\d+\.\d+/);
+    // The repository's own record is a source build's: the answer names the commit its notes reach.
+    const embedded = readEmbeddedReleaseHistory();
+    if (!embedded.ok) throw new Error(embedded.reason);
+    if (embedded.history.build.channel === "source") {
+      expect(card?.notesCover?.commit).toBe(embedded.history.releases[0]?.commitRange.to);
+      expect(text).toContain(card?.notesCover?.commit.slice(0, 7));
+    }
+  });
+
+  it("documents its refusals with the error body the route sends", () => {
+    const responses = (openApiDocument() as { paths: Record<string, { get: { responses: Record<string, { content?: unknown }> } }> }).paths[
+      "/changelog"
+    ]?.get.responses;
+    const errorBody = { "application/json": { schema: { $ref: "#/components/schemas/Error" } } };
+    expect(responses?.["400"]?.content).toEqual(errorBody);
+    expect(responses?.["503"]?.content).toEqual(errorBody);
   });
 
   it("names a bad version in /changelog instead of drawing a card", async () => {

@@ -28,7 +28,9 @@ export const MESSAGES_CHANGELOG_VI = {
   "settings.changelog.heading": "Phiên bản & có gì mới",
   "settings.changelog.intro": "Ghi chú phát hành đi kèm bản này, đọc được cả khi không có mạng. Hỏi Clark “có gì mới?” hoặc gõ /changelog để xem trong hội thoại.",
   "settings.changelog.loading": "Đang đọc ghi chú phát hành…",
-  "settings.changelog.failed": "Không đọc được ghi chú phát hành: {reason}",
+  "settings.changelog.failed":
+    "Không đọc được ghi chú phát hành của bản này. Hội thoại và cài đặt không bị ảnh hưởng. Mở lại Cài đặt để thử lại, hoặc gõ /changelog để Clark cho biết lý do.",
+  "changelog.sourceCoverage": "Ghi chú này dừng ở commit {commit} ({date}). Bản checkout này có thể có thay đổi mới hơn chưa được liệt kê.",
 } as const;
 
 export const MESSAGES_CHANGELOG_EN = {
@@ -52,5 +54,7 @@ export const MESSAGES_CHANGELOG_EN = {
   "settings.changelog.heading": "Version & what's new",
   "settings.changelog.intro": "The release notes that came with this build, readable offline. Ask Clark \"what's new?\" or type /changelog to see them in the conversation.",
   "settings.changelog.loading": "Reading the release notes…",
-  "settings.changelog.failed": "Could not read the release notes: {reason}",
+  "settings.changelog.failed":
+    "Could not read this build's release notes. Your conversation and settings are unaffected. Reopen Settings to try again, or type /changelog to have Clark say why.",
+  "changelog.sourceCoverage": "These notes go up to commit {commit} ({date}). This checkout may include later changes that are not listed.",
 } as const satisfies Record<keyof typeof MESSAGES_CHANGELOG_VI, string>;

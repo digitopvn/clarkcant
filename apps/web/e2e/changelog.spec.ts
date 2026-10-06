@@ -43,6 +43,8 @@ test("/changelog answers with the host-owned card naming the installed version, 
   // The newest release is open, and the baseline is labelled as history rather than as a release.
   await expect(card.locator("details[data-release-kind]").first()).toHaveAttribute("open", "");
   await expect(card.locator('details[data-release-kind="baseline"]')).toHaveCount(1);
+  // The repository runs from source: the card says which commit its notes reach, rather than passing them off as current.
+  await expect(card.locator("[data-changelog-covers]")).toBeVisible();
   await expect(card.locator("button, select, input")).toHaveCount(0);
   await expect(page.locator('.cc-row[data-role="user"]', { hasText: "/changelog" })).toHaveCount(0);
 });

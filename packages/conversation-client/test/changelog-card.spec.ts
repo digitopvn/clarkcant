@@ -83,6 +83,17 @@ describe("the changelog card", () => {
     expect(out).toContain("keep the queued message");
   });
 
+  it("says, for a build run from source, which commit the notes reach and that the checkout may be ahead", () => {
+    const source: ChangelogCard = {
+      ...CARD,
+      installed: { version: "0.2.1", channel: "source" },
+      notesCover: { commit: RANGE.from, date: "2026-10-01" },
+    };
+    expect(html(source)).toContain("These notes go up to commit 806c396 (2026-10-01). This checkout may include later changes that are not listed.");
+    expect(html(source, vi)).toContain("Ghi chú này dừng ở commit 806c396 (2026-10-01).");
+    expect(html(CARD)).not.toContain("data-changelog-covers");
+  });
+
   it("says when nothing came after the version asked about", () => {
     const out = html({ ...CARD, since: "0.3.0", releases: [] });
     expect(out).toContain("This build records no release after 0.3.0.");

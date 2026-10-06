@@ -132,6 +132,12 @@ export const changelogCardSchema = z.strictObject({
   installed: z.strictObject({ version: semverSchema, channel: installedChannelSchema }),
   /** Present when the person asked what changed after a version. */
   since: semverSchema.optional(),
+  /**
+   * For a build run from source: the newest commit and date the embedded notes reach. The record is written at release
+   * time and never committed back, so a checkout can be ahead of it, and the card says so instead of presenting the
+   * notes as the checkout's whole history.
+   */
+  notesCover: z.strictObject({ commit: commitShaSchema, date: releaseDateSchema }).optional(),
   releases: z
     .array(
       z.strictObject({
