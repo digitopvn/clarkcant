@@ -442,17 +442,17 @@ describe("a session with a dedicated recognizer", () => {
     const agent = recordingAgent();
     const client = await open({ createRecognizer: () => recognizer, answer: agent.answer, utteranceSettleMs: 20 }, live);
 
-    recognizer.emit("voice-1:s0", "câu một", true);
+    recognizer.emit("voice-1:s0", "sửa lỗi stale closure nhé", true);
     await client.waitFor((control) => control["text"] === "ok 1", "the first answer");
     // The live reading of that same sentence arrives after the recognizer delivered it.
-    live.hearPartial("câu một");
+    live.hearPartial("sửa lỗi stale closure nhé");
     await settle(60);
-    live.hearPartial("mở file");
+    live.hearPartial(" mở file");
     recognizer.emit("voice-1:s1", "mở", false);
     recognizer.fail();
 
     await client.waitFor((control) => control["text"] === "ok 2", "the second answer");
-    expect(agent.asked).toEqual(["câu một", "mở file"]);
+    expect(agent.asked).toEqual(["sửa lỗi stale closure nhé", "mở file"]);
   });
 
   it("falls back without losing a sentence the live reading started early", async () => {
@@ -461,17 +461,17 @@ describe("a session with a dedicated recognizer", () => {
     const agent = recordingAgent();
     const client = await open({ createRecognizer: () => recognizer, answer: agent.answer, utteranceSettleMs: 20 }, live);
 
-    live.hearPartial("câu một");
+    live.hearPartial("sửa lỗi stale closure nhé");
     await settle(60);
     // The next sentence's live reading arrives before the recognizer delivers the first.
-    live.hearPartial("mở file voice session");
-    recognizer.emit("voice-1:s0", "câu một", true);
+    live.hearPartial(" mở file voice session");
+    recognizer.emit("voice-1:s0", "sửa lỗi stale closure nhé", true);
     await client.waitFor((control) => control["text"] === "ok 1", "the first answer");
     recognizer.emit("voice-1:s1", "mở", false);
     recognizer.fail();
 
     await client.waitFor((control) => control["text"] === "ok 2", "the second answer");
-    expect(agent.asked).toEqual(["câu một", "mở file voice session"]);
+    expect(agent.asked).toEqual(["sửa lỗi stale closure nhé", "mở file voice session"]);
   });
 
   it("keeps a sentence whole across the provider's session limit, with the real recognizer", async () => {

@@ -74,15 +74,24 @@ const STATE_WORD_KEYS: Record<VoiceState, MessageKey> = {
  * A final update settles the line in progress rather than adding a second one: the sentence as it was finally heard
  * (or corrected) replaces its interim reading, so one thing said is one line. A final without words only closes the
  * line in progress, and is nothing to show on its own.
+ *
+ * A final settles the speaker's latest unsettled line wherever it is: the other side can start answering before the
+ * person's sentence is settled, and that answer between the two must not leave the interim reading on screen beside
+ * the final one. A non-final update only continues the trailing line, so the start of a new reading never overwrites
+ * an earlier line that was cut off.
  */
 export function foldTranscriptUpdate(
   current: readonly VoiceTranscriptUpdate[],
   update: VoiceTranscriptUpdate,
 ): VoiceTranscriptUpdate[] {
-  const last = current[current.length - 1];
-  const inProgress = last !== undefined && last.role === update.role && !last.final;
+  const at = update.final ? current.findLastIndex((line) => line.role === update.role) : current.length - 1;
+  const line = at >= 0 ? current[at] : undefined;
   const empty = update.text.trim() === "";
-  if (inProgress) return [...current.slice(0, -1), update.final && empty ? { ...last, final: true } : update];
+  if (line !== undefined && line.role === update.role && !line.final) {
+    const next = [...current];
+    next[at] = update.final && empty ? { ...line, final: true } : update;
+    return next;
+  }
   if (update.final && empty) return [...current];
   return [...current, update];
 }

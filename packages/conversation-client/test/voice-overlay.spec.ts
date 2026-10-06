@@ -121,6 +121,25 @@ describe("folding a streamed answer into the transcript", () => {
     expect(foldTranscriptUpdate([done("xong rồi")], done(""))).toEqual([done("xong rồi")]);
   });
 
+  it("settles the person's interim with its final even when an answer started in between", () => {
+    const interim = { role: "user" as const, text: "sửa lỗi stale closer", final: false };
+    const canonical = { role: "user" as const, text: "sửa lỗi stale closure", final: true };
+    expect(foldTranscriptUpdate([interim, partial("Đang xem")], canonical)).toEqual([canonical, partial("Đang xem")]);
+    expect(foldTranscriptUpdate([interim, partial("Đang xem")], { role: "user", text: "", final: true })).toEqual([
+      { ...interim, final: true },
+      partial("Đang xem"),
+    ]);
+  });
+
+  it("starts a new line for a new interim rather than overwriting an earlier line of the same speaker", () => {
+    const cutOff = { role: "user" as const, text: "mở file", final: false };
+    expect(foldTranscriptUpdate([cutOff, done("Dạ")], { role: "user", text: "chạy test", final: false })).toEqual([
+      cutOff,
+      done("Dạ"),
+      { role: "user", text: "chạy test", final: false },
+    ]);
+  });
+
   it("still starts a new line for a final when nothing was in progress", () => {
     expect(foldTranscriptUpdate([done("một")], done("hai"))).toEqual([done("một"), done("hai")]);
   });

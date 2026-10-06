@@ -695,7 +695,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     /** How many live-transcribed utterances this session has dispatched, for their provenance ids. */
     let liveUtterances = 0;
     /** The live reading the recognizer has not delivered yet: what takes over if the recognizer fails mid-sentence. */
-    const liveShadow = new LiveShadow({ pauseMs: options.utteranceSettleMs ?? 400 });
+    const liveShadow = new LiveShadow();
 
     /**
      * Wait for the transcription to go quiet, then take the sentence.
