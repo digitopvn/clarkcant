@@ -325,6 +325,10 @@ diacritics.
 `docs/conformance-traceability.md` remains English-only because it is the
 canonical checked status ledger.
 
+`AGENTS.md` (with `CLAUDE.md`, which includes it) and `REVIEW.md` are
+English-only: they are the operating rules agents load into context, and a
+second copy would double the surface that can drift.
+
 Do not document target behavior as already shipped.
 
 Use English for code, identifiers, commit messages, and protocol/schema names.
