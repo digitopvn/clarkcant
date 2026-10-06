@@ -36,6 +36,8 @@ import {
   upsertTask,
 } from "@clarkcant/storage";
 
+import type { SuccessGateReason } from "./task-settle-reason.ts";
+
 /**
  * Task lifecycle service.
  *
@@ -253,7 +255,13 @@ export function recordEvidence(
 
 export type SuccessCheck =
   | { allowed: true; evidenceId: string }
-  | { allowed: false; code: "NO_EVIDENCE" | "EFFECT_UNSETTLED" | "EVIDENCE_CONTRADICTED"; message: string };
+  | {
+      allowed: false;
+      code: "NO_EVIDENCE" | "EFFECT_UNSETTLED" | "EVIDENCE_CONTRADICTED";
+      message: string;
+      /** The same refusal as data, so the person can be told it in their own language. */
+      reason: SuccessGateReason;
+    };
 
 /**
  * Gate the only transition into `succeeded`.
@@ -272,6 +280,7 @@ export function checkSuccessPreconditions(
       allowed: false,
       code: "NO_EVIDENCE",
       message: "no evidence recorded; a finished run is not by itself a successful outcome",
+      reason: { kind: "no-evidence" },
     };
   }
   const contradicted = evidence.find((entry) => entry.verdict === "contradicted");
@@ -280,6 +289,7 @@ export function checkSuccessPreconditions(
       allowed: false,
       code: "EVIDENCE_CONTRADICTED",
       message: `evidence contradicts the expected outcome: ${contradicted.summary}`,
+      reason: { kind: "contradicted", summary: contradicted.summary },
     };
   }
   const verified = evidence.find((entry) => entry.verdict === "verified");
@@ -289,6 +299,7 @@ export function checkSuccessPreconditions(
       code: "NO_EVIDENCE",
       message:
         "evidence was recorded but nothing was verified; the result must be reported as not-verified rather than as success",
+      reason: { kind: "nothing-verified" },
     };
   }
   const unsettled = effectsForTask(deps.db, taskId).find(
@@ -299,6 +310,7 @@ export function checkSuccessPreconditions(
       allowed: false,
       code: "EFFECT_UNSETTLED",
       message: `effect ${unsettled.effectId} is still ${unsettled.state}; reconcile it before reporting success`,
+      reason: { kind: "effect-unsettled", effectId: unsettled.effectId, state: unsettled.state },
     };
   }
   return { allowed: true, evidenceId: verified.ref ?? verified.kind };

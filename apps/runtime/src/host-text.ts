@@ -88,7 +88,8 @@ export interface HostText {
     refused: (summary: string, because: string, refusal: string) => string;
     refusedTitle: string;
     notStartedTitle: string;
-    notStarted: (summary: string | undefined, because: string, reason: string) => string;
+    /** `error` is the exception's own text, quoted as a diagnostic rather than worded into the sentence. */
+    notStarted: (summary: string | undefined, because: string, error: string) => string;
     remind: (summary: string, message: string) => string;
     parked: (summary: string, because: string, reason: string, taskId: string) => string;
     parkedTitle: string;
@@ -438,10 +439,10 @@ const VI: HostText = {
     refused: (summary, because, refusal) => `Việc tự động "${summary}" không chạy cho ${because}: ${refusal}.`,
     refusedTitle: "Việc tự động bị từ chối",
     notStartedTitle: "Việc tự động không bắt đầu được",
-    notStarted: (summary, because, reason) =>
+    notStarted: (summary, because, error) =>
       summary === undefined
-        ? `Lần chạy cho ${because} không bắt đầu được: ${reason}. Lần này sẽ không chạy lại.`
-        : `"${summary}" không bắt đầu được cho ${because}: ${reason}. Lần này sẽ không chạy lại; bản thân việc tự động vẫn được giữ nguyên.`,
+        ? `Lần chạy cho ${because} không bắt đầu được. Lỗi gặp phải: “${error}”. Lần này sẽ không chạy lại.`
+        : `“${summary}” không bắt đầu được cho ${because}. Lỗi gặp phải: “${error}”. Lần này sẽ không chạy lại; bản thân việc tự động vẫn được giữ nguyên.`,
     remind: (summary, message) => `Nhắc bạn — ${summary}: ${message}`,
     parked: (summary, because, reason, taskId) =>
       `Việc tự động "${summary}" đã khớp ${because}, nhưng đang chờ: ${reason}. Task ${taskId} sẽ tiếp tục khi có thứ chạy được nó.`,
@@ -709,10 +710,10 @@ const EN: HostText = {
     refused: (summary, because, refusal) => `The automation "${summary}" did not run for ${because}: ${refusal}.`,
     refusedTitle: "An automation was refused",
     notStartedTitle: "An automation could not start",
-    notStarted: (summary, because, reason) =>
+    notStarted: (summary, because, error) =>
       summary === undefined
-        ? `The run for ${because} could not start: ${reason}. It will not be retried.`
-        : `"${summary}" could not start for ${because}: ${reason}. This run will not be retried; the automation itself is kept as it is.`,
+        ? `The run for ${because} could not start. The error was: “${error}”. It will not be retried.`
+        : `“${summary}” could not start for ${because}. The error was: “${error}”. This run will not be retried; the automation itself is kept as it is.`,
     remind: (summary, message) => `Reminder — ${summary}: ${message}`,
     parked: (summary, because, reason, taskId) =>
       `The automation "${summary}" matched ${because}, but is waiting: ${reason}. Task ${taskId} carries on once something can run it.`,
