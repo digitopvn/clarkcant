@@ -9,7 +9,7 @@ import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
  * The same session registry `/widget-dev/sessions` drives, so a sentence, a voice command and the HTTP API start one
  * thing. Starting installs the folder's package through the node's install path. A session started here is Clark's
  * initiative: its installs are decided as Clark's own proposal (a mode that asks before what the person did not ask for
- * by name asks), and it may watch only the person's project folders or Clark's widget workspace. Only a turn the person
+ * by name asks), and it may watch only Clark's widget workspace or a project root the person configured. Only a turn the person
  * sent can start, rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
  */
 
@@ -71,10 +71,11 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       "that still reads as a package rebuilds it, and the widget reloads in place. A save that does not read as a package " +
       "keeps the last good build on screen and reports what is wrong. A build that asks to reach more is decided by the " +
       "execution policy again, and may wait for the person in the inbox. status reports a session, rebuild builds now, " +
-      "place puts its widget here again, stop ends watching (what runs keeps running). The folder must be one of the " +
-      "person's project folders or your widget workspace" +
-      (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget`) +
-      "; any other folder the person starts from their own app. Only widgets that render in the frame or are data are " +
+      "place puts its widget here again, stop ends watching (what runs keeps running). The folder must be inside your " +
+      "widget workspace" +
+      (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget,`) +
+      " or inside a project root the person added to their workspace.roots setting themselves; any other folder the " +
+      "person starts from their own app. Only widgets that render in the frame or are data are " +
       "developed this way: a package with a service, tools or a native part is refused.",
     parameters: {
       type: "object",

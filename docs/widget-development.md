@@ -2895,9 +2895,10 @@ files, is copied into the node's package cache and listed for this node alone, a
 install path. Nothing goes through npm, the Marketplace or a directory index, and nothing is published. A root
 `node_modules` folder is left out of each build; built output such as `dist` is kept.
 
-Clark may develop a folder only when it is in one of your project folders (the `workspace.roots` preference) or in its
-own widget workspace (`<dataDir>/widget-workspace`), where it scaffolds a new widget. To develop any other folder on the
-machine, start the session yourself from the app. The node's own data folder is never developed, and neither is a
+Clark may develop a folder only in two places. One is its own widget workspace (`<dataDir>/widget-workspace`), where it
+scaffolds a new widget. The other is inside a project root you added to the `workspace.roots` setting yourself. The
+built-in default roots, your home folder and the drive the node runs from, do not count. To develop any other folder,
+start the session yourself from the app, or add its project folder to `workspace.roots`. The node's own data folder is never developed, and neither is a
 network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
 a native part is refused with a problem saying so; install that package the ordinary way.
 
@@ -3209,7 +3210,7 @@ This section states which parts of the document already have code, so that nobod
   `allow-same-origin`), and the server refuses any path outside the package.
 - Widget dev sessions in the conversation (§16, "Developing in the conversation"): one build engine shared with the dev
   host, immutable generations, last-known-good, policy-decided installs under a reach-bound consent scope, Clark-started
-  sessions confined to project folders and the widget workspace and decided as Clark's proposal, frame and data facets
+  sessions confined to the widget workspace and project roots the person configured and decided as Clark's proposal, frame and data facets
   only, cleanup of superseded builds, frame-only remount, and host-owned build status. Pinning a dev widget works; detaching an isolated widget into its own window,
   and the dev host's fixture, viewport, theme and reduced-motion controls beside a node frame, are not yet available.
 - Durable state for isolated widgets, declarative host-run migrations, and `ephemeralStateKeys` (§15).

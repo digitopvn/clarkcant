@@ -17,6 +17,7 @@ import { EXECUTION_POLICY_PREFERENCE_KEY, setPreference, writeRegisteredPreferen
 import { createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
 import { WIDGET_DEV_STORE_MAX, readDevSessions, writeDevSessions } from "../src/application/widget-dev-store.ts";
 import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
+import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -396,7 +397,7 @@ describe("a widget dev session", () => {
 
     const outside = await toolFor(conversationId).execute({ action: "start", root: elsewhere });
     expect(outside.text).toContain("Not started");
-    expect(outside.text).toContain("widget workspace");
+    expect(outside.text).toContain("widget-workspace");
     expect((await call("GET", "/widget-dev/sessions")).body).toEqual({ sessions: [] });
 
     const scaffolded = join(services.widgetDev?.workspace() ?? "", "counter");
@@ -406,6 +407,32 @@ describe("a widget dev session", () => {
 
     // The person may name the other folder from their own surface.
     expect((await call("POST", "/widget-dev/sessions", { root: elsewhere })).status).toBe(201);
+  });
+
+  it("does not count the built-in project roots, or roots Clark wrote, as folders the person chose", async () => {
+    const conversationId = await conversation();
+    const setRoots = (source: "user" | "agent") =>
+      setPreference(
+        { db: services.runtime.db, now: () => new Date().toISOString() as never },
+        { principalId: services.runtime.identity.ownerPrincipalId, key: "workspace.roots", scope: "global", value: [join(dir, "projects")], source },
+      );
+
+    // No configured roots: the default (home and the node's drive) holds the test folder, and still does not count.
+    services.runtime.db.prepare("DELETE FROM preferences WHERE key = ?").run("workspace.roots");
+    expect(services.projects.roots().length).toBeGreaterThan(0);
+    const unset = await toolFor(conversationId).execute({ action: "start", root });
+    expect(unset.text).toContain("Not started");
+    expect(unset.text).toContain("workspace.roots");
+    // Said in the owner's language (Vietnamese by default), with how to start it themselves or add the project.
+    expect(unset.text).toContain("tự bắt đầu phiên cho thư mục này");
+    expect(hostText("en").approvals.devSessionRootNotOwned("/x", "/w")).toContain("start a session for this folder yourself");
+
+    setRoots("agent");
+    expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Not started");
+    expect((await call("GET", "/widget-dev/sessions")).body).toEqual({ sessions: [] });
+
+    setRoots("user");
+    expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Running generation 1.");
   });
 
   it("decides a session Clark started as Clark's own proposal, so guarded mode asks", async () => {

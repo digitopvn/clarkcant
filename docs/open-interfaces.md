@@ -637,8 +637,9 @@ name, and a name longer than 120 characters is shortened before its extension, w
 Install button and a notice's `update` call; no agent tool installs a package from a directory (the package tool lists,
 uninstalls, restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with
 `403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`
-([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It may watch only the person's
-project folders or Clark's own widget workspace, and the policy decides its installs as Clark's own proposal.
+([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It may watch only Clark's own
+widget workspace or a folder inside a project root the person configured themselves, and the policy decides its
+installs as Clark's own proposal.
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
@@ -736,9 +737,15 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
 - `400 ROOT_IN_DATA_FOLDER` refuses the node's data folder, any folder inside it, and any folder that holds it. The one
   exception is Clark's widget workspace, `<dataDir>/widget-workspace`.
 - A session the person starts on this route may watch any other local folder.
-- A session Clark starts with `develop_widget` may watch only the person's project folders (the `workspace.roots`
-  preference, by default the home folder and the drive the node runs from) or the widget workspace, where Clark
-  scaffolds a new widget. Any other folder is refused with `403 ROOT_NOT_OWNED`, and the person can start it themselves.
+- A session Clark starts with `develop_widget` may watch only two kinds of folder:
+  - the widget workspace, where Clark scaffolds a new widget;
+  - a folder inside a project root the person configured themselves, meaning a `workspace.roots` preference they
+    wrote in settings or onboarding.
+
+  The built-in default roots (the home folder and the drive the node runs from) do not count, and neither does a value
+  Clark wrote. The node has no registry of projects the person added apart from these roots. Any other folder is
+  refused with `403 ROOT_NOT_OWNED`, in the owner's language. The message tells the person they can start the session
+  themselves or add the project's folder to `workspace.roots`.
 
 **Which packages.** A session runs only packages whose facets stay in the widget frame or are data (`isolated-ui` and
 `declarative`). A build of a package with a service, tools or native facet fails with a diagnostic coded

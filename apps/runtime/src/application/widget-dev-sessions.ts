@@ -18,6 +18,7 @@ import {
   cachedLocalSnapshotPath,
   devConsentScopeOf,
   directoryIndexPath,
+  getPreference,
   pinInstance,
   readDirectoryIndex,
   readPackage,
@@ -56,7 +57,8 @@ import {
  * Whose intent the installs carry out is the session's initiative. A session the person starts on their own surface
  * installs as their request, for any folder on the node outside its data folder. A session Clark starts during a turn
  * installs as Clark's own proposal (`proposed`), so a mode that asks before what the person did not ask for by name asks,
- * and it may watch only the person's project folders or Clark's own widget workspace (`widgetWorkspaceDir`). A turn a
+ * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`) or a folder inside a project root the person
+ * configured themselves. A turn a
  * machine surface, an automation or a peer sent starts nothing.
  *
  * Phases 1–2 run only packages whose facets stay in the widget frame or are data (`WIDGET_DEV_ALLOWED_ISOLATIONS`); a
@@ -69,7 +71,7 @@ import {
 /** The most sessions that watch folders at once on one node. */
 export const WIDGET_DEV_LIVE_MAX = 8;
 
-export type WidgetDevServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "browserTokens" | "projects">;
+export type WidgetDevServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "browserTokens">;
 
 export type WidgetDevResult<T> = { ok: true; value: T } | { ok: false; status: number; code: string; message: string };
 
@@ -222,8 +224,9 @@ export function createWidgetDevSessions(
    * Local folders only: a Windows share or device path is refused. Nothing that holds the node's data folder, or lies
    * inside it, may be watched, except Clark's widget workspace: the package cache, the session store and the database
    * live there, and a session that watched them would build from its own snapshots. A session Clark starts may watch only
-   * the person's project folders and that workspace, so a model cannot point the node's install path at an arbitrary
-   * folder; the person may name any other local folder from their own surface.
+   * that workspace and folders inside a root the person configured themselves (`configuredRoots`), so a model cannot
+   * point the node's install path at an arbitrary folder; the person may name any other local folder from their own
+   * surface.
    */
   const checkRoot = (raw: string, initiative: WidgetDevInitiative): WidgetDevResult<string> => {
     const given = raw.trim();
@@ -249,19 +252,30 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_IN_DATA_FOLDER", "the folder holds or lies inside this node's data folder, which is not developed from; use a project folder");
     }
     if (initiative.kind === "clark" && !inWorkspace) {
-      const projects = services()
-        .projects.roots()
+      const configured = configuredRoots()
         .map((path) => realOrUndefined(path))
         .filter((path): path is string => path !== undefined);
-      if (containingRoot(ownedResources(projects), root) === undefined) {
-        return refusal(
-          403,
-          "ROOT_NOT_OWNED",
-          `Clark develops widgets only in the person's project folders or in its own widget workspace (${widgetWorkspace}); ${root} is neither. The person can start a session for it themselves.`,
-        );
+      if (containingRoot(ownedResources(configured), root) === undefined) {
+        return refusal(403, "ROOT_NOT_OWNED", hostText(ownerLocale(services().runtime)).approvals.devSessionRootNotOwned(root, widgetWorkspace));
       }
     }
     return { ok: true, value: root };
+  };
+
+  /**
+   * The folders the person configured themselves for their projects (`workspace.roots`, written by them in settings or
+   * onboarding). The built-in default, the home folder and the drive the node runs from, is not a choice the person
+   * made, and a value Clark wrote is not one either: neither lets Clark watch a folder. The node has no registry of
+   * projects the person added apart from these roots; its project index is a scan beneath them.
+   */
+  const configuredRoots = (): string[] => {
+    const runtime = services().runtime;
+    const record = getPreference(
+      { db: runtime.db, now: nowInstant },
+      { principalId: runtime.identity.ownerPrincipalId, key: "workspace.roots", scope: "global" },
+    );
+    if (record === undefined || (record.source !== "user" && record.source !== "onboarding") || !Array.isArray(record.value)) return [];
+    return record.value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "" && isAbsolute(entry.trim())).map((entry) => entry.trim());
   };
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {

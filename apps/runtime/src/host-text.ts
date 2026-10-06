@@ -196,6 +196,8 @@ export interface HostText {
      * execution policy ran it without asking: what it added, so a wider reach is never taken in silence.
      */
     devSessionWidened: (name: string, generation: number, added: string) => string;
+    /** Why Clark may not watch a folder for a widget dev session, and how the person can. */
+    devSessionRootNotOwned: (root: string, workspace: string) => string;
     /** A capability grant an install asks about separately. */
     grantCard: (ref: string, name: string, version: string) => string;
     /** A command's result when it printed nothing: a fact worth stating rather than an empty block. */
@@ -541,6 +543,8 @@ const VI: HostText = {
       `chạy ${name} ${version} từ thư mục đang phát triển, tự cập nhật khi mã thay đổi trong cùng phạm vi truy cập (${riskTier})`,
     devSessionWidened: (name, generation, added) =>
       `Bản dựng ${String(generation)} của ${name} được truy cập nhiều hơn bản trước (${added}). Chính sách thực thi của bạn cho phép cài mà không hỏi, nên bản này đang chạy; mọi thay đổi đã được ghi lại.`,
+    devSessionRootNotOwned: (root, workspace) =>
+      `Clark chỉ phát triển widget trong không gian widget của mình (${workspace}) hoặc trong một thư mục gốc bạn đã tự thêm vào cài đặt workspace.roots; ${root} không thuộc chỗ nào trong đó, nên chưa có gì được bắt đầu. Bạn có thể tự bắt đầu phiên cho thư mục này từ ứng dụng, hoặc thêm thư mục dự án của nó vào workspace.roots rồi nhờ lại.`,
     grantCard: (ref, name, version) => `cấp quyền ${ref} cho ${name} ${version}`,
     noOutput: "Không có output.",
     truncated: "\n… (đã cắt bớt)",
@@ -816,6 +820,8 @@ const EN: HostText = {
       `run ${name} ${version} from the folder being developed, updating as its code changes within the same reach (${riskTier})`,
     devSessionWidened: (name, generation, added) =>
       `Build ${String(generation)} of ${name} reaches more than the one before it (${added}). Your execution policy lets installs run without asking, so it is running now; the change is recorded.`,
+    devSessionRootNotOwned: (root, workspace) =>
+      `Clark develops widgets only in its own widget workspace (${workspace}) or inside a folder you added to the workspace.roots setting yourself; ${root} is in neither, so nothing was started. You can start a session for this folder yourself from the app, or add its project folder to workspace.roots and ask again.`,
     grantCard: (ref, name, version) => `grant ${ref} to ${name} ${version}`,
     noOutput: "No output.",
     truncated: "\n… (truncated)",

@@ -643,8 +643,8 @@ của chính ứng dụng và thao tác `update` của một thông báo gọi; 
 gói chỉ liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
 `403 PERSON_ONLY`. Tool duy nhất của agent đi tới đường cài là `develop_widget`
 ([phiên phát triển widget](#phiên-phát-triển-widget)). Tool này chỉ chạy trong một lượt do chính người dùng gửi. Nó chỉ
-được theo dõi các thư mục dự án của người dùng hoặc không gian widget riêng của Clark, và chính sách quyết định các lần
-cài của nó như đề xuất của chính Clark.
+được theo dõi không gian widget riêng của Clark hoặc một thư mục nằm trong thư mục gốc dự án mà chính người dùng đã cấu
+hình, và chính sách quyết định các lần cài của nó như đề xuất của chính Clark.
 
 Với một gói được liệt kê bằng đường dẫn trên máy này, node sao chép các tệp của nó vào bộ nhớ đệm gói
 (`<dataDir>/package-cache/local/<sha256>`) và tính digest của bản sao (`digestOfDirectory`, cùng digest mà một lần
@@ -742,9 +742,15 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
 - `400 ROOT_IN_DATA_FOLDER` từ chối thư mục dữ liệu của node, mọi thư mục nằm trong nó và mọi thư mục chứa nó. Ngoại lệ
   duy nhất là không gian widget của Clark, `<dataDir>/widget-workspace`.
 - Một phiên người dùng bắt đầu trên route này được theo dõi mọi thư mục cục bộ khác.
-- Một phiên Clark bắt đầu bằng `develop_widget` chỉ được theo dõi các thư mục dự án của người dùng (tùy chọn
-  `workspace.roots`, mặc định là thư mục home và ổ đĩa node đang chạy) hoặc không gian widget, nơi Clark dựng khung một
-  widget mới. Mọi thư mục khác bị từ chối với `403 ROOT_NOT_OWNED`, và người dùng có thể tự bắt đầu phiên cho thư mục đó.
+- Một phiên Clark bắt đầu bằng `develop_widget` chỉ được theo dõi hai loại thư mục:
+  - không gian widget, nơi Clark dựng khung một widget mới;
+  - một thư mục nằm trong thư mục gốc dự án mà chính người dùng đã cấu hình, tức tùy chọn `workspace.roots` do họ
+    ghi trong cài đặt hoặc khi bắt đầu dùng.
+
+  Các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) không được tính, và giá trị do Clark ghi cũng
+  không. Ngoài các thư mục gốc này, node không có danh sách dự án nào do người dùng thêm. Mọi thư mục khác bị từ chối với
+  `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy. Thông báo cho người dùng biết họ có thể tự bắt đầu phiên, hoặc thêm thư
+  mục của dự án vào `workspace.roots`.
 
 **Gói nào.** Một phiên chỉ chạy các gói có facet nằm trong frame widget hoặc là dữ liệu (`isolated-ui` và
 `declarative`). Lần dựng một gói có facet dịch vụ, công cụ hoặc native sẽ lỗi với một chẩn đoán mang mã

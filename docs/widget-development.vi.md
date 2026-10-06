@@ -2882,9 +2882,11 @@ chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riê
 đi qua npm, Marketplace hay một directory index, và không có gì được phát hành. Thư mục `node_modules` ở gốc bị loại khỏi
 mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
 
-Clark chỉ được phát triển một thư mục khi nó nằm trong một thư mục dự án của bạn (tùy chọn `workspace.roots`) hoặc trong
-không gian widget riêng của Clark (`<dataDir>/widget-workspace`), nơi Clark dựng khung một widget mới. Để phát triển bất
-kỳ thư mục nào khác trên máy, hãy tự bắt đầu phiên từ ứng dụng. Thư mục dữ liệu của chính node không bao giờ được phát
+Clark chỉ được phát triển một thư mục ở hai nơi. Nơi thứ nhất là không gian widget riêng của Clark
+(`<dataDir>/widget-workspace`), nơi Clark dựng khung một widget mới. Nơi thứ hai là bên trong một thư mục gốc dự án mà bạn
+đã tự thêm vào cài đặt `workspace.roots`. Các thư mục gốc mặc định có sẵn, tức thư mục home và ổ đĩa node đang chạy,
+không được tính. Để phát triển bất kỳ thư mục nào khác, hãy tự bắt đầu phiên từ ứng dụng, hoặc thêm thư mục dự án của nó
+vào `workspace.roots`. Thư mục dữ liệu của chính node không bao giờ được phát
 triển, và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
 dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
 
@@ -3197,7 +3199,7 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
 - Phiên phát triển widget trong cuộc hội thoại (§16, "Phát triển trong cuộc hội thoại"): một build engine dùng chung với
   dev host, generation bất biến, giữ bản dựng tốt gần nhất, lần cài do chính sách quyết định theo một phạm vi đồng ý gắn
-  với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng thư mục dự án và không gian widget và được quyết định như đề
+  với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng không gian widget và thư mục gốc dự án do người dùng cấu hình và được quyết định như đề
   xuất của Clark, chỉ facet frame và dữ liệu, dọn dẹp các bản dựng đã bị thay thế, chỉ mount lại frame, và trạng thái
   bản dựng do host sở hữu. Ghim một widget đang phát triển đã
   chạy được; tách một widget cách ly ra cửa sổ riêng, cùng các điều khiển fixture, viewport, theme và reduced motion của
