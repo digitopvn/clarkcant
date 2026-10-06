@@ -10,6 +10,7 @@ import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/ga
 import { artifactIntakeDeps, peerDelegationHandlers } from "../src/delegation-handlers.ts";
 import { hostText } from "../src/host-text.ts";
 import { QUESTION_TTL_MS, createQuestion, expireQuestions } from "../src/interactions.ts";
+import { recordNodeNotice } from "../src/notices.ts";
 import { tellStuck } from "../src/peer-skip.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -298,6 +299,23 @@ describe("an inbox notice the node records follows its owner's interface languag
   it("words it in the same Vietnamese as before when no language was ever chosen", async () => {
     const notice = await stuckNotice("node_peer_vi");
     expect(notice?.title).toBe("Ghép cặp với thiết bị khác đang bị kẹt");
+  });
+
+  /** Record a notice whose title cleans down to nothing, as one a paired node sent can, and read its title back. */
+  async function untitledNotice(dedupKey: string): Promise<string | undefined> {
+    recordNodeNotice(services, { sourceKind: "worker", category: "result", severity: "info", title: " \n\t ", dedupKey, at: AT as Instant });
+    const inbox = await request("GET", "/inbox");
+    expect(inbox.status).toBe(200);
+    return (inbox.body as { notices: { title: string }[] }).notices.find((notice) => notice.title.startsWith("("))?.title;
+  }
+
+  it("gives a notice with no title of its own the owner's word for untitled", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    expect(await untitledNotice("untitled:en")).toBe("(untitled)");
+  });
+
+  it("keeps the Vietnamese word for untitled when no language was ever chosen", async () => {
+    expect(await untitledNotice("untitled:vi")).toBe("(không có tiêu đề)");
   });
 });
 

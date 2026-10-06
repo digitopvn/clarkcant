@@ -1,4 +1,5 @@
 import {
+  type AppIntentLocale,
   type EffectCategory,
   type Instant,
   MAP_TILE_POLICY_PREFERENCE,
@@ -20,6 +21,8 @@ import {
 } from "@clarkcant/core";
 import { asJsonValue, type Database, payloadDigest } from "@clarkcant/storage";
 
+import { preferredAppIntentLocale } from "../app-intents.ts";
+import { hostText, type MapTileWords } from "../host-text.ts";
 import { mapTileCredentialProblem, readMapTileKey, readMapTilePolicy } from "../map-tiles.ts";
 
 /**
@@ -99,31 +102,31 @@ export function mapTilePolicyDigest(policy: MapTilePolicy): string {
   return payloadDigest(asJsonValue({ kind: "map-tile-policy", policy }));
 }
 
-const SETTINGS_PLACE = "Cài đặt → Tiện ích → Ô bản đồ";
-
 /**
  * Where the key goes under this policy, in the person's words: to the policy's origin only when the saved key was
  * entered for it, and otherwise nowhere, with what the person does about it.
  */
-function describeKey(policy: Exclude<MapTilePolicy, null>, savedKey: { origin?: string } | null): string {
+function describeKey(policy: Exclude<MapTilePolicy, null>, savedKey: { origin?: string } | null, say: MapTileWords): string {
   const credential = policy.credential;
-  if (credential === undefined) return "không gửi khóa";
-  const where = credential.header === undefined ? `tham số ${credential.query ?? ""}` : `header ${credential.header}`;
-  if (savedKey === null) {
-    return `cần khóa qua ${where}, nhưng chưa có khóa nào được lưu: bản đồ chỉ dùng nền ngoại tuyến cho tới khi người dùng nhập khóa trong ${SETTINGS_PLACE}`;
-  }
-  if (savedKey.origin === policy.origin) return `gửi khóa đã lưu cho ${policy.origin} qua ${where}, chỉ tới ${policy.origin}`;
-  const bound = savedKey.origin === undefined ? "không gắn với nguồn nào" : `được nhập cho ${savedKey.origin}`;
-  return (
-    `khóa đã lưu ${bound} nên KHÔNG được gửi tới ${policy.origin}: nhà cung cấp này chạy không có khóa — bản đồ chỉ dùng ` +
-    `nền ngoại tuyến — cho tới khi người dùng nhập lại khóa trong ${SETTINGS_PLACE}`
-  );
+  if (credential === undefined) return say.noKey;
+  const where = credential.header === undefined ? say.keyParameter(credential.query ?? "") : say.keyHeader(credential.header);
+  if (savedKey === null) return say.keyMissing(where);
+  if (savedKey.origin === policy.origin) return say.keySent(policy.origin, where);
+  return say.keyWithheld(savedKey.origin, policy.origin);
 }
 
-/** The card's, and the activity record's, description: whose tiles, and where the key goes. Never the key. */
-export function describeMapTilePolicy(policy: MapTilePolicy, savedKey: { origin?: string } | null): string {
-  if (policy === null) return "Tắt ô bản đồ: bản đồ chỉ dùng nền ngoại tuyến";
-  return `Bật ô bản đồ từ ${policy.origin} (${policy.attribution}, zoom tối đa ${String(policy.maxZoom)}; ${describeKey(policy, savedKey)})`;
+/**
+ * The card's, and the activity record's, description: whose tiles, and where the key goes. Never the key. Worded in
+ * `language`, the person's interface language; Vietnamese when none is named.
+ */
+export function describeMapTilePolicy(
+  policy: MapTilePolicy,
+  savedKey: { origin?: string } | null,
+  language: AppIntentLocale = "vi",
+): string {
+  const say = hostText(language).approvals.mapTiles;
+  if (policy === null) return say.off;
+  return say.on(policy.origin, policy.attribution, policy.maxZoom, describeKey(policy, savedKey, say));
 }
 
 const APPROVAL_TTL_MS = 15 * 60_000;
@@ -173,7 +176,11 @@ export function requestMapTilePolicy(
     intent: input.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: input.origin },
   });
   if (decided.kind === "deny") return { kind: "refused", code: "POLICY_REFUSED", message: decided.reason };
-  const description = describeMapTilePolicy(policy, readMapTileKey({ db: deps.db, principalId: deps.principalId }));
+  const description = describeMapTilePolicy(
+    policy,
+    readMapTileKey({ db: deps.db, principalId: deps.principalId }),
+    preferredAppIntentLocale({ db: deps.db, now: deps.now }, deps.principalId),
+  );
 
   if (decided.kind === "execute") {
     // Recorded before the write, so the activity shows what was started even if the write is then refused.
@@ -229,14 +236,17 @@ export function isMapTilePolicyPayload(payload: string): boolean {
 }
 
 /** What happened, in the person's words, after a policy Clark asked for was written. */
-export function describeMapTileReceipt(policy: MapTilePolicy, status: MapTilePolicyStatus): string {
-  if (policy === null) return "Đã tắt ô bản đồ; bản đồ chỉ dùng nền ngoại tuyến";
-  if (status.keyUsable !== false) return `Đã bật ô bản đồ từ ${policy.origin}`;
+export function describeMapTileReceipt(
+  policy: MapTilePolicy,
+  status: MapTilePolicyStatus,
+  language: AppIntentLocale = "vi",
+): string {
+  const say = hostText(language).approvals.mapTiles;
+  if (policy === null) return say.turnedOff;
+  if (status.keyUsable !== false) return say.turnedOn(policy.origin);
   return status.view.offline === "key-origin-mismatch"
-    ? `Đã đặt nhà cung cấp ô ${policy.origin}, nhưng khóa đã lưu dành cho ${status.savedKey?.origin ?? "nguồn khác"} nên không được gửi tới đó: ` +
-        `bản đồ chỉ dùng nền ngoại tuyến cho tới khi người dùng nhập lại khóa trong ${SETTINGS_PLACE}`
-    : `Đã đặt nhà cung cấp ô ${policy.origin}, nhưng chưa có khóa dùng được nên bản đồ vẫn chỉ dùng nền ngoại tuyến cho tới khi ` +
-        `người dùng nhập khóa trong ${SETTINGS_PLACE}`;
+    ? say.setButKeyElsewhere(policy.origin, status.savedKey?.origin)
+    : say.setButNoKey(policy.origin);
 }
 
 /**
@@ -277,7 +287,7 @@ export function runApprovedMapTilePolicy(
     type: "tool-activity",
     toolCallId: `map-tiles-${input.approvalId}`,
     name: "set_map_tiles",
-    label: describeMapTileReceipt(policy.data, status),
+    label: describeMapTileReceipt(policy.data, status, preferredAppIntentLocale(deps, input.principalId)),
     status: "done",
     // The approval id travels with the receipt so the card it answered reads as decided, including after a reload.
     args: { approvalId: input.approvalId, decision: "granted", ...(policy.data === null ? { clear: true } : { origin: policy.data.origin }) },

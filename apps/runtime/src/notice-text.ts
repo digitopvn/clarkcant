@@ -15,6 +15,8 @@ import type { PeerNoticeRefusalCode } from "./peer-notices.ts";
 export type PeerOutageSituation = "unreachable" | "refused" | "erroring" | "given-up";
 
 export interface NoticeText {
+  /** The title a notice is stored with when the one it was given is empty once cleaned. */
+  untitled: string;
   /** The title of the notice a dispatched task leaves when it settles. */
   workerOutcome: Record<"succeeded" | "failed" | "cancelled" | "uncertain", string>;
   packageUpdate: {
@@ -93,6 +95,7 @@ export interface NoticeText {
 }
 
 const VI: NoticeText = {
+  untitled: "(không có tiêu đề)",
   workerOutcome: {
     succeeded: "Việc chạy nền đã xong",
     failed: "Việc chạy nền không xong",
@@ -259,6 +262,7 @@ const VI: NoticeText = {
 };
 
 const EN: NoticeText = {
+  untitled: "(untitled)",
   workerOutcome: {
     succeeded: "Background work finished",
     failed: "Background work did not finish",

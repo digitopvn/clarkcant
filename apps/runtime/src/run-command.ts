@@ -209,6 +209,8 @@ export interface RunCommandOptions {
   conversationId?: string;
   /** The task this command runs for, when a task's worker asked for it. */
   taskId?: string;
+  /** The language of the notes the host adds to the output (a cut, a refusal, a failed start); Vietnamese when none is named. */
+  language?: AppIntentLocale;
 }
 
 /**
@@ -230,11 +232,12 @@ export async function runCommand(
   const timeoutMs = options.timeoutMs ?? COMMAND_LIMITS.timeoutMs;
   const maxOutputBytes = options.maxOutputBytes ?? COMMAND_LIMITS.maxOutputBytes;
   const startedAt = Date.now();
+  const say = hostText(options.language).approvals;
   if (refusingCommands) {
     return {
       exitCode: null,
       stdout: "",
-      stderr: "node đang tắt nên lệnh không được chạy; không có gì được thực hiện",
+      stderr: say.refusedWhileStopping,
       durationMs: 0,
       timedOut: false,
     };
@@ -268,7 +271,7 @@ export async function runCommand(
       // nothing more, which is a different claim.
       if (recorded >= maxOutputBytes) return;
       const room = maxOutputBytes - recorded;
-      const piece = text.length <= room ? text : `${text.slice(0, room)}\n… (đã cắt bớt)`;
+      const piece = text.length <= room ? text : `${text.slice(0, room)}${say.truncated}`;
       recorded += piece.length;
       if (into === "stdout") stdout += piece;
       else stderr += piece;
@@ -327,7 +330,7 @@ export async function runCommand(
     }, timeoutMs);
 
     child.on("error", (cause: Error) => {
-      stderr += `${stderr === "" ? "" : "\n"}không chạy được lệnh: ${cause.message}`;
+      stderr += `${stderr === "" ? "" : "\n"}${say.didNotStart(cause.message)}`;
       finish(null);
     });
     child.on("close", (code: number | null) => finish(code));
@@ -338,28 +341,25 @@ export async function runCommand(
  * What the conversation says about a finished command.
  *
  * The verdict only. The output itself belongs in the block's result, which the interface draws as a code
- * block, and saying it in both places is what made a receipt print its own output twice.
+ * block, and saying it in both places is what made a receipt print its own output twice. Worded in `language`, the
+ * person's interface language, because it is also the line the audit trail keeps; Vietnamese when none is named.
  */
-export function describeCommandOutcome(command: string, outcome: CommandOutcome): string {
-  const verdict = outcome.stopped === true
-    ? `bị dừng theo yêu cầu sau ${outcome.durationMs} ms`
-    : outcome.timedOut
-      ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
-      : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
-  return `\`${command}\` ${verdict}.`;
+export function describeCommandOutcome(command: string, outcome: CommandOutcome, language: AppIntentLocale = "vi"): string {
+  const ended = outcome.stopped === true ? "stopped" : outcome.timedOut ? "timed-out" : "exited";
+  return hostText(language).approvals.commandVerdict(command, ended, outcome.exitCode, outcome.durationMs);
 }
 
 /**
  * What the command printed, as the result a reader can copy.
  *
- * Labelled by stream, because which of the two a line came from is often the whole question, and "Không có
- * output." rather than an empty block, because a command that printed nothing is a fact worth stating.
+ * Labelled by stream, because which of the two a line came from is often the whole question, and "No output" (in
+ * `language`) rather than an empty block, because a command that printed nothing is a fact worth stating.
  */
-export function commandOutput(outcome: CommandOutcome): string {
+export function commandOutput(outcome: CommandOutcome, language: AppIntentLocale = "vi"): string {
   const parts: string[] = [];
   if (outcome.stdout.trim() !== "") parts.push(`stdout:\n${outcome.stdout.trimEnd()}`);
   if (outcome.stderr.trim() !== "") parts.push(`stderr:\n${outcome.stderr.trimEnd()}`);
-  return parts.length === 0 ? "Không có output." : parts.join("\n\n");
+  return parts.length === 0 ? hostText(language).approvals.noOutput : parts.join("\n\n");
 }
 
 /**
@@ -439,6 +439,7 @@ export async function runGuardedCommand(input: {
           env: commandEnvironment(request.env),
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
           ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+          ...(input.language === undefined ? {} : { language: input.language }),
         },
       ))
   )({
@@ -450,7 +451,7 @@ export async function runGuardedCommand(input: {
   });
   const outcome = withoutInjectedValues(ran, input.env);
 
-  const description = describeCommandOutcome(command, outcome);
+  const description = describeCommandOutcome(command, outcome, input.language);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
   const because = input.reason ?? "";
   const why = input.why ?? "";
@@ -468,7 +469,7 @@ export async function runGuardedCommand(input: {
       ),
       status: succeeded ? "done" : "failed",
       args: { command, cwd, decision: "guarded", effect: input.envelope.classification.commandClass },
-      result: commandOutput(outcome),
+      result: commandOutput(outcome, input.language),
       path: fitTail(cwd, ACTIVITY_PATH_MAX),
       startedAt,
       endedAt: at(),
@@ -632,10 +633,14 @@ export async function runApprovedCommand(input: {
     ((request) =>
       runCommand(
         { command: request.command, cwd: request.cwd },
-        { ...request, ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }) },
+        {
+          ...request,
+          ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+          ...(input.language === undefined ? {} : { language: input.language }),
+        },
       ))
   )({ command, cwd: resolvedCwd, ...budget });
-  const description = describeCommandOutcome(command, outcome);
+  const description = describeCommandOutcome(command, outcome, input.language);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
 
   const blocks: MessageBlock[] = [
@@ -648,7 +653,7 @@ export async function runApprovedCommand(input: {
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
       args: { command, cwd: resolvedCwd, approvalId: input.approvalId, decision: "granted" },
-      result: commandOutput(outcome),
+      result: commandOutput(outcome, input.language),
       path: fitTail(resolvedCwd, ACTIVITY_PATH_MAX),
       startedAt,
       endedAt: at(),

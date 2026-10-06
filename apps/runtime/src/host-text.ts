@@ -174,6 +174,22 @@ export interface HostText {
     timedOutEvidence: (took: string) => string;
     /** Where the folder a command runs in came from: the words it was found from and its path inside them. */
     foundFrom: (where: string, relPath: string) => string;
+    /** A finished command's verdict, for the audit trail and the agent: how it ended, its exit code and how long it took. */
+    commandVerdict: (command: string, ended: "stopped" | "timed-out" | "exited", exitCode: number | null, durationMs: number) => string;
+    /** A package install the card asks about; the risk tier is the lane's own identifier. */
+    installCard: (name: string, version: string, riskTier: string) => string;
+    /** A capability grant an install asks about separately. */
+    grantCard: (ref: string, name: string, version: string) => string;
+    /** A command's result when it printed nothing: a fact worth stating rather than an empty block. */
+    noOutput: string;
+    /** What ends output cut at its budget, so a cut does not read as a command that printed nothing more. */
+    truncated: string;
+    /** A command's stderr when it was not run because the node is stopping. */
+    refusedWhileStopping: string;
+    /** A command's stderr when it could not be started; `cause` is the system's own message. */
+    didNotStart: (cause: string) => string;
+    /** The map tile policy as the card and its row describe it, and the receipt once it is written. */
+    mapTiles: MapTileWords;
   };
   /**
    * The start screen's suggestions. `label` is the chip, `text` what pressing it sends, `source` the line under it.
@@ -203,6 +219,35 @@ export interface HostText {
     agentNote: string;
   };
 }
+
+/**
+ * The map tile policy in the person's words: whose tiles, and where the key goes — never the key. `where` is already
+ * worded by `keyParameter` / `keyHeader`.
+ */
+export interface MapTileWords {
+  /** The card and row for turning tiles off. */
+  off: string;
+  /** The card and row for turning tiles on from `origin`; `key` says where the key goes. */
+  on: (origin: string, attribution: string, maxZoom: number, key: string) => string;
+  noKey: string;
+  keyParameter: (name: string) => string;
+  keyHeader: (name: string) => string;
+  /** The provider needs a key and none is saved. */
+  keyMissing: (where: string) => string;
+  /** The saved key goes to this origin, and only there. */
+  keySent: (origin: string, where: string) => string;
+  /** The saved key was entered for another origin (`undefined`: for none), so it is not sent to `origin`. */
+  keyWithheld: (boundTo: string | undefined, origin: string) => string;
+  /** The receipts once a policy Clark asked for was written. */
+  turnedOff: string;
+  turnedOn: (origin: string) => string;
+  setButKeyElsewhere: (origin: string, keyOrigin: string | undefined) => string;
+  setButNoKey: (origin: string) => string;
+}
+
+/** Where a person enters the tile key, as the settings screen names it in each language. */
+const VI_MAP_KEY_PLACE = "Cài đặt → Tiện ích → Ô bản đồ";
+const EN_MAP_KEY_PLACE = "Settings → Extensions → Map tiles";
 
 /**
  * The English labels of the node's own tools, by tool name.
@@ -450,6 +495,41 @@ const VI: HostText = {
     exitEvidence: (exitCode, took) => `Lệnh thoát với mã ${exitCode ?? "không rõ"} sau ${took}.`,
     timedOutEvidence: (took) => `Lệnh bị dừng sau ${took} vì vượt thời gian cho phép.`,
     foundFrom: (where, relPath) => `được tìm thấy từ “${where}” (${relPath})`,
+    commandVerdict: (command, ended, exitCode, durationMs) =>
+      `\`${command}\` ${
+        ended === "stopped"
+          ? `bị dừng theo yêu cầu sau ${durationMs} ms`
+          : ended === "timed-out"
+            ? `hết thời gian sau ${durationMs} ms và bị dừng`
+            : `thoát với mã ${exitCode ?? "không rõ"} sau ${durationMs} ms`
+      }.`,
+    installCard: (name, version, riskTier) => `cài ${name} ${version} (${riskTier})`,
+    grantCard: (ref, name, version) => `cấp quyền ${ref} cho ${name} ${version}`,
+    noOutput: "Không có output.",
+    truncated: "\n… (đã cắt bớt)",
+    refusedWhileStopping: "node đang tắt nên lệnh không được chạy; không có gì được thực hiện",
+    didNotStart: (cause) => `không chạy được lệnh: ${cause}`,
+    mapTiles: {
+      off: "Tắt ô bản đồ: bản đồ chỉ dùng nền ngoại tuyến",
+      on: (origin, attribution, maxZoom, key) => `Bật ô bản đồ từ ${origin} (${attribution}, zoom tối đa ${String(maxZoom)}; ${key})`,
+      noKey: "không gửi khóa",
+      keyParameter: (name) => `tham số ${name}`,
+      keyHeader: (name) => `header ${name}`,
+      keyMissing: (where) =>
+        `cần khóa qua ${where}, nhưng chưa có khóa nào được lưu: bản đồ chỉ dùng nền ngoại tuyến cho tới khi người dùng nhập khóa trong ${VI_MAP_KEY_PLACE}`,
+      keySent: (origin, where) => `gửi khóa đã lưu cho ${origin} qua ${where}, chỉ tới ${origin}`,
+      keyWithheld: (boundTo, origin) =>
+        `khóa đã lưu ${boundTo === undefined ? "không gắn với nguồn nào" : `được nhập cho ${boundTo}`} nên KHÔNG được gửi tới ${origin}: ` +
+        `nhà cung cấp này chạy không có khóa — bản đồ chỉ dùng nền ngoại tuyến — cho tới khi người dùng nhập lại khóa trong ${VI_MAP_KEY_PLACE}`,
+      turnedOff: "Đã tắt ô bản đồ; bản đồ chỉ dùng nền ngoại tuyến",
+      turnedOn: (origin) => `Đã bật ô bản đồ từ ${origin}`,
+      setButKeyElsewhere: (origin, keyOrigin) =>
+        `Đã đặt nhà cung cấp ô ${origin}, nhưng khóa đã lưu dành cho ${keyOrigin ?? "nguồn khác"} nên không được gửi tới đó: ` +
+        `bản đồ chỉ dùng nền ngoại tuyến cho tới khi người dùng nhập lại khóa trong ${VI_MAP_KEY_PLACE}`,
+      setButNoKey: (origin) =>
+        `Đã đặt nhà cung cấp ô ${origin}, nhưng chưa có khóa dùng được nên bản đồ vẫn chỉ dùng nền ngoại tuyến cho tới khi ` +
+        `người dùng nhập khóa trong ${VI_MAP_KEY_PLACE}`,
+    },
   },
   suggestions: {
     recency: { unknown: "gần đây", today: "hôm nay", yesterday: "hôm qua", thisWeek: "trong tuần này", earlier: "trước đó" },
@@ -672,6 +752,41 @@ const EN: HostText = {
     exitEvidence: (exitCode, took) => `The command exited with code ${exitCode ?? "unknown"} after ${took}.`,
     timedOutEvidence: (took) => `The command was stopped after ${took} because it ran past its time limit.`,
     foundFrom: (where, relPath) => `found from “${where}” (${relPath})`,
+    commandVerdict: (command, ended, exitCode, durationMs) =>
+      `\`${command}\` ${
+        ended === "stopped"
+          ? `was stopped on request after ${durationMs} ms`
+          : ended === "timed-out"
+            ? `ran out of time after ${durationMs} ms and was stopped`
+            : `exited with code ${exitCode ?? "unknown"} after ${durationMs} ms`
+      }.`,
+    installCard: (name, version, riskTier) => `install ${name} ${version} (${riskTier})`,
+    grantCard: (ref, name, version) => `grant ${ref} to ${name} ${version}`,
+    noOutput: "No output.",
+    truncated: "\n… (truncated)",
+    refusedWhileStopping: "the node is shutting down, so the command was not run; nothing was done",
+    didNotStart: (cause) => `the command could not be started: ${cause}`,
+    mapTiles: {
+      off: "Turn map tiles off: the map uses only its offline base",
+      on: (origin, attribution, maxZoom, key) => `Turn on map tiles from ${origin} (${attribution}, max zoom ${String(maxZoom)}; ${key})`,
+      noKey: "sends no key",
+      keyParameter: (name) => `the ${name} parameter`,
+      keyHeader: (name) => `the ${name} header`,
+      keyMissing: (where) =>
+        `needs a key through ${where}, but none is saved: the map uses only its offline base until the person enters a key in ${EN_MAP_KEY_PLACE}`,
+      keySent: (origin, where) => `sends the saved key for ${origin} through ${where}, only to ${origin}`,
+      keyWithheld: (boundTo, origin) =>
+        `the saved key ${boundTo === undefined ? "is not bound to any origin" : `was entered for ${boundTo}`}, so it is NOT sent to ${origin}: ` +
+        `this provider runs without a key — the map uses only its offline base — until the person enters the key again in ${EN_MAP_KEY_PLACE}`,
+      turnedOff: "Turned map tiles off; the map uses only its offline base",
+      turnedOn: (origin) => `Turned on map tiles from ${origin}`,
+      setButKeyElsewhere: (origin, keyOrigin) =>
+        `Set the tile provider to ${origin}, but the saved key is for ${keyOrigin ?? "another origin"}, so it is not sent there: ` +
+        `the map uses only its offline base until the person enters the key again in ${EN_MAP_KEY_PLACE}`,
+      setButNoKey: (origin) =>
+        `Set the tile provider to ${origin}, but there is no usable key, so the map still uses only its offline base until ` +
+        `the person enters a key in ${EN_MAP_KEY_PLACE}`,
+    },
   },
   suggestions: {
     recency: { unknown: "recently", today: "today", yesterday: "yesterday", thisWeek: "this week", earlier: "earlier" },

@@ -9,6 +9,7 @@ import type {
 } from "@clarkcant/contracts";
 import { type Database, dismissNotificationsByKeyPrefix, recordNotification } from "@clarkcant/storage";
 
+import { ownerLocale } from "./host-text.ts";
 import { noticeText } from "./notice-text.ts";
 
 /**
@@ -53,6 +54,8 @@ export function recordNodeNotice(services: NoticeServices, notice: NodeNotice): 
     notificationId: services.conductor.newId("ntf"),
     principalId: services.runtime.identity.ownerPrincipalId,
     ...notice,
+    // Only used when the title cleans down to nothing, as one from a paired node can; in the owner's language.
+    untitled: noticeText(ownerLocale(services.runtime)).untitled,
   });
 }
 

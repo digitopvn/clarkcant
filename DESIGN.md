@@ -1226,7 +1226,9 @@ Use segmented controls, toggles and swatches:
   translated. The words the node itself writes for its owner are worded in this language when they are written, and
   never translated on the client. That covers the model note and other host cards, the rows and receipts an approved
   command or package call leaves, approval cards and the reason a task waits for one, inbox notices, start-screen
-  suggestions, and the Tools tab's labels. Two kinds of text stay as written. Text a node sends to a paired node is
+  suggestions, and the Tools tab's labels. What is already written keeps its language: switching changes what is
+  written next, so an approval card asked before the switch keeps its wording, and so does that wording where the
+  notice of its expiry quotes it. Two kinds of text stay as written. Text a node sends to a paired node is
   one, because that node's owner's language is not known. Labels and summaries authored by a package or extension are
   the other: they are shown in their author's words.
 - Theme Lab: Browse themes opens a temporary Gallery above Settings. Opening puts focus on the selected theme once;

@@ -221,6 +221,23 @@ describe("running an approved operation", () => {
     expect(result.blocks.some((block) => block.type === "text")).toBe(false);
   });
 
+  it("states the silence, and the verdict the audit keeps, in English when the person reads English", async () => {
+    const result = await runApprovedCommand({
+      payload,
+      expectedDigest: digest,
+      approvalId: "appr_1",
+      resources: owned,
+      language: "en",
+      run: async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false }),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const activity = result.blocks[0];
+    expect(activity?.type === "tool-activity" ? activity.result : undefined).toBe("No output.");
+    expect(result.description).toMatch(/^`.+` exited with code 0 after 1 ms\.$/u);
+  });
+
   it("refuses an operation whose payload changed after it was displayed", async () => {
     // The approval covers what the user read. Swapping the command afterwards — the classic
     // display-then-execute gap — has to fail here, and nothing may run.
@@ -343,6 +360,23 @@ describe("running a real command", () => {
     );
     expect(outcome.stdout.length).toBeLessThan(400);
     expect(outcome.stdout).toContain("đã cắt bớt");
+  });
+
+  it("says that it cut the output in English when the person reads English", async () => {
+    const outcome = await runCommand(
+      { command: `node -e "process.stdout.write('x'.repeat(5000))"`, cwd: process.cwd() },
+      { maxOutputBytes: 200, language: "en" },
+    );
+    expect(outcome.stdout.endsWith("\n… (truncated)")).toBe(true);
+  });
+
+  it("says a command could not be started, in the person's language", async () => {
+    const missing = join(tmpdir(), "clarkcant-run-command-no-such-folder", "deeper");
+    const english = await runCommand({ command: "echo hi", cwd: missing }, { language: "en" });
+    expect(english.exitCode).toBeNull();
+    expect(english.stderr).toMatch(/^the command could not be started: /u);
+    const vietnamese = await runCommand({ command: "echo hi", cwd: missing });
+    expect(vietnamese.stderr).toMatch(/^không chạy được lệnh: /u);
   });
 });
 
