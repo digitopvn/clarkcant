@@ -174,19 +174,34 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
   const latest = useRef({ shown, windowFor, props });
   latest.current = { shown, windowFor, props };
 
-  /** Put the row being read back where it was, and stay at the bottom when the reader is following it. */
+  /** The scroll position the anchor was last taken or restored at. */
+  const anchoredTop = useRef(0);
+
+  /**
+   * Put the row being read back where it was.
+   *
+   * This corrects a change of layout, never a scroll. A scroll the anchor has not been taken from yet - the reader's, a
+   * focus or a `scrollIntoView` that brought something into view - moved the scroll position since the anchor was
+   * taken; it is what the reader is now looking at, so the anchor is taken from it instead of the view being pulled
+   * back to where it was.
+   */
   const holdPlace = useCallback((): void => {
     const node = scroller.current;
     const rows = list.current;
     if (node === null || rows === null) return;
+    if (Math.abs(node.scrollTop - anchoredTop.current) >= 1) {
+      anchor.current = captureAnchor(node, rows);
+      anchoredTop.current = node.scrollTop;
+      return;
+    }
     const held = anchor.current;
     const slot = held === undefined ? undefined : slotById(rows, held.id);
     if (held !== undefined && slot !== undefined) {
       const delta = slot.getBoundingClientRect().top - node.getBoundingClientRect().top - held.offset;
       if (Math.abs(delta) >= 1) node.scrollTo({ top: node.scrollTop + delta, behavior: "instant" });
     }
-    if (followBottom.current === true && distanceFromBottom(node) > 0) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
-  }, [followBottom, scroller]);
+    anchoredTop.current = node.scrollTop;
+  }, [scroller]);
 
   /** Read the page before the loaded history when its top is near. */
   const nearTop = useCallback((): void => {
@@ -208,6 +223,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       const rows = list.current;
       if (rows === null) return;
       anchor.current = captureAnchor(node, rows);
+      anchoredTop.current = node.scrollTop;
       const next = { anchor: anchor.current, height: node.clientHeight };
       if (!sameTranscriptWindow(latest.current.windowFor(next), latest.current.shown)) setViewport(next);
       nearTop();
@@ -255,15 +271,32 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     [measure],
   );
 
-  /* After every change to what is mounted: keep the place, report what is drawn, and read more history if near the top. */
+  /*
+   * After every change to what is mounted: keep the place, report what is drawn, and read more history if near the top.
+   *
+   * A reader following the bottom stays at it when the messages held change - the conversation opening, a message
+   * arriving - as `use-turn-send.ts` does for the timeline; the rows are only laid out here, after it has scrolled. A
+   * settled row growing as its picture or chart loads is not something arriving, and does not pull the view down.
+   */
   const reported = useRef("");
+  const heldMessages = useRef("");
   useLayoutEffect(() => {
     const rows = list.current;
+    const node = scroller.current;
     if (rows !== null && gap.current === 0) {
       const parsed = Number.parseFloat(getComputedStyle(rows).rowGap);
       gap.current = Number.isFinite(parsed) ? parsed : 0;
     }
     holdPlace();
+    const held = `${ids[0] ?? ""}\u0000${ids.at(-1) ?? ""}\u0000${String(ids.length)}`;
+    if (held !== heldMessages.current) {
+      heldMessages.current = held;
+      if (node !== null && rows !== null && followBottom.current === true && distanceFromBottom(node) > 0) {
+        node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+        anchor.current = captureAnchor(node, rows);
+        anchoredTop.current = node.scrollTop;
+      }
+    }
     const mounted = new Set(shown.mounted.map((index) => ids[index]!));
     // A row that left the document enters without animation if it comes back.
     for (const id of enters.current.keys()) if (!mounted.has(id)) enters.current.set(id, false);
