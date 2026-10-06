@@ -62,7 +62,23 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   // starts only where a run of address characters starts, so each run is scanned once rather than from every boundary
   // inside it.
   { label: "email", pattern: /(?<![A-Za-z0-9._%+-])\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g },
-  { label: "phone", pattern: /\b(?:\+?\d[\s-]?){9,}\b/g },
+  // Nine or more digits joined by single spaces or dashes, with an optional `+` and area-code parentheses. A match does
+  // not start:
+  // - after a word character, `+` or `(`;
+  // - after a single digit that itself follows a dash or a dot, then a dash, or after a digit and a dot: the tail of
+  //   `4-5-20250929` or `4.1-2025-04-14` is part of an identifier, not a number of its own (a label that ends in a
+  //   digit, as in `Q1-0912345678` or `A1-555-123-4567`, still starts one);
+  // - after a letter and a dash when one digit and a separator follow, which is a dated model id such as
+  //   `claude-sonnet-4-5-20250929` (`Hotline-0912345678` is still a number).
+  // A match ends on a digit, so the space after a number is left in place, or on the `)` closing parentheses the
+  // number opened, so `(5551234567)` is replaced whole. It never ends before `:` and a digit, so a date and time such as
+  // `2025-09-29 12:34` is not a number. Each digit is one step with a fixed, optional prefix and suffix, every
+  // lookaround but one reads at most four characters, and the check for an opening `(` reads back no further than
+  // the previous parenthesis, so the shape stays linear on any input.
+  {
+    label: "phone",
+    pattern: /(?<![\w+(]|[A-Za-z]-(?=\d[\s-])|[-.]\d\)?-|\d\.)(?:[(+]{0,2}\d\)?[\s-]?){9,}(?:(?<=\d)|(?<=\([\d\s+-]*\d\)))(?!\w|:\d)/g,
+  },
 ];
 
 /**

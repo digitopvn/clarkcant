@@ -48,6 +48,61 @@ describe("the class of a text", () => {
     expect(dataClassOfText("file ở C:\\Users\\duy\\notes.txt")).toBe("confidential");
   });
 
+  it("is confidential for a phone number however it is written", () => {
+    // Assembled here so no scanner reads a literal phone number in this file.
+    const local = ["0912", "345", "678"];
+    const us = ["555", "123", "4567"];
+    const phones = [
+      `+84 ${["912", "345", "678"].join("-")}`,
+      `(555) ${us.slice(1).join("-")}`,
+      us.join("-"),
+      local.join(" "),
+      `call ${us.join("-")} tomorrow`,
+      `số ${local.join("")}.`,
+      // After a label that ends in a digit, or a word joined to the number by a dash.
+      `Q1 ${local.join("")}`,
+      `v2 ${local.join(" ")}`,
+      `x1 ${us.join(" ")}`,
+      `Room A1\n${local.join("")}`,
+      `id-42 ${us.join(" ")}`,
+      `Hotline-${local.join("")}`,
+      `Smith-${us.join("-")}`,
+      // Joined by a dash to a label that ends in a digit.
+      `Q1-${local.join("")}`,
+      `A1-${us.join("-")}`,
+      `P12-${local[0] ?? ""} ${local.slice(1).join(" ")}`,
+      `ext12-${us.join("")}`,
+      `Room B2-${us.join("-")}`,
+      `v2-${local.join("")}`,
+      `id42-${local.join("")}`,
+      `"Q1-${local.join("")}"`,
+      // After an abbreviation or a list number and a dot.
+      `Tel. ${local.join("")}`,
+      `1. ${local.join("")}`,
+    ];
+    for (const text of phones) expect(dataClassOfText(text), text).toBe("confidential");
+  });
+
+  it("is internal for a dated model id or a date and time, which only look like runs of digits", () => {
+    const ids = [
+      "claude-sonnet-4-5-20250929",
+      "claude-opus-4-1-20250805",
+      "claude-haiku-4-5-20251001",
+      "claude-3-5-sonnet-20241022",
+      "gpt-4o-2024-08-06",
+      "gpt-4.1-2025-04-14",
+      "gpt-5.1-2025-11-13",
+      "o3-2025-04-16",
+      "jev-1.13.0",
+      "2025-09-29 12:34",
+      "2025-09-29 12:34:56",
+    ];
+    for (const id of ids) {
+      expect(dataClassOfText(`switched the model to ${id}`), id).toBe("internal");
+      expect(redactSecrets(`model ${id} answered`), id).toBe(`model ${id} answered`);
+    }
+  });
+
   it("is internal for everything else, including identifiers and digests", () => {
     expect(dataClassOfText("Dự án dùng SQLite.")).toBe("internal");
     expect(dataClassOfText("the key_value_store module and npm-registry-url")).toBe("internal");
