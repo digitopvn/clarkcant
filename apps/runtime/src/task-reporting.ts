@@ -2,7 +2,7 @@ import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { reportDelegatedOutcome, reportDelegatedStatus } from "./delegation.ts";
 import { unknownEffectsNotice } from "./effect-notices.ts";
-import { ownerHostText } from "./host-text.ts";
+import { ownerHostText, ownerLocale } from "./host-text.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -46,12 +46,13 @@ export function taskDispatchReports(
       // is reported as that effect, under the same key: it is the one thing the person has to do something about, and
       // the effect sweep would otherwise say it a second time.
       let effectNotice: ReturnType<typeof unknownEffectsNotice>;
+      const language = ownerLocale(services.runtime);
       try {
-        effectNotice = unknownEffectsNotice(services.runtime.db, taskId, at);
+        effectNotice = unknownEffectsNotice(services.runtime.db, taskId, at, { language });
       } catch (cause) {
         process.stderr.write(`inbox: could not read the effects of task ${taskId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
       }
-      tryRecordNodeNotice(services, effectNotice ?? workerSettledNotice({ taskId, conversationId, outcome, message, at }));
+      tryRecordNodeNotice(services, effectNotice ?? workerSettledNotice({ taskId, conversationId, outcome, message, at, language }));
       // A task a peer handed over is answered there too, which is how its own task settles.
       const { runtime, conductor } = services;
       // The files its worker wrote go back with the answer, read now, before the task's worktree is taken away.

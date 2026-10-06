@@ -253,3 +253,35 @@ describe("continuing unfinished work", () => {
     }
   });
 });
+
+describe("the words the chips are written in", () => {
+  /** Any letter only Vietnamese writes. */
+  const VIETNAMESE_LETTER = /[ăâđêôơưạảãàáậầấẩẫặằắẳẵẹẻẽèéệềếểễịỉĩìíọỏõòóộồốổỗợờớởỡụủũùúựừứửữỵỷỹỳýĐ]/iu;
+
+  function seed(): void {
+    conversation("conv_one");
+    task("task_a", "conv_one", "write the report");
+    upsertProject(db, project("proj_one", "clarkcant"));
+  }
+
+  it("writes every chip, the sentence it sends and its source line in English when the interface is English", () => {
+    seed();
+    const offered = buildSuggestions({ db, nodeId: NODE, now: () => NOW, principalId: PRINCIPAL, language: "en" });
+    expect(offered.length).toBeGreaterThan(1);
+    for (const item of offered) {
+      expect(`${item.label} ${item.text} ${item.sourceLabel ?? ""}`, item.source).not.toMatch(VIETNAMESE_LETTER);
+    }
+    expect(offered.find((item) => item.source === "task")?.text).toBe("Continue: write the report");
+  });
+
+  it("keeps the same Vietnamese words when no language is named", () => {
+    seed();
+    expect(suggest().find((item) => item.source === "task")?.text).toBe("Tiếp tục việc: write the report");
+  });
+
+  it("strips the prefix an offer added in either language, so switching language does not stack them", () => {
+    expect(withoutContinuePrefix("Continue: Tiếp tục việc: write the report")).toBe("write the report");
+    expect(withoutContinuePrefix("Tiếp tục việc: Continue: write the report")).toBe("write the report");
+    expect(withoutContinuePrefix("Continue:")).toBe("Continue:");
+  });
+});

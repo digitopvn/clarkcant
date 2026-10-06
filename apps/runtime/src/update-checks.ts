@@ -9,6 +9,7 @@ import {
 } from "@clarkcant/core";
 import { skippedVersionsOf, type SkippedVersionKind } from "@clarkcant/storage";
 
+import { ownerLocale } from "./host-text.ts";
 import {
   packageUpdateKeyPrefixes,
   packageUpdateNotice,
@@ -203,6 +204,7 @@ export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport 
           sourceKind: newest.sourceKind,
           lane: newest.lane,
           at: input.now(),
+          language: ownerLocale(input.services.runtime),
         }),
         packageUpdateKeyPrefixes(installed.packageId),
       );

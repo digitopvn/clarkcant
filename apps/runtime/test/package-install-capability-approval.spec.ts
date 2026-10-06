@@ -650,3 +650,69 @@ describe("the pending capability questions Settings puts to the person", () => {
     expect(((await request({ method: "GET", path: "/packages/approvals" })).body as { approvals: unknown[] }).approvals).toEqual([]);
   });
 });
+
+describe("the questions an install asks are worded in the owner's language", () => {
+  function chooseEnglish(): void {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT as never },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", value: "en", source: "user" },
+    );
+    if (!written.ok) throw new Error(written.message);
+  }
+
+  function askAbout(category: "local-write" | "destructive"): void {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT as never },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [{ effectCategory: category, decision: "ask" }] },
+        source: "user",
+      },
+    );
+    if (!written.ok) throw new Error(written.message);
+  }
+
+  function descriptionOf(approvalId: unknown): string {
+    const row = services.runtime.db.prepare("SELECT operation_description FROM approvals WHERE approval_id = ?").get(String(approvalId)) as
+      | { operation_description: string }
+      | undefined;
+    if (row === undefined) throw new Error(`no approval ${String(approvalId)}`);
+    return row.operation_description;
+  }
+
+  async function install(): Promise<Record<string, unknown>> {
+    writeIndex([directoryEntry()]);
+    const response = await request({ method: "POST", path: "/packages/install", body: { packageId: PACKAGE_ID, version: VERSION, localDigest: DIGEST } });
+    expect(response.status).toBeLessThan(300);
+    return response.body as Record<string, unknown>;
+  }
+
+  function firstPending(body: Record<string, unknown>): string {
+    const [pending] = body["pendingCapabilities"] as readonly { approvalId: string }[];
+    if (pending === undefined) throw new Error("expected one pending capability");
+    return pending.approvalId;
+  }
+
+  it("asks for the install itself in English when the owner chose English", async () => {
+    chooseEnglish();
+    askAbout("local-write");
+    expect(descriptionOf((await install())["approvalId"])).toBe("install Capability approval fixture 1.0.0 (service)");
+  });
+
+  it("asks for the install itself in Vietnamese by default", async () => {
+    askAbout("local-write");
+    expect(descriptionOf((await install())["approvalId"])).toBe("cài Capability approval fixture 1.0.0 (service)");
+  });
+
+  it("asks for a capability grant in English when the owner chose English", async () => {
+    chooseEnglish();
+    askAbout("destructive");
+    expect(descriptionOf(firstPending(await install()))).toBe(`grant ${REQUESTED_CAPABILITY} to Capability approval fixture 1.0.0`);
+  });
+
+  it("asks for a capability grant in Vietnamese by default", async () => {
+    askAbout("destructive");
+    expect(descriptionOf(firstPending(await install()))).toBe(`cấp quyền ${REQUESTED_CAPABILITY} cho Capability approval fixture 1.0.0`);
+  });
+});

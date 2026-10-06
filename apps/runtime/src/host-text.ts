@@ -1,4 +1,4 @@
-import { type AppIntentLocale, nowInstant } from "@clarkcant/contracts";
+import { type AppIntentConfirmationFailure, type AppIntentLocale, type EffectCategory, nowInstant } from "@clarkcant/contracts";
 import type { Database } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "./app-intents.ts";
@@ -92,6 +92,14 @@ export interface HostText {
     remind: (summary: string, message: string) => string;
     parked: (summary: string, because: string, reason: string, taskId: string) => string;
     parkedTitle: string;
+    /** Why a run waits: nothing here can run the capability it needs yet. */
+    waitingForCapability: (capabilityRef: string) => string;
+    /** Why a run is refused: the folder it would work in cannot be checked, or is a clone of another repository. */
+    noOriginRemote: (path: string, repository: string) => string;
+    wrongClone: (path: string, where: string, expected: string) => string;
+    notGitHubRemote: string;
+    /** Why a run for another node is refused: no live grant lets that node run it. */
+    noLiveGrant: (executor: string) => string;
     started: (summary: string, because: string, taskId: string, executionNodeId: string) => string;
     deadSignalTitle: string;
     deadSignal: (topic: string, error: string) => string;
@@ -146,8 +154,118 @@ export interface HostText {
     notTaken: (name: string, reason: string | undefined) => string;
     receivedLater: (name: string, peer: string, taskId: string) => string;
     failedLater: (name: string, peer: string, taskId: string, message: string) => string;
+    /** The evidence a received file leaves on its task: its size, the node it came from, and that its digest matched. */
+    receivedEvidence: (name: string, bytes: number, peer: string) => string;
+  };
+  /**
+   * What an approval asks about and the row it leaves once it ran: the card's description of the operation, the reason
+   * a parked task gives, and the label of the receipt an approved command or capability call writes.
+   */
+  approvals: {
+    /** An effect category as a person reads it, for a capability that has no summary of its own. */
+    effectCategory: Record<EffectCategory, string>;
+    /** What a task needs approval for when its capability says nothing more than its effect category. */
+    categoryEffect: (category: EffectCategory) => string;
+    /** Why a task is parked until someone approves `effect`. */
+    needsApproval: (effect: string) => string;
+    /** A browser task's approval: the sites, as hosts, and the request. */
+    browserTask: (hosts: string, request: string) => string;
+    /** A package capability call the card asks about. */
+    capabilityCall: (summary: string, ref: string) => string;
+    /** A command the card asks about; the folder's provenance and the model's reason follow it. */
+    commandCard: (cwd: string) => string;
+    /** The row a command leaves when nothing more specific was said about it. */
+    commandRan: (cwd: string) => string;
+    /** The row an approved capability call leaves. */
+    capabilityRan: (outcome: "job" | "done" | "failed", ref: string) => string;
+    /** A command's receipt: the code it exited with (`null` when there was none) and how long it took, already worded. */
+    exitEvidence: (exitCode: number | null, took: string) => string;
+    /** A command's receipt when it ran out of time. */
+    timedOutEvidence: (took: string) => string;
+    /** Where the folder a command runs in came from: the words it was found from and its path inside them. */
+    foundFrom: (where: string, relPath: string) => string;
+    /** A finished command's verdict, for the audit trail and the agent: how it ended, its exit code and how long it took. */
+    commandVerdict: (command: string, ended: "stopped" | "timed-out" | "exited", exitCode: number | null, durationMs: number) => string;
+    /** A package install the card asks about; the risk tier is the lane's own identifier. */
+    installCard: (name: string, version: string, riskTier: string) => string;
+    /** A capability grant an install asks about separately. */
+    grantCard: (ref: string, name: string, version: string) => string;
+    /** A command's result when it printed nothing: a fact worth stating rather than an empty block. */
+    noOutput: string;
+    /** What ends output cut at its budget, so a cut does not read as a command that printed nothing more. */
+    truncated: string;
+    /** A command's stderr when it was not run because the node is stopping. */
+    refusedWhileStopping: string;
+    /** A command's stderr when it could not be started; `cause` is the system's own message. */
+    didNotStart: (cause: string) => string;
+    /** The map tile policy as the card and its row describe it, and the receipt once it is written. */
+    mapTiles: MapTileWords;
+  };
+  /**
+   * The start screen's suggestions. `label` is the chip, `text` what pressing it sends, `source` the line under it.
+   * `recency` is how long ago, in words computed from the instant.
+   */
+  suggestions: {
+    recency: { unknown: string; today: string; yesterday: string; thisWeek: string; earlier: string };
+    /** What a "continue this" offer puts in front of the task's goal. */
+    continuePrefix: string;
+    unfinishedSource: (recency: string) => string;
+    pinnedLabel: string;
+    pinnedText: string;
+    pinnedSource: (recency: string) => string;
+    latestLabel: string;
+    latestText: string;
+    latestSource: string;
+    memoryLabel: (text: string) => string;
+    memoryText: (text: string) => string;
+    memorySource: (recency: string) => string;
+    projectLabel: (name: string) => string;
+    projectText: (name: string) => string;
+    projectSource: string;
+  };
+  /**
+   * The answer to a spoken or typed request that needed confirming: why a confirmation could not be used, and what is
+   * said when the person declines. An expired one and a wrong one lead to different next steps, so each is spelled out.
+   */
+  confirmations: {
+    failed: Record<AppIntentConfirmationFailure, string>;
+    declined: string;
+  };
+  /** The Tools tab: the agent's own tools, which this node did not define, and the note under them. */
+  toolsTab: {
+    agentTools: Readonly<Record<"read" | "write" | "edit" | "bash", { label: string; description: string }>>;
+    agentNote: string;
   };
 }
+
+/**
+ * The map tile policy in the person's words: whose tiles, and where the key goes — never the key. `where` is already
+ * worded by `keyParameter` / `keyHeader`.
+ */
+export interface MapTileWords {
+  /** The card and row for turning tiles off. */
+  off: string;
+  /** The card and row for turning tiles on from `origin`; `key` says where the key goes. */
+  on: (origin: string, attribution: string, maxZoom: number, key: string) => string;
+  noKey: string;
+  keyParameter: (name: string) => string;
+  keyHeader: (name: string) => string;
+  /** The provider needs a key and none is saved. */
+  keyMissing: (where: string) => string;
+  /** The saved key goes to this origin, and only there. */
+  keySent: (origin: string, where: string) => string;
+  /** The saved key was entered for another origin (`undefined`: for none), so it is not sent to `origin`. */
+  keyWithheld: (boundTo: string | undefined, origin: string) => string;
+  /** The receipts once a policy Clark asked for was written. */
+  turnedOff: string;
+  turnedOn: (origin: string) => string;
+  setButKeyElsewhere: (origin: string, keyOrigin: string | undefined) => string;
+  setButNoKey: (origin: string) => string;
+}
+
+/** Where a person enters the tile key, as the settings screen names it in each language. */
+const VI_MAP_KEY_PLACE = "Cài đặt → Tiện ích → Ô bản đồ";
+const EN_MAP_KEY_PLACE = "Settings → Extensions → Map tiles";
 
 /**
  * The English labels of the node's own tools, by tool name.
@@ -189,6 +307,26 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   terminal_read: "Read the terminal",
   terminal_run: "Run a command in the terminal",
   update_automation: "Change an automation",
+};
+
+const VI_EFFECT_CATEGORY: Record<EffectCategory, string> = {
+  read: "đọc dữ liệu",
+  "local-write": "thay đổi tệp trên máy này",
+  "external-write": "gửi thay đổi ra ngoài máy này",
+  destructive: "thực hiện một thao tác không thể hoàn tác",
+  financial: "thực hiện một giao dịch tài chính",
+  communication: "gửi một liên lạc (email, tin nhắn, ...)",
+  "media-capture": "ghi âm hoặc quay hình",
+};
+
+const EN_EFFECT_CATEGORY: Record<EffectCategory, string> = {
+  read: "read data",
+  "local-write": "change files on this machine",
+  "external-write": "send changes outside this machine",
+  destructive: "do something that cannot be undone",
+  financial: "make a financial transaction",
+  communication: "send a message (email, chat, ...)",
+  "media-capture": "record audio or video",
 };
 
 const VI: HostText = {
@@ -308,6 +446,11 @@ const VI: HostText = {
     parked: (summary, because, reason, taskId) =>
       `Việc tự động "${summary}" đã khớp ${because}, nhưng đang chờ: ${reason}. Task ${taskId} sẽ tiếp tục khi có thứ chạy được nó.`,
     parkedTitle: "Việc tự động đang chờ",
+    waitingForCapability: (capabilityRef) => `đang chờ capability ${capabilityRef}`,
+    noOriginRemote: (path, repository) => `${path} không có remote origin nên không thể đối chiếu với ${repository}`,
+    wrongClone: (path, where, expected) => `${path} là bản clone của ${where}, không phải ${expected}`,
+    notGitHubRemote: "một remote không phải repository GitHub",
+    noLiveGrant: (executor) => `không còn quyền nào đang hiệu lực cho phép ${executor} chạy việc này; hãy nhờ Clark thiết lập lại`,
     started: (summary, because, taskId, executionNodeId) =>
       `Việc tự động "${summary}" bắt đầu vì ${because}: task ${taskId} đang chạy trên ${executionNodeId}.`,
     deadSignalTitle: "Một tín hiệu không xử lý được",
@@ -359,6 +502,92 @@ const VI: HostText = {
     notTaken: (name, reason) => `không nhận ${name}: ${reason ?? "không rõ lý do"}`,
     receivedLater: (name, peer, taskId) => `Đã nhận tệp ${name} từ ${peer} cho task ${taskId}.`,
     failedLater: (name, peer, taskId, message) => `Không nhận được tệp ${name} từ ${peer} cho task ${taskId}: ${message}.`,
+    receivedEvidence: (name, bytes, peer) => `${name} (${String(bytes)} byte) từ ${peer}, khớp digest đã đề nghị`,
+  },
+  approvals: {
+    effectCategory: VI_EFFECT_CATEGORY,
+    categoryEffect: (category) => `một thao tác ${VI_EFFECT_CATEGORY[category]}`,
+    needsApproval: (effect) =>
+      `Cần được duyệt trước khi thực hiện: ${effect}. Việc chưa chạy; ` +
+      `nếu được duyệt việc sẽ tiếp tục, nếu bị từ chối hoặc hết hạn thì việc sẽ dừng hẳn.`,
+    browserTask: (hosts, request) => `dùng trình duyệt trên ${hosts} cho việc “${request}”`,
+    capabilityCall: (summary, ref) => `Gọi ${summary} (${ref})`,
+    commandCard: (cwd) => `Chạy một lệnh trong ${cwd}`,
+    commandRan: (cwd) => `Chạy lệnh trong ${cwd}`,
+    capabilityRan: (outcome, ref) =>
+      outcome === "job" ? `Đã bắt đầu job cho ${ref}` : outcome === "done" ? `Đã gọi ${ref}` : `Không gọi được ${ref}`,
+    exitEvidence: (exitCode, took) => `Lệnh thoát với mã ${exitCode ?? "không rõ"} sau ${took}.`,
+    timedOutEvidence: (took) => `Lệnh bị dừng sau ${took} vì vượt thời gian cho phép.`,
+    foundFrom: (where, relPath) => `được tìm thấy từ “${where}” (${relPath})`,
+    commandVerdict: (command, ended, exitCode, durationMs) =>
+      `\`${command}\` ${
+        ended === "stopped"
+          ? `bị dừng theo yêu cầu sau ${durationMs} ms`
+          : ended === "timed-out"
+            ? `hết thời gian sau ${durationMs} ms và bị dừng`
+            : `thoát với mã ${exitCode ?? "không rõ"} sau ${durationMs} ms`
+      }.`,
+    installCard: (name, version, riskTier) => `cài ${name} ${version} (${riskTier})`,
+    grantCard: (ref, name, version) => `cấp quyền ${ref} cho ${name} ${version}`,
+    noOutput: "Không có output.",
+    truncated: "\n… (đã cắt bớt)",
+    refusedWhileStopping: "node đang tắt nên lệnh không được chạy; không có gì được thực hiện",
+    didNotStart: (cause) => `không chạy được lệnh: ${cause}`,
+    mapTiles: {
+      off: "Tắt ô bản đồ: bản đồ chỉ dùng nền ngoại tuyến",
+      on: (origin, attribution, maxZoom, key) => `Bật ô bản đồ từ ${origin} (${attribution}, zoom tối đa ${String(maxZoom)}; ${key})`,
+      noKey: "không gửi khóa",
+      keyParameter: (name) => `tham số ${name}`,
+      keyHeader: (name) => `header ${name}`,
+      keyMissing: (where) =>
+        `cần khóa qua ${where}, nhưng chưa có khóa nào được lưu: bản đồ chỉ dùng nền ngoại tuyến cho tới khi người dùng nhập khóa trong ${VI_MAP_KEY_PLACE}`,
+      keySent: (origin, where) => `gửi khóa đã lưu cho ${origin} qua ${where}, chỉ tới ${origin}`,
+      keyWithheld: (boundTo, origin) =>
+        `khóa đã lưu ${boundTo === undefined ? "không gắn với nguồn nào" : `được nhập cho ${boundTo}`} nên KHÔNG được gửi tới ${origin}: ` +
+        `nhà cung cấp này chạy không có khóa — bản đồ chỉ dùng nền ngoại tuyến — cho tới khi người dùng nhập lại khóa trong ${VI_MAP_KEY_PLACE}`,
+      turnedOff: "Đã tắt ô bản đồ; bản đồ chỉ dùng nền ngoại tuyến",
+      turnedOn: (origin) => `Đã bật ô bản đồ từ ${origin}`,
+      setButKeyElsewhere: (origin, keyOrigin) =>
+        `Đã đặt nhà cung cấp ô ${origin}, nhưng khóa đã lưu dành cho ${keyOrigin ?? "nguồn khác"} nên không được gửi tới đó: ` +
+        `bản đồ chỉ dùng nền ngoại tuyến cho tới khi người dùng nhập lại khóa trong ${VI_MAP_KEY_PLACE}`,
+      setButNoKey: (origin) =>
+        `Đã đặt nhà cung cấp ô ${origin}, nhưng chưa có khóa dùng được nên bản đồ vẫn chỉ dùng nền ngoại tuyến cho tới khi ` +
+        `người dùng nhập khóa trong ${VI_MAP_KEY_PLACE}`,
+    },
+  },
+  suggestions: {
+    recency: { unknown: "gần đây", today: "hôm nay", yesterday: "hôm qua", thisWeek: "trong tuần này", earlier: "trước đó" },
+    continuePrefix: "Tiếp tục việc: ",
+    unfinishedSource: (recency) => `việc còn dang dở, ${recency}`,
+    pinnedLabel: "Mở lại widget đã ghim",
+    pinnedText: "Mở lại widget mà tôi đã ghim trong phiên gần nhất",
+    pinnedSource: (recency) => `bạn đã ghim, ${recency}`,
+    latestLabel: "Mở lại phiên gần nhất",
+    latestText: "Cho tui xem lại phiên làm việc gần nhất",
+    latestSource: "tiếp tục từ chỗ đã dừng",
+    memoryLabel: (text) => `Nhớ lại: ${text}`,
+    memoryText: (text) => `Cho tui xem lại điều đã ghi nhớ: ${text}`,
+    memorySource: (recency) => `bạn đã ghi nhớ, ${recency}`,
+    projectLabel: (name) => `Mở dự án ${name}`,
+    projectText: (name) => `Mở dự án ${name}`,
+    projectSource: "thư mục dùng gần đây",
+  },
+  confirmations: {
+    failed: {
+      CONFIRMATION_NOT_FOUND: "Không có lời xác nhận nào đang chờ.",
+      CONFIRMATION_EXPIRED: "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé.",
+      CONFIRMATION_ALREADY_USED: "Lời xác nhận này đã được dùng rồi.",
+    },
+    declined: "Tôi đã bỏ qua câu lệnh đó.",
+  },
+  toolsTab: {
+    agentTools: {
+      read: { label: "Đọc tệp", description: "Đọc nội dung một tệp trong thư mục làm việc." },
+      write: { label: "Ghi tệp", description: "Tạo hoặc thay thế một tệp." },
+      edit: { label: "Sửa tệp", description: "Thay một đoạn chính xác trong tệp." },
+      bash: { label: "Chạy lệnh", description: "Chạy một lệnh shell trong thư mục làm việc." },
+    },
+    agentNote: "Công cụ gốc của pi. Extension mà pi tự nạp thêm thì không liệt kê ở đây.",
   },
 };
 
@@ -488,6 +717,11 @@ const EN: HostText = {
     parked: (summary, because, reason, taskId) =>
       `The automation "${summary}" matched ${because}, but is waiting: ${reason}. Task ${taskId} carries on once something can run it.`,
     parkedTitle: "An automation is waiting",
+    waitingForCapability: (capabilityRef) => `waiting for capability ${capabilityRef}`,
+    noOriginRemote: (path, repository) => `${path} has no origin remote, so it cannot be checked against ${repository}`,
+    wrongClone: (path, where, expected) => `${path} is a clone of ${where}, not ${expected}`,
+    notGitHubRemote: "a remote that is not a GitHub repository",
+    noLiveGrant: (executor) => `no live grant lets ${executor} run it any more; ask Clark to set it up again`,
     started: (summary, because, taskId, executionNodeId) =>
       `The automation "${summary}" started because of ${because}: task ${taskId} is running on ${executionNodeId}.`,
     deadSignalTitle: "A signal could not be handled",
@@ -539,12 +773,109 @@ const EN: HostText = {
     notTaken: (name, reason) => `did not take ${name}: ${reason ?? "no reason given"}`,
     receivedLater: (name, peer, taskId) => `Received the file ${name} from ${peer} for task ${taskId}.`,
     failedLater: (name, peer, taskId, message) => `Did not receive the file ${name} from ${peer} for task ${taskId}: ${message}.`,
+    receivedEvidence: (name, bytes, peer) => `${name} (${String(bytes)} bytes) from ${peer}, matching the offered digest`,
+  },
+  approvals: {
+    effectCategory: EN_EFFECT_CATEGORY,
+    categoryEffect: (category) => `an action to ${EN_EFFECT_CATEGORY[category]}`,
+    needsApproval: (effect) =>
+      `Needs approval before it runs: ${effect}. Nothing has run yet; ` +
+      "if it is approved the work carries on, and if it is denied or expires the work stops for good.",
+    browserTask: (hosts, request) => `use the browser on ${hosts} for “${request}”`,
+    capabilityCall: (summary, ref) => `Call ${summary} (${ref})`,
+    commandCard: (cwd) => `Run a command in ${cwd}`,
+    commandRan: (cwd) => `Ran a command in ${cwd}`,
+    capabilityRan: (outcome, ref) =>
+      outcome === "job" ? `Started a job for ${ref}` : outcome === "done" ? `Called ${ref}` : `Could not call ${ref}`,
+    exitEvidence: (exitCode, took) => `The command exited with code ${exitCode ?? "unknown"} after ${took}.`,
+    timedOutEvidence: (took) => `The command was stopped after ${took} because it ran past its time limit.`,
+    foundFrom: (where, relPath) => `found from “${where}” (${relPath})`,
+    commandVerdict: (command, ended, exitCode, durationMs) =>
+      `\`${command}\` ${
+        ended === "stopped"
+          ? `was stopped on request after ${durationMs} ms`
+          : ended === "timed-out"
+            ? `ran out of time after ${durationMs} ms and was stopped`
+            : `exited with code ${exitCode ?? "unknown"} after ${durationMs} ms`
+      }.`,
+    installCard: (name, version, riskTier) => `install ${name} ${version} (${riskTier})`,
+    grantCard: (ref, name, version) => `grant ${ref} to ${name} ${version}`,
+    noOutput: "No output.",
+    truncated: "\n… (truncated)",
+    refusedWhileStopping: "the node is shutting down, so the command was not run; nothing was done",
+    didNotStart: (cause) => `the command could not be started: ${cause}`,
+    mapTiles: {
+      off: "Turn map tiles off: the map uses only its offline base",
+      on: (origin, attribution, maxZoom, key) => `Turn on map tiles from ${origin} (${attribution}, max zoom ${String(maxZoom)}; ${key})`,
+      noKey: "sends no key",
+      keyParameter: (name) => `the ${name} parameter`,
+      keyHeader: (name) => `the ${name} header`,
+      keyMissing: (where) =>
+        `needs a key through ${where}, but none is saved: the map uses only its offline base until the person enters a key in ${EN_MAP_KEY_PLACE}`,
+      keySent: (origin, where) => `sends the saved key for ${origin} through ${where}, only to ${origin}`,
+      keyWithheld: (boundTo, origin) =>
+        `the saved key ${boundTo === undefined ? "is not bound to any origin" : `was entered for ${boundTo}`}, so it is NOT sent to ${origin}: ` +
+        `this provider runs without a key — the map uses only its offline base — until the person enters the key again in ${EN_MAP_KEY_PLACE}`,
+      turnedOff: "Turned map tiles off; the map uses only its offline base",
+      turnedOn: (origin) => `Turned on map tiles from ${origin}`,
+      setButKeyElsewhere: (origin, keyOrigin) =>
+        `Set the tile provider to ${origin}, but the saved key is for ${keyOrigin ?? "another origin"}, so it is not sent there: ` +
+        `the map uses only its offline base until the person enters the key again in ${EN_MAP_KEY_PLACE}`,
+      setButNoKey: (origin) =>
+        `Set the tile provider to ${origin}, but there is no usable key, so the map still uses only its offline base until ` +
+        `the person enters a key in ${EN_MAP_KEY_PLACE}`,
+    },
+  },
+  suggestions: {
+    recency: { unknown: "recently", today: "today", yesterday: "yesterday", thisWeek: "this week", earlier: "earlier" },
+    continuePrefix: "Continue: ",
+    unfinishedSource: (recency) => `unfinished work, ${recency}`,
+    pinnedLabel: "Reopen the pinned widget",
+    pinnedText: "Reopen the widget I pinned in the last session",
+    pinnedSource: (recency) => `you pinned it, ${recency}`,
+    latestLabel: "Reopen the last session",
+    latestText: "Show me the last session again",
+    latestSource: "carry on where you left off",
+    memoryLabel: (text) => `Recall: ${text}`,
+    memoryText: (text) => `Show me what was remembered: ${text}`,
+    memorySource: (recency) => `saved to memory, ${recency}`,
+    projectLabel: (name) => `Open the project ${name}`,
+    projectText: (name) => `Open the project ${name}`,
+    projectSource: "a folder used recently",
+  },
+  confirmations: {
+    failed: {
+      CONFIRMATION_NOT_FOUND: "No confirmation is waiting.",
+      CONFIRMATION_EXPIRED: "The confirmation has expired. Please say the command again.",
+      CONFIRMATION_ALREADY_USED: "This confirmation has already been used.",
+    },
+    declined: "I skipped that command.",
+  },
+  toolsTab: {
+    agentTools: {
+      read: { label: "Read a file", description: "Read the contents of a file in the working folder." },
+      write: { label: "Write a file", description: "Create or replace a file." },
+      edit: { label: "Edit a file", description: "Replace an exact passage in a file." },
+      bash: { label: "Run a command", description: "Run a shell command in the working folder." },
+    },
+    agentNote: "pi's own tools. Extensions pi loads by itself are not listed here.",
   },
 };
 
 /** The host's words in one language; Vietnamese when none is named. */
 export function hostText(locale: AppIntentLocale = "vi"): HostText {
   return locale === "en" ? EN : VI;
+}
+
+/**
+ * The prefix a "continue this" suggestion is written with, in every language, so a goal sent from a chip in one
+ * language is read back without it after the person switched to the other.
+ */
+export const CONTINUE_PREFIXES: readonly string[] = [VI.suggestions.continuePrefix, EN.suggestions.continuePrefix];
+
+/** The node owner's interface language, read now: `experience.language`, Vietnamese when it was never chosen. */
+export function ownerLocale(runtime: { db: Database; identity: { ownerPrincipalId: string } }): AppIntentLocale {
+  return preferredAppIntentLocale({ db: runtime.db, now: nowInstant }, runtime.identity.ownerPrincipalId);
 }
 
 /**
@@ -555,5 +886,5 @@ export function hostText(locale: AppIntentLocale = "vi"): HostText {
  * report that lands after they switched language reads in the new one.
  */
 export function ownerHostText(runtime: { db: Database; identity: { ownerPrincipalId: string } }): HostText {
-  return hostText(preferredAppIntentLocale({ db: runtime.db, now: nowInstant }, runtime.identity.ownerPrincipalId));
+  return hostText(ownerLocale(runtime));
 }

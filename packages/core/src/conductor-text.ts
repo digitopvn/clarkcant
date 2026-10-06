@@ -8,8 +8,9 @@ import type { AppIntentLocale } from "@clarkcant/contracts";
  * it writes them, from the same `AppIntentLocale` the intent read-backs use. Vietnamese stays the default for a caller
  * that names no language, as `describeAppIntent` does.
  *
- * Field labels on the model note are also what the client reads to draw that note as one line (`SystemCardBlock`), so a
- * label changed here has to be changed there too.
+ * The client draws the model note from its typed `modelNote` field (`SystemCardBlock`), not from these labels. It still
+ * reads the elapsed and chosen-model labels on records written before that field existed, so the labels already
+ * written must keep their wording there.
  */
 export interface ConductorText {
   /** A turn that has no model to answer with and no capability to run. */

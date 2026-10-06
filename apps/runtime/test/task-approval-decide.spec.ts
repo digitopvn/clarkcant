@@ -190,6 +190,38 @@ describe("deciding an approval a dispatched task raised", () => {
     expect(pendingApprovalFor(node, task.taskId)).toBeDefined();
   });
 
+  it("tells the owner why the task is parked in their interface language, and tells a peer the effect as before", async () => {
+    node = testNode();
+    const language = writeRegisteredPreference(
+      { db: node.runtime.db, now: () => AT },
+      { principalId: PRINCIPAL.principalId, key: "experience.language", value: "en", source: "user" },
+    );
+    if (!language.ok) throw new Error(language.message);
+    const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);
+    const waiting: { message: string; effect: string }[] = [];
+
+    const dispatcher = createTaskDispatcher({
+      conductor: node.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      ownerPrincipalId: () => PRINCIPAL.principalId,
+      onSettled: () => undefined,
+      onWaitingApproval: (input) => waiting.push(input),
+      runWorker: async () => fakeWorkerResult([]),
+    });
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: CAPABILITY_REF, executionNodeId: node.runtime.identity.nodeId });
+    await vi_flush();
+
+    // The capability's own summary is its author's words and is quoted as they wrote it; the sentence around it is the
+    // host's, in the owner's language.
+    expect(waiting[0]?.message).toBe(
+      "Needs approval before it runs: ghi một file demo. Nothing has run yet; " +
+        "if it is approved the work carries on, and if it is denied or expires the work stops for good.",
+    );
+    // What a peer that handed the task over is told stays as it was: that peer's owner's language is not known here.
+    expect(waiting[0]?.effect).toBe("ghi một file demo");
+  });
+
   it("runs nothing when the approval is denied, settles the task as failed rather than leaving it parked, and refuses a repeat decision", async () => {
     node = testNode();
     const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);

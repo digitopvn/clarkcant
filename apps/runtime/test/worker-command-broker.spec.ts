@@ -56,6 +56,7 @@ function makeBroker(options: {
   roots?: readonly string[];
   run?: CommandToolDeps["run"] | "real";
   ledger?: CommandLedger;
+  language?: "vi" | "en";
 } = {}): {
   broker: ReturnType<typeof createWorkerCommandBroker>;
   runs: { command: string; cwd: string }[];
@@ -91,6 +92,7 @@ function makeBroker(options: {
       principalId: "principal_1",
     }),
     ...(run === undefined ? {} : { run }),
+    ...(options.language === undefined ? {} : { language: () => options.language ?? "vi" }),
   };
   const broker = createWorkerCommandBroker({
     command: deps,
@@ -143,6 +145,16 @@ describe("a background task's command goes through the host's own path", () => {
     expect(audited.map((event) => event.outcome)).toEqual(["done"]);
     expect(audited[0]?.summary).toContain("task_broker");
     expect(effects()).toBe(1);
+  });
+
+  it("writes the audit line in the owner's language, as the guarded path does", async () => {
+    const english = makeBroker({ policy: { mode: "autonomous" }, language: "en" });
+    await english.broker({ command: "git status" });
+    expect(english.audited[0]?.summary).toBe("`git status` exited with code 0 after 3 ms. (task task_broker)");
+
+    const vietnamese = makeBroker({ policy: { mode: "autonomous" } });
+    await vietnamese.broker({ command: "git status" });
+    expect(vietnamese.audited[0]?.summary).toBe("`git status` thoát với mã 0 sau 3 ms. (task task_broker)");
   });
 
   it("refuses a folder the node owns but the task was not given, and runs nothing", async () => {

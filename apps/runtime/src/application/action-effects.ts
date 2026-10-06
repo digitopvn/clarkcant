@@ -10,6 +10,7 @@ import {
 import { asJsonValue, payloadDigest, upsertEffect } from "@clarkcant/storage";
 
 import { COMMAND_STOPPED_ON_REQUEST, unknownEffectsNotice } from "../effect-notices.ts";
+import { ownerLocale } from "../host-text.ts";
 import { tryRecordNodeNotice } from "../notices.ts";
 import type { NodeServices } from "../services.ts";
 
@@ -152,7 +153,7 @@ export function settleActionEffect(
         if (!moved.ok) return { recorded: false };
         upsertEffect(deps.db, moved.effect);
       }
-      const notice = unknownEffectsNotice(deps.db, opened.taskId, at);
+      const notice = unknownEffectsNotice(deps.db, opened.taskId, at, { language: ownerLocale(services.runtime) });
       // Best effort now; the unknown-effect sweep leaves the same notice for any unknown effect that has none.
       if (notice !== undefined) tryRecordNodeNotice(services, notice);
       return { recorded: true };

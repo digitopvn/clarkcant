@@ -78,7 +78,8 @@ describe("package job result artifacts", () => {
     expect(current?.resultRefs).toHaveLength(1);
     expect(storedBytesForInstance(db, owner.instanceId)).toBe(bytes.byteLength);
     expect(notices).toHaveLength(1);
-    expect(notices[0]).toContain("completed and produced “untitled.txt”. Open its widget to use it.");
+    // Worded in the owner's language, Vietnamese by default.
+    expect(notices[0]).toContain("đã xong và tạo ra “untitled.txt”. Mở widget của nó để dùng tệp này.");
     expect(host.get(job.jobId, { ...owner, actionBindingId: "binding_other" })).toBeUndefined();
     unsubscribe();
   });

@@ -123,6 +123,32 @@ describe("running an approved operation", () => {
     expect(result.description).not.toContain("Cloning into");
   });
 
+  it("labels the row and words the receipt it leaves in the person's interface language, Vietnamese when none is named", async () => {
+    const run = async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1500, timedOut: false });
+    const wordsIn = async (language?: "vi" | "en"): Promise<{ label: string; receipt: string }> => {
+      const result = await runApprovedCommand({
+        payload,
+        expectedDigest: digest,
+        approvalId: "appr_1",
+        resources: owned,
+        run,
+        ...(language === undefined ? {} : { language }),
+      });
+      if (!result.ok) throw new Error(result.message);
+      const [activity, evidence] = result.blocks;
+      return {
+        label: activity?.type === "tool-activity" ? activity.label : "",
+        receipt: evidence?.type === "evidence" ? evidence.summary : "",
+      };
+    };
+
+    const english = await wordsIn("en");
+    expect(english.label).toMatch(/^Ran a command in /u);
+    expect(english.receipt).toBe("The command exited with code 0 after 1.5 s.");
+    expect((await wordsIn("vi")).label).toMatch(/^Chạy lệnh trong /u);
+    expect(await wordsIn()).toEqual({ label: expect.stringMatching(/^Chạy lệnh trong /u), receipt: "Lệnh thoát với mã 0 sau 1,5 giây." });
+  });
+
   it("runs the narrowed budget the card carried, and never more than this host allows", async () => {
     /*
      * An asking mode consults the judgment layer before it draws a card, and what that layer narrowed — a shorter
@@ -193,6 +219,23 @@ describe("running an approved operation", () => {
     const activity = result.blocks[0];
     expect(activity?.type === "tool-activity" ? activity.result : undefined).toBe("Không có output.");
     expect(result.blocks.some((block) => block.type === "text")).toBe(false);
+  });
+
+  it("states the silence, and the verdict the audit keeps, in English when the person reads English", async () => {
+    const result = await runApprovedCommand({
+      payload,
+      expectedDigest: digest,
+      approvalId: "appr_1",
+      resources: owned,
+      language: "en",
+      run: async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false }),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const activity = result.blocks[0];
+    expect(activity?.type === "tool-activity" ? activity.result : undefined).toBe("No output.");
+    expect(result.description).toMatch(/^`.+` exited with code 0 after 1 ms\.$/u);
   });
 
   it("refuses an operation whose payload changed after it was displayed", async () => {
@@ -318,6 +361,23 @@ describe("running a real command", () => {
     expect(outcome.stdout.length).toBeLessThan(400);
     expect(outcome.stdout).toContain("đã cắt bớt");
   });
+
+  it("says that it cut the output in English when the person reads English", async () => {
+    const outcome = await runCommand(
+      { command: `node -e "process.stdout.write('x'.repeat(5000))"`, cwd: process.cwd() },
+      { maxOutputBytes: 200, language: "en" },
+    );
+    expect(outcome.stdout.endsWith("\n… (truncated)")).toBe(true);
+  });
+
+  it("says a command could not be started, in the person's language", async () => {
+    const missing = join(tmpdir(), "clarkcant-run-command-no-such-folder", "deeper");
+    const english = await runCommand({ command: "echo hi", cwd: missing }, { language: "en" });
+    expect(english.exitCode).toBeNull();
+    expect(english.stderr).toMatch(/^the command could not be started: /u);
+    const vietnamese = await runCommand({ command: "echo hi", cwd: missing });
+    expect(vietnamese.stderr).toMatch(/^không chạy được lệnh: /u);
+  });
 });
 
 describe("the receipt a model is given", () => {
@@ -377,5 +437,11 @@ describe("how long a command took", () => {
     expect(durationWords(37)).toBe("37 ms");
     expect(durationWords(1053)).toBe("1,1 giây");
     expect(durationWords(12_000)).toBe("12 giây");
+  });
+
+  it("says it in English words and notation when the reader's language is English", () => {
+    expect(durationWords(37, "en")).toBe("37 ms");
+    expect(durationWords(1053, "en")).toBe("1.1 s");
+    expect(durationWords(12_000, "vi")).toBe("12 giây");
   });
 });

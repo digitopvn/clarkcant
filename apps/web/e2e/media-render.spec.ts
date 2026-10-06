@@ -216,7 +216,8 @@ test("a clip larger than one chunk renders with the service's progress, and its 
   await expect(widget.locator("[data-media-preview-meta]")).toHaveAttribute("data-media-duration", `${String(CLIP_SECONDS - 2)}.000`);
   const digest = (await widget.locator("[data-media-digest]").getAttribute("data-media-digest")) ?? "";
   expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
-  await expect(page.getByText(`The package job for ${CAPABILITY} completed`).last()).toBeVisible({ timeout: 30_000 });
+  // The node's note, in its owner's language: the suite's node keeps the default, Vietnamese.
+  await expect(page.getByText(`Job của package cho ${CAPABILITY} đã xong`).last()).toBeVisible({ timeout: 30_000 });
   await page.screenshot({ path: testInfo.outputPath("media-render-1280-light.png"), fullPage: true });
 
   // Saved through the host's prompt, the file is the render the digest names: the trimmed clip, at the new gain.
@@ -286,7 +287,8 @@ test("Escape stops a render mid-way, and the stopped render leaves no file", asy
   await expect(widget.locator("[data-media-cancel]")).toBeDisabled();
   // Focus goes back to Render, so a keyboard user can start again where they were.
   await expect(widget.locator("[data-media-render]")).toBeFocused();
-  await expect(page.getByText(`The package job for ${CAPABILITY} was stopped`).last()).toBeVisible({ timeout: 30_000 });
+  // The node's note, in its owner's language: the suite's node keeps the default, Vietnamese.
+  await expect(page.getByText(`Job của package cho ${CAPABILITY} đã bị dừng`).last()).toBeVisible({ timeout: 30_000 });
 
   // The node's own snapshot of the stopped job carries no file: nothing was finalized as the render.
   const snapshot = await widget.locator("body").evaluate(async (_body, ref) => {

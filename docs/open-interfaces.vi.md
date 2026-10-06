@@ -171,6 +171,17 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 `clarkcant api`. Vì vậy một chương trình giữ token của node có thể đổi cài đặt này. Hoàn tác `execution.machineTurns`
 chỉ đặt lại đúng lựa chọn đó; nó trả về `undone: false` khi lần ghi chính sách gần nhất không đổi lựa chọn này.
 
+### Model nào đã trả lời: ghi chú model
+
+Mỗi lượt của model kết thúc bằng một `system-card` của host có `subject` là `"connection"`: ghi chú cho biết model nào
+đã trả lời. Các `fields` của nó là những dòng để đọc, được viết bằng ngôn ngữ của chủ node lúc ghi. Cùng các dữ kiện đó
+cũng nằm trên thẻ dưới dạng dữ liệu, nên client không bao giờ phải đọc nhãn của một dòng:
+`modelNote: { "version": 1, "elapsedMs": <số nguyên ≥ 0>, "fallback"?: { "from": "<provider/model>" } }`.
+`elapsedMs` là thời gian model đã dùng, đúng con số mà dòng thời gian hiển thị. `fallback` chỉ có khi một model dự phòng
+trả lời thay cho model người dùng đã chọn, và `from` là tên model đã chọn. Thẻ được ghi trước khi có trường này thì không
+có `modelNote`. Client gặp thẻ không có trường này, có version mà nó không biết, hoặc có ghi chú nó không đọc được, thì
+quay về đọc các dòng.
+
 ### Xoá hội thoại
 
 Lệnh gõ “xoá hội thoại này” và lệnh nói tương ứng cùng đi qua intent `conversation.delete` như capability REST.

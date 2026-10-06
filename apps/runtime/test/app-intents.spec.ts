@@ -390,6 +390,45 @@ describe("the read-back follows the stored UI language", () => {
     const decision = json(confirmed).decision as { readBack: string };
     expect(decision.readBack).toBe("I understand you want to quit the app. Do you confirm?");
   });
+
+  /** Ask to quit, answer once with `decision`, then try the same token again. */
+  async function answerTwice(decision: "granted" | "denied"): Promise<{ first: GatewayResponse; again: GatewayResponse }> {
+    const asked = await request("POST", "/app-intents", { text: "thoát ứng dụng", source: "voice" });
+    const token = (json(asked).decision as { confirmationToken: string }).confirmationToken;
+    const first = await request("POST", "/app-intents/confirm", { confirmationToken: token, decision });
+    const again = await request("POST", "/app-intents/confirm", { confirmationToken: token, decision: "granted" });
+    return { first, again };
+  }
+
+  it("says a declined command was skipped, and a spent confirmation was spent, in English once the preference is set", async () => {
+    await request("PUT", "/preferences/experience.language", { value: "en" });
+    const { first, again } = await answerTwice("denied");
+    expect((json(first).decision as { say: string }).say).toBe("I skipped that command.");
+    expect(json(again)).toMatchObject({ code: "CONFIRMATION_ALREADY_USED", message: "This confirmation has already been used." });
+  });
+
+  it("says the same in Vietnamese by default", async () => {
+    const { first, again } = await answerTwice("denied");
+    expect((json(first).decision as { say: string }).say).toBe("Tôi đã bỏ qua câu lệnh đó.");
+    expect(json(again)).toMatchObject({ code: "CONFIRMATION_ALREADY_USED", message: "Lời xác nhận này đã được dùng rồi." });
+  });
+
+  it("says a confirmation expired in English once the preference is set", async () => {
+    await request("PUT", "/preferences/experience.language", { value: "en" });
+    const asked = await request("POST", "/app-intents", { text: "thoát ứng dụng", source: "voice" });
+    const token = (json(asked).decision as { confirmationToken: string }).confirmationToken;
+    const response = await handleRequest({ ...deps, now: () => LATER }, {
+      method: "POST",
+      path: "/app-intents/confirm",
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+      body: JSON.stringify({ confirmationToken: token, decision: "granted" }),
+    });
+    expect(json(response)).toMatchObject({
+      code: "CONFIRMATION_EXPIRED",
+      message: "The confirmation has expired. Please say the command again.",
+    });
+  });
 });
 
 describe("the page's report on an agent-issued action", () => {

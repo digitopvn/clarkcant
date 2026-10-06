@@ -17,6 +17,7 @@ import {
   type WidgetDefinition,
   type WidgetPerformRequest,
   ContractViolation,
+  MODEL_NOTE_VERSION,
   assertBlockProvenance,
   attachmentRefSchema,
   isTerminal,
@@ -1033,6 +1034,8 @@ export function modelReplyCard(
 ): MessageBlock {
   const fallback = reply.stopped === true ? undefined : reply.fallback;
   const say = conductorText(locale).reply;
+  // One figure for the readable row and the typed note, so a reader can tell the row by its value.
+  const elapsedMs = Math.max(0, Math.round(reply.elapsedMs));
   return {
     type: "system-card",
     owner: "host",
@@ -1060,11 +1063,17 @@ export function modelReplyCard(
         // at a different effort is a different answer to the same question.
         value: reply.metrics?.thinkingLevel === undefined ? reply.model : `${reply.model} · ${reply.metrics.thinkingLevel}`,
       },
-      { label: say.elapsedLabel, value: `${reply.elapsedMs} ms` },
+      { label: say.elapsedLabel, value: `${elapsedMs} ms` },
       ...turnMetricFields(reply.metrics, locale),
     ],
     // The typed copy, for the statusline: the rows above are written to be read, these to be drawn.
     ...(reply.metrics === undefined ? {} : { metrics: reply.metrics }),
+    // The same for the note itself: the rows are in the person's language, so an interface reads these instead.
+    modelNote: {
+      version: MODEL_NOTE_VERSION,
+      elapsedMs,
+      ...(fallback === undefined ? {} : { fallback: { from: fallback.from } }),
+    },
     cancellable: false,
     updatedAt: at,
   };

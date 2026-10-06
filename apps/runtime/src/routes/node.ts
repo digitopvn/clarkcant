@@ -10,7 +10,8 @@ import { nowInstant } from "@clarkcant/contracts";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "../autonomy-settings.ts";
 import { cycleModelPool, readCurrentAlias, readModelPool, selectModelProfile, writeModelPool } from "../model-registry.ts";
 import { availableCredentials } from "../readiness.ts";
-import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "../tool-catalogue.ts";
+import { ownerLocale } from "../host-text.ts";
+import { toolsTab } from "../tool-catalogue.ts";
 import { type NodeServices } from "../services.ts";
 import { storeModelChoice } from "../application/model-choice.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -294,11 +295,8 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
    * matters - claiming a capability this node does not have.
    */
   if (segments.length === 1 && segments[0] === "tools" && request.method === "GET") {
-    return json(200, {
-      self: nodeToolCatalogue(),
-      agent: PI_BUILTIN_TOOLS,
-      agentNote: "Công cụ gốc của pi. Extension mà pi tự nạp thêm thì không liệt kê ở đây.",
-    });
+    // Labels and the note are the host's words, in the owner's interface language, read now.
+    return json(200, toolsTab(ownerLocale(deps.services.runtime)));
   }
 
   return undefined;
