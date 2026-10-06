@@ -602,7 +602,9 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   process.stderr.write(
     sessionFixture
       ? "update check: FIXTURE — no periodic job started, no registry is called\n"
-      : "update check: periodic job started — installed packages/widgets against the directory index, the Pi SDK against npm when there is network\n",
+      : // The Pi SDK is not checked: it is pinned and ships with ClarkCant (see update-checks.ts), so the line says so
+        // rather than claiming a registry call the job no longer makes.
+        "update check: periodic job started — installed packages/widgets against the directory index; the Pi SDK ships pinned with ClarkCant and is not checked\n",
   );
 
   return { stopUpdateChecks: () => updateChecks?.stop() };
