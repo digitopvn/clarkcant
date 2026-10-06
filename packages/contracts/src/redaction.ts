@@ -51,13 +51,22 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   },
   { label: "windows-path", pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g },
   { label: "email", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
-  // Nine or more digits joined by single spaces or dashes, with an optional `+` and area-code parentheses. The run is
-  // read from its own start only: not after a word character, `+` or `(`, not after a digit and its separator (so no
-  // tail of a run is tried on its own), and not after a letter and a dash, which makes it part of an identifier such
-  // as the dated model id `claude-sonnet-4-5-20250929`. Each digit is one step with a fixed, optional prefix and
-  // suffix, and only a run's first character may start a match, so the shape stays linear on any input. A match ends
-  // on a digit, so the space after a number is left in place.
-  { label: "phone", pattern: /(?<![\w+(]|[A-Za-z]-|\d\)?[\s-]?)(?:[(+]{0,2}\d\)?[\s-]?){9,}(?<=\d)\b/g },
+  // Nine or more digits joined by single spaces or dashes, with an optional `+` and area-code parentheses. A match does
+  // not start:
+  // - after a word character, `+` or `(`;
+  // - after a digit and a dash, or a digit and a dot: the tail of `4-5-20250929` or `4.1-2025-04-14` is part of an
+  //   identifier, not a number of its own;
+  // - after a letter and a dash when one digit and a separator follow, which is a dated model id such as
+  //   `claude-sonnet-4-5-20250929` (`Hotline-0912345678` is still a number).
+  // A match ends on a digit, so the space after a number is left in place, or on the `)` closing parentheses the
+  // number opened, so `(5551234567)` is replaced whole. It never ends before `:` and a digit, so a date and time such as
+  // `2025-09-29 12:34` is not a number. Each digit is one step with a fixed, optional prefix and suffix, every
+  // lookaround but one reads at most three characters, and the check for an opening `(` reads back no further than
+  // the previous parenthesis, so the shape stays linear on any input.
+  {
+    label: "phone",
+    pattern: /(?<![\w+(]|[A-Za-z]-(?=\d[\s-])|\d\)?-|\d\.)(?:[(+]{0,2}\d\)?[\s-]?){9,}(?:(?<=\d)|(?<=\([\d\s+-]*\d\)))(?!\w|:\d)/g,
+  },
 ];
 
 /**
