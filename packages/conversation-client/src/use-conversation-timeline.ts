@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
 import { composedImageRefs } from "./mini-app-surface.tsx";
+import { mergeTimeline, olderPageCursor } from "./timeline-window.ts";
 import { useHostObjectUrls } from "./use-image-urls.ts";
 import type { ObjectUrls } from "./use-object-urls.ts";
 
@@ -25,8 +26,17 @@ export interface ConversationTimelineState {
   refreshDataset: (datasetId: string) => void;
   snapshots: Record<string, SnapshotPresentationResponse>;
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
+  /** Merge a page the node answered with into the held window (`mergeTimeline`). */
   applyTimeline: (next: Timeline) => void;
   refreshTimeline: () => void;
+  /** Whether the node holds messages older than the oldest one held here. */
+  hasOlder: boolean;
+  /** A read of the page before the held window is under way. */
+  olderLoading: boolean;
+  /** The last read of an older page failed; the next `loadOlder` asks again. */
+  olderFailed: boolean;
+  /** Read the page just older than the held window and merge it in front. Resolves once it is merged or has failed. */
+  loadOlder: () => Promise<void>;
   instanceById: Map<string, Timeline["instances"][number]>;
   composedSnapshots: { snapshotId: string; instanceId: string | undefined }[];
   imageUrl: (imageRef: string) => string | undefined;
@@ -61,10 +71,38 @@ export function useConversationTimeline(
    */
   const [snapshots, setSnapshots] = useState<Record<string, SnapshotPresentationResponse>>({});
 
+  /**
+   * The timeline as last merged, read by the next merge.
+   *
+   * Two pages can arrive in one render - an action's answer and a refresh - and the second has to merge into what the
+   * first left rather than into the state this render was drawn from.
+   */
+  const held = useRef<Timeline | undefined>(undefined);
+  /** The conversation the screen is on, so a page read for one the person has since left is not drawn here. */
+  const shownConversation = useRef(conversationId);
+  shownConversation.current = conversationId;
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [olderFailed, setOlderFailed] = useState(false);
+  const olderInFlight = useRef(false);
+
+  const replaceTimeline = useCallback((next: Timeline | undefined) => {
+    held.current = next;
+    setTimeline(next);
+    if (next === undefined) setOlderFailed(false);
+  }, []);
+
+  /**
+   * Take a page the node answered with into the window this conversation holds (`mergeTimeline`).
+   *
+   * Every answer that carries the conversation comes through here, so none of them sends a person who has scrolled back
+   * through history to the start of the conversation or drops the turn they just sent.
+   */
   const applyTimeline = useCallback(
     (next: Timeline) => {
-      setTimeline(next);
-      onTimelineChange?.(next);
+      const merged = mergeTimeline(held.current, next);
+      held.current = merged;
+      setTimeline(merged);
+      onTimelineChange?.(merged);
     },
     [onTimelineChange],
   );
@@ -74,22 +112,51 @@ export function useConversationTimeline(
    *
    * A voice session answers through the conductor like any other message, but over its own
    * socket, so nothing draws the result here. This is the ask that keeps the two views of one
-   * conversation from disagreeing until someone reloads the page.
+   * conversation from disagreeing until someone reloads the page. It reads the newest page, which merges into the held
+   * window instead of replacing it.
    */
   const refreshTimeline = useCallback((): void => {
     if (conversationId === undefined) return;
     void client
-      .timeline(conversationId)
-      .then((loaded) => applyTimeline(loaded))
+      .timelinePage(conversationId, { kind: "latest" })
+      .then((loaded) => {
+        if (shownConversation.current === conversationId) applyTimeline(loaded);
+      })
       .catch(() => undefined);
   }, [applyTimeline, client, conversationId]);
 
-  /* Load any existing conversation once, so a reload is not a new conversation. */
+  /**
+   * Read the page just older than the oldest message held, and merge it in front.
+   *
+   * One read at a time: the cursor is the held window's own first sequence, so a second read started before the first
+   * answered would ask for the same page. A page for a conversation the person has since left is dropped. A failure is
+   * reported as such, and the next call asks again.
+   */
+  const loadOlder = useCallback(async (): Promise<void> => {
+    const current = held.current;
+    const cursor = olderPageCursor(current);
+    if (current === undefined || cursor === undefined || olderInFlight.current) return;
+    const target = current.conversationId;
+    olderInFlight.current = true;
+    setOlderLoading(true);
+    setOlderFailed(false);
+    try {
+      const page = await client.timelinePage(target, { kind: "before", beforeSequence: cursor });
+      if (held.current?.conversationId === target) applyTimeline(page);
+    } catch {
+      if (held.current?.conversationId === target) setOlderFailed(true);
+    } finally {
+      olderInFlight.current = false;
+      setOlderLoading(false);
+    }
+  }, [applyTimeline, client]);
+
+  /* Load any existing conversation once, so a reload is not a new conversation. It opens on its newest page. */
   useEffect(() => {
     if (initialConversationId === undefined) return;
     let cancelled = false;
     client
-      .timeline(initialConversationId)
+      .timelinePage(initialConversationId, { kind: "latest" })
       .then((loaded) => {
         if (!cancelled) applyTimeline(loaded);
       })
@@ -144,6 +211,9 @@ export function useConversationTimeline(
     },
     [client],
   );
+
+  // Read once per timeline rather than per render: a streamed reply renders the conversation on every delta.
+  const hasOlder = useMemo(() => olderPageCursor(timeline) !== undefined, [timeline]);
 
   const instanceById = useMemo(() => {
     const map = new Map<string, Timeline["instances"][number]>();
@@ -236,7 +306,7 @@ export function useConversationTimeline(
     conversationId,
     setConversationId,
     timeline,
-    setTimeline,
+    setTimeline: replaceTimeline,
     datasets,
     setDatasets,
     refreshDataset,
@@ -244,6 +314,10 @@ export function useConversationTimeline(
     setSnapshots,
     applyTimeline,
     refreshTimeline,
+    hasOlder,
+    olderLoading,
+    olderFailed,
+    loadOlder,
     instanceById,
     composedSnapshots,
     imageUrl,

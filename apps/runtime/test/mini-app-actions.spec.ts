@@ -443,7 +443,7 @@ describe("live ownership route", () => {
     const path = `/conversations/${conversationId}/widgets/${seeds.instanceId}/live-owner`;
     await call("POST", path, { body: { ownerToken: "token_secret_value", surface: "pin" } });
 
-    const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId });
     const serialised = JSON.stringify(timeline);
     expect(serialised).not.toContain("token_secret_value");
     // The surface is reported, because the UI needs to say where the live view is.
@@ -469,7 +469,7 @@ describe("live ownership route", () => {
 describe("timeline DTO", () => {
   it("carries snapshots and live instances as separate lists", async () => {
     const seeds = seedComposition();
-    const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId });
     expect(timeline.snapshots).toHaveLength(1);
     expect(timeline.snapshots[0]?.bundleRef).toBe(seeds.bundleRef);
     const instance = timeline.instances.find((entry) => entry.instanceId === seeds.instanceId);

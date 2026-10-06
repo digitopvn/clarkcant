@@ -43,7 +43,7 @@ The stable surface is the one `/openapi.json` describes:
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — waits for the answer |
 | POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `widget-perform`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — stops the reply being written; keeps what was written, labelled as stopped; answers `{ stopped }` |
-| GET | `/conversations/{id}/timeline?after=N` | – |
+| GET | `/conversations/{id}/timeline?after=N` · `?before=N` · `?window=latest`, each with `&limit=` | – one page of the conversation; see [Reading a long conversation](#reading-a-long-conversation) |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — something happened; `202` recorded, `200` already recorded |
@@ -106,6 +106,40 @@ stores that as the message's `surface`; a spoken message is stored with `surface
 message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a script) is stored without a surface.
 Only a message with a surface counts as the person's own words where that matters, such as which sites a browser task
 may act on; any other value of the header is ignored.
+
+### Reading a long conversation
+
+A conversation can grow far past what one read should carry, so the timeline route answers one page of its messages,
+oldest first, chosen by message sequence: the order the node stores one conversation's messages in.
+
+| Query | Page |
+|---|---|
+| none, or `after=N` | the messages just after sequence `N`; none is `after=0`, the page this route always answered |
+| `before=N` | the messages just before sequence `N`, for scrolling back |
+| `window=latest` | the newest messages, which is what reopening a conversation shows |
+
+At most one of the three may be given, and `limit` sizes the page: 1 to 500, 200 when absent. Anything else is
+`400 INVALID_SCHEMA`.
+
+Every timeline, from this route or carried in another answer, includes `window`:
+
+```json
+{ "version": 1, "fromSequence": 1901, "toSequence": 2100, "hasOlder": true, "hasNewer": false, "sequences": [1901, 1902, "..."] }
+```
+
+The page holds every stored message with `fromSequence <= sequence <= toSequence`, and no other. `sequences` gives
+each message's sequence in the order of `messages`. `hasOlder` means `before=<fromSequence>` reads the page that meets
+this one, and `hasNewer` means `after=<toSequence>` does. Two pages whose ranges meet or overlap merge into one range
+with no message twice and no gap. Inside its own range, the more recent page is right, so a removed message goes.
+Pages that do not meet cannot be stitched together, and a reader can tell that from the numbers.
+
+The event `cursor` a timeline also carries is a different number. It says which events a reader has seen, not which
+messages it holds, and is never a page cursor.
+
+Every answer that carries the conversation answers with its newest page. This covers sending a message, the SSE
+`done` event, widget actions, pins, answered questions and cards, and approvals. A widget action's answer also
+carries the instance it acted on, and every timeline carries the instances of the conversation's pins, wherever their
+messages are. A reader holding older history merges that page into what it holds instead of starting over.
 
 ### Who asked: a turn's origin
 
