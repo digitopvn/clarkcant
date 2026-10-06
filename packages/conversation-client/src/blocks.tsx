@@ -12,6 +12,7 @@ import {
   type DiagnosticLine,
   type FeedbackDraft,
   type FeedbackPublication,
+  type FeedbackPublishIntent,
   type FeedbackRequestInput,
   type ProviderSignInView,
 } from "@clarkcant/contracts";
@@ -699,12 +700,13 @@ export interface BlockActions {
    */
   onFeedbackPreview?: (input: { cardId: string; request: FeedbackRequestInput }) => void;
   /**
-   * Create issue on the composer, Send again on a result (`intent: "send"`, the default), or Check again (`"check"`,
-   * which only finds out and never sends): the person's own press, through the person-only publish route. With
+   * Create issue on the composer, Send again on a result (`intent: "send"`, the default), Check again (`"check"`,
+   * which only finds out and never sends), or Send anyway on an outcome checking cannot settle (`"send-anyway"`, which
+   * may file twice): the person's own press, through the person-only publish route. With
    * `reportId` it acts on that report; with `request` it prepares the report first, unless the preview — or an earlier
    * press that did not get through — already did for the same words.
    */
-  onFeedbackCreate?: (input: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: "send" | "check" }) => void;
+  onFeedbackCreate?: (input: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: FeedbackPublishIntent }) => void;
   /** What each feedback card's press came to, keyed by card id. */
   feedback?: Readonly<Record<string, FeedbackCardState>>;
   /**
@@ -718,7 +720,7 @@ export interface BlockActions {
 export type FeedbackCardState =
   | { status: "preparing" }
   | { status: "prepared"; requestKey: string; draft: FeedbackDraft; diagnostics: DiagnosticLine[] }
-  | { status: "publishing"; intent: "send" | "check" }
+  | { status: "publishing"; intent: FeedbackPublishIntent }
   | { status: "done"; publication: FeedbackPublication }
   /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
   | { status: "failed"; message: string; reportId?: string; requestKey?: string };

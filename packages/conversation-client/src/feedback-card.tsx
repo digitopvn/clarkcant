@@ -1,6 +1,13 @@
 import { useState, type ReactElement } from "react";
 
-import type { DiagnosticLine, FeedbackCard, FeedbackKind, FeedbackPublication, FeedbackRequestInput } from "@clarkcant/contracts";
+import type {
+  DiagnosticLine,
+  FeedbackCard,
+  FeedbackKind,
+  FeedbackPublication,
+  FeedbackPublishIntent,
+  FeedbackRequestInput,
+} from "@clarkcant/contracts";
 
 import type { BlockActions, FeedbackCardState } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -367,7 +374,9 @@ const STATUS_TONE: Record<FeedbackPublication["status"], string | undefined> = {
 /**
  * The result of a publish, as written. Pure: what a later check found is a new card, never a change to this one.
  * Check again only looks for the report on GitHub; Send again — offered only once GitHub was seen not to hold it, or
- * refused it in a way sending again can help — is the press that sends.
+ * refused it in a way sending again can help — is the press that sends. An outcome checking cannot settle offers no
+ * Check again: it says so, links the person's own GitHub list and the manual page with a duplicate warning, and leaves
+ * Send anyway to the person.
  */
 export function FeedbackResult({ block, t, actions }: { block: FeedbackCard; t: T; actions?: BlockActions }): ReactElement | null {
   const publication = block.publication;
@@ -376,8 +385,14 @@ export function FeedbackResult({ block, t, actions }: { block: FeedbackCard; t: 
   const live = actions?.onFeedbackCreate !== undefined;
   const state = actions?.feedback?.[block.cardId];
   const busy = state?.status === "publishing";
-  const status = publication.status === "published" && publication.mode === "commented" ? "feedback.status.commented" : STATUS_KEY[publication.status];
-  const press = (label: MessageKey, marker: string, intent: "send" | "check"): ReactElement | null =>
+  const inconclusive = publication.status === "unknown" ? publication.inconclusive : undefined;
+  const status =
+    publication.status === "published" && publication.mode === "commented"
+      ? "feedback.status.commented"
+      : inconclusive === undefined
+        ? STATUS_KEY[publication.status]
+        : "feedback.status.inconclusive";
+  const press = (label: MessageKey, marker: string, intent: FeedbackPublishIntent): ReactElement | null =>
     live ? (
       <button
         type="button"
@@ -420,10 +435,28 @@ export function FeedbackResult({ block, t, actions }: { block: FeedbackCard; t: 
               </a>
             </p>
           </>
-        ) : (
+        ) : inconclusive === undefined ? (
           <p className="cc-list-subtitle">{publication.reason}</p>
+        ) : (
+          <div data-feedback-inconclusive>
+            <p className="cc-list-subtitle">{publication.reason}</p>
+            <p className="cc-list-subtitle">
+              <a href={inconclusive.searchUrl} target="_blank" rel="noopener noreferrer" data-feedback-search>
+                {fill(t("feedback.inconclusive.search"), { date: inconclusive.since.slice(0, 10) })}
+              </a>
+            </p>
+            <p className="cc-list-subtitle">
+              <a href={inconclusive.manualUrl} target="_blank" rel="noopener noreferrer" data-feedback-manual>
+                {t("feedback.openManual")}
+              </a>
+            </p>
+            <p className="cc-list-subtitle" data-feedback-duplicate-warning>
+              {t("feedback.inconclusive.warning")}
+            </p>
+          </div>
         )}
-        {publication.status === "unknown" ? press("feedback.checkAgain", "data-feedback-check", "check") : null}
+        {publication.status === "unknown" && inconclusive === undefined ? press("feedback.checkAgain", "data-feedback-check", "check") : null}
+        {inconclusive === undefined ? null : press("feedback.sendAnyway", "data-feedback-send-anyway", "send-anyway")}
         {publication.status === "failed" && publication.retryable ? press("feedback.sendAgain", "data-feedback-send-again", "send") : null}
         {state?.status === "publishing" ? (
           <p className="cc-command-status" role="status">

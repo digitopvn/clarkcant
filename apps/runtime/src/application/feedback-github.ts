@@ -55,11 +55,14 @@ export interface FeedbackGithubClient {
   createIssue(input: { title: string; body: string; labels: readonly string[] }): Promise<{ number: number; url: string }>;
   createComment(issueNumber: number, body: string): Promise<{ id: number; url: string }>;
   getComment(id: number): Promise<GithubComment | undefined>;
+  /** The login the token belongs to, or `undefined` when there is no token to ask about. */
+  viewerLogin(): Promise<string | undefined>;
   /**
-   * The issue updated since `since` whose body carries `marker`. `undefined` only when GitHub's whole list was read;
-   * a list longer than the bounded scan throws instead, because an unread page may hold it.
+   * The issue updated since `since` whose body carries `marker`, among those `creator` opened when given. `undefined`
+   * only when GitHub's whole list was read; a list longer than the bounded scan throws `MarkerScanIncompleteError`,
+   * because an unread page may hold it.
    */
-  findIssueWithMarker(marker: string, since: Instant): Promise<GithubIssue | undefined>;
+  findIssueWithMarker(marker: string, since: Instant, creator?: string): Promise<GithubIssue | undefined>;
   /** The comment on `issueNumber` updated since `since` whose body carries `marker`; bounded the same way. */
   findCommentWithMarker(issueNumber: number, marker: string, since: Instant): Promise<GithubComment | undefined>;
   /** What GitHub's timeline shows of work on the issue: open pull requests referencing it, and anyone claiming it. */
@@ -91,6 +94,17 @@ export class FeedbackGithubError extends Error {
     this.kind = kind;
     this.status = options.status;
     this.retryable = options.retryable ?? kind !== "refused";
+  }
+}
+
+/**
+ * GitHub answered, and its list is longer than the bounded scan reads: what was not read may hold the marker. Not a
+ * failure to reach GitHub (asking again reads the same too-long list), so it is told apart from one.
+ */
+export class MarkerScanIncompleteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MarkerScanIncompleteError";
   }
 }
 
@@ -240,8 +254,7 @@ export function createGithubRestClient(options: {
     }
     // Every page read was full, so the list goes on: what was not read may hold the marker, and "not found" here would
     // offer to file the report a second time. Saying GitHub could not be checked keeps it unknown instead.
-    throw new FeedbackGithubError(
-      "no-answer",
+    throw new MarkerScanIncompleteError(
       `GitHub listed more than ${String(MARKER_SCAN_PAGES * 100)} items changed since the attempt, too many to read through`,
     );
   };
@@ -276,9 +289,18 @@ export function createGithubRestClient(options: {
       const { value } = await call("GET", `/repos/${repo}/issues/comments/${String(id)}`);
       return value === undefined ? undefined : commentFromRaw(value as { id?: unknown });
     },
-    async findIssueWithMarker(marker, since) {
+    async viewerLogin() {
+      if (options.token === undefined) return undefined;
+      const { value } = await call("GET", "/user");
+      const login = (value as { login?: unknown } | undefined)?.login;
+      if (typeof login !== "string" || login === "") throw new FeedbackGithubError("no-answer", "GitHub did not say whose token this is");
+      return login;
+    },
+    async findIssueWithMarker(marker, since, creator) {
+      // Only the person's own issues: a busy repository's other traffic is what would otherwise run past the scan.
+      const by = creator === undefined ? "" : `&creator=${encodeURIComponent(creator)}`;
       return await listPages(
-        `/repos/${repo}/issues?state=all&sort=created&direction=desc&since=${encodeURIComponent(scanSince(since))}`,
+        `/repos/${repo}/issues?state=all&sort=created&direction=desc${by}&since=${encodeURIComponent(scanSince(since))}`,
         (raw) => issueFromRaw(raw as RawIssue),
         (issue) => !issue.isPullRequest && issue.body.includes(marker),
       );
@@ -350,7 +372,8 @@ export function createNodeFeedbackGithub(
       createIssue: () => Promise.reject(new FeedbackGithubError("not-sent", "a reader does not write")),
       createComment: () => Promise.reject(new FeedbackGithubError("not-sent", "a reader does not write")),
       getComment: (id) => withToken((c) => c.getComment(id)),
-      findIssueWithMarker: (marker, since) => withToken((c) => c.findIssueWithMarker(marker, since)),
+      viewerLogin: () => withToken((c) => c.viewerLogin()),
+      findIssueWithMarker: (marker, since, creator) => withToken((c) => c.findIssueWithMarker(marker, since, creator)),
       findCommentWithMarker: (issue, marker, since) => withToken((c) => c.findCommentWithMarker(issue, marker, since)),
       issueActivity: (issue) => withToken((c) => c.issueActivity(issue)),
     }),

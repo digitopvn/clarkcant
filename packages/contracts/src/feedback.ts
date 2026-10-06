@@ -183,7 +183,10 @@ export type FeedbackDraft = z.infer<typeof feedbackDraftSchema>;
  * Where a report stands after a publish was asked for. Each state says only what is known:
  *
  *   - `published` — GitHub was read back and holds the issue or comment carrying this report's marker;
- *   - `unknown` — sent, and no answer this node can trust yet; it is found again by its marker, never sent twice;
+ *   - `unknown` — sent, and no answer this node can trust yet; it is found again by its marker, never sent twice.
+ *     With `inconclusive`, checking cannot settle it (GitHub's list runs past what is read, or the record of the
+ *     attempt is gone): the person gets the links to look for themselves and may send it anyway, knowing it may file
+ *     twice; the node never sends it again on its own;
  *   - `failed` — GitHub refused it, it never left, or GitHub's own list shows the unanswered attempt never arrived;
  *     `retryable` says whether sending it again can help;
  *   - `needs-access` — this node has no GitHub token it may use for reports; nothing was sent;
@@ -201,7 +204,21 @@ export const feedbackPublicationSchema = z.discriminatedUnion("status", [
     commentUrl: z.url().optional(),
     confirmedAt: instantSchema,
   }),
-  z.strictObject({ status: z.literal("unknown"), reportId: feedbackReportIdSchema, reason: z.string().min(1).max(600) }),
+  z.strictObject({
+    status: z.literal("unknown"),
+    reportId: feedbackReportIdSchema,
+    reason: z.string().min(1).max(600),
+    inconclusive: z
+      .strictObject({
+        /** No later than the attempt: what the person filed on GitHub from this moment on may be this report. */
+        since: instantSchema,
+        /** GitHub's own list of what the person filed (or commented on) since then, to look for it themselves. */
+        searchUrl: z.url().max(2000),
+        /** Where to file it by hand: GitHub's prefilled new-issue page, or the issue a comment would go on. */
+        manualUrl: z.url().max(8000),
+      })
+      .optional(),
+  }),
   z.strictObject({
     status: z.literal("failed"),
     reportId: feedbackReportIdSchema,
@@ -322,13 +339,16 @@ export const feedbackPrepareRequestSchema = z.strictObject({
 });
 
 /**
- * `POST /feedback/reports/:reportId/publish`, the person's press: publish it (`send`, the default) or only find out what
- * an earlier send came to (`check`, which never sends), and write the result card into this conversation. `answers`
- * names the card pressed.
+ * `POST /feedback/reports/:reportId/publish`, the person's press: publish it (`send`, the default), only find out what
+ * an earlier send came to (`check`, which never sends), or send a report whose outcome cannot be found out anyway
+ * (`send-anyway`, accepted only for an inconclusive `unknown`, knowing it may file twice). It writes the result card
+ * into this conversation; `answers` names the card pressed.
  */
+export const FEEDBACK_PUBLISH_INTENTS = ["send", "check", "send-anyway"] as const;
+export type FeedbackPublishIntent = (typeof FEEDBACK_PUBLISH_INTENTS)[number];
 export const feedbackPublishRequestSchema = z.strictObject({
   conversationId: z.string().min(1).max(128),
-  intent: z.enum(["send", "check"]).default("send"),
+  intent: z.enum(FEEDBACK_PUBLISH_INTENTS).default("send"),
   answers: z.string().min(1).max(128).optional(),
 });
 

@@ -1,4 +1,10 @@
-import { type Instant, feedbackPrepareRequestSchema, feedbackPublishRequestSchema, feedbackReportIdSchema } from "@clarkcant/contracts";
+import {
+  type Instant,
+  PERSON_ONLY_REFUSAL,
+  feedbackPrepareRequestSchema,
+  feedbackPublishRequestSchema,
+  feedbackReportIdSchema,
+} from "@clarkcant/contracts";
 import { getConversation, getFeedbackReport } from "@clarkcant/storage";
 
 import {
@@ -10,7 +16,7 @@ import {
 } from "../application/product-feedback.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { appendHostReply } from "./conversations.ts";
-import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
  * The product feedback family (#510): what the host-owned Feedback Composer calls.
@@ -21,11 +27,12 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *       safe diagnostics in the person's words.
  *   GET /feedback/reports/:reportId
  *       the report as it stands: `{ draft, status, publication? }`.
- *   POST /feedback/reports/:reportId/publish { conversationId, intent?: "send" | "check", answers? }
+ *   POST /feedback/reports/:reportId/publish { conversationId, intent?: "send" | "check" | "send-anyway", answers? }
  *       `send` (the default) files it, unless the execution policy refuses external writes; a report sent before without
- *       a trustworthy answer is only looked for by its marker, never sent again from here. `check` only looks. Either
- *       way the result card is written into the conversation. Answers `{ publication, eligibility?, messageId,
- *       timeline }`.
+ *       a trustworthy answer is only looked for by its marker, never sent again from here. `check` only looks.
+ *       `send-anyway` files one whose earlier attempt checking cannot settle (409 `NOT_INCONCLUSIVE` otherwise), the
+ *       person accepting it may file twice; the policy applies as to `send`. The result card is written into the
+ *       conversation. Answers `{ publication, eligibility?, messageId, timeline }`.
  *
  * Publishing from here is the person's own press on the host's card, so it is person-only (`isPersonOnlyRoute`): Clark,
  * an AI client or a remote surface can prepare a report and show it, and never file one.
@@ -81,6 +88,13 @@ export async function handleFeedbackRoutes(deps: FeedbackRouteDeps): Promise<Gat
 
   if (segments.length === 4 && segments[3] === "publish") {
     if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a report is published with POST");
+    /*
+     * The relay and the MCP server already refuse this person-only path; refusing it again here keeps filing the
+     * person's own press even if a forwarder's path check were bypassed. The marker only ever refuses more: its
+     * absence proves nothing, since any caller can leave it out.
+     */
+    const surface = request.headers[SURFACE_HEADER];
+    if (surface === "mcp" || surface === "relay") return fail(403, PERSON_ONLY_REFUSAL.code, PERSON_ONLY_REFUSAL.message);
     const body = readJson(request);
     if (!body.ok) return body.response;
     const parsed = feedbackPublishRequestSchema.safeParse(body.value);

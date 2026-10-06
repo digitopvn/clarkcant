@@ -45,6 +45,7 @@ import {
   feedbackPublishResponseSchema,
   type FeedbackPrepareResponse,
   type FeedbackPublishResponse,
+  type FeedbackPublishIntent,
   type FeedbackRequestInput,
   parseSseChunk,
   inboxResponseSchema,
@@ -2668,7 +2669,7 @@ export class GatewayClient {
   async publishFeedback(
     reportId: string,
     conversationId: string,
-    options: { intent?: "send" | "check"; answers?: string } = {},
+    options: { intent?: FeedbackPublishIntent; answers?: string } = {},
   ): Promise<FeedbackPublishResponse & { timeline: Timeline }> {
     const body = await this.#call<{ timeline: Timeline }>("POST", `/feedback/reports/${encodeURIComponent(reportId)}/publish`, {
       conversationId,

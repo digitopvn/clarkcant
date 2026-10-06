@@ -70,6 +70,7 @@ describe("product report contracts", () => {
     expect(feedbackPublishRequestSchema.parse({ conversationId: "conv_1" })).toEqual({ conversationId: "conv_1", intent: "send" });
     expect(feedbackPublishRequestSchema.parse({ conversationId: "conv_1", intent: "check", answers: "card_1" }).intent).toBe("check");
     expect(feedbackPublishRequestSchema.safeParse({ conversationId: "conv_1", intent: "approve" }).success).toBe(false);
+    expect(feedbackPublishRequestSchema.parse({ conversationId: "conv_1", intent: "send-anyway" }).intent).toBe("send-anyway");
   });
 
   it("carries a prepared report's exact preview on the composer, and which card a result answers", () => {
@@ -77,5 +78,21 @@ describe("product report contracts", () => {
     expect(feedbackCardSchema.safeParse({ ...base, stage: "compose", reportId: "rpt_a1", title: "bug: x", preview: { body: "x" } }).success).toBe(true);
     expect(feedbackCardSchema.safeParse({ ...base, stage: "compose", preview: { body: "x", extra: true } }).success).toBe(false);
     expect(feedbackCardSchema.safeParse({ ...base, stage: "result", answers: "card_0" }).success).toBe(true);
+  });
+
+  it("tells an outcome checking cannot settle apart, with where to look and file by hand", () => {
+    const inconclusive = {
+      status: "unknown",
+      reportId: "rpt_a1",
+      reason: "Clark can't tell whether GitHub kept this report, and checking again won't change that.",
+      inconclusive: {
+        since: "2026-10-06T09:00:00.000Z",
+        searchUrl: "https://github.com/digitopvn/clarkcant/issues?q=is%3Aissue",
+        manualUrl: "https://github.com/digitopvn/clarkcant/issues/new?title=x",
+      },
+    };
+    expect(feedbackPublicationSchema.safeParse(inconclusive).success).toBe(true);
+    expect(feedbackPublicationSchema.safeParse({ ...inconclusive, inconclusive: { ...inconclusive.inconclusive, extra: 1 } }).success).toBe(false);
+    expect(feedbackPublicationSchema.safeParse({ status: "unknown", reportId: "rpt_a1", reason: "waiting" }).success).toBe(true);
   });
 });

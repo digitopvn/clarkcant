@@ -36,7 +36,7 @@ import {
 import { handleRequest } from "../src/gateway.ts";
 import { reconcileFeedbackAtStart } from "../src/routes/feedback.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
-import { createFakeGithub, type FakeGithub } from "../src/test-support/fake-github.ts";
+import { FAKE_GITHUB_VIEWER, createFakeGithub, type FakeGithub } from "../src/test-support/fake-github.ts";
 
 /**
  * The product report service against an in-process GitHub.
@@ -104,7 +104,7 @@ async function prepared(request: FeedbackRequest) {
   return outcome;
 }
 
-/** The person's press: `send` (Create issue, Send again) or `check` (Check again). */
+/** The person's press: `send` (Create issue, Send again), `check` (Check again) or `send-anyway` (Send anyway). */
 function press(reportId: string, intent: PublishIntent = "send", options: PublishOptions = FAST) {
   return publishFeedback(services, { reportId, conversationId, intent, at }, options);
 }
@@ -493,35 +493,126 @@ describe("after a restart", () => {
     expect(github.writes()).toHaveLength(1);
   });
 
-  it("keeps a report unknown when the record of its attempt is missing, however long ago, and sends nothing", async () => {
+  it("says plainly that a report whose attempt left no record cannot be checked, once, and sends nothing", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.parse(AT));
     const { draft } = await prepared(bug("Scrollbar flickers"));
     stopMidSend(draft.reportId);
     vi.setSystemTime(Date.parse(AT) + 60 * MINUTE);
 
-    await reconcileFeedbackAtStart(services, FAST);
+    expect(await reconcileFeedbackAtStart(services, FAST)).toEqual({ checked: 1, announced: 1 });
+    // Checking again cannot change it, so a second start has nothing new to say.
+    expect(await reconcileFeedbackAtStart(services, FAST)).toEqual({ checked: 1, announced: 0 });
 
     const record = getFeedbackReport(services.runtime.db, draft.reportId);
     expect(record?.status).toBe("unknown");
-    expect(record?.publication).toMatchObject({ status: "unknown" });
+    expect(record?.publication).toMatchObject({
+      status: "unknown",
+      reason: "Clark không thể biết GitHub đã giữ báo cáo này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó.",
+      inconclusive: { since: draft.createdAt },
+    });
     expect(cardsIn().map((card) => card.publication?.status)).toEqual(["unknown"]);
     expect(github.writes()).toHaveLength(0);
   });
+});
 
-  it("keeps a report unknown, never offering Send again, when GitHub's list is too long to read through", async () => {
+describe("a report checking cannot settle", () => {
+  /** An unanswered send, then a check while GitHub's list runs past what the scan reads. */
+  async function beyondChecking(description: string) {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.parse(AT));
     github.fail("createIssue", { kind: "no-answer", applied: false });
-    const { draft } = await prepared(bug("Tray icon goes missing"));
+    const { draft } = await prepared(bug(description));
     await press(draft.reportId);
     vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
-    github.fail("findIssue", { kind: "no-answer" });
+    github.overlongLists = true;
+    const checked = await press(draft.reportId, "check");
+    return { draft, checked };
+  }
+
+  it("is told apart from a GitHub that could not be reached: said as such, with where to look and file by hand", async () => {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: at },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", value: "en", source: "user" },
+    );
+    if (!written.ok) throw new Error(written.message);
+    const { draft, checked } = await beyondChecking("Tray icon goes missing");
+
+    if (!checked.ok || checked.publication.status !== "unknown") throw new Error("expected an unknown outcome");
+    expect(checked.publication.reason).toBe("Clark can't tell whether GitHub kept this report, and checking again won't change that.");
+    const inconclusive = checked.publication.inconclusive;
+    expect(inconclusive?.since).toBe(getEffect(services.runtime.db, getFeedbackReport(services.runtime.db, draft.reportId)?.effectId ?? "")?.preparedAt);
+    expect(decodeURIComponent(inconclusive?.searchUrl ?? "")).toBe(
+      `https://github.com/digitopvn/clarkcant/issues?q=is:issue author:@me created:>=${AT.slice(0, 10)}`,
+    );
+    expect(inconclusive?.manualUrl).toMatch(/^https:\/\/github\.com\/digitopvn\/clarkcant\/issues\/new\?/u);
+    expect(github.writes()).toHaveLength(1);
+  });
+
+  it("is never sent again by the node, nor by a plain send", async () => {
+    const { draft } = await beyondChecking("Menu bar text is clipped");
+
+    const sent = await press(draft.reportId, "send");
+    await reconcileFeedbackAtStart(services, FAST);
+
+    expect(sent.ok && sent.publication).toMatchObject({ status: "unknown", inconclusive: expect.any(Object) });
+    expect(github.writes()).toHaveLength(1);
+  });
+
+  it("is sent anyway on the person's press, recorded as their decision, and may file twice", async () => {
+    setExecution({ mode: "ask" });
+    const { draft } = await beyondChecking("Settings window opens off-screen");
+    github.overlongLists = false;
+
+    const anyway = await press(draft.reportId, "send-anyway");
+
+    expect(anyway.ok && anyway.publication.status).toBe("published");
+    expect(github.writes()).toHaveLength(2);
+    const executed = allRows<{ document: string }>(services.runtime.db, "SELECT document FROM events WHERE kind = 'effect.executed'").map(
+      (row) => JSON.parse(row.document) as Record<string, unknown>,
+    );
+    expect(executed.at(-1)).toMatchObject({ approvedBy: "person", because: expect.stringContaining("Send anyway") });
+  });
+
+  it("is refused by the policy without sending, and stays beyond checking", async () => {
+    const { draft } = await beyondChecking("Notifications arrive twice");
+    setExecution({ prohibition: "all" });
+
+    const anyway = await press(draft.reportId, "send-anyway");
+
+    expect(anyway.ok && anyway.publication.status).toBe("refused");
+    expect(github.writes()).toHaveLength(1);
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.publication).toMatchObject({ status: "unknown", inconclusive: expect.any(Object) });
+  });
+
+  it("is the only report Send anyway is accepted for", async () => {
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const { draft } = await prepared(bug("Popover flickers"));
+
+    expect(await press(draft.reportId, "send-anyway")).toMatchObject({ ok: false, status: 409, code: "NOT_INCONCLUSIVE" });
+    await press(draft.reportId);
+    expect(await press(draft.reportId, "send-anyway")).toMatchObject({ ok: false, status: 409, code: "NOT_INCONCLUSIVE" });
+    expect(github.writes()).toHaveLength(1);
+  });
+});
+
+describe("looking for a report by its marker", () => {
+  it("looks among the token owner's own issues, asking GitHub who that is once per check", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const { draft } = await prepared(bug("Cursor lags in the composer"));
+    await press(draft.reportId);
+    // Someone else's issue quoting the marker is not the report.
+    github.seedIssue({ title: "quoting", body: feedbackMarker(draft.reportId), author: "someone-else" });
+    vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
+    github.calls.length = 0;
 
     const checked = await press(draft.reportId, "check");
 
-    expect(checked.ok && checked.publication.status).toBe("unknown");
-    expect(github.writes()).toHaveLength(1);
+    expect(checked.ok && checked.publication.status).toBe("failed");
+    expect(github.calls.filter((call) => call.operation === "viewer")).toHaveLength(1);
+    expect(github.calls.find((call) => call.operation === "findIssue")?.detail).toContain(`by ${FAKE_GITHUB_VIEWER}`);
   });
 
   it("says nothing new about a report already known to be unknown that is still unknown", async () => {

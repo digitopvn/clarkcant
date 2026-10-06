@@ -10,6 +10,7 @@ import {
   type FeedbackIssueRef,
   type FeedbackKind,
   type FeedbackPublication,
+  type FeedbackPublishIntent,
   type FeedbackRelated,
   type FeedbackRequest,
   HANDLING_PREREQUISITES,
@@ -64,6 +65,7 @@ import {
   type FeedbackGithubClient,
   FeedbackGithubError,
   type GithubIssue,
+  MarkerScanIncompleteError,
   createNodeFeedbackGithub,
 } from "./feedback-github.ts";
 
@@ -247,10 +249,11 @@ export async function prepareFeedback(
 
 /**
  * What a press asks for. `send` files the report (or, while an earlier attempt's outcome is unknown, only finds out what
- * it came to); `check` only finds out and never sends. Nothing else publishes: Clark prepares a report and shows it,
- * and only the person's press on the host's card files it.
+ * it came to); `check` only finds out and never sends; `send-anyway` files a report whose earlier attempt can never be
+ * found out, which the person chose knowing it may file twice. Nothing else publishes: Clark prepares a report and
+ * shows it, and only the person's press on the host's card files it. The node never sends one again on its own.
  */
-export type PublishIntent = "send" | "check";
+export type PublishIntent = FeedbackPublishIntent;
 
 export type PublishOutcome =
   | { ok: true; publication: FeedbackPublication; record: FeedbackReportRecord; previousStatus: FeedbackReportRecord["status"] }
@@ -345,12 +348,15 @@ function settleObserved(services: FeedbackServices, effect: EffectRecord, outcom
 type MarkerLookup =
   | { kind: "found"; issue: FeedbackIssueRef; commentUrl?: string }
   | { kind: "absent" }
-  | { kind: "lookup-failed"; reason: string };
+  | { kind: "lookup-failed"; reason: string }
+  | { kind: "inconclusive"; reason: string };
 
 /**
  * Find the report on GitHub by its marker: the new issue it opened, or its comment on the duplicate. `attemptedAt` is
  * when the write was first handed to the ledger, which no later check moves, so the window always reaches back past
- * the moment GitHub could have created it.
+ * the moment GitHub could have created it. A new issue is looked for among the token owner's own issues only (asked of
+ * GitHub once per lookup), so other traffic in the repository does not run the scan out; a list that still runs past
+ * it is `inconclusive`, which checking again would not change.
  */
 async function findByMarker(client: FeedbackGithubClient, draft: FeedbackDraft, attemptedAt: Instant): Promise<MarkerLookup> {
   const marker = feedbackMarker(draft.reportId);
@@ -359,9 +365,11 @@ async function findByMarker(client: FeedbackGithubClient, draft: FeedbackDraft, 
       const comment = await client.findCommentWithMarker(draft.duplicateOf.number, marker, attemptedAt);
       return comment === undefined ? { kind: "absent" } : { kind: "found", issue: draft.duplicateOf, commentUrl: comment.url };
     }
-    const issue = await client.findIssueWithMarker(marker, attemptedAt);
+    const creator = await client.viewerLogin();
+    const issue = await client.findIssueWithMarker(marker, attemptedAt, creator);
     return issue === undefined ? { kind: "absent" } : { kind: "found", issue: issueRef(issue) };
   } catch (cause) {
+    if (cause instanceof MarkerScanIncompleteError) return { kind: "inconclusive", reason: cause.message };
     return { kind: "lookup-failed", reason: cause instanceof Error ? cause.message : String(cause) };
   }
 }
@@ -401,8 +409,9 @@ function settled(record: FeedbackReportRecord, previousStatus: FeedbackReportRec
  * Found by its marker: published. GitHub unreadable, GitHub having answered that it filed it, or too little time since
  * the attempt for an absence to mean anything: still unknown. Absent from GitHub's own list well after the attempt:
  * it was never filed, which is `failed` and retryable — the person's Send again is then the first time it is filed.
- * The time measured is the attempt's own, from the ledger, so checking again and again never moves it. Without that
- * ledger entry there is no attempt time to measure from, so an absence means nothing and the report stays unknown.
+ * The time measured is the attempt's own, from the ledger, so checking again and again never moves it. When checking
+ * cannot settle it (GitHub's list runs past the scan, or the ledger no longer holds the attempt, so an absence means
+ * nothing) it is `unknown` and `inconclusive`: said as such, with the links for the person to look themselves.
  */
 async function reconcileAttempt(
   services: FeedbackServices,
@@ -430,15 +439,9 @@ async function reconcileAttempt(
       ).slice(0, 600),
     });
   }
-  if (effect === undefined) {
-    return save(services, record, "unknown", {
-      status: "unknown",
-      reportId: record.reportId,
-      reason: say(
-        "Không còn bản ghi về lần gửi trước, nên không biết chắc nó đã tới GitHub hay chưa. Báo cáo không được gửi lại.",
-        "The record of the earlier attempt is missing, so whether it reached GitHub cannot be told. The report is not sent again.",
-      ).slice(0, 600),
-    });
+  if (lookup.kind === "inconclusive" || effect === undefined) {
+    // The draft's own time is never later than any attempt to send it, so the person's list from then holds it if GitHub does.
+    return save(services, record, "unknown", inconclusiveAttempt(record, effect?.preparedAt ?? record.draft.createdAt, say));
   }
   const settledFiled = effect.state === "confirmed";
   const tooSoon = Date.now() - Date.parse(attemptedAt) < (options.reconcileGraceMs ?? FEEDBACK_RECONCILE_GRACE_MS);
@@ -470,13 +473,42 @@ async function reconcileAttempt(
   });
 }
 
+/** GitHub's prefilled new-issue page for the report, or the duplicate's issue its comment would go on. */
+function manualUrlOf(draft: FeedbackDraft): string {
+  return draft.duplicateOf === undefined ? manualIssueUrl(draft.repository, draft.title, draft.body, draft.labels) : draft.duplicateOf.url;
+}
+
+/** An attempt checking cannot settle: said plainly, with where the person can look and file by hand. */
+function inconclusiveAttempt(record: FeedbackReportRecord, since: Instant, say: (vi: string, en: string) => string): FeedbackPublication {
+  const draft = record.draft;
+  const day = since.slice(0, 10);
+  const query = draft.duplicateOf === undefined ? `is:issue author:@me created:>=${day}` : `is:issue commenter:@me updated:>=${day}`;
+  return {
+    status: "unknown",
+    reportId: record.reportId,
+    reason: say(
+      "Clark không thể biết GitHub đã giữ báo cáo này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó.",
+      "Clark can't tell whether GitHub kept this report, and checking again won't change that.",
+    ),
+    inconclusive: {
+      since,
+      searchUrl: `https://github.com/${draft.repository}/issues?q=${encodeURIComponent(query)}`,
+      manualUrl: manualUrlOf(draft),
+    },
+  };
+}
+
+function isInconclusive(record: FeedbackReportRecord): boolean {
+  return record.status === "unknown" && record.publication?.status === "unknown" && record.publication.inconclusive !== undefined;
+}
+
 /**
  * Publish a prepared report on the person's press, or find out what an earlier publish of it came to.
  *
  * The press is the person's decision, and the execution policy still has its say: a policy that refuses external
  * writes, or prohibits effects, refuses this one too; one that would ask first is answered by the press itself. A
  * report already published answers with what it is. One sent before without a trustworthy answer is only looked for,
- * never sent again from here (`reconcileAttempt`).
+ * never sent again from here (`reconcileAttempt`), unless checking cannot settle it and the person pressed Send anyway.
  */
 export async function publishFeedback(
   services: FeedbackServices,
@@ -497,8 +529,17 @@ export async function publishFeedback(
     return { ok: false, status: 409, code: "WRONG_REPOSITORY", message: `reports go to ${FEEDBACK_REPOSITORY} only` };
   }
 
+  const anyway = input.intent === "send-anyway";
+  if (anyway && !isInconclusive(record)) {
+    return {
+      ok: false,
+      status: 409,
+      code: "NOT_INCONCLUSIVE",
+      message: "Send anyway is only for a report whose earlier attempt cannot be found out; this one can be sent or checked",
+    };
+  }
   // An earlier attempt that never got a trustworthy answer: find out, and send nothing.
-  if (record.status === "publishing" || record.status === "unknown") {
+  if (!anyway && (record.status === "publishing" || record.status === "unknown")) {
     return settled(await reconcileAttempt(services, record, github.reader(), say, options), previousStatus);
   }
   if (input.intent === "check") {
@@ -518,11 +559,18 @@ export async function publishFeedback(
     intent: { kind: "interactive" },
   });
   if (asked.kind === "deny") {
-    record = save(services, record, "draft", { status: "refused", reportId: record.reportId, reason: asked.reason.slice(0, 600) });
+    const refused: FeedbackPublication = { status: "refused", reportId: record.reportId, reason: asked.reason.slice(0, 600) };
+    // A refused Send anyway sends nothing and changes nothing: the earlier attempt is still beyond checking, and saying
+    // otherwise on the report would let a later plain send file it again without the warning.
+    if (anyway) return { ok: true, publication: refused, record, previousStatus };
+    record = save(services, record, "draft", refused);
     return settled(record, previousStatus);
   }
   // The question an "ask" policy would put is the one the person just answered by pressing on the host's card.
-  const decision = asked.kind === "ask" ? { kind: "execute" as const, reason: "the person pressed to file it on the host's card", audit: true } : asked;
+  const pressed = anyway
+    ? "the person pressed Send anyway on the host's card, knowing an earlier attempt may already have filed it"
+    : "the person pressed to file it on the host's card";
+  const decision = asked.kind === "ask" ? { kind: "execute" as const, reason: pressed, audit: true } : asked;
   recordEffectExecution(
     { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: input.at, newId: services.conductor.newId },
     {
@@ -540,7 +588,6 @@ export async function publishFeedback(
   const current = record;
   const attempt = github.withWriter((client) => sendAndReadBack(services, client, current, input.conversationId, description, options));
   if (!attempt.ok) {
-    const body = draft.duplicateOf === undefined ? draft.body : (draft.occurrence ?? draft.body);
     record = save(services, record, "draft", {
       status: "needs-access",
       reportId: record.reportId,
@@ -548,7 +595,7 @@ export async function publishFeedback(
         `Chưa gửi được: ${attempt.reason}. Thêm token GitHub (secret “github_token”) để Clark gửi giúp, hoặc tự mở issue với nội dung đã chuẩn bị.`,
         `Not filed: ${attempt.reason}. Add a GitHub token (secret “github_token”) for Clark to file it, or open the issue yourself with the prepared text.`,
       ).slice(0, 600),
-      manualUrl: draft.duplicateOf === undefined ? manualIssueUrl(draft.repository, draft.title, body, draft.labels) : draft.duplicateOf.url,
+      manualUrl: manualUrlOf(draft),
     });
     return settled(record, previousStatus);
   }
@@ -860,7 +907,12 @@ export function describePublication(publication: FeedbackPublication, locale: Lo
             `An open issue already covers this, so Clark added this occurrence to #${String(publication.issue.number)}: ${publication.commentUrl ?? publication.issue.url}`,
           );
     case "unknown":
-      return say(`Chưa biết kết quả: ${publication.reason}`, `Outcome not known yet: ${publication.reason}`);
+      return publication.inconclusive === undefined
+        ? say(`Chưa biết kết quả: ${publication.reason}`, `Outcome not known yet: ${publication.reason}`)
+        : say(
+            `${publication.reason} Xem các issue bạn đã mở trên GitHub (${publication.inconclusive.searchUrl}); nếu không có, bạn có thể tự gửi hoặc bấm Vẫn gửi, dù có thể tạo trùng.`,
+            `${publication.reason} Look through the issues you opened on GitHub (${publication.inconclusive.searchUrl}); if it is not there, file it yourself or press Send anyway, which may file it twice.`,
+          );
     case "failed":
       return say(`Chưa gửi được báo cáo. ${publication.reason}`, `The report was not filed. ${publication.reason}`);
     case "needs-access":
@@ -975,7 +1027,10 @@ export async function reconcileUnsettledFeedback(
     );
     checked += 1;
     if (!described.ok || conversationId === undefined) continue;
-    const news = described.previousStatus === "publishing" || described.publication.status !== "unknown";
+    // Worth saying: an attempt that died mid-send, an outcome now settled, or one now known to be beyond checking.
+    const nowInconclusive = described.publication.status === "unknown" && described.publication.inconclusive !== undefined;
+    const news =
+      described.previousStatus === "publishing" || described.publication.status !== "unknown" || (nowInconclusive && !isInconclusive(record));
     if (!news) continue;
     try {
       input.announce(conversationId, described.text, described.blocks);

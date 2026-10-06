@@ -219,7 +219,7 @@ người dùng trên thẻ đó mới gửi báo cáo; Clark, công cụ của n
 |---|---|---|
 | POST | `/feedback/reports` | `{ request, conversationId? }` — `201 { draft, diagnostics }`. Chuẩn bị và lưu bản nháp; chưa gửi gì |
 | GET | `/feedback/reports/{reportId}` | `{ draft, status, publication? }` |
-| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId, intent?: "send" \| "check", answers? }` — `{ publication, eligibility?, messageId, timeline }`, kèm thẻ kết quả ghi vào hội thoại. **Chỉ người dùng** |
+| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId, intent?: "send" \| "check" \| "send-anyway", answers? }` — `{ publication, eligibility?, messageId, timeline }`, kèm thẻ kết quả ghi vào hội thoại. **Chỉ người dùng** |
 
 `request` là `{ kind: "bug" | "feature", description, source, includeDiagnostics?, title?, subsystem?, bug?, feature?,
 evidence?, error?, philosophy? }`. Phần nào không ai nói tới thì bị bỏ khỏi issue, và bước tái hiện không ai đưa ra
@@ -239,8 +239,13 @@ khi tải lại. Lần ghi không nhận được phản hồi là `unknown`, v�
 tìm dấu và không bao giờ gửi; kiểm tra một báo cáo chưa từng gửi trả `409 NOTHING_SENT`. Khi danh sách của chính GitHub
 cho thấy không có dấu ít nhất hai phút sau lần thử (tính từ lúc thử gửi, không phải lần kiểm tra gần nhất), báo cáo
 chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi nó lần đầu tiên. Không gửi gì khi chưa kiểm tra được
-GitHub, và việc không thấy dấu không được tin khi danh sách của GitHub quá dài để đọc hết hoặc sổ hiệu ứng không còn
-ghi lần thử: báo cáo vẫn là `unknown`. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
+GitHub. Dấu được tìm trong các issue do chủ token mở (`creator`, lấy từ `GET /user`), tối đa ba trang 100 mục. Khi danh
+sách đó vẫn dài hơn phạm vi đọc, hoặc sổ hiệu ứng không còn ghi lần thử, việc kiểm tra không thể ngã ngũ: báo cáo là
+`unknown` kèm `inconclusive: { since, searchUrl, manualUrl }`, và thẻ ghi "Clark không thể biết GitHub đã giữ báo cáo
+này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó." Thay cho Kiểm tra lại, thẻ dẫn tới các issue người dùng
+đã mở từ lần thử và trang tạo issue đã điền sẵn, cảnh báo rằng gửi lại có thể tạo bản trùng, và có nút Vẫn gửi
+(`intent: "send-anyway"`, chỉ nhận cho báo cáo như vậy, nếu không thì `409 NOT_INCONCLUSIVE`), có thể gửi nó hai lần.
+Node không bao giờ tự gửi lại. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
 ngũ được ghi vào hội thoại của nó thành thẻ kết quả. Các trạng thái khác là `needs-access` (chưa có `github_token`; kèm
 `manualUrl`, trang tạo issue của GitHub đã điền sẵn) và `refused`. Lần ghi là một hiệu ứng `external-write` trong sổ
 hiệu ứng, và policy thực thi áp dụng cho cú bấm của người dùng: luật hay lệnh cấm từ chối thì báo cáo là `refused` và

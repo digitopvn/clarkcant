@@ -5,6 +5,7 @@ import {
   type FeedbackGithubClient,
   FeedbackGithubError,
   type GithubComment,
+  MarkerScanIncompleteError,
   type GithubIssue,
   type GithubFailureKind,
   type IssueActivity,
@@ -23,7 +24,19 @@ import {
  * allowance the real client asks for, so a window that starts too late misses the report here as it would there.
  */
 
-export type FakeGithubOperation = "search" | "getIssue" | "createIssue" | "createComment" | "getComment" | "findIssue" | "findComment" | "activity";
+export type FakeGithubOperation =
+  | "search"
+  | "getIssue"
+  | "createIssue"
+  | "createComment"
+  | "getComment"
+  | "viewer"
+  | "findIssue"
+  | "findComment"
+  | "activity";
+
+/** The login the fake's token belongs to: every issue it files, and every seeded one unless told otherwise, is theirs. */
+export const FAKE_GITHUB_VIEWER = "clark-reporter";
 
 export interface FakeGithubFault {
   kind: GithubFailureKind;
@@ -35,12 +48,17 @@ export interface FakeGithubFault {
 }
 
 export interface FakeGithub extends FeedbackGithub {
-  issues: Map<number, GithubIssue & { comments: Array<GithubComment & { createdAt: string }>; createdAt: string; activity: IssueActivity }>;
+  issues: Map<
+    number,
+    GithubIssue & { comments: Array<GithubComment & { createdAt: string }>; createdAt: string; author: string; activity: IssueActivity }
+  >;
   calls: Array<{ operation: FakeGithubOperation; detail?: string }>;
   /** Whether a writer is available: `false` behaves like a node with no `github_token`. */
   writable: boolean;
+  /** While true, every marker scan reads a list longer than the bounded scan, as a busy repository's does. */
+  overlongLists: boolean;
   fail(operation: FakeGithubOperation, fault: FakeGithubFault): void;
-  seedIssue(issue: Partial<GithubIssue> & { title: string; body?: string; activity?: IssueActivity }): GithubIssue;
+  seedIssue(issue: Partial<GithubIssue> & { title: string; body?: string; author?: string; activity?: IssueActivity }): GithubIssue;
   /** Every call that wrote, in order. */
   writes(): Array<{ operation: FakeGithubOperation; detail?: string }>;
 }
@@ -117,6 +135,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
           isPullRequest: false,
           comments: [],
           createdAt: now(),
+          author: FAKE_GITHUB_VIEWER,
           activity: { openPullRequests: [] },
         };
         issues.set(issue.number, issue);
@@ -151,18 +170,28 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
       }
       return undefined;
     },
-    async findIssueWithMarker(marker, since) {
-      calls.push({ operation: "findIssue", detail: marker });
+    async viewerLogin() {
+      calls.push({ operation: "viewer" });
+      const found = fault("viewer");
+      if (found !== undefined) raise(found);
+      return FAKE_GITHUB_VIEWER;
+    },
+    async findIssueWithMarker(marker, since, creator) {
+      calls.push({ operation: "findIssue", detail: creator === undefined ? marker : `${marker} by ${creator}` });
       const found = fault("findIssue");
       if (found !== undefined) raise(found);
+      if (fake.overlongLists) throw new MarkerScanIncompleteError("fake GitHub: the list runs past the scan");
       const from = Date.parse(scanSince(since));
-      const issue = [...issues.values()].find((entry) => Date.parse(entry.createdAt) >= from && entry.body.includes(marker));
+      const issue = [...issues.values()].find(
+        (entry) => Date.parse(entry.createdAt) >= from && (creator === undefined || entry.author === creator) && entry.body.includes(marker),
+      );
       return issue === undefined ? undefined : view(issue);
     },
     async findCommentWithMarker(issueNumber, marker, since) {
       calls.push({ operation: "findComment", detail: marker });
       const found = fault("findComment");
       if (found !== undefined) raise(found);
+      if (fake.overlongLists) throw new MarkerScanIncompleteError("fake GitHub: the list runs past the scan");
       const from = Date.parse(scanSince(since));
       const comment = issues.get(issueNumber)?.comments.find((entry) => Date.parse(entry.createdAt) >= from && entry.body.includes(marker));
       return comment === undefined ? undefined : { id: comment.id, url: comment.url, body: comment.body };
@@ -181,6 +210,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
     issues,
     calls,
     writable: options.writable ?? true,
+    overlongLists: false,
     reader: () => client,
     withWriter(use) {
       if (!fake.writable) return { ok: false, reason: 'this node has no "github_token" token to file it with' };
@@ -203,6 +233,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
         isPullRequest: seed.isPullRequest ?? false,
         comments: [],
         createdAt: now(),
+        author: seed.author ?? FAKE_GITHUB_VIEWER,
         activity: seed.activity ?? { openPullRequests: [] },
       };
       issues.set(number, issue);

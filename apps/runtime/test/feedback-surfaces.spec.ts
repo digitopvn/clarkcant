@@ -20,6 +20,7 @@ import { messagesSince } from "@clarkcant/storage";
 import { reportArgument } from "../src/application/slash-commands.ts";
 import { createFeedbackTool } from "../src/feedback-tool.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
+import { SURFACE_HEADER } from "../src/routes/http.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createFakeGithub, type FakeGithub } from "../src/test-support/fake-github.ts";
 
@@ -52,12 +53,12 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-function call(method: string, path: string, body?: unknown) {
+function call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
   return handleRequest(deps, {
     method,
     path,
     query: {},
-    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}`, ...headers },
     body: body === undefined ? "" : JSON.stringify(body),
   });
 }
@@ -185,6 +186,30 @@ describe("the report routes", () => {
 
     const unknownIntent = await call("POST", "/feedback/reports/rpt_missing/publish", { conversationId, intent: "approve" });
     expect(unknownIntent.status).toBe(400);
+  });
+
+  it("offers Send anyway only on the person's own surface, for a report checking cannot settle", async () => {
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const prepared = await call("POST", "/feedback/reports", { request: { kind: "bug", description: "Clock widget drifts", source: "composer" }, conversationId });
+    const { draft } = prepared.body as { draft: { reportId: string } };
+    await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId });
+    github.overlongLists = true;
+    await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId, intent: "check" });
+    const beyond = feedbackCards().at(-1);
+    expect(beyond?.publication).toMatchObject({ status: "unknown", inconclusive: expect.any(Object) });
+
+    for (const surface of ["mcp", "relay"]) {
+      const asked = await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId, intent: "send-anyway" }, { [SURFACE_HEADER]: surface });
+      expect(asked.status, surface).toBe(403);
+      expect((asked.body as { code?: string }).code, surface).toBe("PERSON_ONLY");
+    }
+    expect(github.writes()).toHaveLength(1);
+
+    github.overlongLists = false;
+    const pressed = await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId, intent: "send-anyway", answers: beyond?.cardId });
+    expect(pressed.status).toBe(200);
+    expect(feedbackCards().at(-1)?.publication?.status).toBe("published");
+    expect(github.writes()).toHaveLength(2);
   });
 
   it("keeps publishing to the person: a machine surface cannot file a report", () => {

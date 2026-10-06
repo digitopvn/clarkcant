@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CommandCardAction, FeedbackRequestInput, ProviderSignInView } from "@clarkcant/contracts";
+import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -542,7 +542,7 @@ export function useBlockActions({
   );
 
   const createFeedback = useCallback(
-    ({ cardId, request, reportId, intent = "send" }: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: "send" | "check" }) => {
+    ({ cardId, request, reportId, intent = "send" }: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: FeedbackPublishIntent }) => {
       if (conversationId === undefined) return;
       const previous = feedbackRef.current[cardId];
       const requestKey = request === undefined ? undefined : JSON.stringify(request);

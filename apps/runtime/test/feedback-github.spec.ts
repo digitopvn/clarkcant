@@ -4,6 +4,7 @@ import { type Instant, feedbackMarker } from "@clarkcant/contracts";
 
 import {
   FeedbackGithubError,
+  MarkerScanIncompleteError,
   classifyFetchFailure,
   classifyStatus,
   createGithubRestClient,
@@ -106,8 +107,26 @@ describe("the REST client", () => {
 
     await expect(
       createGithubRestClient({ repository: REPO, fetch }).findIssueWithMarker(marker, "2026-10-06T09:00:00.000Z" as Instant),
-    ).rejects.toBeInstanceOf(FeedbackGithubError);
+    ).rejects.toBeInstanceOf(MarkerScanIncompleteError);
     expect(seen).toHaveLength(3);
+  });
+
+  it("asks whose token it holds, and lists only that person's issues when told who", async () => {
+    const { fetch, seen } = scripted((url) => (url.pathname === "/user" ? json({ login: "ann" }) : json([])));
+    const client = createGithubRestClient({ repository: REPO, token: "t", fetch });
+
+    const login = await client.viewerLogin();
+    await client.findIssueWithMarker(feedbackMarker("rpt_mine"), "2026-10-06T09:00:00.000Z" as Instant, login);
+
+    expect(login).toBe("ann");
+    expect(seen[1]?.url.searchParams.get("creator")).toBe("ann");
+  });
+
+  it("does not ask whose token it is when it has none", async () => {
+    const { fetch, seen } = scripted(() => json({ login: "nobody" }));
+
+    expect(await createGithubRestClient({ repository: REPO, fetch }).viewerLogin()).toBeUndefined();
+    expect(seen).toHaveLength(0);
   });
 
   it("answers absent once the last page of the list has been read", async () => {

@@ -101,6 +101,37 @@ describe("a result", () => {
     expect(pressed).toEqual([{ cardId: "card_result", reportId: "rpt_1", intent: "send" }]);
   });
 
+  it("says plainly when checking cannot settle it: no Check again, both links, the warning, and Send anyway", () => {
+    const { actions, pressed } = live();
+    const block = result({
+      status: "unknown",
+      reportId: "rpt_1",
+      reason: "Clark can't tell whether GitHub kept this report, and checking again won't change that.",
+      inconclusive: {
+        since: "2026-10-06T08:58:00.000Z",
+        searchUrl: "https://github.com/digitopvn/clarkcant/issues?q=is%3Aissue%20author%3A%40me%20created%3A%3E%3D2026-10-06",
+        manualUrl: "https://github.com/digitopvn/clarkcant/issues/new?title=bug",
+      },
+    });
+    const card = FeedbackResult({ block, t, actions });
+    const [anyway] = findAll(card, "data-feedback-send-anyway");
+    (anyway?.props.onClick as () => void)();
+
+    expect(findAll(card, "data-feedback-check")).toHaveLength(0);
+    expect(findAll(card, "data-feedback-send-again")).toHaveLength(0);
+    expect(textOf(anyway)).toBe("Send anyway — this may file it twice");
+    expect(pressed).toEqual([{ cardId: "card_result", reportId: "rpt_1", intent: "send-anyway" }]);
+    const html = markup(block, actions);
+    expect(html).toContain("Can&#x27;t be checked");
+    expect(html).toContain("See what you filed on GitHub since 2026-10-06");
+    expect(html).toContain('href="https://github.com/digitopvn/clarkcant/issues/new?title=bug"');
+    expect(html).toContain("data-feedback-duplicate-warning");
+    expect(MESSAGES_VI["feedback.sendAnyway"]).toBe("Vẫn gửi — có thể tạo bản trùng");
+    // A snapshot keeps the links and the warning, and offers no press.
+    expect(markup(block)).not.toContain("data-feedback-send-anyway");
+    expect(markup(block)).toContain("data-feedback-search");
+  });
+
   it("offers nothing once a later result answers it", () => {
     const html = markup(result({ status: "unknown", reportId: "rpt_1", reason: "GitHub did not answer" }), live(["card_result"]).actions);
 
