@@ -67,6 +67,15 @@ describe("the class of a text", () => {
       `id-42 ${us.join(" ")}`,
       `Hotline-${local.join("")}`,
       `Smith-${us.join("-")}`,
+      // Joined by a dash to a label that ends in a digit.
+      `Q1-${local.join("")}`,
+      `A1-${us.join("-")}`,
+      `P12-${local[0] ?? ""} ${local.slice(1).join(" ")}`,
+      `ext12-${us.join("")}`,
+      `Room B2-${us.join("-")}`,
+      `v2-${local.join("")}`,
+      `id42-${local.join("")}`,
+      `"Q1-${local.join("")}"`,
       // After an abbreviation or a list number and a dot.
       `Tel. ${local.join("")}`,
       `1. ${local.join("")}`,
