@@ -36,7 +36,11 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      - audio đi tới cả hai;
      - Live vẫn nói và vẫn nghe barge-in;
      - interim của recognizer được hiển thị, và chỉ bản final đã chốt mới được dispatch.
-   - Recognizer không mở được, hoặc hỏng giữa phiên, sẽ trả câu đang nói dở lại cho transcription của phiên live.
+   - Một câu bị giới hạn phiên mười phút của provider cắt đôi vẫn là một utterance: cách đọc của phiên mở lại được nối
+     vào những gì phiên đã đóng nghe được, và audio nói trong lúc mở lại được giữ rồi gửi tiếp.
+   - Recognizer không mở được trong một khoảng thời gian có giới hạn, hoặc hỏng giữa phiên, sẽ trả câu đang nói dở lại
+     cho transcription của phiên live. Cách đọc live được giữ theo từng câu, và mỗi bản final của recognizer phủ câu đọc
+     giống nó, nên khi fallback không lặp lại câu đã gửi và không làm mất câu mà phiên live bắt đầu nghe sớm.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;
@@ -46,15 +50,25 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      - một glossary lập trình có sẵn, với các lỗi nghe sai đã biết làm alias.
    - Mọi term đi qua `redactSecrets` dùng chung, và bị loại nếu redaction chạm vào nó. Không có bộ pattern secret thứ
      hai nào.
-   - Văn bản hội thoại chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
+   - Khi recognizer chuyên dụng được bật, các term - kể cả định danh, path, tên branch và số issue trích từ hội thoại -
+     được gửi tới nó làm vocabulary. Các câu trong hội thoại chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
    - Adapter của từng provider dịch vocabulary sang field riêng của mình. Gemini chỉ nhận cách viết chuẩn, vì kéo
      recognizer về phía một lỗi nghe sai đã biết thì đi ngược mục đích.
 4. **Một normaliser tất định, không phải model.**
    - Các quy tắc là casing, khoảng cách, alias và near-match cách một lỗi. Mỗi quy tắc cần bằng chứng: câu có tiếng
      Việt, hoặc có một mốc kỹ thuật nằm ngoài đoạn được sửa.
+   - Near-match chỉ sửa một lỗi nói nhầm ở một từ của tên glossary, provider hoặc model. Nó không bao giờ chạm tới
+     symbol, path, branch hay package, vốn có hàng xóm cách một lỗi là những tên thật khác (`setUser` và `getUser`),
+     và không áp dụng cho văn bản đã được viết dạng code.
+   - Một phần của một từ viết dài hơn (`live` trong `gemini-live.tsx`) không bao giờ bị động tới, và dấu câu mà một
+     cách viết đã mang sẵn không bị viết hai lần.
+   - Một từ thật hoặc tên người không bao giờ là alias: "Jeff" vẫn là "Jeff".
    - Casing không bao giờ hạ chữ hoa.
-   - Lệnh không bao giờ bị đổi, ngoại trừ casing.
+   - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
+     lệnh ("git re base" được giữ nguyên như đã nghe).
    - Một đoạn có thể là hai term thì được giữ nguyên như đã nghe, và việc abstain được ghi lại.
+   - Một câu đã chuẩn được trả lại đúng như cũ. Benchmark kiểm tra điều này trên mọi câu tham chiếu, kể cả các mục âm
+     dựng từ tên hàng xóm gần, tên nằm trong từ dài hơn và tên người.
    - Mỗi thay đổi được ghi thành provenance có giới hạn.
 5. **Chốt một lần, và chỉ thử lại khi có chủ đích.**
    - Một utterance final được chốt trên một hàng đợi có thứ tự và dispatch một lần cho mỗi utterance id, qua cùng
@@ -63,7 +77,7 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      giới hạn của chính nó, với context tập trung vào các ứng viên.
    - Hai cách đọc được so sánh theo một quy tắc cố định. Bản gốc thắng khi hòa, và cũng thắng khi lần thử lại nghe
      thành một câu khác.
-   - Lần thử lại bị giới hạn thời gian. Không transcript nào được gửi tới Jev; Jev chọn giữa các phương án có giới hạn,
+   - Lần thử lại bị giới hạn thời gian, và lần thử lại vượt quá giới hạn sẽ bị hủy, đóng luôn phiên nó đã mở. Không transcript nào được gửi tới Jev; Jev chọn giữa các phương án có giới hạn,
      không phải bộ viết lại transcript.
 
 ## Vì sao recognizer chuyên dụng chưa là mặc định
@@ -77,19 +91,22 @@ quyết định họ không thể đánh giá, nên không có bộ chọn nào.
 ## Bằng chứng
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` chạy bộ chấm điểm trên
-`packages/voice-adapters/bench/vi-en-coding-corpus.json`. Corpus có 68 utterance (tiếng Việt chuyển sang tiếng Anh, và
-tiếng Anh có ngữ cảnh tiếng Việt) và 94 thuật ngữ kỹ thuật. Đầu ra recognizer trong đó là giả lập: các lỗi
-transcription live điển hình được viết tay, không phải bản ghi âm.
+`packages/voice-adapters/bench/vi-en-coding-corpus.json`. Corpus có 74 utterance (tiếng Việt chuyển sang tiếng Anh, và
+tiếng Anh có ngữ cảnh tiếng Việt, gồm sáu mục âm phải được trả lại nguyên vẹn) và 100 thuật ngữ kỹ thuật. Đầu ra
+recognizer trong đó là giả lập: các lỗi transcription live điển hình được viết tay, không phải bản ghi âm. Normaliser
+không đổi câu tham chiếu chuẩn nào.
 
 | Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Utterance khớp hoàn toàn | Thay đổi | Abstain | Hồi quy |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| thô | 27.2% | 4.5% | 80.9% | 16.2% | - | - | - |
-| đã chuẩn hóa | 4.5% | 1.0% | 16.0% | 75.0% | 62 | 1 | 0 |
+| thô | 25.5% | 4.2% | 77.0% | 21.6% | - | - | - |
+| đã chuẩn hóa | 4.1% | 0.9% | 16.0% | 75.7% | 61 | 1 | 0 |
 
-Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (9/11 và 2/2 ở cả trước lẫn sau); symbol từ 0/19 lên 15/19, path
-từ 0/6 lên 5/6, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
+Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (9/12 và 2/2 ở cả trước lẫn sau); symbol từ 1/20 lên 17/20, path
+từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
 
 - `git stash` bị nghe thành `git status` không được sửa, vì lệnh không bao giờ bị đoán;
+- "git re base" không được ghép thành `git rebase`, cùng lý do đó;
+- "Jeff" không bị viết lại thành Jev, vì đó cũng là tên người;
 - số issue không bị viết lại;
 - tên ngoài vocabulary được giữ nguyên;
 - văn xuôi tiếng Anh không có mốc kỹ thuật được giữ nguyên;
@@ -104,8 +121,13 @@ Cùng lệnh đó với `--audio <manifest> --recognizer gemini-transcribe-live|
 **Giữ nguyên:**
 
 - `VoiceProviderAdapter`, `GeminiLiveAdapter` và đường live mặc định;
-- wire tới browser: interim là frame `transcript` của user thông thường chưa final, còn câu chuẩn là một frame final;
-- mute, end và media focus, giờ tới được cả recognizer.
+- wire tới browser: interim là frame `transcript` của user thông thường chưa final, còn câu chuẩn là một frame final.
+  Phần gộp của trang dùng frame final để chốt dòng đang nói dở, nên một interim và bản sửa của nó là một dòng;
+- mute và end, giờ tới được cả recognizer (mute cũng chốt câu trước đó). Media focus không đổi và không liên quan tới
+  recognizer.
+
+**Đường mặc định:** normaliser cũng chạy trên transcription live mặc định, với cùng vocabulary phiên. Khi không có
+recognizer chuyên dụng, không có gì được gửi tới nơi mới: vocabulary ở lại trên node.
 
 **External gate:**
 

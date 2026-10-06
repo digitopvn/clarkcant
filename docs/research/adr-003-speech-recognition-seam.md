@@ -38,8 +38,11 @@ them before they mean anything.
      - the audio goes to both;
      - Live keeps speaking and keeps hearing barge-in;
      - the recognizer's interims are shown, and only its settled final is dispatched.
-   - A recognizer that cannot open, or fails mid-session, hands the sentence in progress back to the live
-     transcription.
+   - A sentence the provider's ten-minute session limit cuts in half stays one utterance: the reopened session's
+     reading is joined to what the closed one had heard, and audio said while reopening is held and sent on.
+   - A recognizer that cannot open within a bounded time, or fails mid-session, hands the sentence in progress back to
+     the live transcription. The live reading is kept as sentences, and each recognizer final covers the one that reads
+     like it, so a fallback neither repeats a delivered sentence nor drops one the live reading started early.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;
@@ -49,15 +52,26 @@ them before they mean anything.
      - a built-in coding glossary with known mis-hearings as aliases.
    - Every term passes the shared `redactSecrets` and is dropped if redaction would touch it. No second set of secret
      patterns exists.
-   - Conversation text only ranks terms and never leaves the node.
+   - With the dedicated recognizer enabled, the terms - including identifiers, paths, branch names and issue numbers
+     extracted from the conversation - are sent to it as its vocabulary. The conversation's sentences only rank terms
+     and never leave the node.
    - A provider adapter translates the vocabulary into its own field. Gemini gets canonical spellings only, because
      biasing a recognizer towards a known mis-hearing would defeat the purpose.
 4. **A deterministic normaliser, not a model.**
    - The rules are casing, spacing, alias and one-edit near-match. Each needs evidence: Vietnamese in the sentence, or
      a technical anchor outside the span.
+   - Near-match only corrects a spoken slip in one word of a glossary, provider or model name. It never reaches a
+     symbol, path, branch or package, whose one-edit neighbours are other real names (`setUser` and `getUser`), and
+     never applies to text already written as code.
+   - Part of a longer written word (`live` in `gemini-live.tsx`) is never touched, and punctuation a spelling carries
+     is not written twice.
+   - A real word or a person's name is never an alias: "Jeff" stays "Jeff".
    - Casing never lowers a letter.
-   - Commands are never changed except by casing.
+   - Commands are never changed except by casing, and no respelled word may complete one with its neighbours ("git re
+     base" stays as heard).
    - A span that could be two terms is left as heard, and the abstention is recorded.
+   - A canonical sentence comes back exactly as it is. The benchmark checks this on every reference, including negative
+     entries built from near neighbours, embedded names and a person's name.
    - Each change is recorded as bounded provenance.
 5. **Settle once, and retry deliberately.**
    - A final utterance is settled on an ordered queue and dispatched once per utterance id, through the same `ask`
@@ -67,8 +81,8 @@ them before they mean anything.
      audio buffer, with a context focused on the candidates.
    - The readings are compared by a fixed rule. The original wins ties, and so does any retry that heard a different
      sentence.
-   - The retry is bounded in time. No transcript is sent to Jev, which decides between bounded options and is not a
-     transcript rewriter.
+   - The retry is bounded in time, and a retry past its bound is aborted, closing the session it opened. No
+     transcript is sent to Jev, which decides between bounded options and is not a transcript rewriter.
 
 ## Why the dedicated recognizer is not the default yet
 
@@ -81,19 +95,22 @@ make a decision they cannot evaluate, so there is none.
 ## Evidence
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` runs the scorer over
-`packages/voice-adapters/bench/vi-en-coding-corpus.json`. The corpus holds 68 utterances (code-switched Vietnamese and
-English with Vietnamese context) and 94 technical terms. Its recognizer outputs are simulated: they are typical
-live-transcription errors written by hand, not recordings.
+`packages/voice-adapters/bench/vi-en-coding-corpus.json`. The corpus holds 74 utterances (code-switched Vietnamese and
+English with Vietnamese context, including six negative entries that must come back unchanged) and 100 technical
+terms. Its recognizer outputs are simulated: they are typical live-transcription errors written by hand, not
+recordings. No canonical reference is changed by the normaliser.
 
 | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| raw | 27.2% | 4.5% | 80.9% | 16.2% | - | - | - |
-| normalized | 4.5% | 1.0% | 16.0% | 75.0% | 62 | 1 | 0 |
+| raw | 25.5% | 4.2% | 77.0% | 21.6% | - | - | - |
+| normalized | 4.1% | 0.9% | 16.0% | 75.7% | 61 | 1 | 0 |
 
-Commands and versions are never worse after normalisation (9/11 and 2/2 both before and after); symbols go from 0/19 to
-15/19, paths from 0/6 to 5/6, acronyms from 0/9 to 9/9. The residuals are deliberate:
+Commands and versions are never worse after normalisation (9/12 and 2/2 both before and after); symbols go from 1/20 to
+17/20, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
 
 - `git stash` heard as `git status` is not corrected, because commands are never guessed;
+- "git re base" is not completed into `git rebase`, for the same reason;
+- "Jeff" is not rewritten to Jev, because it is also a person's name;
 - issue numbers are not rewritten;
 - out-of-vocabulary names are left alone;
 - English prose with no technical anchor is left alone;
@@ -109,8 +126,13 @@ and scores them beside the corpus, reporting finalization latency. That run need
 
 - `VoiceProviderAdapter`, `GeminiLiveAdapter` and the default live path;
 - the wire to the browser: interims are ordinary non-final user `transcript` frames, and a canonical sentence is a
-  final one;
-- mute, end and media focus, which now reach the recognizer too.
+  final one. The page's fold settles the line in progress with its final, so an interim and its correction are one
+  line;
+- mute and end, which now reach the recognizer too (a mute also finalizes the sentence before it). Media focus is
+  unchanged and does not involve the recognizer.
+
+**Default path:** the normaliser runs on the default live transcription as well, against the same session vocabulary.
+Without the dedicated recognizer nothing is sent anywhere new: the vocabulary stays on the node.
 
 **External gates:**
 
