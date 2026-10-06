@@ -100,7 +100,11 @@ const TOOLS = [
     inputSchema: objectSchema(
       {
         conversationId: { type: "string" },
-        after: { type: "integer", minimum: 0, description: "Only messages after this cursor" },
+        after: {
+          type: "integer",
+          minimum: 0,
+          description: "Only messages after this one: the `cursor` an earlier read returned. Without it, the newest messages.",
+        },
       },
       ["conversationId"],
     ),
@@ -316,10 +320,14 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
     }
     case "read_conversation": {
       if (typeof args.conversationId !== "string") return toolError("conversationId is required");
-      const after = typeof args.after === "number" ? { after: String(args.after) } : {};
-      const read = await call("GET", `/conversations/${encodeURIComponent(args.conversationId)}/timeline`, undefined, after);
+      // Without `after`, the newest page: a question Clark is waiting on is at the end of the conversation, and the
+      // first page of a long one never reaches it.
+      const page: Record<string, string> = typeof args.after === "number" ? { after: String(args.after) } : { window: "latest" };
+      const read = await call("GET", `/conversations/${encodeURIComponent(args.conversationId)}/timeline`, undefined, page);
       if (read.status >= 400) return refused(read);
-      const timeline = read.body as { cursor?: number; messages?: unknown[] };
+      // The cursor handed back is the message sequence `after` takes, read from the page's window. The timeline's own
+      // `cursor` is the event replay cursor, a different number: passed back as `after`, it skipped messages.
+      const timeline = read.body as { window?: { toSequence?: number }; messages?: unknown[] };
       const text = (timeline.messages ?? [])
         .map((message) => {
           const record = message as { role?: string; blocks?: MessageBlock[] };
@@ -328,7 +336,7 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
         .join("\n\n");
       return {
         content: [{ type: "text", text: text === "" ? "The conversation has no messages." : text }],
-        structuredContent: { cursor: timeline.cursor ?? 0, messages: timeline.messages ?? [] },
+        structuredContent: { cursor: timeline.window?.toSequence ?? 0, messages: timeline.messages ?? [] },
       };
     }
     case "answer_question": {

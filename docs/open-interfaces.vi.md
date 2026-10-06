@@ -788,6 +788,11 @@ có thể thay đổi.
 | `read_inbox` | – | `GET /inbox` |
 | `act_on_notice` | `noticeId`, `action`, `until?` | `POST /inbox/notices/{noticeId}/actions/{action}` |
 
+`read_conversation` không có `after` sẽ đọc trang mới nhất (`window=latest`), nên câu hỏi Clark đang chờ luôn nằm trong đó
+dù cuộc trò chuyện dài đến đâu. `structuredContent.cursor` của nó là `window.toSequence` của trang: một số thứ tự tin nhắn,
+truyền lại làm `after` để chỉ đọc những tin nhắn được viết từ đó. Đây không phải `cursor` sự kiện của timeline; trước khi
+được sửa, tool trả về con số đó, và đọc lại với nó làm `after` thì bị sót tin nhắn.
+
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
