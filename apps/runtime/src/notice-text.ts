@@ -63,6 +63,18 @@ export interface NoticeText {
   expired: { install: string; approval: string; question: string };
   /** A package job's result (`bootstrap/work-bootstrap.ts`); the body is the job's own note. */
   packageJob: Record<"completed" | "cancelled" | "other", string>;
+  /**
+   * How a package job ended (`job-host.ts`): the note in its conversation, which is also its notice's body, so the two
+   * read in one language. `names` are the results already quoted; `more` is how many were left unnamed.
+   */
+  packageJobEnded: {
+    completed: (ref: string) => string;
+    produced: (ref: string, names: string, more: number, count: number) => string;
+    notSent: (ref: string) => string;
+    stopped: (ref: string) => string;
+    failed: (ref: string) => string;
+    interrupted: (ref: string) => string;
+  };
   /** A watched GitHub repository this node cannot read (`github-polling.ts`). */
   githubPolling: {
     title: (repository: string) => string;
@@ -203,6 +215,22 @@ const VI: NoticeText = {
     completed: "Một job của package đã xong",
     cancelled: "Một job của package đã bị dừng",
     other: "Một job của package không xong",
+  },
+  packageJobEnded: {
+    completed: (ref) => `Job của package cho ${ref} đã xong. Widget của nó hiện kết quả.`,
+    produced: (ref, names, more, count) =>
+      `Job của package cho ${ref} đã xong và tạo ra ${names}${more > 0 ? ` và ${String(more)} tệp khác` : ""}. ` +
+      `Mở widget của nó để dùng ${count === 1 ? "tệp này" : "các tệp này"}.`,
+    notSent: (ref) =>
+      `Job của package cho ${ref} đã kết thúc trước khi yêu cầu được gửi. Chưa có gì chạy; có thể bắt đầu lại từ widget của nó.`,
+    stopped: (ref) =>
+      `Job của package cho ${ref} đã bị dừng. Service có thể đã hoàn tất tác động trước khi nhận lệnh dừng; ` +
+      "hãy kiểm tra kết quả trước khi chạy lại.",
+    failed: (ref) =>
+      `Job của package cho ${ref} không thành công. Service có thể đã làm một phần việc; hãy kiểm tra kết quả trước khi chạy lại.`,
+    interrupted: (ref) =>
+      `Job của package cho ${ref} bị gián đoạn khi node khởi động lại. Service của nó có thể đã hoàn tất tác động; ` +
+      "hãy xem lại trước khi thử lại.",
   },
   githubPolling: {
     title: (repository) => `Chưa theo dõi được ${repository}`,
@@ -370,6 +398,21 @@ const EN: NoticeText = {
     completed: "A package job finished",
     cancelled: "A package job was stopped",
     other: "A package job did not finish",
+  },
+  packageJobEnded: {
+    completed: (ref) => `The package job for ${ref} completed. Its widget shows the result.`,
+    produced: (ref, names, more, count) =>
+      `The package job for ${ref} completed and produced ${names}${more > 0 ? ` and ${String(more)} more` : ""}. ` +
+      `Open its widget to use ${count === 1 ? "it" : "them"}.`,
+    notSent: (ref) => `The package job for ${ref} ended before its request was sent. Nothing ran; it can be started again from its widget.`,
+    stopped: (ref) =>
+      `The package job for ${ref} was stopped. The service may have finished its effect before it received the cancellation; ` +
+      "check the result before starting it again.",
+    failed: (ref) =>
+      `The package job for ${ref} failed. The service may have done part of its work; check the result before starting it again.`,
+    interrupted: (ref) =>
+      `The package job for ${ref} was interrupted when the node restarted. Its service may have completed its effect; ` +
+      "review it before retrying.",
   },
   githubPolling: {
     title: (repository) => `Cannot watch ${repository} yet`,

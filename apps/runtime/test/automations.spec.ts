@@ -304,7 +304,11 @@ describe("a task set up in the conversation", () => {
     service?.tick();
     service?.tick();
     expect(dispatched).toHaveLength(0);
-    expect(assistantTexts(conversationId).filter((text) => text.includes("đang chờ"))).toHaveLength(1);
+    const waiting = assistantTexts(conversationId).filter((text) => text.includes("đang chờ"));
+    expect(waiting).toHaveLength(1);
+    // Why it waits, in the same language as the sentence around it.
+    expect(waiting[0]).toContain("đang chờ capability ");
+    expect(waiting[0]).not.toContain("waiting for capability");
     registerCapability({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }, codeChange());
     service?.tick();
     expect(dispatched).toHaveLength(1);

@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
 import { applyTaskEvent, createTask } from "@clarkcant/core";
+import { insertJob } from "@clarkcant/storage";
 
+import { repositoryBindingRefusal } from "../src/automation-service.ts";
+import { attachNodeWork } from "../src/bootstrap/work-bootstrap.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { artifactIntakeDeps, peerDelegationHandlers } from "../src/delegation-handlers.ts";
 import { hostText } from "../src/host-text.ts";
@@ -13,7 +16,7 @@ import { QUESTION_TTL_MS, createQuestion, expireQuestions } from "../src/interac
 import { recordNodeNotice } from "../src/notices.ts";
 import { tellStuck } from "../src/peer-skip.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
-import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 
 /**
  * What the node itself writes into a conversation follows the person's interface language.
@@ -301,6 +304,59 @@ describe("an inbox notice the node records follows its owner's interface languag
     expect(notice?.title).toBe("Ghép cặp với thiết bị khác đang bị kẹt");
   });
 
+  /**
+   * A package job a restart interrupted, recovered through the node's own job host: its note in the conversation and the
+   * inbox notice that points at it, read back over the wire.
+   */
+  async function interruptedJob(): Promise<{ title: string; body?: string; note: string }> {
+    const created = await request("POST", "/conversations", { title: "jobs" });
+    const conversationId = (created.body as { conversationId: string }).conversationId;
+    insertJob(services.runtime.db, {
+      jobId: "job_interrupted",
+      nodeId: services.runtime.identity.nodeId,
+      ownerPrincipalId: services.runtime.identity.ownerPrincipalId,
+      conversationId,
+      instanceId: "winst_1",
+      actionBindingId: "binding_1",
+      packageId: "pkg_1",
+      packageGeneration: "generation_1",
+      capabilityRef: "example.export@1",
+      effectCategory: "local-write",
+      status: "running",
+      resultRefs: [],
+      createdAt: AT,
+      startedAt: AT,
+      nodeBootId: "boot_before_the_restart",
+    } as never);
+    // The node's own work wiring, as `main.ts` attaches it: the job host and the notice it records are the real ones.
+    expect(attachNodeWork({ services, env: {}, envLoaded: [] }).packageJobs.recover()).toBe(1);
+    const inbox = await request("GET", "/inbox");
+    const notice = (inbox.body as { notices: { title: string; body?: string; conversationId?: string }[] }).notices.find(
+      (entry) => entry.conversationId === conversationId,
+    );
+    const timeline = JSON.stringify(buildTimeline(services, { conversationId, afterSequence: 0 }));
+    if (notice === undefined) throw new Error("no notice for the interrupted job");
+    return { title: notice.title, ...(notice.body === undefined ? {} : { body: notice.body }), note: timeline };
+  }
+
+  it("words a package job's notice title and body in one language: English when the owner chose it", async () => {
+    expect((await request("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    const { title, body, note } = await interruptedJob();
+    expect(title).toBe("A package job did not finish");
+    expect(body).toBe(
+      "The package job for example.export@1 was interrupted when the node restarted. Its service may have completed its effect; review it before retrying.",
+    );
+    expect(`${title} ${body ?? ""}`).not.toMatch(VIETNAMESE_LETTER);
+    expect(note).toContain("The package job for example.export@1 was interrupted");
+  });
+
+  it("words a package job's notice title and body in one language: Vietnamese by default", async () => {
+    const { title, body, note } = await interruptedJob();
+    expect(title).toBe("Một job của package không xong");
+    expect(body).toMatch(/^Job của package cho example\.export@1 bị gián đoạn khi node khởi động lại\./u);
+    expect(note).toContain("Job của package cho example.export@1 bị gián đoạn");
+  });
+
   /** Record a notice whose title cleans down to nothing, as one a paired node sent can, and read its title back. */
   async function untitledNotice(dedupKey: string): Promise<string | undefined> {
     recordNodeNotice(services, { sourceKind: "worker", category: "result", severity: "info", title: " \n\t ", dedupKey, at: AT as Instant });
@@ -348,6 +404,10 @@ describe("the host's catalog", () => {
       en.automation.refused("Triage", en.automation.timer, "no grant"),
       en.automation.notStarted(undefined, en.automation.anySignal, "boom"),
       en.automation.parked("Triage", en.automation.signal("issues.opened", " (issue 7)", "acme/widgets"), "busy", "task_1"),
+      en.automation.waitingForCapability("project.work"),
+      en.automation.noOriginRemote("/w", "acme/widgets"),
+      en.automation.wrongClone("/w", en.automation.notGitHubRemote, "github.com/acme/widgets"),
+      en.automation.noLiveGrant("node_b"),
       en.automation.started("Triage", en.automation.timer, "task_1", "node_a"),
       en.automation.deadSignal("issues.opened", "boom"),
       en.miniApp.templateSummary(en.miniApp.templateTitle.overview, 3, 1),
@@ -368,6 +428,23 @@ describe("the host's catalog", () => {
     ];
     expect(en.files.receivedEvidence("notes.md", 12, "node_b")).toBe("notes.md (12 bytes) from node_b, matching the offered digest");
     for (const sample of samples) expect(sample).not.toMatch(VIETNAMESE_LETTER);
+  });
+
+  it("words why an automation will not work in a folder in the language it is given", () => {
+    const signal = {
+      source: { kind: "webhook", sourceId: "github", provider: "github" },
+      subject: { refs: { repository: "acme/widgets" } },
+    } as never;
+    const elsewhere = (): string => "https://github.com/acme/other.git";
+    expect(repositoryBindingRefusal(signal, ["/w"], elsewhere, hostText("en").automation)).toBe(
+      "/w is a clone of github.com/acme/other, not github.com/acme/widgets",
+    );
+    expect(repositoryBindingRefusal(signal, ["/w"], elsewhere, hostText("vi").automation)).toBe(
+      "/w là bản clone của github.com/acme/other, không phải github.com/acme/widgets",
+    );
+    expect(repositoryBindingRefusal(signal, ["/w"], () => undefined, hostText("vi").automation)).toBe(
+      "/w không có remote origin nên không thể đối chiếu với acme/widgets",
+    );
   });
 
   it("keeps the Vietnamese words the node wrote before", () => {

@@ -297,7 +297,15 @@ export type PreparedRun =
    * by itself once the capability becomes usable; `newlyParked` is true only on the call that parked it, so the person
    * is told once.
    */
-  | { kind: "parked"; run: IntentRun; intent: PersistentIntent; taskId: string; reason: string; newlyParked: boolean }
+  | {
+      kind: "parked";
+      run: IntentRun;
+      intent: PersistentIntent;
+      taskId: string;
+      capabilityRef: string;
+      reason: string;
+      newlyParked: boolean;
+    }
   /** The task already moved past dispatch before a crash; there is nothing left to start. */
   | { kind: "already-started"; run: IntentRun; intent: PersistentIntent; taskId: string }
   | { kind: "skipped"; run: IntentRun; reason: string };
@@ -436,6 +444,7 @@ export function prepareIntentRun(
         run,
         intent,
         taskId: task.taskId,
+        capabilityRef,
         reason: parked.ok ? `waiting for capability ${capabilityRef}` : parked.message,
         newlyParked: parked.ok,
       };
@@ -485,6 +494,7 @@ export function prepareIntentRun(
       run,
       intent,
       taskId: task.taskId,
+      capabilityRef,
       reason: task.parkedReason ?? `waiting for capability ${capabilityRef}`,
       newlyParked: false,
     };

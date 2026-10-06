@@ -92,6 +92,14 @@ export interface HostText {
     remind: (summary: string, message: string) => string;
     parked: (summary: string, because: string, reason: string, taskId: string) => string;
     parkedTitle: string;
+    /** Why a run waits: nothing here can run the capability it needs yet. */
+    waitingForCapability: (capabilityRef: string) => string;
+    /** Why a run is refused: the folder it would work in cannot be checked, or is a clone of another repository. */
+    noOriginRemote: (path: string, repository: string) => string;
+    wrongClone: (path: string, where: string, expected: string) => string;
+    notGitHubRemote: string;
+    /** Why a run for another node is refused: no live grant lets that node run it. */
+    noLiveGrant: (executor: string) => string;
     started: (summary: string, because: string, taskId: string, executionNodeId: string) => string;
     deadSignalTitle: string;
     deadSignal: (topic: string, error: string) => string;
@@ -438,6 +446,11 @@ const VI: HostText = {
     parked: (summary, because, reason, taskId) =>
       `Việc tự động "${summary}" đã khớp ${because}, nhưng đang chờ: ${reason}. Task ${taskId} sẽ tiếp tục khi có thứ chạy được nó.`,
     parkedTitle: "Việc tự động đang chờ",
+    waitingForCapability: (capabilityRef) => `đang chờ capability ${capabilityRef}`,
+    noOriginRemote: (path, repository) => `${path} không có remote origin nên không thể đối chiếu với ${repository}`,
+    wrongClone: (path, where, expected) => `${path} là bản clone của ${where}, không phải ${expected}`,
+    notGitHubRemote: "một remote không phải repository GitHub",
+    noLiveGrant: (executor) => `không còn quyền nào đang hiệu lực cho phép ${executor} chạy việc này; hãy nhờ Clark thiết lập lại`,
     started: (summary, because, taskId, executionNodeId) =>
       `Việc tự động "${summary}" bắt đầu vì ${because}: task ${taskId} đang chạy trên ${executionNodeId}.`,
     deadSignalTitle: "Một tín hiệu không xử lý được",
@@ -704,6 +717,11 @@ const EN: HostText = {
     parked: (summary, because, reason, taskId) =>
       `The automation "${summary}" matched ${because}, but is waiting: ${reason}. Task ${taskId} carries on once something can run it.`,
     parkedTitle: "An automation is waiting",
+    waitingForCapability: (capabilityRef) => `waiting for capability ${capabilityRef}`,
+    noOriginRemote: (path, repository) => `${path} has no origin remote, so it cannot be checked against ${repository}`,
+    wrongClone: (path, where, expected) => `${path} is a clone of ${where}, not ${expected}`,
+    notGitHubRemote: "a remote that is not a GitHub repository",
+    noLiveGrant: (executor) => `no live grant lets ${executor} run it any more; ask Clark to set it up again`,
     started: (summary, because, taskId, executionNodeId) =>
       `The automation "${summary}" started because of ${because}: task ${taskId} is running on ${executionNodeId}.`,
     deadSignalTitle: "A signal could not be handled",

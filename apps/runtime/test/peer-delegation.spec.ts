@@ -838,7 +838,9 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     await signal(a, "note-1");
 
     await waitUntil(() => said(a, onA).some((text) => text.includes("không chạy cho")), "A to refuse the run");
-    expect(said(a, onA).find((text) => text.includes("không chạy cho"))).toContain(`no live grant lets ${identityOf(b).nodeId} run it any more`);
+    expect(said(a, onA).find((text) => text.includes("không chạy cho"))).toContain(
+      `không còn quyền nào đang hiệu lực cho phép ${identityOf(b).nodeId} chạy việc này`,
+    );
     expect(tasksOn(b)).toEqual([]);
   });
 
