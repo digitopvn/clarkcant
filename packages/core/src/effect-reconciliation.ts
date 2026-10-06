@@ -14,6 +14,7 @@ import {
 
 import { type BrowserPressLocale, browserPressOfIntent, describeBrowserPress } from "./browser-press.ts";
 import type { TaskServiceDeps } from "./task-service.ts";
+import type { TaskSettleReason } from "./task-settle-reason.ts";
 
 /**
  * A person's answer to an effect whose outcome nobody observed.
@@ -34,7 +35,10 @@ export type ReconcileSource = "click" | "chat" | "voice";
 /** How a task left `uncertain` once nothing about it is unknown any more, and the sentence that says so. */
 export interface ReconciledSettlement {
   outcome: "succeeded" | "failed" | "cancelled";
+  /** In Vietnamese, as a peer that handed the task over is told it. */
   message: string;
+  /** The same settlement as data, for the owner's surfaces to word in the owner's language. */
+  reason: Extract<TaskSettleReason, { code: "reconciled" }>;
 }
 
 export type ReconcileEffectResult =
@@ -234,7 +238,15 @@ function settlementPlan(
   // Uncertain about something nobody answered for: not this function's to settle.
   if (reconciled.length === 0) return undefined;
   const didNotLand = reconciled.find((effect) => answered.get(effect.effectId) === "failed");
-  const landed = reconciled.filter((effect) => answered.get(effect.effectId) === "confirmed").map((effect) => quotedEffectIntent(effect)).join(", ");
+  const landedEffects = reconciled.filter((effect) => answered.get(effect.effectId) === "confirmed");
+  const landed = landedEffects.map((effect) => quotedEffectIntent(effect)).join(", ");
+  const reason = (stopped: boolean, unverified: boolean): ReconciledSettlement["reason"] => ({
+    code: "reconciled",
+    stopped,
+    ...(didNotLand === undefined ? {} : { didNotLand: didNotLand.intent }),
+    landed: landedEffects.map((effect) => effect.intent),
+    unverified,
+  });
 
   if (entered.from === "cancel_requested") {
     return {
@@ -246,6 +258,7 @@ function settlementPlan(
           didNotLand !== undefined
             ? `bạn xác nhận ${quotedEffectIntent(didNotLand)} chưa có hiệu lực; việc vẫn dừng theo yêu cầu của bạn`
             : `bạn xác nhận ${landed} đã có hiệu lực trước khi dừng; việc vẫn dừng theo yêu cầu của bạn`,
+        reason: reason(true, false),
       },
     };
   }
@@ -253,12 +266,16 @@ function settlementPlan(
     return {
       task,
       event: "reconcile.failed",
-      settlement: { outcome: "failed", message: `bạn xác nhận ${quotedEffectIntent(didNotLand)} chưa có hiệu lực` },
+      settlement: { outcome: "failed", message: `bạn xác nhận ${quotedEffectIntent(didNotLand)} chưa có hiệu lực`, reason: reason(false, false) },
     };
   }
   const [lastEvidence] = taskEventDocuments(db, { taskId, kind: "evidence.recorded", limit: 1 }) as Array<{ verdict?: unknown }>;
   if (lastEvidence?.verdict === "verified") {
-    return { task, event: "reconcile.succeeded", settlement: { outcome: "succeeded", message: `bạn xác nhận ${landed} đã có hiệu lực` } };
+    return {
+      task,
+      event: "reconcile.succeeded",
+      settlement: { outcome: "succeeded", message: `bạn xác nhận ${landed} đã có hiệu lực`, reason: reason(false, false) },
+    };
   }
   return {
     task,
@@ -266,6 +283,7 @@ function settlementPlan(
     settlement: {
       outcome: "failed",
       message: `bạn xác nhận ${landed} đã có hiệu lực, nhưng lần chạy chưa xác minh được kết quả của việc nên chưa thể báo là xong`,
+      reason: reason(false, true),
     },
   };
 }
@@ -275,7 +293,7 @@ function settlementPlan(
  * quoted. A press on a page is worded rather than quoted, since its record is data in a fixed form and its label carries
  * its own quotes.
  */
-export function quotedEffectIntent(effect: EffectRecord, locale: BrowserPressLocale = "vi"): string {
+export function quotedEffectIntent(effect: Pick<EffectRecord, "intent">, locale: BrowserPressLocale = "vi"): string {
   const press = browserPressOfIntent(effect.intent);
   if (press !== undefined) return `${locale === "en" ? "the action" : "thao tác"} ${describeBrowserPress(press, locale)}`;
   const intent = effect.intent.split(" — ")[0] ?? effect.intent;

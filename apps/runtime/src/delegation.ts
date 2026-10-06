@@ -401,7 +401,10 @@ export function settleUndelivered(
     if (task.state === "cancel_requested") {
       if (applyTaskEvent(coordination, task.taskId, "cancel.confirmed").ok) settled = { outcome: "cancelled", message };
     } else {
-      settled = settleDispatchedTask(deps.conductor, task.taskId, { kind: "api-receipt", summary: message, verified: false });
+      // Recorded through the run's own settlement, which fails it; what the owner is told is only why, in their words.
+      // The success gate's own English, which that settlement adds for an unverified report, would say nothing more
+      // about a task that never ran and could not have succeeded.
+      settled = { outcome: settleDispatchedTask(deps.conductor, task.taskId, { kind: "api-receipt", summary: message, verified: false }).outcome, message };
     }
   } else {
     const message = letter.kind === "delegate" ? deps.say.delegation.undeliveredHandOver(peer) : deps.say.delegation.undeliveredStop(peer);
