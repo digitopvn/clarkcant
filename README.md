@@ -1,5 +1,7 @@
 # clarkcant
 
+> English (default) · [Tiếng Việt](README.vi.md)
+
 Conversation-first agent platform: a portable runtime that anyone can install on their
 own machine or VPS, plus paired execution nodes, rich widgets in the conversation, and
 capability packs that install through chat.
