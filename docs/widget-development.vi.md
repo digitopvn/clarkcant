@@ -2690,8 +2690,8 @@ cùng state như **Khôi phục**, và khi đó không còn gì để khôi ph�
 ### Bắt đầu nhanh bên ngoài repository này
 
 `@clarkcant/widget-cli` (lệnh `clark`) và `@clarkcant/widget-sdk` được build từ repository này thành các package npm
-không cần bản checkout ClarkCant. **Trạng thái: chưa có phiên bản nào trên npm.** Workflow phát hành bên dưới đã có,
-nhưng cho tới khi nó chạy, cài từ registry sẽ thất bại; hãy cài các archive build từ bản checkout
+không cần bản checkout ClarkCant. Cả hai đã có trên npm: `@clarkcant/widget-cli` 0.1.0 và `@clarkcant/widget-sdk`
+0.2.0. Để thử các thay đổi chưa phát hành, hãy cài các archive build từ bản checkout
 (xem [Trước khi phát hành](#trước-khi-phát-hành)).
 
 Trên một máy sạch có Node 22.19 trở lên và pnpm (`corepack enable pnpm`), trên macOS, Windows hoặc Linux:
@@ -2760,10 +2760,12 @@ chạy lại chỉ publish phần còn thiếu. Version npm đã có nhưng nộ
 bất kỳ package nào, nên package đã thay đổi luôn cần version mới.
 
 Job publish chạy trong GitHub environment `npm-release`. Người bảo trì phải giới hạn deployment của environment đó vào
-các tag `widget-tooling-v*` và bắt buộc có người duyệt. Thông tin xác thực dự kiến là npm trusted publishing (OIDC): khi
-trusted publisher của từng package trên npmjs.com đã nêu repository và workflow này thì không cần secret npm nào. Version
-đầu tiên của một package, được publish trước khi có thể đặt trusted publisher cho nó, cần secret `NPM_TOKEN` của
-environment, và secret này chỉ được đưa cho bước publish.
+các tag `widget-tooling-v*` và bắt buộc có người duyệt. Thông tin xác thực là npm trusted publishing (OIDC): khi
+trusted publisher của từng package trên npmjs.com đã nêu repository và workflow này thì không cần secret npm nào. Cả hai
+package đã có trusted publisher đó, giới hạn vào environment `npm-release`, và environment không giữ secret npm nào.
+Các version hiện có trên npm (`@clarkcant/widget-cli` 0.1.0 cùng một bản giữ chỗ rỗng `0.0.0-stage` do npm tạo khi
+publish nó, và `@clarkcant/widget-sdk` 0.2.0) được publish thủ công, vì npm chỉ cho đặt trusted publisher trên package
+đã tồn tại, nên chúng không có provenance; mọi bản phát hành từ workflow đều có.
 
 ### init
 
