@@ -322,12 +322,23 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
       if (typeof args.conversationId !== "string") return toolError("conversationId is required");
       // Without `after`, the newest page: a question Clark is waiting on is at the end of the conversation, and the
       // first page of a long one never reaches it.
-      const page: Record<string, string> = typeof args.after === "number" ? { after: String(args.after) } : { window: "latest" };
-      const read = await call("GET", `/conversations/${encodeURIComponent(args.conversationId)}/timeline`, undefined, page);
+      const after = typeof args.after === "number" ? args.after : undefined;
+      const path = `/conversations/${encodeURIComponent(args.conversationId)}/timeline`;
+      const read = await call("GET", path, undefined, after === undefined ? { window: "latest" } : { after: String(after) });
       if (read.status >= 400) return refused(read);
       // The cursor handed back is the message sequence `after` takes, read from the page's window. The timeline's own
       // `cursor` is the event replay cursor, a different number: passed back as `after`, it skipped messages.
-      const timeline = read.body as { window?: { toSequence?: number }; messages?: unknown[] };
+      type Page = { window?: { toSequence?: number; hasNewer?: boolean }; messages?: unknown[] };
+      const timeline = read.body as Page;
+      let cursor = timeline.window?.toSequence ?? 0;
+      // A page that reaches the end echoes an `after` beyond the newest message - a guess, or an event cursor kept from
+      // before - and reading on with it would skip every message written until the conversation caught up. The cursor
+      // never goes past the newest message there is.
+      if (after !== undefined && timeline.window?.hasNewer !== true) {
+        const newest = await call("GET", path, undefined, { window: "latest", limit: "1" });
+        if (newest.status >= 400) return refused(newest);
+        cursor = Math.min(cursor, (newest.body as Page).window?.toSequence ?? 0);
+      }
       const text = (timeline.messages ?? [])
         .map((message) => {
           const record = message as { role?: string; blocks?: MessageBlock[] };
@@ -335,8 +346,13 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
         })
         .join("\n\n");
       return {
-        content: [{ type: "text", text: text === "" ? "The conversation has no messages." : text }],
-        structuredContent: { cursor: timeline.window?.toSequence ?? 0, messages: timeline.messages ?? [] },
+        content: [
+          {
+            type: "text",
+            text: text !== "" ? text : after === undefined ? "The conversation has no messages." : `No messages after ${String(after)}.`,
+          },
+        ],
+        structuredContent: { cursor, hasNewer: timeline.window?.hasNewer === true, messages: timeline.messages ?? [] },
       };
     }
     case "answer_question": {

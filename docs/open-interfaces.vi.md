@@ -790,8 +790,9 @@ có thể thay đổi.
 
 `read_conversation` không có `after` sẽ đọc trang mới nhất (`window=latest`), nên câu hỏi Clark đang chờ luôn nằm trong đó
 dù cuộc trò chuyện dài đến đâu. `structuredContent.cursor` của nó là `window.toSequence` của trang: một số thứ tự tin nhắn,
-truyền lại làm `after` để chỉ đọc những tin nhắn được viết từ đó. Đây không phải `cursor` sự kiện của timeline; trước khi
-được sửa, tool trả về con số đó, và đọc lại với nó làm `after` thì bị sót tin nhắn.
+truyền lại làm `after` để chỉ đọc những tin nhắn được viết từ đó. Đây không phải `cursor` sự kiện của timeline, và nó không
+bao giờ vượt quá tin nhắn mới nhất: một `after` lớn hơn sẽ được trả về bằng số thứ tự của tin nhắn mới nhất. `hasNewer` cho biết
+sau trang này vẫn còn tin nhắn; hãy đọc lại với cursor mới cho đến khi không còn tin nhắn nào được trả về.
 
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và

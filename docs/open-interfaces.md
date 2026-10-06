@@ -784,8 +784,9 @@ part of the stable description and may change.
 
 `read_conversation` without `after` reads the newest page (`window=latest`), so a question Clark is waiting on is in it
 however long the conversation is. Its `structuredContent.cursor` is the page's `window.toSequence`: a message sequence,
-passed back as `after` to read only the messages written since. It is not the timeline's event `cursor`; before this was
-fixed the tool returned that one, and reading again with it as `after` skipped messages.
+passed back as `after` to read only the messages written since. It is not the timeline's event `cursor`, and it never
+passes the newest message: an `after` beyond it comes back as the newest message's sequence. `hasNewer` says more
+messages are left after this page; read again with the new cursor until no messages come back.
 
 **No approval tool, on purpose.** An approval is the person's decision about something an agent wants to do; an MCP
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and

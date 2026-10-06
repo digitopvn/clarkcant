@@ -266,6 +266,21 @@ describe("MCP endpoint", () => {
     const nothingNew = await read(conversationId, since.structuredContent.cursor);
     expect(nothingNew.structuredContent.messages).toEqual([]);
     expect(nothingNew.structuredContent.cursor).toBe(since.structuredContent.cursor);
+    expect(nothingNew.content[0]?.text).toBe("No messages after 6.");
+
+    // A cursor past the newest message - a guess, or the event cursor this tool used to hand back - comes back as the
+    // newest message, so the next message written is not skipped.
+    let clamped = 0;
+    for (const inflated of [18, 999_999]) {
+      const stale = await read(conversationId, inflated);
+      expect(stale.structuredContent.messages).toEqual([]);
+      expect(stale.structuredContent.cursor).toBe(6);
+      clamped = stale.structuredContent.cursor;
+    }
+    await ask("fourth question", conversationId);
+    const afterStale = await read(conversationId, clamped);
+    expect(afterStale.content[0]?.text).toContain("fourth question");
+    expect(afterStale.structuredContent.cursor).toBe(8);
   });
 
   it("reads the newest messages of a long conversation when no cursor is given", async () => {
@@ -294,10 +309,22 @@ describe("MCP endpoint", () => {
       method: "tools/call",
       params: { name: "read_conversation", arguments: { conversationId } },
     });
-    const result = (read.body as { result: { content: { text: string }[]; structuredContent: { cursor: number } } }).result;
+    type Result = { result: { content: { text: string }[]; structuredContent: { cursor: number; hasNewer: boolean; messages: unknown[] } } };
+    const result = (read.body as Result).result;
     expect(result.content[0]?.text).toContain("message 230");
     expect(result.content[0]?.text).not.toContain("message 1\n");
-    expect(result.structuredContent.cursor).toBe(230);
+    expect(result.structuredContent).toMatchObject({ cursor: 230, hasNewer: false });
+
+    // Reading forward from the start says when more is left, and the cursor reads exactly the rest.
+    const page = async (after: number) =>
+      ((await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "read_conversation", arguments: { conversationId, after } } }))
+        .body as Result).result.structuredContent;
+    const first = await page(0);
+    expect(first).toMatchObject({ cursor: 200, hasNewer: true });
+    expect(first.messages).toHaveLength(200);
+    const rest = await page(first.cursor);
+    expect(rest).toMatchObject({ cursor: 230, hasNewer: false });
+    expect(rest.messages).toHaveLength(30);
   });
 
   it("stops one conversation's reply through the same route as the Stop button, and says when there was none", async () => {
