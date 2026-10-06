@@ -491,7 +491,8 @@ describe("a labelled issue becomes a draft pull request", () => {
       () => assistantTexts(conversationId).find((text) => text.includes(`(task ${taskId}):`)),
       30_000,
     );
-    expect(report).toContain("stopped on request");
+    // In the owner's language, which is the default Vietnamese here.
+    expect(report).toContain("đã dừng theo yêu cầu trước khi worker xong");
     // The command the worker asked the host for is ended by the same stop — a process tree takes a moment to go.
     await waitUntil(() => (listRunningCommands().some((running) => running.taskId === taskId) ? undefined : true), 15_000);
     expect(git(bare, ["branch", "--list", managedBranchFor(taskId)])).toBe("");
