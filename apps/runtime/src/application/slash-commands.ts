@@ -1,5 +1,6 @@
 import {
   type AppIntentDecision,
+  type ChangelogCard,
   type CommandCard,
   type Instant,
   type MessageBlock,
@@ -16,6 +17,7 @@ import { conversationLabel } from "../composer-suggestions.ts";
 import { startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { nodeWork } from "../work-supervisor.ts";
+import { changelogCard, readChangelog } from "./changelog.ts";
 
 /**
  * The host's answers to the composer's slash commands.
@@ -31,7 +33,7 @@ type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "tu
 
 export interface SlashCommandAnswer {
   text: string;
-  card?: CommandCard;
+  card?: CommandCard | ChangelogCard;
   /** Present when the page has something to do as well, such as `/new` leaving for a fresh conversation. */
   appIntent?: AppIntentDecision;
 }
@@ -43,6 +45,7 @@ const NOTES: Record<SlashCommand, Record<Locale, string>> = {
   logout: { vi: "Đăng xuất khỏi một AI provider", en: "Sign out of an AI provider" },
   thinking: { vi: "Đặt mức suy nghĩ cho lượt sau", en: "Set how hard the next turn thinks" },
   background: { vi: "Chạy một yêu cầu ở chế độ nền", en: "Run a request in the background" },
+  changelog: { vi: "Phiên bản này của Clark có gì mới", en: "What this version of Clark changed" },
 };
 
 /** What the composer's picker says beside a command, in the person's language. */
@@ -177,7 +180,46 @@ export async function answerSlashCommand(
     case "login":
     case "logout":
       return providersAnswer(services, command, say, card);
+
+    case "changelog":
+      return changelogAnswer(services, argument, say, input.at);
   }
+}
+
+/** `/changelog` and `/changelog 1.4`: the release notes embedded with this build, as the host-owned card. */
+function changelogAnswer(services: SlashServices, argument: string, say: Say, at: () => Instant): SlashCommandAnswer {
+  const answer = readChangelog({ since: argument });
+  if (!answer.ok) {
+    const typed = argument.slice(0, 60);
+    return answer.code === "invalid-version"
+      ? {
+          text: say(
+            `"${typed}" không phải số phiên bản. Thử /changelog 1.4, hoặc /changelog để xem tất cả.`,
+            `"${typed}" is not a version. Try /changelog 1.4, or /changelog for everything.`,
+          ),
+        }
+      : {
+          text: say(
+            `Không đọc được ghi chú phát hành đi kèm bản này: ${answer.message}. Không có gì bị thay đổi.`,
+            `Could not read the release notes that came with this build: ${answer.message}. Nothing was changed.`,
+          ),
+        };
+  }
+  const { view } = answer;
+  const installed =
+    view.installed.channel === "source"
+      ? say(`Bạn đang chạy Clark ${view.installed.version} từ mã nguồn.`, `You are running Clark ${view.installed.version} from source.`)
+      : say(
+          `Bạn đang dùng Clark ${view.installed.version}, kênh ${view.installed.channel}.`,
+          `You are on Clark ${view.installed.version}, ${view.installed.channel} channel.`,
+        );
+  const what =
+    view.since === undefined
+      ? say("Đây là ghi chú phát hành đi kèm bản này.", "Here are the release notes that came with this build.")
+      : view.releases.length === 0
+        ? say(`Bản này không ghi nhận phiên bản nào sau ${view.since}.`, `This build records no release after ${view.since}.`)
+        : say(`Đây là những gì thay đổi sau ${view.since}.`, `Here is what changed after ${view.since}.`);
+  return { text: `${installed} ${what}`, card: changelogCard(view, { cardId: services.conductor.newId("card"), at: at() }) };
 }
 
 type Say = (vi: string, en: string) => string;

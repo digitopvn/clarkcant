@@ -14,6 +14,7 @@ import { ownerLocale } from "../host-text.ts";
 import { toolsTab } from "../tool-catalogue.ts";
 import { type NodeServices } from "../services.ts";
 import { storeModelChoice } from "../application/model-choice.ts";
+import { readChangelog } from "../application/changelog.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -60,6 +61,18 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
       // is a state worth showing plainly: the node answers from scripts and capabilities only.
       model: liveModel(deps.services),
     });
+  }
+
+  /*
+   * What this version of Clark changed: the release notes embedded with the build, as Settings shows them. The same
+   * read `/changelog` and `show_changelog` make (`application/changelog.ts`); `?since=1.4` keeps the releases after it.
+   */
+  if (request.method === "GET" && request.path === "/changelog") {
+    const answer = readChangelog({ since: request.query.since });
+    if (answer.ok) return json(200, answer.view);
+    return answer.code === "invalid-version"
+      ? fail(400, "INVALID_SCHEMA", answer.message)
+      : fail(503, "CHANGELOG_UNAVAILABLE", answer.message);
   }
 
   if (request.method === "GET" && request.path === "/model") {
