@@ -155,18 +155,21 @@ const PLACEHOLDER_WORDS = new Set([
 /**
  * Whether a credential-shaped value is an obvious placeholder: `your_api_key`, `example`, `changeme`, `YOURTOKENHERE`,
  * `xxxxxxxx`, `********`, `••••••••`, `sk-…abcd`. Conservative on purpose — a miss here costs a refused turn, a wrong
- * hit costs a credential — so a value is one only when it is shown masked (a `•` or `…` in it: what an interface prints
- * in place of a credential it will not show), or has no digit and is a known stand-in word, addresses the reader about a
- * generic credential (`your_api_key`, `insert_your_token_here`, `replace_password`), ends in
+ * hit costs a credential — so a value is one only when the whole of it is a masked display (see `MASKED_VALUE`), or has
+ * no digit and is a known stand-in word, addresses the reader about a generic credential (`your_api_key`, `insert_your_token_here`, `replace_password`), ends in
  * `<key|token|secret|password|value>here`, or is at least four of one repeated mask character. A value that merely
  * starts with `your` (`YourMomsMaidenNameIsSecret`) is a value.
  */
+// A credential as an interface shows it: optional issued-style prefix, then >=4 mask bullets with <=4 visible
+// characters on one side, or one elision followed by 2-4 visible characters. A trailing ellipsis never qualifies, so
+// `hunter22x…` cut short in prose, or a password that merely holds a `•`, is still a value.
+const MASKED_VALUE = /^(?:[A-Za-z]{2,4}(?:[-_][A-Za-z]{2,6})?[-_])?(?:[•*]{4,}[A-Za-z0-9]{0,4}|[A-Za-z0-9]{0,4}[•*]{4,}|…[A-Za-z0-9]{2,4})$/;
+
 function isPlaceholderValue(raw: string): boolean {
   const value = raw.trim().replace(/^["']|["']$/g, "");
   if (value === "") return true;
-  if (/^(.)\1{3,}$/.test(value) && /^[x*.#•…-]$/i.test(value[0] ?? "")) return true;
-  // A value shown masked, `••••1234` or `sk-…abcd`: an issued credential is never written with these characters.
-  if (/[•…]/.test(value)) return true;
+  if (/^(.)\1{3,}$/.test(value) && /^[x*.#-]$/i.test(value[0] ?? "")) return true;
+  if (MASKED_VALUE.test(value)) return true;
   if (/\d/.test(value)) return false;
   const word = value.toLowerCase().replace(/[-_. ]/g, "");
   if (PLACEHOLDER_WORDS.has(word)) return true;

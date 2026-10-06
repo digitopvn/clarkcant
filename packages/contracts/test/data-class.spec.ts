@@ -271,12 +271,32 @@ describe("the class of JSON carried as text", () => {
     expect(dataClassOfText(JSON.stringify({ fields }))).toBe("internal");
   });
 
-  it("does not take a masked value for a credential", () => {
-    for (const masked of ["••••••••", "••••1234", `${["sk", "live"].join("-")}-…a1b2`, "……………"]) {
-      expect(dataClassOfText(`${PASSWORD_NAME} = "${masked}"`), masked).toBe("internal");
-      expect(dataClassOfText(JSON.stringify({ name: API_KEY_NAME, value: masked })), masked).toBe("internal");
+  it("does not take a whole masked display for a credential", () => {
+    const masked = ["••••••••", "••••1234", "1234••••", "****abcd", `${["sk", "live"].join("-")}-…a1b2`, `${"sk"}-…abcd`];
+    for (const value of masked) {
+      expect(dataClassOfText(`${PASSWORD_NAME} = "${value}"`), value).toBe("internal");
+      expect(dataClassOfText(JSON.stringify({ name: API_KEY_NAME, value })), value).toBe("internal");
     }
-    expect(dataClassOfText(`${PASSWORD_NAME} = "${VALUE}"`)).toBe("secret");
+  });
+
+  it("still takes a value that only holds a mask character for a credential", () => {
+    const values = [
+      `${VALUE}…`,
+      ["Tr0ub4dor", "horse"].join("•"),
+      ["pa", "rd-and-more"].join("••••"),
+      `${["sk", "live"].join("_")}_…0c…`,
+      ["ab", "cdefgh12"].join("…"),
+    ];
+    for (const value of values) expect(dataClassOfText(`${PASSWORD_NAME} = "${value}"`), value).toBe("secret");
+    // A lone elision is no masked display either: as a URL's password, the one place a value that short is read, it is
+    // still a value.
+    expect(dataClassOfText(["postgres://app", "…@db.example.com/x"].join(":"))).toBe("secret");
+  });
+
+  it("keeps a credential secret beside an ellipsis or a bullet in prose and in a URL", () => {
+    expect(dataClassOfText(`the db ${PASSWORD_NAME}=${VALUE}… and then it failed`)).toBe("secret");
+    expect(dataClassOfText(`${PASSWORD_NAME}="${VALUE}•horse"`)).toBe("secret");
+    expect(dataClassOfText(`${["postgres://app", VALUE].join(":")}…@db.example.com/x`)).toBe("secret");
   });
 
   it("finds a personal shape behind escaping as well", () => {
