@@ -2760,11 +2760,12 @@ chạy lại chỉ publish phần còn thiếu. Version npm đã có nhưng nộ
 bất kỳ package nào, nên package đã thay đổi luôn cần version mới.
 
 Job publish chạy trong GitHub environment `npm-release`. Người bảo trì phải giới hạn deployment của environment đó vào
-các tag `widget-tooling-v*` và bắt buộc có người duyệt. Thông tin xác thực dự kiến là npm trusted publishing (OIDC): khi
+các tag `widget-tooling-v*` và bắt buộc có người duyệt. Thông tin xác thực là npm trusted publishing (OIDC): khi
 trusted publisher của từng package trên npmjs.com đã nêu repository và workflow này thì không cần secret npm nào. Cả hai
 package đã có trusted publisher đó, giới hạn vào environment `npm-release`, và environment không giữ secret npm nào.
-Version đầu tiên của chúng được publish thủ công, vì npm chỉ cho đặt trusted publisher trên package đã tồn tại, nên hai
-version đó không có provenance; mọi bản phát hành từ workflow đều có.
+Các version hiện có trên npm (`@clarkcant/widget-cli` 0.1.0 cùng một bản giữ chỗ rỗng `0.0.0-stage` do npm tạo khi
+publish nó, và `@clarkcant/widget-sdk` 0.2.0) được publish thủ công, vì npm chỉ cho đặt trusted publisher trên package
+đã tồn tại, nên chúng không có provenance; mọi bản phát hành từ workflow đều có.
 
 ### init
 

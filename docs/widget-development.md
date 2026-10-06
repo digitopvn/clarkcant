@@ -2771,11 +2771,12 @@ skipped, so a rerun publishes only what is missing. A version npm already has wi
 before either package is published, so a changed package always needs a new version.
 
 The publish job runs in the `npm-release` GitHub environment. Its maintainers must restrict that environment's
-deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the intended
+deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the
 credential: once each package's trusted publisher on npmjs.com names this repository and workflow, no npm secret is
 needed. Both packages have that trusted publisher, limited to the `npm-release` environment, and the environment holds no
-npm secret. Their first versions were published by hand, because npm only lets a trusted publisher be set on a package
-that already exists, so those two versions carry no provenance; every release from the workflow does.
+npm secret. The versions on npm today (`@clarkcant/widget-cli` 0.1.0 with an empty `0.0.0-stage` placeholder npm made while
+publishing it, and `@clarkcant/widget-sdk` 0.2.0) were published by hand, because npm only lets a trusted publisher be
+set on a package that already exists, so they carry no provenance; every release from the workflow does.
 
 ### init
 
