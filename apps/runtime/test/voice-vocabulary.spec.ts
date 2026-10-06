@@ -8,7 +8,7 @@ import { createConversation, migrate, openDatabase, upsertProject } from "@clark
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { NodeServices } from "../src/services.ts";
-import { languageHintsFor, voiceRecognitionContext } from "../src/voice-vocabulary.ts";
+import { conversationProject, languageHintsFor, voiceRecognitionContext } from "../src/voice-vocabulary.ts";
 
 /**
  * The session vocabulary, from what the node actually holds: its projects, the active project's manifest and branch,
@@ -37,7 +37,7 @@ function projectDir(): string {
   return dir;
 }
 
-function servicesWith(dir: string, extra: Partial<NodeServices> = {}): NodeServices {
+function servicesWith(dir: string, extra: Partial<NodeServices> = {}, said = "trong voice-lab, "): NodeServices {
   const db = openDatabase({ path: ":memory:" });
   migrate(db);
   createConversation(db, { conversationId: CONVERSATION, homeNodeId: NODE, title: "vocabulary", at: AT });
@@ -54,11 +54,30 @@ function servicesWith(dir: string, extra: Partial<NodeServices> = {}): NodeServi
     lastUsedAt: AT,
     indexedAt: AT,
   });
+  // Used more recently than voice-lab, and not what this conversation is about.
+  const elsewhere = mkdtempSync(join(tmpdir(), "cc-vocabulary-other-"));
+  made.push(elsewhere);
+  writeFileSync(join(elsewhere, "package.json"), JSON.stringify({ name: "@acme/unrelated-shop", dependencies: { stripe: "1.0.0" } }));
+  upsertProject(db, {
+    projectId: "project_2",
+    nodeId: NODE,
+    path: elsewhere,
+    name: "unrelated-shop",
+    aliases: [],
+    gitRemote: undefined,
+    markers: ["package.json"],
+    kind: "code",
+    mtime: 0,
+    lastUsedAt: "2026-10-06T04:00:00.000Z",
+    indexedAt: AT,
+  });
   let counter = 0;
   const conductor = { db, nodeId: NODE, now: () => AT, newId: (prefix: string) => `${prefix}_${String(++counter).padStart(6, "0")}` };
+  // Assembled at run time, so the repository's own secret scan does not read a test fixture as a leaked key.
+  const secret = ["sk", "ant", "api03", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
   recordVoiceTranscript(conductor as never, {
     conversationId: CONVERSATION,
-    userText: "sửa `useVoiceSession` trong packages/voice-adapters/src/index.ts cho issue #468, token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
+    userText: `${said}sửa \`useVoiceSession\` trong packages/voice-adapters/src/index.ts cho issue #468, token ${secret}`,
     assistantText: "",
     at: AT,
   });
@@ -81,6 +100,33 @@ describe("the session vocabulary", () => {
     for (const expected of ["voice-lab", "@acme/voice-lab", "zod", "vitest", "feat/468-code-switching", "useVoiceSession", "packages/voice-adapters/src/index.ts", "#468", "code-review", "claude-opus-5-5", "anthropic"]) {
       expect(texts).toContain(expected);
     }
+  });
+
+  it("reads the manifest of the project the conversation is about, not the node's most recently used one", async () => {
+    const dir = projectDir();
+    const texts = (await voiceRecognitionContext(servicesWith(dir), { conversationId: CONVERSATION, locale: "vi" })).terms.map((term) => term.text);
+    expect(texts).toContain("@acme/voice-lab");
+    expect(texts).not.toContain("@acme/unrelated-shop");
+    expect(texts).not.toContain("stripe");
+  });
+
+  it("reads no manifest or branch when the conversation names no project", async () => {
+    const dir = projectDir();
+    const texts = (await voiceRecognitionContext(servicesWith(dir, {}, ""), { conversationId: CONVERSATION, locale: "vi" })).terms.map((term) => term.text);
+    for (const unsaid of ["@acme/voice-lab", "@acme/unrelated-shop", "stripe", "feat/468-code-switching"]) expect(texts).not.toContain(unsaid);
+    // Project names are still words this node expects to hear.
+    expect(texts).toEqual(expect.arrayContaining(["voice-lab", "unrelated-shop"]));
+  });
+
+  it("finds a project by name or alias as a whole word, the newest mention winning", () => {
+    const projects = [
+      { name: "voice-lab", aliases: ["phòng lab"] },
+      { name: "shop", aliases: [] },
+    ];
+    expect(conversationProject(projects, ["mở voice-lab", "giờ qua shop"])?.name).toBe("shop");
+    expect(conversationProject(projects, ["giờ qua shop", "quay lại phòng lab"])?.name).toBe("voice-lab");
+    expect(conversationProject(projects, ["voice-labs và workshop"])).toBeUndefined();
+    expect(conversationProject(projects, [])).toBeUndefined();
   });
 
   it("never sends a secret, a project's absolute path, or the conversation text", async () => {

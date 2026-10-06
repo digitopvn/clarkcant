@@ -70,16 +70,21 @@ const STATE_WORD_KEYS: Record<VoiceState, MessageKey> = {
  * A non-final update is the same sentence still being written, and it carries the text so far rather than a
  * fragment to append - so it replaces the entry before it. Appending instead produces a wall of fragments,
  * each one the answer as it stood a moment ago, which is what "streaming" looks like when it is done wrong.
+ *
+ * A final update settles the line in progress rather than adding a second one: the sentence as it was finally heard
+ * (or corrected) replaces its interim reading, so one thing said is one line. A final without words only closes the
+ * line in progress, and is nothing to show on its own.
  */
 export function foldTranscriptUpdate(
   current: readonly VoiceTranscriptUpdate[],
   update: VoiceTranscriptUpdate,
 ): VoiceTranscriptUpdate[] {
   const last = current[current.length - 1];
-  if (update.final || last === undefined || last.role !== update.role || last.final) {
-    return [...current, update];
-  }
-  return [...current.slice(0, -1), update];
+  const inProgress = last !== undefined && last.role === update.role && !last.final;
+  const empty = update.text.trim() === "";
+  if (inProgress) return [...current.slice(0, -1), update.final && empty ? { ...last, final: true } : update];
+  if (update.final && empty) return [...current];
+  return [...current, update];
 }
 
 export interface VoiceOverlayProps {

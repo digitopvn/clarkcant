@@ -40,6 +40,7 @@ import {
   type VoiceWidgetRun,
 } from "./widget-voice-action.ts";
 import type { NodeServices } from "./services.ts";
+import { LiveShadow } from "./voice-live-shadow.ts";
 import { focusedSemanticView } from "./widget-semantic.ts";
 
 /**
@@ -269,6 +270,8 @@ export interface VoiceGatewayOptions {
    * cannot open, or fails during the session, the live transcription takes over rather than the session going deaf.
    */
   createRecognizer?: () => SpeechRecognitionAdapter;
+  /** How long the recognizer may take to open before the session opens on the live transcription instead. */
+  recognizerStartTimeoutMs?: number;
   /**
    * The session vocabulary: bounded, ranked and redacted terms built on the node.
    *
@@ -476,6 +479,8 @@ const DECISION_PHRASES = [
 /** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
 const CLOSE_POLICY = 1008;
 const CLOSE_TRY_LATER = 1013;
+/** The longest a dedicated recognizer may delay a session's `ready` before the session opens without it. */
+const DEFAULT_RECOGNIZER_START_TIMEOUT_MS = 4000;
 
 /**
  * What the live session is for.
@@ -689,8 +694,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
     /** How many live-transcribed utterances this session has dispatched, for their provenance ids. */
     let liveUtterances = 0;
-    /** The live reading since the recognizer's last final: what takes over if the recognizer fails mid-sentence. */
-    let liveShadow = "";
+    /** The live reading the recognizer has not delivered yet: what takes over if the recognizer fails mid-sentence. */
+    const liveShadow = new LiveShadow({ pauseMs: options.utteranceSettleMs ?? 400 });
 
     /**
      * Wait for the transcription to go quiet, then take the sentence.
@@ -709,18 +714,20 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     /**
      * Dispatch what the live transcription heard, in its canonical spelling.
      *
-     * When normalisation changed the words, the page is sent the canonical sentence as the final user line, so what
-     * the person reads is what was dispatched rather than the raw reading it replaced.
+     * The sentence's one final user line is sent here, carrying the whole sentence as dispatched: the page replaces the
+     * in-progress line with it, so the person reads what was answered, once, rather than the raw reading and then a
+     * second, corrected copy of it.
      */
     const askLive = (at: Instant): void => {
       const heard = userText.trim();
-      if (heard !== "" && recognitionContext !== undefined) {
-        liveUtterances += 1;
-        const canonical = canonicalWithoutRetry(heard, `${sessionId}:l${liveUtterances}`, at, liveSource());
-        if (canonical !== heard) {
+      if (heard !== "") {
+        let canonical = heard;
+        if (recognitionContext !== undefined) {
+          liveUtterances += 1;
+          canonical = canonicalWithoutRetry(heard, `${sessionId}:l${liveUtterances}`, at, liveSource());
           userText = canonical;
-          send({ type: "transcript", role: "user", text: canonical, final: true });
         }
+        send({ type: "transcript", role: "user", text: canonical, final: true });
       }
       ask(at);
     };
@@ -750,7 +757,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       }
       markSettled(utterance.utteranceId);
       pendingInterim = "";
-      liveShadow = "";
+      liveShadow.delivered(utterance.text);
       const audio = utteranceAudio?.take();
       const context = recognitionContext;
       if (utterance.text.trim() === "") return;
@@ -794,8 +801,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (lost === undefined) return;
       recognizer = undefined;
       utteranceAudio?.clear();
-      const inProgress = liveShadow.trim() !== "" ? liveShadow.trim() : pendingInterim.trim();
-      liveShadow = "";
+      const undelivered = liveShadow.take();
+      const inProgress = undelivered !== "" ? undelivered : pendingInterim.trim();
       pendingInterim = "";
       if (inProgress !== "") {
         userText = userText.trim() === "" ? inProgress : `${userText.trim()} ${inProgress}`;
@@ -1273,6 +1280,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         // a mute that depends on one is a mute that fails silently when that one is broken.
         muted = control["muted"] === true;
         adapter?.setMuted(muted);
+        // A mute ends what was being said: the recognizer is told the audio stopped, so the sentence before the mute is
+        // finalized now rather than left open until the person speaks again and joined to whatever they say then.
+        if (muted) recognizer?.endAudio?.();
         recognizer?.setMuted(muted);
         // Audio from before the mute is not kept across it: a retry never runs on words said while muted, or on a
         // sentence the mute cut in half.
@@ -1348,7 +1358,6 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (options.voiceLiveUtterance !== undefined) {
         options.voiceLiveUtterance.sendUserText = (text: string) => {
           userText += text;
-          send({ type: "transcript", role: "user", text, final: true });
           askLive(now());
         };
       }
@@ -1369,14 +1378,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         if (fragment.role === "user" && recognizer !== undefined) {
           // The dedicated recognizer is the source of the person's words. The live reading of the same audio is
           // kept only as the fallback for the utterance in progress, should the recognizer fail in the middle of it.
-          liveShadow = `${liveShadow}${fragment.text}`.slice(-8000);
+          liveShadow.hear(fragment);
           return;
         }
         if (fragment.role === "user") {
           userText += fragment.text;
-          // Forwarded before the sentence is taken, so the page has the person's words before anything said about
-          // them, and a canonical reading sent while taking it is the last word on what they said.
-          send({ type: "transcript", role: fragment.role, text: fragment.text, final: fragment.isFinal });
+          // Words are forwarded as they arrive, as the in-progress line. The final line is the whole sentence and is
+          // sent when it is taken, so the provider's close - which carries no words - is not forwarded on its own.
+          if (fragment.text !== "") send({ type: "transcript", role: fragment.role, text: fragment.text, final: false });
           // The final fragment of an utterance is the adapter saying this one is complete, so this is
           // where a sentence becomes a message.
           if (fragment.isFinal) {
@@ -1423,10 +1432,21 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         candidate.onStateChange((state) => {
           if (state === "failed" && recognizer === candidate) recognizerLost();
         });
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await contextReady;
           const context = recognitionContext;
-          await candidate.start({ sessionId, tokenProvider: async () => credential, ...(context === undefined ? {} : { context }) });
+          const starting = candidate.start({ sessionId, tokenProvider: async () => credential, ...(context === undefined ? {} : { context }) });
+          // Abandoned on a timeout, which stops the candidate: its later rejection is expected.
+          starting.catch(() => undefined);
+          // The session's `ready` waits for this, so a recognizer that never finishes opening must not hold the
+          // session closed: past the bound it is a recognizer that could not open, and the live transcription is used.
+          await Promise.race([
+            starting,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("the recognizer did not open in time")), options.recognizerStartTimeoutMs ?? DEFAULT_RECOGNIZER_START_TIMEOUT_MS);
+            }),
+          ]);
           if (closing) {
             await candidate.stop();
             return;
@@ -1437,6 +1457,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           await candidate.stop().catch(() => undefined);
           // Named without the provider's message: a transport error can carry the request it failed on.
           process.stderr.write("voice: the dedicated recognizer could not open, so this session uses the live session's transcription\n");
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
         }
       };
       const recognizerReady = startRecognizer();

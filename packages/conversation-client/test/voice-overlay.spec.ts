@@ -108,4 +108,20 @@ describe("folding a streamed answer into the transcript", () => {
     const heard = [{ role: "user" as const, text: "tôi nói", final: false }];
     expect(foldTranscriptUpdate(heard, partial("và"))).toEqual([...heard, partial("và")]);
   });
+
+  it("settles the line in progress with its final, so an interim and its correction are one line, not two", () => {
+    const interim = { role: "user" as const, text: "sửa lỗi stale closer trong use effect", final: false };
+    const canonical = { role: "user" as const, text: "sửa lỗi stale closure trong useEffect", final: true };
+    expect(foldTranscriptUpdate([done("xong rồi"), interim], canonical)).toEqual([done("xong rồi"), canonical]);
+    expect(foldTranscriptUpdate([partial("Đang chuyển")], done("Đã chuyển xong."))).toEqual([done("Đã chuyển xong.")]);
+  });
+
+  it("closes the line in progress on a final without words, and shows nothing for one on its own", () => {
+    expect(foldTranscriptUpdate([partial("Đang chuyển")], done(""))).toEqual([done("Đang chuyển")]);
+    expect(foldTranscriptUpdate([done("xong rồi")], done(""))).toEqual([done("xong rồi")]);
+  });
+
+  it("still starts a new line for a final when nothing was in progress", () => {
+    expect(foldTranscriptUpdate([done("một")], done("hai"))).toEqual([done("một"), done("hai")]);
+  });
 });

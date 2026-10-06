@@ -13,8 +13,9 @@ import type { NodeServices } from "./services.ts";
  * The words this node expects to hear, gathered when a voice session opens.
  *
  * Everything is read here, on the node, and only the ranked, bounded and redacted term list leaves it - as the
- * vocabulary a recognizer is given. The conversation text is read to rank what this session is about and is never
- * part of what is sent; an absolute project path is never a term either.
+ * vocabulary a recognizer is given. That list does include terms extracted from the conversation (identifiers, paths,
+ * branch names and issue numbers it mentions); the conversation's sentences themselves are never sent, and an absolute
+ * project path is never a term.
  *
  * Every source is best effort and bounded in time: a voice session that waited on a slow skill catalogue would be a
  * session that does not start, and a vocabulary missing one source is still a better vocabulary than none.
@@ -24,6 +25,10 @@ import type { NodeServices } from "./services.ts";
 const RECENT_MESSAGES = 40;
 /** How many projects contribute their names. */
 const PROJECTS = 12;
+/** How many indexed projects are looked through for the one the conversation is about. */
+const PROJECTS_SEARCHED = 200;
+/** A name shorter than this is too common a word to say which project a conversation is about. */
+const MIN_PROJECT_NAME = 3;
 /** Dependencies taken from the active project's manifest. */
 const MANIFEST_DEPENDENCIES = 40;
 /** A manifest larger than this is not read: it is not a hand-written package.json. */
@@ -39,7 +44,7 @@ export interface VoiceVocabularyInput {
 /** The session vocabulary. Never rejects: a source that fails is left out, and the glossary alone is a valid context. */
 export async function voiceRecognitionContext(services: NodeServices, input: VoiceVocabularyInput): Promise<RecognitionContext> {
   const { db, identity } = services.runtime;
-  const projects = safely(() => listProjects(db, identity.nodeId, PROJECTS), []);
+  const indexed = safely(() => listProjects(db, identity.nodeId, PROJECTS_SEARCHED), []);
   const recentText =
     input.conversationId === undefined
       ? []
@@ -47,7 +52,8 @@ export async function voiceRecognitionContext(services: NodeServices, input: Voi
           .map((message) => textOfMessage(message))
           .filter((text) => text !== "")
           .reverse();
-  const active = projects[0];
+  const active = conversationProject(indexed, recentText);
+  const projects = [...(active === undefined ? [] : [active]), ...indexed.filter((project) => project !== active)].slice(0, PROJECTS);
   const [manifest, branch, skills, extensions] = await Promise.all([
     active === undefined ? Promise.resolve(undefined) : bounded(readManifest(active.path)),
     active === undefined ? Promise.resolve(undefined) : bounded(readBranch(active.path)),
@@ -70,6 +76,36 @@ export async function voiceRecognitionContext(services: NodeServices, input: Voi
     recentText,
   };
   return buildRecognitionContext(sources, { languageHints: languageHintsFor(input.locale) });
+}
+
+/**
+ * The project this conversation is about: the one it named most recently, by name or alias.
+ *
+ * A conversation is not bound to a project in storage, so its own words are the evidence. Without a mention there is
+ * no active project, and no manifest or branch is read: the node's most recently used project may belong to a
+ * different conversation entirely, and its dependencies would bias recognition towards the wrong words.
+ */
+export function conversationProject<Project extends { name: string; aliases: readonly string[] }>(
+  projects: readonly Project[],
+  recentText: readonly string[],
+): Project | undefined {
+  const named = projects.map((project) => ({
+    project,
+    patterns: [project.name, ...project.aliases]
+      .map((name) => name.trim())
+      .filter((name) => name.length >= MIN_PROJECT_NAME)
+      .map((name) => new RegExp(`(?<![\\p{L}\\p{N}_-])${escapeRegExp(name)}(?![\\p{L}\\p{N}_-])`, "iu")),
+  }));
+  for (let index = recentText.length - 1; index >= 0; index -= 1) {
+    const text = recentText[index]!;
+    const found = named.find((entry) => entry.patterns.some((pattern) => pattern.test(text)));
+    if (found !== undefined) return found.project;
+  }
+  return undefined;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** The person's language first, English second: the sentences are theirs, the identifiers are mostly English. */

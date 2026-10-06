@@ -14,6 +14,8 @@ import {
 } from "@clarkcant/contracts";
 import { createConversation, messagesSince, migrate, openDatabase } from "@clarkcant/storage";
 import {
+  GeminiTranscribeLiveAdapter,
+  type LiveSocket,
   type SpeechRecognitionAdapter,
   type UtteranceRetry,
   type VoiceProviderAdapter,
@@ -127,23 +129,36 @@ class FakeRecognizer implements SpeechRecognitionAdapter {
   started: RecognitionContext | undefined;
   startCount = 0;
   stopped = 0;
+  audioEnded = 0;
   muted = false;
   failStart = false;
+  /** A provider that accepts the connection and never completes setup: start waits until stopped. */
+  hangStart = false;
   #utterance: ((utterance: RecognizedUtterance) => void) | undefined;
   #state: ((state: VoiceState) => void) | undefined;
   #sequence = 0;
+  #release: ((cause: Error) => void) | undefined;
 
   async start(input: { context?: RecognitionContext }): Promise<void> {
     this.startCount += 1;
     if (this.failStart) throw new Error("socket refused");
+    if (this.hangStart) {
+      await new Promise<void>((_, reject) => {
+        this.#release = reject;
+      });
+    }
     this.started = input.context;
     this.#state?.("listening");
   }
   async stop(): Promise<void> {
     this.stopped += 1;
+    this.#release?.(new Error("stopped"));
   }
   sendAudio(frame: Uint8Array): void {
     this.frames.push(frame);
+  }
+  endAudio(): void {
+    this.audioEnded += 1;
   }
   setMuted(muted: boolean): void {
     this.muted = muted;
@@ -176,6 +191,48 @@ class FakeRecognizer implements SpeechRecognitionAdapter {
 
   fail(): void {
     this.#state?.("failed");
+  }
+}
+
+/** The provider's socket, for the real recognizer: what it is sent, and what the provider says back. */
+class TranscribeSocket implements LiveSocket {
+  readonly sent: string[] = [];
+  #onOpen: (() => void) | undefined;
+  #onMessage: ((payload: string) => void) | undefined;
+  #onClose: ((info: { code: number; reason: string }) => void) | undefined;
+
+  send(payload: string): void {
+    this.sent.push(payload);
+  }
+  close(): void {}
+  onOpen(listener: () => void): void {
+    this.#onOpen = listener;
+  }
+  onMessage(listener: (payload: string) => void): void {
+    this.#onMessage = listener;
+  }
+  onClose(listener: (info: { code: number; reason: string }) => void): void {
+    this.#onClose = listener;
+  }
+  onError(): void {}
+
+  open(): void {
+    this.#onOpen?.();
+  }
+  deliver(frame: unknown): void {
+    this.#onMessage?.(JSON.stringify(frame));
+  }
+  drop(code: number, reason: string): void {
+    this.#onClose?.({ code, reason });
+  }
+}
+
+/** Wait for a condition the session reaches asynchronously, bounded so a regression fails rather than hangs. */
+async function until(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+  const started = Date.now();
+  while (!condition()) {
+    if (Date.now() - started > timeoutMs) throw new Error("timed out waiting for the condition");
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
 
@@ -359,6 +416,95 @@ describe("a session with a dedicated recognizer", () => {
     expect(recognizer.frames.map((frame) => [...frame])).toEqual([[1, 2, 3, 4]]);
     expect(live.muted).toBe(true);
     expect(recognizer.muted).toBe(true);
+    // The sentence before the mute is finalized now, not left open to be joined to whatever is said after it.
+    expect(recognizer.audioEnded).toBe(1);
+  });
+
+  it("opens on the live transcription when the recognizer never finishes opening", async () => {
+    const live = new FakeLive();
+    const recognizer = new FakeRecognizer();
+    recognizer.hangStart = true;
+    const agent = recordingAgent();
+    const client = await open(
+      { createRecognizer: () => recognizer, recognitionContext: async () => CONTEXT, answer: agent.answer, recognizerStartTimeoutMs: 50 },
+      live,
+    );
+    expect(recognizer.stopped).toBe(1);
+
+    live.hear("sửa lỗi stale closer trong use effect");
+    await client.waitFor((control) => control["type"] === "transcript" && control["role"] === "assistant", "the answer");
+    expect(agent.asked).toEqual(["sửa lỗi stale closure trong useEffect"]);
+  });
+
+  it("falls back without doubling a sentence the live reading finished late", async () => {
+    const live = new FakeLive();
+    const recognizer = new FakeRecognizer();
+    const agent = recordingAgent();
+    const client = await open({ createRecognizer: () => recognizer, answer: agent.answer, utteranceSettleMs: 20 }, live);
+
+    recognizer.emit("voice-1:s0", "câu một", true);
+    await client.waitFor((control) => control["text"] === "ok 1", "the first answer");
+    // The live reading of that same sentence arrives after the recognizer delivered it.
+    live.hearPartial("câu một");
+    await settle(60);
+    live.hearPartial("mở file");
+    recognizer.emit("voice-1:s1", "mở", false);
+    recognizer.fail();
+
+    await client.waitFor((control) => control["text"] === "ok 2", "the second answer");
+    expect(agent.asked).toEqual(["câu một", "mở file"]);
+  });
+
+  it("falls back without losing a sentence the live reading started early", async () => {
+    const live = new FakeLive();
+    const recognizer = new FakeRecognizer();
+    const agent = recordingAgent();
+    const client = await open({ createRecognizer: () => recognizer, answer: agent.answer, utteranceSettleMs: 20 }, live);
+
+    live.hearPartial("câu một");
+    await settle(60);
+    // The next sentence's live reading arrives before the recognizer delivers the first.
+    live.hearPartial("mở file voice session");
+    recognizer.emit("voice-1:s0", "câu một", true);
+    await client.waitFor((control) => control["text"] === "ok 1", "the first answer");
+    recognizer.emit("voice-1:s1", "mở", false);
+    recognizer.fail();
+
+    await client.waitFor((control) => control["text"] === "ok 2", "the second answer");
+    expect(agent.asked).toEqual(["câu một", "mở file voice session"]);
+  });
+
+  it("keeps a sentence whole across the provider's session limit, with the real recognizer", async () => {
+    const live = new FakeLive();
+    const agent = recordingAgent();
+    const sockets: TranscribeSocket[] = [];
+    const createRecognizer = (): SpeechRecognitionAdapter =>
+      new GeminiTranscribeLiveAdapter({
+        createSocket: () => {
+          const socket = new TranscribeSocket();
+          sockets.push(socket);
+          // Accepts and completes setup as soon as the adapter has wired its listeners.
+          queueMicrotask(() => {
+            socket.open();
+            socket.deliver({ setupComplete: {} });
+          });
+          return socket;
+        },
+      });
+    const client = await open({ createRecognizer, answer: agent.answer }, live);
+    expect(sockets).toHaveLength(1);
+
+    sockets[0]!.deliver({ serverContent: { interimInputTranscription: { text: "mở file index" } } });
+    // The provider ends every session at ten minutes, in the middle of whatever is being said.
+    sockets[0]!.drop(1000, "session limit");
+    await until(() => sockets.length === 2 && sockets[1]!.sent.length > 0);
+    await settle();
+    expect(agent.asked).toEqual([]);
+
+    sockets[1]!.deliver({ serverContent: { inputTranscription: { text: "chấm ts giúp tui" } } });
+    await client.waitFor((control) => control["text"] === "ok 1", "the answer");
+    expect(agent.asked).toEqual(["mở file index chấm ts giúp tui"]);
+    expect(client.userLines().filter((line) => line.final === true)).toEqual([{ text: "mở file index chấm ts giúp tui", final: true }]);
   });
 
   it("stops the recognizer when the session ends, and keeps an unfinished hypothesis as the person's words", async () => {
@@ -503,7 +649,11 @@ describe("a session on the live transcription", () => {
 
     await client.waitFor((control) => control["type"] === "transcript" && control["role"] === "assistant", "the answer");
     expect(agent.asked).toEqual(["sửa lỗi stale closure trong useEffect"]);
-    expect(client.userLines().at(-1)).toEqual({ text: "sửa lỗi stale closure trong useEffect", final: true });
+    // One line in progress, then the one final line that settles it: never the raw reading and a corrected copy.
+    expect(client.userLines()).toEqual([
+      { text: "sửa lỗi stale closer trong use effect", final: false },
+      { text: "sửa lỗi stale closure trong useEffect", final: true },
+    ]);
     expect(provenance[0]).toMatchObject({ provider: "fake-live", contextApplied: false, abstained: 0 });
     expect(provenance[0]?.normalization.map((change) => change.rule).sort()).toEqual(["alias", "spacing"]);
   });
