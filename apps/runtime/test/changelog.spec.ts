@@ -8,6 +8,7 @@ import { type ChangelogCard, type Instant, changelogCardSchema, instantSchema } 
 import { messagesSince } from "@clarkcant/storage";
 
 import {
+  CHANGELOG_FALLBACK_URL,
   RELEASE_NOTES_FILE,
   type ReleaseHistoryRead,
   describeChangelog,
@@ -17,6 +18,7 @@ import {
 } from "../src/application/changelog.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createNodeTools } from "../src/node-tools.ts";
+import { changelogUnavailableText } from "../src/application/slash-commands.ts";
 import { openApiDocument } from "../src/open-interfaces.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createShowChangelogTool } from "../src/show-changelog-tool.ts";
@@ -150,7 +152,24 @@ describe("readChangelog", () => {
   });
 
   it("says the notes are unavailable when the build carries none", () => {
-    expect(readChangelog({}, () => ({ ok: false, reason: "missing" }))).toEqual({ ok: false, code: "unavailable", message: "missing" });
+    expect(readChangelog({}, () => ({ ok: false, reason: "gone", missing: true }))).toEqual({
+      ok: false,
+      code: "unavailable",
+      message: "gone",
+      missing: true,
+    });
+    expect(readChangelog({}, () => parseReleaseHistory("{"))).toMatchObject({ ok: false, code: "unavailable", missing: false });
+  });
+
+  it("tells a missing notes file from an unreadable one in the /changelog reply", () => {
+    const en = (_vi: string, english: string) => english;
+    const missing = changelogUnavailableText({ message: "release-notes.json is missing", missing: true }, en);
+    expect(missing).toContain("Running setup again restores the notes file");
+    expect(missing).toContain(CHANGELOG_FALLBACK_URL);
+    const unreadable = changelogUnavailableText({ message: "not valid JSON", missing: false }, en);
+    expect(unreadable).toContain("unreadable; updating the checkout (git pull) replaces it");
+    expect(unreadable).not.toContain("setup");
+    expect(unreadable).toContain("Nothing was changed");
   });
 });
 

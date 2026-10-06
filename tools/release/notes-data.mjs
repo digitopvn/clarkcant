@@ -6,11 +6,13 @@
  * the bounds of `releaseHistorySchema` (`packages/contracts/src/release-notes.ts`), which validates the result.
  */
 
+import { CLARK_REPOSITORY_URL } from "../../packages/contracts/src/clark-repository.ts";
+
 /** Kept in step with `RELEASE_NOTES_BOUNDS` in the contract; the contract's schema is what refuses a record that is not. */
 export const BOUNDS = { releases: 20, entries: 100, notes: 40_000, summary: 300 };
 
 /** Where the full notes live: the repository's releases, and its history for the baseline. */
-export const CANONICAL_REPOSITORY = "https://github.com/digitopvn/clarkcant";
+export const CANONICAL_REPOSITORY = CLARK_REPOSITORY_URL;
 export const CANONICAL_SOURCE = `${CANONICAL_REPOSITORY}/releases`;
 
 /**

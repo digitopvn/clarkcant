@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import {
+  CLARK_REPOSITORY_URL,
   type ChangelogCard,
   type ChangelogView,
   type Instant,
@@ -30,9 +31,10 @@ import {
 export const RELEASE_NOTES_FILE = new URL("../../release-notes.json", import.meta.url);
 
 /** Where the change history can still be read when this build's notes cannot: the canonical repository's history. */
-export const CHANGELOG_FALLBACK_URL = "https://github.com/digitopvn/clarkcant/commits/main";
+export const CHANGELOG_FALLBACK_URL = `${CLARK_REPOSITORY_URL}/commits/main`;
 
-export type ReleaseHistoryRead = { ok: true; history: ReleaseHistory } | { ok: false; reason: string };
+/** `missing` is set when the file is absent, as opposed to present but unreadable or off its contract. */
+export type ReleaseHistoryRead = { ok: true; history: ReleaseHistory } | { ok: false; reason: string; missing?: true };
 
 let embedded: ReleaseHistoryRead | undefined;
 
@@ -63,7 +65,7 @@ export function readEmbeddedReleaseHistory(): ReleaseHistoryRead {
     text = readFileSync(RELEASE_NOTES_FILE, "utf8");
   } catch {
     // Not cached: a file that a later read can find (a restored install) should be found.
-    return { ok: false, reason: "this build carries no release notes (release-notes.json is missing beside the runtime)" };
+    return { ok: false, reason: "this build carries no release notes (release-notes.json is missing beside the runtime)", missing: true };
   }
   embedded = parseReleaseHistory(text);
   return embedded;
@@ -71,7 +73,8 @@ export function readEmbeddedReleaseHistory(): ReleaseHistoryRead {
 
 export type ChangelogAnswer =
   | { ok: true; view: ChangelogView }
-  | { ok: false; code: "unavailable" | "invalid-version"; message: string };
+  | { ok: false; code: "invalid-version"; message: string }
+  | { ok: false; code: "unavailable"; message: string; missing: boolean };
 
 /**
  * The changelog, optionally only what came after a version.
@@ -91,7 +94,7 @@ export function readChangelog(
     }
   }
   const read = load();
-  if (!read.ok) return { ok: false, code: "unavailable", message: read.reason };
+  if (!read.ok) return { ok: false, code: "unavailable", message: read.reason, missing: read.missing === true };
   const { history } = read;
   const after = since;
   const releases = history.releases

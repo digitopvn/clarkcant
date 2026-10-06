@@ -69,11 +69,23 @@ export function ChangelogList({ view, t }: { view: ChangelogView; t: Translate }
       )}
       <p className="cc-list-subtitle">
         <a href={view.source} target="_blank" rel="noopener noreferrer" data-changelog-source="true">
-          {t("changelog.source")}
+          {t(opensReleases(view.source) ? "changelog.source" : "changelog.sourceHistory")}
         </a>
       </p>
     </div>
   );
+}
+
+/**
+ * Whether the canonical link opens published releases. Until the first release it opens the commit history the baseline
+ * was built to, and the link is labelled for what it opens.
+ */
+function opensReleases(source: string): boolean {
+  try {
+    return new URL(source).pathname.replace(/\/+$/, "").endsWith("/releases");
+  } catch {
+    return false;
+  }
 }
 
 function Release({ release, open, t }: { release: ChangelogView["releases"][number]; open: boolean; t: Translate }): ReactElement {

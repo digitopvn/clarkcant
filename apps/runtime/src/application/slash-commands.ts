@@ -198,14 +198,7 @@ function changelogAnswer(services: SlashServices, argument: string, say: Say, at
             `"${typed}" is not a version. Try /changelog 1.4, or /changelog for everything.`,
           ),
         }
-      : {
-          text: say(
-            `Không đọc được ghi chú phát hành đi kèm bản này: ${answer.message}. Không có gì bị thay đổi: hội thoại và cài đặt vẫn nguyên, Clark vẫn chạy bình thường. ` +
-              `Chạy lại bước cài đặt (hoặc cập nhật bản checkout) sẽ khôi phục tệp ghi chú; trong lúc đó, lịch sử thay đổi có tại ${CHANGELOG_FALLBACK_URL}.`,
-            `Could not read the release notes that came with this build: ${answer.message}. Nothing was changed: your conversation and settings are as they were, and Clark keeps working. ` +
-              `Running setup again (or updating the checkout) restores the notes file; until then, the change history is at ${CHANGELOG_FALLBACK_URL}.`,
-          ),
-        };
+      : { text: changelogUnavailableText(answer, say) };
   }
   const { view } = answer;
   const coverage =
@@ -232,6 +225,27 @@ function changelogAnswer(services: SlashServices, argument: string, say: Say, at
 }
 
 type Say = (vi: string, en: string) => string;
+
+/**
+ * Why `/changelog` has no notes to show, what is untouched and how to recover. A missing file comes back with setup; a
+ * file that is present but unreadable or off its contract is part of the checkout, so updating the checkout replaces it.
+ */
+export function changelogUnavailableText(answer: { message: string; missing: boolean }, say: Say): string {
+  const preserved = say(
+    "Không có gì bị thay đổi: hội thoại và cài đặt vẫn nguyên, Clark vẫn chạy bình thường.",
+    "Nothing was changed: your conversation and settings are as they were, and Clark keeps working.",
+  );
+  const recover = answer.missing
+    ? say(
+        `Chạy lại bước cài đặt sẽ khôi phục tệp ghi chú; trong lúc đó, lịch sử thay đổi có tại ${CHANGELOG_FALLBACK_URL}.`,
+        `Running setup again restores the notes file; until then, the change history is at ${CHANGELOG_FALLBACK_URL}.`,
+      )
+    : say(
+        `Tệp ghi chú có ở đó nhưng không đọc được; cập nhật bản checkout (git pull) sẽ thay nó. Trong lúc đó, lịch sử thay đổi có tại ${CHANGELOG_FALLBACK_URL}.`,
+        `The notes file is there but unreadable; updating the checkout (git pull) replaces it. Until then, the change history is at ${CHANGELOG_FALLBACK_URL}.`,
+      );
+  return `${say("Không đọc được ghi chú phát hành đi kèm bản này", "Could not read the release notes that came with this build")}: ${answer.message}. ${preserved} ${recover}`;
+}
 type CardOf = (command: SlashCommand, fields: Omit<CommandCard, "type" | "owner" | "cardId" | "command" | "updatedAt">) => CommandCard;
 type Row = CommandCard["rows"][number];
 

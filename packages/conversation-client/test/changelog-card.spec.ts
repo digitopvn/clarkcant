@@ -94,6 +94,13 @@ describe("the changelog card", () => {
     expect(html(CARD)).not.toContain("data-changelog-covers");
   });
 
+  it("labels the link for what it opens: release notes, or the change history before the first release", () => {
+    expect(html(CARD)).toContain(">Full release notes</a>");
+    const history = { ...CARD, source: `https://github.com/digitopvn/clarkcant/commits/${RANGE.from}` };
+    expect(html(history)).toContain(">Full change history</a>");
+    expect(html(history, vi)).toContain(">Toàn bộ lịch sử thay đổi</a>");
+  });
+
   it("says when nothing came after the version asked about", () => {
     const out = html({ ...CARD, since: "0.3.0", releases: [] });
     expect(out).toContain("This build records no release after 0.3.0.");

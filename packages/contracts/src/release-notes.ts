@@ -15,6 +15,8 @@ import { instantSchema, semverSchema } from "./primitives.ts";
  * the bound keeps the newest and counts the rest in `omittedEntries`, and the full list stays in the canonical source.
  */
 
+export { CLARK_REPOSITORY_URL } from "./clark-repository.ts";
+
 /** The channels a release is published on: `main` releases stable versions, `dev` beta prereleases. */
 export const RELEASE_CHANNELS = ["stable", "beta"] as const;
 export const releaseChannelSchema = z.enum(RELEASE_CHANNELS);
