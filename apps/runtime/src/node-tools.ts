@@ -65,6 +65,7 @@ import {
   createPlaceWidgetTool,
 } from "./widget-perform-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
+import { createDevelopWidgetTool, type DevelopWidgetToolDeps } from "./develop-widget-tool.ts";
 import { createMapTilesTool, type MapTilesToolDeps } from "./map-tiles-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
 import { type ActOnNoticeToolDeps, createActOnNoticeTool } from "./act-on-notice-tool.ts";
@@ -206,7 +207,7 @@ export function createNodeTools(input: {
    *
    * Absent means neither is registered: a turn with no conversation has nowhere to place a widget or one to act on.
    */
-  widgets?: { perform: PerformWidgetActionToolDeps; place: PlaceWidgetToolDeps };
+  widgets?: { perform: PerformWidgetActionToolDeps; place: PlaceWidgetToolDeps; develop?: DevelopWidgetToolDeps };
   /**
    * The node's terminals, when a turn may open or type into one.
    *
@@ -330,6 +331,7 @@ export function createNodeTools(input: {
     ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
     ...(input.capabilities === undefined ? [] : [createInvokeCapabilityTool(input.capabilities)]),
     ...(input.widgets === undefined ? [] : [createPlaceWidgetTool(input.widgets.place), createPerformWidgetActionTool(input.widgets.perform)]),
+    ...(input.widgets?.develop === undefined ? [] : [createDevelopWidgetTool(input.widgets.develop)]),
     ...(input.work === undefined ? [] : createWorkTools(input.work)),
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
     ...(input.notices === undefined ? [] : [createActOnNoticeTool(input.notices)]),

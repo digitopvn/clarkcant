@@ -426,6 +426,11 @@ describe("WebSocket gateway", () => {
       "/packages/install",
       "//packages//install/",
       "/packages/install?packageId=com.example.x",
+      // A widget dev session installs a folder's package, and so do its rebuild and placement.
+      "/widget-dev/sessions",
+      "//widget-dev//sessions/",
+      "/widget-dev/sessions/wdev_x/rebuild",
+      "/widget-dev/sessions/wdev_x/place",
       "/conversations/conv_x/delete",
       "//conversations//conv_x//delete/?ignored=1",
     ];

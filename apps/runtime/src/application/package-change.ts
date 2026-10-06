@@ -1,4 +1,4 @@
-import { directoryIndexPath, listInstalledPackages, readDirectoryIndex } from "@clarkcant/core";
+import { listInstalledPackages } from "@clarkcant/core";
 import { nowInstant, type ServiceConnectionRequirement } from "@clarkcant/contracts";
 
 import type { PackageConnectionBroker } from "../package-connections.ts";
@@ -7,6 +7,7 @@ import type { PackageInstallDeps } from "./package-install.ts";
 import type { TurnOrigin } from "@clarkcant/contracts";
 
 import { changePackage, type PackageChange, type PackageChangeOutcome, type PackageChangeSource } from "./package-lifecycle.ts";
+import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
  * A package change, and what it means for the account the package was connected to.
@@ -39,6 +40,6 @@ function declaredConnection(deps: PackageInstallDeps, packageId: string): Servic
     newId: deps.conductor.newId,
   }).find((entry) => entry.packageId === packageId);
   if (installed === undefined) return undefined;
-  const manifest = installedManifest(installed, runtime.dataDir, readDirectoryIndex(directoryIndexPath(process.env)));
+  const manifest = installedManifest(installed, runtime.dataDir, readNodeDirectory(runtime.dataDir));
   return manifest === "unreadable" ? undefined : installedConnection(manifest);
 }

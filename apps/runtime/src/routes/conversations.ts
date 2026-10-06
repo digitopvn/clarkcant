@@ -42,7 +42,6 @@ import {
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
-  directoryIndexPath,
   findIsolatedFrame,
   getActionBinding,
   getInstance,
@@ -56,7 +55,6 @@ import {
   mintFrameGrant,
   pinInstance,
   prepareFrameState,
-  readDirectoryIndex,
   readSnapshotForDisplay,
   readyCapabilities,
   releaseLiveOwner,
@@ -134,6 +132,7 @@ import { answerSlashCommand, slashCommandBlocks } from "../application/slash-com
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 import { exportTableCsv } from "./table-export.ts";
+import { devSessionRunning, readNodeDirectory } from "../application/widget-dev-store.ts";
 
 /**
  * The conversation family: the thread, its messages, its turns, its questions and its approvals, plus
@@ -217,7 +216,7 @@ function frameOffscreen(
 }
 
 export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readNodeDirectory(runtime.dataDir);
   /*
    * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
    * newest listing is not what is installed: the frame must load the code of the active generation, or rolling back
@@ -456,6 +455,7 @@ function resolveLiveWidget(
      * with it; never longer than the production lifetime, whatever the fixture holds.
      */
     const grantLifetimeMs = Math.min(services.frameGrantFixture?.lifetimeMs() ?? FRAME_GRANT_LIFETIME_MS, FRAME_GRANT_LIFETIME_MS);
+    const devSession = devSessionRunning(runtime.dataDir, isolated.packageId, isolated.version);
 
     return json(200, {
       kind: "isolated-frame",
@@ -467,6 +467,11 @@ function resolveLiveWidget(
       state: frameState.state,
       stateStatus: frameState.status,
       ephemeralStateKeys: isolated.definition.ephemeralStateKeys ?? [],
+      /*
+       * The widget dev session whose generation this frame runs, when one does, so the host can show the session's build
+       * status beside the frame (`GET /widget-dev/sessions/:id`). The frame itself is told nothing about it.
+       */
+      ...(devSession === undefined ? {} : { development: { sessionId: devSession.sessionId } }),
       frame: {
         /*
          * Relative to this node, served from the package path so the widget's own relative imports resolve, and
@@ -491,8 +496,10 @@ function resolveLiveWidget(
         /*
          * Which document the URL loads, without the grant. The grant changes on every read, so a client that compared
          * URLs would remount a running widget each time it re-read availability; this changes only when the code does.
+         * The generation is part of it: the same version installed again from other files (a widget dev session's next
+         * build, a reinstall of a re-packed local package) is other code, and only the frame remounts for it.
          */
-        document: `${isolated.packageId}@${isolated.version}/${isolated.entryPath}`,
+        document: `${isolated.packageId}@${isolated.version}/${isolated.entryPath}${generation === undefined ? "" : `#${generation.generationId}`}`,
         isolation: isolated.isolation,
         grantedCapabilities: capabilities.ready,
         unavailableCapabilities,
@@ -984,7 +991,7 @@ function performsWidgets(request: GatewayRequest): boolean {
 
 export function appendHostReply(
   services: Pick<NodeServices, "runtime" | "conductor" | "search">,
-  input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
+  input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant; messageId?: string },
 ): { messageId: string } {
   const message = writeHostReply(services, input);
   indexHostReply(services, message);
@@ -997,12 +1004,13 @@ export function appendHostReply(
  */
 export function writeHostReply(
   services: Pick<NodeServices, "runtime" | "conductor">,
-  input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
+  /** `messageId` when the caller already captured something against the reply (a placed widget's snapshot). */
+  input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant; messageId?: string },
 ): MessageRecord {
   const blocks: MessageBlock[] =
     input.blocks ?? [{ type: "text", format: "plain", content: input.text ?? "", streaming: false }];
   const message: MessageRecord = {
-    messageId: services.conductor.newId("msg") as MessageRecord["messageId"],
+    messageId: (input.messageId ?? services.conductor.newId("msg")) as MessageRecord["messageId"],
     conversationId: input.conversationId as MessageRecord["conversationId"],
     role: "assistant",
     blocks,

@@ -1,11 +1,12 @@
 import { PERSON_ONLY_REFUSAL, type ServiceConnectionRequirement, nowInstant } from "@clarkcant/contracts";
-import { directoryIndexPath, listInstalledPackages, readDirectoryIndex } from "@clarkcant/core";
+import { listInstalledPackages } from "@clarkcant/core";
 import type { Database } from "@clarkcant/storage";
 
 import type { PackageConnectionBroker } from "../package-connections.ts";
 import { installedConnection, installedManifest } from "../package-resources.ts";
 import type { ServiceHost } from "../service-host.ts";
 import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json } from "./http.ts";
+import { readNodeDirectory } from "../application/widget-dev-store.ts";
 
 /**
  * A package's account connection, as the host's own Settings drives it.
@@ -53,7 +54,7 @@ function declaredConnection(
   if (installed === undefined) {
     return { ok: false, response: fail(404, "NOT_INSTALLED", `${packageId} is not installed on this node`) };
   }
-  const manifest = installedManifest(installed, runtime.dataDir, readDirectoryIndex(directoryIndexPath(process.env)));
+  const manifest = installedManifest(installed, runtime.dataDir, readNodeDirectory(runtime.dataDir));
   if (manifest === "unreadable") {
     return { ok: false, response: fail(409, "MANIFEST_UNREADABLE", `this node cannot read ${packageId}'s manifest`) };
   }

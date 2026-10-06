@@ -4,10 +4,8 @@ import { nowInstant, type DirectoryEntry, type PackageGeneration, type TurnOrigi
 import {
   decideExecution,
   declaredWidgetIds,
-  directoryIndexPath,
   listInstalledPackages,
   packageGenerations,
-  readDirectoryIndex,
   readExecutionPolicy,
   recordEffectExecution,
   resolveLocalSource,
@@ -20,6 +18,7 @@ import {
 } from "@clarkcant/core";
 
 import type { PackageInstallDeps } from "./package-install.ts";
+import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
  * Uninstalling, restoring and rolling back a package, whoever asked.
@@ -156,7 +155,7 @@ export function changePackage(
     };
   }
 
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readNodeDirectory(deps.runtime.dataDir);
   const entries = index.kind === "configured" ? entriesOf(index.entries, input.packageId) : [];
   const core = installDeps(deps);
   const widgetIds = widgetIdsOf(entries, join(deps.runtime.dataDir, "package-cache"), packageGenerations(core, input.packageId));

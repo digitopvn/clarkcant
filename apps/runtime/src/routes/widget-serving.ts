@@ -4,10 +4,8 @@ import { join } from "node:path";
 import type { DirectoryEntry } from "@clarkcant/contracts";
 import {
   activeGenerations,
-  directoryIndexPath,
   installedDirectoryEntries,
   notInstalledAsListedMessage,
-  readDirectoryIndex,
   readPackage,
   readPackageFile,
   resolveFrameAncestors,
@@ -17,6 +15,7 @@ import {
 import type { Database } from "@clarkcant/storage";
 
 import { type GatewayRequest, type GatewayResponse, fail } from "./http.ts";
+import { readNodeDirectory } from "../application/widget-dev-store.ts";
 
 /**
  * A package's files, reached through a frame grant.
@@ -44,7 +43,7 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
   if (grant === undefined) return undefined;
   if (!(request.method === "GET" && segments.length >= 3 && segments[0] === "frame")) return undefined;
 
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readNodeDirectory(deps.runtime.dataDir);
   if (index.kind !== "configured") {
     return fail(409, index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE", index.reason);
   }
