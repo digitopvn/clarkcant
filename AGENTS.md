@@ -287,6 +287,35 @@ Do not treat an invariant checker as evidence for things it does not verify.
   Prefer body files for complex content and read important created artifacts back
   after mutation.
 
+### Issue status labels and ownership
+
+Every contributor, human or agent, keeps an issue's status label and assignee
+current, so parallel work does not collide.
+
+- Before starting, read the issue's assignee, status label, linked PRs and open
+  branches. If someone else owns it, or an open PR already addresses it, comment
+  and coordinate instead of starting parallel work.
+- Assign yourself (the GitHub account doing the work) when you start.
+- Move exactly one status label through the lifecycle:
+
+  | Label | Meaning |
+  | --- | --- |
+  | `in progress` | actively being implemented |
+  | `blocked` | cannot continue; the comment names the blocker issue or external gate |
+  | `in review` | implementation finished; review in progress |
+  | `done` | PR opened for the issue; waiting for CI/merge |
+  | `shipped` | merged into `main` |
+
+- `external-gate` is not a status. Keep it alongside the status when part of the
+  work needs credentials, hardware or a second host.
+- An epic stays `in progress` while child issues carry their own status. Partial
+  delivery is recorded in a comment that says what landed and what remains.
+- Review a change in an isolated reviewer context (a separate subagent or a
+  different person) that did not write it, then attest it as `REVIEW.md`
+  describes.
+- A finding unrelated to the current issue becomes its own issue. A related or
+  duplicate issue gets a comment linking the current work.
+
 ## Documentation and language
 
 Internal and official documentation are bilingual unless explicitly exempted:
