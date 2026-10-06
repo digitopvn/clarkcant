@@ -15,18 +15,24 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   { label: "jwt", pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g },
   // A PEM private key, header to footer, or header and base64 body when the footer was cut off. The match never runs
   // past the key: its body may hold only base64, whitespace and escaped line breaks, so inside a JSON string it stops at
-  // the closing quote, and a key header mentioned on its own in code, with no body after it, is left alone.
-  { label: "private-key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?:[A-Za-z0-9+/=:,\t \r\n-]|\\[nr])*?-----END [A-Z ]*PRIVATE KEY-----|(?:[\t \r\n]|\\[nr])*[A-Za-z0-9+/=]{40,}(?:(?:[\t \r\n]|\\[nr])+[A-Za-z0-9+/=]{16,})*)/g },
+  // the closing quote, and a key header mentioned on its own in code, with no body after it, is left alone. The body
+  // never holds a run of five dashes, so a scan from one header stops at the next marker instead of running on through
+  // every later one.
+  { label: "private-key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?:[A-Za-z0-9+/=:,\t \r\n]|-(?!----)|\\[nr])*?-----END [A-Z ]*PRIVATE KEY-----|(?:[\t \r\n]|\\[nr])*[A-Za-z0-9+/=]{40,}(?:(?:[\t \r\n]|\\[nr])+[A-Za-z0-9+/=]{16,})*)/g },
   { label: "aws-access-key", pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { label: "github-token", pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g },
   { label: "google-api-key", pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
   { label: "sendgrid-key", pattern: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
   // An HTTP Basic header's value, which is a user and password in base64. Only after the header name: "Basic" alone is a
-  // word in ordinary prose.
-  { label: "basic-auth", pattern: /\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi },
+  // word in ordinary prose. The name and its value may each be quoted, in any of the three quotes, and the header may be
+  // a key and its value or an assignment to one (`{"Authorization": "Basic …"}`, `authorization: \`Basic …\``,
+  // `headers["Authorization"] = "Basic …"`): each is the same header.
+  { label: "basic-auth", pattern: /\bAuthorization["'`]?\]?\s*[:=]\s*["'`]?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi },
   // A password in a URL (`postgres://user:pass@host`), before the email shape reads `pass@host` as an address. A
   // template placeholder (`${password}`, `<password>`, `{{password}}`) or a masked `***` is not a password.
-  { label: "url-credentials", pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi },
+  // The scheme is at most 32 characters: unbounded, every word boundary in a long `a-a-a-…` run started a scan to the
+  // end of it, which made a hostile 16 KB string take most of a second. No registered scheme comes near that length.
+  { label: "url-credentials", pattern: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi },
   { label: "bearer", pattern: /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g },
   { label: "prefixed-token", pattern: /\b(?:sk|pk|rk|ghp|gho|npm|xox[baprs]|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi },
   {
@@ -50,7 +56,12 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
     pattern: /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
   },
   { label: "windows-path", pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g },
-  { label: "email", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
+  // Bounded for the same reason as the scheme above: an unbounded local part is scanned to the end of the run from every
+  // boundary inside it. RFC 5321 allows 64 characters before the `@` and 255 after; the local part is given twice that,
+  // because a mail system that accepts a longer one still delivers to it, and the bound only has to be finite. A match
+  // starts only where a run of address characters starts, so each run is scanned once rather than from every boundary
+  // inside it.
+  { label: "email", pattern: /(?<![A-Za-z0-9._%+-])\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g },
   // Nine or more digits joined by single spaces or dashes, with an optional `+` and area-code parentheses. A match does
   // not start:
   // - after a word character, `+` or `(`;

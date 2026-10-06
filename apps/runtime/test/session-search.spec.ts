@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type DataClass, HOST_WRITTEN_MESSAGE_VERSION, type Instant, type MessageRecord } from "@clarkcant/contracts";
-import { appendMessage, migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { appendMessage, historyEntryTexts, indexHistory, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
   ensureSessionsDirectory,
@@ -613,5 +613,118 @@ describe("the search deadline", () => {
     );
     expect(byCloudflare.mode).toBe("jev");
     expect(byCloudflare.decider).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+  });
+
+  /** Records every request and declines to choose, so the search falls back to its ranking. */
+  const recordingDecider = (): { transport: JevTransport; bodies: string[] } => {
+    const bodies: string[] = [];
+    const transport: JevTransport = async (request) => {
+      bodies.push(JSON.stringify(request.body));
+      return { status: 529, body: undefined };
+    };
+    return { transport, bodies };
+  };
+  const budget = () => ({ deadlineAt: Date.now() + 2000, timeoutMs: 2000 });
+  // The address sits far from the match, so the snippet cut from this message carries none of it.
+  const filler = Array.from({ length: 80 }, (_unused, index) => `mục${String(index)}`).join(" ");
+
+  it("leaves a result whose stored record is above the selector's ceiling out of the decision request", async () => {
+    seed("sửa lỗi đăng nhập token hết hạn", "msg_login_a", "2026-09-16T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
+    seed(`sửa lỗi đăng nhập ${filler} liên hệ duy@example.com`, "msg_login_mail", "2026-09-14T02:00:00.000Z");
+    const { transport, bodies } = recordingDecider();
+
+    const outcome = await searchSessions(
+      { ...search, decider: { jev: { config: config(), transport }, budget }, deciderMode: "jev" },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+
+    // The confidential record is still a search result; it is only never shown to the decision provider.
+    expect(outcome.results.map((hit) => hit.ref)).toContain("msg_login_mail");
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) {
+      expect(body).not.toContain("msg_login_mail");
+      expect(body).not.toContain("mục1");
+    }
+    expect(bodies[0]).toContain("result:msg_login_a");
+    expect(bodies[0]).toContain("result:msg_login_b");
+  });
+
+  it("does not call the decision provider when fewer than two results may be shown to it", async () => {
+    // Three results a keyword search cannot separate, two of them carrying an address.
+    seed("sửa lỗi đăng nhập gửi duy@example.com", "msg_mail_a", "2026-09-16T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập hỏi an@example.com", "msg_mail_c", "2026-09-14T02:00:00.000Z");
+    const { transport, bodies } = recordingDecider();
+
+    const outcome = await searchSessions(
+      { ...search, decider: { jev: { config: config(), transport }, budget }, deciderMode: "jev" },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+
+    expect(bodies).toHaveLength(0);
+    expect(outcome.mode).toBe("rank");
+    expect(outcome.decider?.reason).toBe("fewer than two results may be shown to the decision provider");
+    expect(outcome.results).toHaveLength(3);
+  });
+
+  /**
+   * Counts every statement that reads the history table by ref. The table indexes only its text, so each such read
+   * walks the whole table: one per result is what made a fifty-result search block the node for seconds.
+   */
+  const countReadsByRef = (): { reads: () => number; restore: () => void } => {
+    const prepare = db.prepare.bind(db);
+    let reads = 0;
+    db.prepare = ((sql: string) => {
+      if (/FROM history_fts/.test(sql) && /\bref\s*(?:=|IN)\s*[?(]/.test(sql)) reads += 1;
+      return prepare(sql);
+    }) as typeof db.prepare;
+    return { reads: () => reads, restore: () => void (db.prepare = prepare) };
+  };
+
+  it("classifies lexical results from the text the search returned, reading nothing back, for the decision and the tool", async () => {
+    for (let index = 0; index < 30; index += 1) {
+      seed(`sửa lỗi đăng nhập lần ${String(index)}`, `msg_login_${String(index)}`, "2026-09-16T02:00:00.000Z");
+    }
+    seed(`sửa lỗi đăng nhập ${filler} liên hệ duy@example.com`, "msg_login_mail", "2026-09-14T02:00:00.000Z");
+    const { transport, bodies } = recordingDecider();
+    const counter = countReadsByRef();
+    try {
+      const deps: SessionSearchDeps = {
+        ...search,
+        decider: { jev: { config: config(), transport }, budget },
+        deciderMode: "jev",
+        allowed: () => ["public", "internal"],
+      };
+      const result = await createSearchHistoryTool(deps).execute({ query: "sửa lỗi đăng nhập", limit: 20 });
+      expect(bodies.length).toBeGreaterThan(0);
+      expect(counter.reads()).toBe(0);
+      // The tool's own limit still holds, on the same class the decision judged.
+      expect(result.text).not.toContain("duy@example.com");
+    } finally {
+      counter.restore();
+    }
+  });
+});
+
+describe("reading several history entries back", () => {
+  it("reads them in one statement, within the principal, keyed by source and ref", () => {
+    seed("một", "msg_one", "2026-09-16T02:00:00.000Z");
+    seed("hai", "msg_two", "2026-09-16T02:00:00.000Z");
+    indexHistory(db, { source: "message", ref: "msg_foreign", text: "của người khác", principalId: "prin_other", createdAt: AT });
+
+    const texts = historyEntryTexts(db, {
+      principalId: PRINCIPAL,
+      entries: [
+        { source: "message", ref: "msg_one" },
+        { source: "message", ref: "msg_two" },
+        // Same ref, other source: not what was asked for.
+        { source: "session_entry", ref: "msg_one" },
+        { source: "message", ref: "msg_foreign" },
+        { source: "message", ref: "msg_gone" },
+      ],
+    });
+    expect(Object.fromEntries(texts)).toEqual({ "message:msg_one": "một", "message:msg_two": "hai" });
+    expect(historyEntryTexts(db, { principalId: PRINCIPAL, entries: [] }).size).toBe(0);
   });
 });

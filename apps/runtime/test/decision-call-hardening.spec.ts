@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { type DecisionConfig, decisionCallRefusal, decisionConfigFromEnv } from "../src/decision-config.ts";
-import { type DecisionTransport, MAX_DECISION_RESPONSE_BYTES, createFetchTransport } from "../src/decision-transport.ts";
+import {
+  type DecisionTransport,
+  MAX_DECISION_REQUEST_BYTES,
+  MAX_DECISION_RESPONSE_BYTES,
+  createFetchTransport,
+} from "../src/decision-transport.ts";
 import { type JevTelemetry, askNoul, createJevBudget, selectTemplate } from "../src/jev-selector.ts";
 import type { MiniAppCandidateSet } from "../src/mini-app-candidates.ts";
 
@@ -122,6 +127,23 @@ describe("the secret-shape check on the request body", () => {
     expect(outcome.status).toBe("unavailable");
   });
 
+  it("refuses HTTP Basic credentials written as a header name and its value", async () => {
+    const config = typesafeConfig();
+    const { transport, bodies } = recording({ model: config.model, answers: { noul: { type: "noul", noul: 0.9 } } });
+    const encoded = Buffer.from(["admin", "hunter22x"].join(":")).toString("base64");
+    const outcome = await askNoul(
+      { config, transport },
+      {
+        // Neither string carries the header on its own: only the request as written puts the name beside its value.
+        state: { intent: "gọi API", headers: { Authorization: `Basic ${encoded}` } },
+        instructions: "Should this request be retried?",
+        budget: createJevBudget(config),
+      },
+    );
+    expect(bodies).toHaveLength(0);
+    expect(outcome.status).toBe("unavailable");
+  });
+
   it("selects a template whose id only resembles a token", async () => {
     const config = typesafeConfig();
     const set = candidates();
@@ -155,6 +177,68 @@ describe("the secret-shape check on the request body", () => {
     );
     expect(bodies).toHaveLength(1);
     expect(outcome).toEqual({ status: "answered", probability: 0.9, verdict: "on" });
+  });
+});
+
+describe("the shared call path's own byte ceilings", () => {
+  it("refuses a request over the ceiling before reading it or sending it", async () => {
+    const config = typesafeConfig();
+    const { transport, bodies } = recording({ model: config.model, answers: { noul: { type: "noul", noul: 0.9 } } });
+    const telemetry: JevTelemetry[] = [];
+    const outcome = await askNoul(
+      { config, transport, onTelemetry: (event) => telemetry.push(event) },
+      {
+        state: { intent: "thêm lịch", notes: "a-".repeat(MAX_DECISION_REQUEST_BYTES / 2) },
+        instructions: "Should a calendar be shown?",
+        budget: createJevBudget(config),
+      },
+    );
+    expect(bodies).toHaveLength(0);
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") expect(outcome.reason).toContain(`${MAX_DECISION_REQUEST_BYTES}-byte ceiling`);
+    expect(telemetry.map((event) => event.event)).toEqual(["refusal"]);
+  });
+
+  it("still sends a request just under the ceiling", async () => {
+    const config = typesafeConfig();
+    const { transport, bodies } = recording({ model: config.model, answers: { noul: { type: "noul", noul: 0.9 } } });
+    await askNoul(
+      { config, transport },
+      {
+        state: { intent: "thêm lịch", notes: "lịch tuần ".repeat(4_000) },
+        instructions: "Should a calendar be shown?",
+        budget: createJevBudget(config),
+      },
+    );
+    expect(bodies).toHaveLength(1);
+  });
+
+  it("never reads an error body, whichever transport hands one back", async () => {
+    const config = typesafeConfig();
+    // An error body that echoes the request, as some do: nothing of it may reach a reason or a telemetry line.
+    const echoed = { error: { message: "echo: deploy key rotation", request: "x".repeat(MAX_DECISION_RESPONSE_BYTES * 2) } };
+    const transport: DecisionTransport = async () => ({ status: 500, body: echoed });
+    const telemetry: JevTelemetry[] = [];
+    const outcome = await askNoul(
+      { config, transport, onTelemetry: (event) => telemetry.push(event) },
+      { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
+    );
+    expect(outcome).toEqual({ status: "unavailable", reason: "the provider answered with HTTP 500" });
+    expect(JSON.stringify(telemetry)).not.toContain("echo");
+  });
+
+  it("treats an answer over the response ceiling as malformed even from a transport that does not cap it", async () => {
+    const config = typesafeConfig();
+    const { transport } = recording({
+      model: config.model,
+      answers: { noul: { type: "noul", noul: 0.9 } },
+      padding: "x".repeat(MAX_DECISION_RESPONSE_BYTES),
+    });
+    const outcome = await askNoul(
+      { config, transport },
+      { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
+    );
+    expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
   });
 });
 
@@ -240,6 +324,30 @@ describe("the fetch transport", () => {
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
     expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
+  });
+
+  it("discards an error body unread: cancelled, not consumed, and never returned", async () => {
+    let pulled = 0;
+    let cancelled = false;
+    globalThis.fetch = (async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled += 1;
+          // An error body that never ends: reading it would hang the call until its deadline.
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ error: "echo of the request" })));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(stream, { status: 503, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const response = await createFetchTransport()(request());
+    expect(response).toEqual({ status: 503, body: undefined });
+    expect(cancelled).toBe(true);
+    // At most the stream's eager first pull.
+    expect(pulled).toBeLessThanOrEqual(1);
   });
 
   it("still reads an answer under the cap", async () => {
