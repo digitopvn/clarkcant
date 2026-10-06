@@ -1,6 +1,10 @@
 import {
   type CompositionSlot,
+  type DataClass,
   MAX_SELECTION_METADATA_BYTES,
+  SELECTOR_DATA_CLASSES,
+  checkSendBoundary,
+  dataClassOfText,
   dataClassesOfText,
   redactSecrets,
   utf8Bytes,
@@ -88,7 +92,54 @@ function stripControlCharacters(text: string): string {
 export function sanitizeIntent(text: string, maxLength = 1000): string {
   let clean = redactSecrets(stripControlCharacters(text).replace(/\s+/g, " ").trim());
   if (clean.length > maxLength) clean = `${clean.slice(0, maxLength - 1)}…`;
-  return clean;
+  return withinSelectorCeiling(clean);
+}
+
+/*
+ * The data-class ceiling of a decision call.
+ *
+ * A decision provider is a third party that only ever ranks, so a request to one carries only what the selector may be
+ * shown: `SELECTOR_DATA_CLASSES`, the same limit the context planner applies to its candidates. What is above it is
+ * removed before the request is built - a candidate is left out, and free text is redacted - rather than sent and
+ * filtered afterwards. The classes come from the send boundary's own check, so a decision call and a model turn
+ * cannot disagree about what a text is.
+ *
+ * Host-written identifiers (option ids, model aliases, refs) are not content and are not judged here: a dated model id
+ * reads as a phone number to the shape classifier, and refusing it would refuse ordinary decisions. The credential
+ * check in the shared call path still covers every string of a request, ids included.
+ */
+
+/** Whether a text may be shown to a decision provider. */
+export function selectorMayRead(text: string): boolean {
+  return checkSendBoundary({ allowed: SELECTOR_DATA_CLASSES, texts: [text] }).ok;
+}
+
+/**
+ * Whether a candidate may be offered to a decision provider, judged on the whole record it stands for.
+ *
+ * `dataClass` is the class of that whole record when the caller has it - a search snippet is a window cut from a
+ * message, and a value split at the cut no longer matches its shape - and the candidate's own text is classified
+ * otherwise.
+ */
+export function selectorMayOffer(candidate: { text: string; dataClass?: DataClass | undefined }): boolean {
+  return SELECTOR_DATA_CLASSES.includes(candidate.dataClass ?? dataClassOfText(candidate.text));
+}
+
+/**
+ * Free text cut to `maxLength` for a decision request, within the ceiling.
+ *
+ * Redacted on the whole text first, so a value is recognised before a cut can split it. A cut can still leave a shape
+ * that was not one before (ten digits that ran on into letters now end the text), so the cut text is checked again and
+ * redacted again if it needs to be; what is still above the ceiling after that is not sent at all.
+ */
+export function selectorText(text: string, maxLength: number): string {
+  return withinSelectorCeiling(redactSecrets(text).slice(0, maxLength));
+}
+
+function withinSelectorCeiling(text: string): string {
+  if (selectorMayRead(text)) return text;
+  const again = redactSecrets(text);
+  return selectorMayRead(again) ? again : "";
 }
 
 /**
