@@ -131,6 +131,10 @@ const ENVELOPE: Readonly<Record<string, Kind>> = {
   "questions.*.instructions": "host",
 };
 
+/**
+ * One case per decision function. The shape check only sees requests a case makes, so a new decision function (or a new
+ * question an existing one asks) is unchecked until it has its own case here, driven far enough to send that request.
+ */
 const CASES: readonly Case[] = [
   {
     name: "runtime target",

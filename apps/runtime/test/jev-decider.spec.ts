@@ -18,7 +18,9 @@ import {
   rankGapIsClear,
   decideRuntimeTarget,
   decideSearchResult,
+  decideToolFamily,
   decideTurnAction,
+  UNSHOWABLE_SUBJECT_REASON,
   searchDeciderFromEnv,
   searchDecisionBudget,
 } from "../src/jev-decider.ts";
@@ -446,11 +448,40 @@ describe("the selector's data-class ceiling", () => {
       // Fails closed: what is still above the ceiling after redaction is not sent at all.
       expect(selectorText(text, 400)).toBe("");
 
+      // A question about nothing is not asked: the decision falls back without a call.
       const { recorded, bodies } = recordingBodies();
-      await decideTurnAction(deps(recorded), { text, runningMs: 5_000 });
+      expect(await decideTurnAction(deps(recorded), { text, runningMs: 5_000 })).toEqual({
+        status: "fallback",
+        reason: UNSHOWABLE_SUBJECT_REASON,
+      });
+      expect(bodies).toHaveLength(0);
+    });
+
+    it.each(escapedTexts)("makes every decision about it fall back without a call: %s", async (text) => {
+      const { recorded, bodies } = recordingBodies();
+      const fallback = { reason: UNSHOWABLE_SUBJECT_REASON };
+      expect(await decideTurnAction(deps(recorded), { text, runningMs: 5_000 })).toEqual({ status: "fallback", ...fallback });
+      expect(
+        await decideToolFamily(deps(recorded), { text, families: { browser: "điều khiển trình duyệt", files: "đọc và sửa tệp" } }),
+      ).toEqual({ status: "all", ...fallback });
+      expect(await decideSearchResult(deps(recorded), { query: text, results: close })).toEqual({ status: "rank", ...fallback });
+      expect(
+        await decideContextFocus(deps(recorded), {
+          query: text,
+          candidates: [
+            { id: "memory:a", text: "báo cáo tuần gửi vào thứ sáu" },
+            { id: "memory:b", text: "báo cáo tuần dùng mẫu mới" },
+          ],
+        }),
+      ).toEqual({ status: "rank", ...fallback });
+      expect(bodies).toHaveLength(0);
+      expect(recorded.calls).toBe(0);
+    });
+
+    it("still asks about an empty message, which hides nothing", async () => {
+      const { recorded, bodies } = recordingBodies();
+      await decideTurnAction(deps(recorded), { text: "", runningMs: 5_000 });
       expect(bodies).toHaveLength(1);
-      expect(bodies[0]).not.toContain(value);
-      expect(JSON.parse(bodies[0]!).state.message).toBe("");
     });
 
     it.each(escapedTexts)("is never offered as a search result: %s", async (text) => {

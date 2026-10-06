@@ -246,6 +246,19 @@ export interface SearchDecisionInput {
 /** How many search results the selector is offered at most. */
 const MAX_OFFERED_RESULTS = 10;
 
+/** Why a decision fell back when its own question could not be shown to the provider. */
+export const UNSHOWABLE_SUBJECT_REASON = "the text being decided about is above what the decision provider may be shown";
+
+/**
+ * A decision's subject - the message or query it is about - within the selector's ceiling, or `undefined` when text was
+ * given and nothing of it may be shown. A question with its subject blanked out is not the question that was asked, so
+ * the caller falls back instead of paying for an answer to a different one.
+ */
+function shownSubject(text: string, maxLength: number): string | undefined {
+  const shown = selectorText(text, maxLength);
+  return shown === "" && text.trim() !== "" ? undefined : shown;
+}
+
 export type SearchDecision =
   | { status: "chosen"; ref: string; confidence: number | undefined; margin: number | undefined; model: string }
   | { status: "clarify"; question: string }
@@ -614,10 +627,12 @@ export async function decideTurnAction(
 > {
   const refused = jevCallRefusal(deps.jev.config);
   if (refused !== undefined) return { status: "fallback", reason: refused };
+  const message = shownSubject(input.text, 400);
+  if (message === undefined) return { status: "fallback", reason: UNSHOWABLE_SUBJECT_REASON };
 
   const outcome = await askChoice(deps.jev, {
     state: {
-      message: selectorText(input.text, 400),
+      message,
       runningForSeconds: String(Math.max(0, Math.round(input.runningMs / 1000))),
     },
     instructions:
@@ -679,13 +694,15 @@ export async function decideContextFocus(
   if (offered.length < 2) return { status: "rank", reason: "there was nothing to choose between" };
   const refused = jevCallRefusal(deps.jev.config);
   if (refused !== undefined) return { status: "rank", reason: refused };
+  const message = shownSubject(input.query, 300);
+  if (message === undefined) return { status: "rank", reason: UNSHOWABLE_SUBJECT_REASON };
 
   const criteria: Record<string, string | null> = {};
   offered.forEach((candidate, index) => {
     criteria[`item:${String(index)}`] = selectorText(candidate.text.replace(/\s+/g, " "), 200);
   });
   const outcome = await askChoice(deps.jev, {
-    state: { message: selectorText(input.query, 300) },
+    state: { message },
     instructions:
       "Which of these remembered notes or earlier messages matters most for answering the message? Choose none if none of them does.",
     criteria,
@@ -719,10 +736,12 @@ export async function decideToolFamily(
   if (names.length < 2) return { status: "all", reason: "there was nothing to choose between" };
   const refused = jevCallRefusal(deps.jev.config);
   if (refused !== undefined) return { status: "all", reason: refused };
+  const message = shownSubject(input.text, 400);
+  if (message === undefined) return { status: "all", reason: UNSHOWABLE_SUBJECT_REASON };
   const criteria: Record<string, string | null> = {};
   for (const name of names) criteria[`family:${name}`] = input.families[name] ?? null;
   const outcome = await askChoice(deps.jev, {
-    state: { message: selectorText(input.text, 400) },
+    state: { message },
     instructions:
       "Which kind of tool will answering this message most likely need? Choose none if it needs no tool or more than one kind.",
     criteria,
@@ -802,6 +821,9 @@ export async function decideSearchResult(
 
   const refused = jevCallRefusal(deps.jev.config);
   if (refused !== undefined) return { status: "rank", reason: refused };
+  // Before any result is classified, since a query that may not be shown makes their classes moot.
+  const query = shownSubject(input.query, 300);
+  if (query === undefined) return { status: "rank", reason: UNSHOWABLE_SUBJECT_REASON };
 
   /*
    * Snippets are the user's own history. A result is offered only when the whole record it was cut from is within what
@@ -827,7 +849,7 @@ export async function decideSearchResult(
   const budget = deps.budget();
 
   const choice = await askChoice(deps.jev, {
-    state: { query: selectorText(input.query, 300) },
+    state: { query },
     instructions: "Which of these earlier records is the one the question is about? Choose none if none of them is.",
     criteria,
     questionId: "result",
@@ -861,7 +883,7 @@ export async function decideSearchResult(
   // means "do not guess".
   const noul = await askNoul(deps.jev, {
     state: {
-      query: selectorText(input.query, 300),
+      query,
       resultCount: offered.length,
     },
     instructions:
