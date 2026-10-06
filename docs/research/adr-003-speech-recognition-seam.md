@@ -39,10 +39,16 @@ them before they mean anything.
      - Live keeps speaking and keeps hearing barge-in;
      - the recognizer's interims are shown, and only its settled final is dispatched.
    - A sentence the provider's ten-minute session limit cuts in half stays one utterance: the reopened session's
-     reading is joined to what the closed one had heard, and audio said while reopening is held and sent on.
-   - A recognizer that cannot open within a bounded time, or fails mid-session, hands the sentence in progress back to
-     the live transcription. The live reading is kept as sentences, and each recognizer final covers the one that reads
-     like it, so a fallback neither repeats a delivered sentence nor drops one the live reading started early.
+     reading is joined to what the closed one had heard, and audio said while reopening is held and sent on. If the
+     session ended exactly as the sentence did and nothing more is said shortly after, the carried words are the whole
+     sentence rather than the start of the next one.
+   - A recognizer that cannot open within a bounded time, or fails mid-session, hands what it had not delivered back to
+     the live transcription. The live reading is kept as the live session cut it, never split at a pause, and a cursor
+     marks how far the recognizer delivered: a final moves it when its words are, in order and within a few characters,
+     the beginning of what the live reading holds next, so a final may cover only the first part of a live utterance.
+     Finals shorter than three words never move it, and a final whose live reading does not arrive soon expires. When the
+     alignment is unclear, only the newest live sentence is answered. Every rule prefers answering words twice to losing
+     them.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;
@@ -61,8 +67,9 @@ them before they mean anything.
    - The rules are casing, spacing, alias and one-edit near-match. Each needs evidence: Vietnamese in the sentence, or
      a technical anchor outside the span.
    - Near-match only corrects a spoken slip in one word of a glossary, provider or model name. It never reaches a
-     symbol, path, branch or package, whose one-edit neighbours are other real names (`setUser` and `getUser`), and
-     never applies to text already written as code.
+     symbol, path, branch or package, whose one-edit neighbours are other real names (`setUser` and `getUser`), never
+     a word with a digit in it ("claude opus 3" is another version, not a slip of `claude-opus-4`), and never applies
+     to text already written as code.
    - Part of a longer written word (`live` in `gemini-live.tsx`) is never touched, and punctuation a spelling carries
      is not written twice.
    - A real word or a person's name is never an alias: "Jeff" stays "Jeff".
@@ -71,7 +78,7 @@ them before they mean anything.
      base" stays as heard).
    - A span that could be two terms is left as heard, and the abstention is recorded.
    - A canonical sentence comes back exactly as it is. The benchmark checks this on every reference, including negative
-     entries built from near neighbours, embedded names and a person's name.
+     entries built from near neighbours, embedded names, a person's name and other model versions.
    - Each change is recorded as bounded provenance.
 5. **Settle once, and retry deliberately.**
    - A final utterance is settled on an ordered queue and dispatched once per utterance id, through the same `ask`
@@ -95,15 +102,15 @@ make a decision they cannot evaluate, so there is none.
 ## Evidence
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` runs the scorer over
-`packages/voice-adapters/bench/vi-en-coding-corpus.json`. The corpus holds 74 utterances (code-switched Vietnamese and
-English with Vietnamese context, including six negative entries that must come back unchanged) and 100 technical
+`packages/voice-adapters/bench/vi-en-coding-corpus.json`. The corpus holds 76 utterances (code-switched Vietnamese and
+English with Vietnamese context, including eight negative entries that must come back unchanged) and 100 technical
 terms. Its recognizer outputs are simulated: they are typical live-transcription errors written by hand, not
 recordings. No canonical reference is changed by the normaliser.
 
 | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| raw | 25.5% | 4.2% | 77.0% | 21.6% | - | - | - |
-| normalized | 4.1% | 0.9% | 16.0% | 75.7% | 61 | 1 | 0 |
+| raw | 24.9% | 4.2% | 77.0% | 23.7% | - | - | - |
+| normalized | 4.0% | 0.9% | 16.0% | 76.3% | 61 | 1 | 0 |
 
 Commands and versions are never worse after normalisation (9/12 and 2/2 both before and after); symbols go from 1/20 to
 17/20, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
