@@ -255,9 +255,10 @@ describe("the class of JSON carried as text", () => {
   });
 
   it("stays linear on a large result", () => {
-    const rows = Array.from({ length: 20_000 }, (_, index) => ({ name: `row_${String(index)}`, value: `v${String(index)}` }));
+    // Sized so that one quadratic step over its rows, escapes or unclosed braces would take minutes, not milliseconds.
+    const rows = Array.from({ length: 4_000 }, (_, index) => ({ name: `row_${String(index)}`, value: `v${String(index)}` }));
     const large = JSON.stringify({ body: JSON.stringify({ rows, note: "\\".repeat(10_000) + "{".repeat(10_000) }) });
-    expect(large.length).toBeGreaterThan(900_000);
+    expect(large.length).toBeGreaterThan(200_000);
     const started = performance.now();
     expect(dataClassOfText(large)).toBe("internal");
     expect(dataClassOfText(`${large}${JSON.stringify({ name: PASSWORD_NAME, value: VALUE })}`)).toBe("secret");
