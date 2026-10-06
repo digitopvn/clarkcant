@@ -42,7 +42,7 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 | `CLARKCANT_SEARCH_DECIDER` | `rank` | `rank` uses BM25 alone; `jev` asks the selector to choose between results that are close. Any other value falls back to `rank`. |
 | `CLARKCANT_SEARCH_SEMANTIC` | off | `1`/`true` turns on vector retrieval (sqlite-vec + local E5-small), fused with the lexical results by RRF. Off because it was measured: on the Phase 8 corpus it did not improve top-1 and cost precision when the cosine ceiling was loose. |
 | `CLARKCANT_CONTEXT_PLANNER` | bật | `off` trả lại phần tóm tắt cố định (12 tin mới nhất) và bản ghi nhớ cố định (12 ghi nhớ mới nhất), và thôi đưa ngữ cảnh đã truy xuất cho việc chạy nền và task worker được điều phối. Hai cải tiến vẫn giữ ở cả hai chế độ: bản ghi nhớ không đọc được thì lượt chạy tiếp mà không có nó thay vì thất bại, và một lượt có thể được dừng trong lúc đang đọc ngữ cảnh. Phần tóm tắt cũng đọc 40 tin mới nhất ở cả hai chế độ. Khi bật, cả hai tập trung vào tin đang được trả lời, và quay về dạng cố định khi không có gì khớp. `off` cũng tắt việc giữ lại theo mức dữ liệu trong recap, bản ghi nhớ, bundle truy xuất, hướng dẫn dự án và `search_history`; định tuyến nền theo mức dữ liệu vẫn áp dụng (xem [system-architecture.vi.md §7.2](../system-architecture.vi.md)). |
-| `CLARKCANT_CONTEXT_DECIDER` | `rank` | `jev` cho selector sắp lại 8 kết quả khớp nhất của phần tóm tắt và bản ghi nhớ khi thứ hạng sát nhau, và chọn một nhóm tool cho tin không nhắc nhóm nào khi đang mở dần tool. Nó chỉ được hỏi khi câu trả lời có thể đổi điều được gửi đi. Khi được hỏi, nội dung rời khỏi node tới provider của Jev: tin đang được trả lời (đã che thông tin nhạy cảm, tối đa 300 ký tự; 400 ký tự khi chọn nhóm tool) và từng ghi nhớ hay tin cũ hơn là ứng viên (đã che, tối đa 200 ký tự). Lỗi hay hết giờ thì giữ thứ tự tất định. Giá trị khác là `rank`. |
+| `CLARKCANT_CONTEXT_DECIDER` | `rank` | `jev` cho selector sắp lại 8 kết quả khớp nhất của phần tóm tắt và bản ghi nhớ khi thứ hạng sát nhau, và chọn một nhóm tool cho tin không nhắc nhóm nào khi đang mở dần tool. Nó chỉ được hỏi khi câu trả lời có thể đổi điều được gửi đi. Khi được hỏi, nội dung rời khỏi node tới provider của Jev: tin đang được trả lời (đã che thông tin nhạy cảm, tối đa 300 ký tự; 400 ký tự khi chọn nhóm tool) và từng ghi nhớ hay tin cũ hơn là ứng viên mà toàn bộ là `public` hoặc `internal` (đã che, tối đa 200 ký tự; ứng viên nhạy cảm hơn không được đưa ra). Lỗi hay hết giờ thì giữ thứ tự tất định. Giá trị khác là `rank`. |
 | `CLARKCANT_TOOL_DISCLOSURE` | `all` | `progressive` đưa cho hội thoại các tool lõi cùng các nhóm tool mà tin nhắn nhắc tới, chỉ tăng thêm trong một session. Tắt vì đã đo: trong ước tính offline, nó tiết kiệm token schema nhưng tốn hơn khi tính cả việc ghi lại prompt cache (xem [system-architecture.vi.md §7.3](../system-architecture.vi.md)). Giá trị khác là `all`. |
 | `CLARKCANT_CONDITIONAL_INSTRUCTIONS` | on | `off` ngừng đọc `.clarkcant/instructions.json` của dự án, nên không hướng dẫn có điều kiện nào được nêu cho hội thoại hay task worker (xem [system-architecture.vi.md §7.2](../system-architecture.vi.md)). Mọi giá trị khác là bật. |
 | `CLARKCANT_SESSION_POLICY` | `off` | `observe` báo mỗi lượt session của hội thoại sẽ được giữ hay dựng lại và vì sao, dưới dạng số đếm trên stderr; `rebuild` dựng lại thật, chỉ khi cache đã nguội, context lớn và chủ đề mới (xem [system-architecture.vi.md §7.3](../system-architecture.vi.md)). Với `CLARKCANT_CONTEXT_DECIDER=jev`, Jev được hỏi ở vùng chưa rõ và chỉ được xem số đếm. Mọi giá trị khác là `off`. |
@@ -82,6 +82,15 @@ một lựa chọn kỹ thuật.
 Cloudflare công bố benchmark so sánh Clef với Jev. Đó là số liệu của nhà cung cấp trên workload của
 họ, không phải bằng chứng về các quyết định của node này, và vì thế mặc định không thay đổi.
 
+**Chuyển về TypeSafe.** Bỏ `CLARKCANT_DECISION_PROVIDER` (hoặc đặt thành `typesafe`) rồi khởi động
+lại. Một surface do Cloudflare chọn vẫn đọc được: một lượt được phát lại trả về surface đã lưu mà không
+hỏi provider nào, và provenance của nó vẫn ghi `provider: "cloudflare"` cùng `clef`, vì nó ghi lại ai
+đã quyết định chứ không phải cấu hình hiện tại. Quyết định mới được ghi như một node mặc định vẫn ghi,
+không có trường `provider`. Còn hạ chính node về một bản phát hành chưa hỗ trợ Cloudflare thì khác:
+schema surface đã lưu của bản đó không biết trường `provider`, nên nó từ chối đọc một surface do
+Cloudflare chọn (phát lại hay làm mới surface đó sẽ thất bại). Hãy chuyển provider về trước, và giữ bản
+phát hành đọc được trường này chừng nào các surface đó còn cần.
+
 Những gì chưa được kiểm chứng với dịch vụ Workers AI thật: model id chính xác trong response của Clef
 (`clef` và `@cf/cloudflare/clef` đều được đọc là `clef`; mọi giá trị khác bị từ chối như drift), và
 envelope mà Clef thực sự trả về, vốn đang theo tài liệu REST chung của Cloudflare. `clef-live.spec.ts`
@@ -113,9 +122,42 @@ key, or any host-owned card. The assembled state is capped at 16 KiB and is refu
 rather than sent and rejected. A second check re-scans the serialized state for a credential
 and refuses to send it at all if one survives.
 
-Bước cuối cùng trước khi gọi bất kỳ provider nào, dù provider nào được chọn, là quét toàn bộ request
-đã tuần tự hoá (state và các câu hỏi, kể cả mô tả của từng lựa chọn) để tìm credential, bằng bộ phân loại mà ranh giới gửi dùng cho đầu vào của model. Id và tên chỉ giống token thì không tính. Nếu phát hiện, request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi
-provider khác, và lý do cùng telemetry không chứa phần nào của giá trị.
+**Trần data class.** Trong mọi lời gọi quyết định, dù là quyết định nào và provider nào nhận, nội dung
+do người dùng, một tệp hay một bản ghi cung cấp chỉ được thuộc các class mà selector được phép xem:
+`public` và `internal` (`SELECTOR_DATA_CLASSES`, cùng giới hạn mà context planner áp dụng). Nội dung
+vượt trần bị bỏ ra trước khi dựng request, không bao giờ gửi đi rồi mới lọc:
+
+- một ứng viên đại diện cho một bản ghi dữ liệu của người dùng (một kết quả tìm kiếm, một ghi nhớ hay
+  một tin cũ hơn) chỉ được đưa ra khi toàn bộ bản ghi nằm trong trần. Một kết quả tìm kiếm được xét
+  trên toàn bộ mục đã lưu, không phải trên đoạn trích 200 ký tự cắt ra từ nó, vì một giá trị bị cắt
+  đôi ở mép đoạn trích không còn trông giống chính nó. Kết quả bị bỏ ra vẫn giữ vị trí trong thứ hạng;
+  khi còn lại ít hơn hai kết quả, provider hoàn toàn không được hỏi;
+- văn bản tự do (lời người dùng, tên thư mục, mô tả của một ứng viên, các quy tắc guardrail của chính
+  người dùng) được che trên toàn văn trước khi cắt, và được kiểm tra lại sau khi cắt. Một lần cắt để
+  lại một dạng nhạy cảm (mười chữ số vốn nối liền với chữ cái nay đứng cuối văn bản) sẽ được che lần
+  nữa, và văn bản vẫn vượt trần thì không được gửi.
+
+Những gì do chính host viết được miễn khỏi trần này, vì với bộ phân loại theo hình dạng, một model id
+có ngày tháng trông như số điện thoại:
+
+- định danh: id lựa chọn, ref, id và loại của ứng viên, locale, và các con số đếm;
+- các chỉ dẫn và câu mô tả lựa chọn cố định của host;
+- mô tả trong danh mục: `alias (provider/modelId)` của một tuyến model, nhãn của một template trình
+  bày, mô tả của một cách thu hẹp mà guardrail đưa ra, và dòng `about` của một nhóm tool.
+
+Chúng vẫn nằm trong phạm vi kiểm tra credential bên dưới. Trường nào trong request của từng quyết
+định thuộc bên nào được liệt kê từng trường một trong
+`apps/runtime/test/decision-request-fields.spec.ts`; một trường mới sẽ làm test đó thất bại cho tới khi
+nó được xếp vào một bên.
+
+Bước cuối cùng trước khi gọi bất kỳ provider nào, dù provider nào được chọn, trước hết đo request đã tuần
+tự hoá: request lớn hơn 64 KiB không được gửi, và không gì đọc tiếp nó. Sau đó bước này quét toàn bộ
+request (state và các câu hỏi, kể cả mô tả của từng lựa chọn) để tìm credential, bằng bộ phân loại mà
+ranh giới gửi dùng cho đầu vào của model. Id và tên chỉ giống token thì không tính; một header HTTP Basic
+được viết thành một key và giá trị của nó (`{"Authorization": "Basic …"}`), thành một phép gán
+(`headers["Authorization"] = "Basic …"`) hay trong dấu backtick thì có tính. Nếu phát hiện,
+request hoàn toàn không được gửi; lời gọi quay về phương án dự phòng như mọi lỗi provider khác, và lý do
+cùng telemetry không chứa phần nào của giá trị.
 
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
@@ -145,13 +187,15 @@ the release evidence rather than tuned to taste.
 | Tên provider không xác định, hoặc model hay account id của Cloudflare bị thiếu hoặc sai dạng | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
 | Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn Cloudflare hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
 | Còn sót một credential ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do không chứa phần nào của giá trị. |
+| Request lớn hơn 64 KiB sau khi tuần tự hoá | `unavailable`; không có lời gọi mạng, và request không bị quét. |
+| Ít hơn hai kết quả tìm kiếm nằm trong trần của selector | Giữ nguyên thứ hạng; không có lời gọi mạng. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
-| 422 | `unavailable`; the provider's error body is read and discarded. |
+| 422 | `unavailable`; body lỗi của provider bị huỷ mà không đọc, và không bao giờ được trả về, ghi log hay lưu lại. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
 | Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho cả hai provider. |
-| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Áp dụng cho cả hai provider. |
+| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Đường gọi chung giữ cùng giới hạn đó bất kể transport nào đưa câu trả lời về. Áp dụng cho cả hai provider. |
 | Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. Với Cloudflare, envelope không có `success: true` hoặc không có `result` dạng System One được coi là sai dạng. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
@@ -225,10 +269,14 @@ nothing, and re-measure with
 `CLARKCANT_EMBEDDINGS_LIVE=1 pnpm exec vitest run apps/runtime/test/hybrid-calibration-live.spec.ts`,
 which prints a per-ceiling sweep. The numbers belong in a report before the default changes.
 
-**What a composed surface costs.** One selector batch per composition when no template was named (two
-at most, if the template changes the candidate set), and zero when the model names a template. Search
-costs one call only when `decider = jev`, at least two results are close, and the ranking did not
-already separate them.
+**Một surface được dựng tốn bao nhiêu.** Mỗi lần dựng tốn một lô gọi selector khi chưa có template nào
+được nêu tên (tối đa hai lô, nếu template làm đổi tập ứng viên), và không tốn lời gọi nào khi model đã
+nêu tên một template. Tìm kiếm chỉ tốn một lời gọi khi `decider = jev`, có ít nhất hai kết quả sát
+nhau, thứ hạng chưa tự tách chúng ra, và có ít nhất hai kết quả nằm trong trần data class của
+selector. Việc xét class của các kết quả tốn thêm cho tìm kiếm nhiều nhất một lần đọc: kết quả từ tìm
+kiếm theo từ khoá được xét trên chính văn bản mà tìm kiếm đã trả về, các kết quả chỉ phía vector tìm
+thấy được đọc lại cùng nhau trong một truy vấn duy nhất, và chỉ những kết quả sắp được đưa cho selector
+mới được xét.
 
 **Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
 the home directory, and the system ignore list). Changing them needs no restart. What the selector

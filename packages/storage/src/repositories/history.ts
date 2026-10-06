@@ -291,3 +291,32 @@ export function historyEntry(
     createdAt: row.created_at,
   };
 }
+
+/**
+ * The stored text of several entries, read in one query and keyed `source:ref`.
+ *
+ * The lexical table indexes only its text, so any lookup by ref reads the table through. Many refs in one statement
+ * cost that read once, where one `historyEntry` per ref costs it once each. An entry no longer stored is absent.
+ */
+export function historyEntryTexts(
+  db: Database,
+  input: { principalId: string; entries: readonly { source: HistorySource; ref: string }[] },
+): Map<string, string> {
+  const texts = new Map<string, string>();
+  if (input.entries.length === 0) return texts;
+  const wanted = new Set(input.entries.map((entry) => `${entry.source}:${entry.ref}`));
+  const refs = [...new Set(input.entries.map((entry) => entry.ref))];
+  const rows = allRows<{ source: string; ref: string; text: string }>(
+    db,
+    `SELECT source, ref, text
+       FROM history_fts
+      WHERE principal_id = ? AND ref IN (${refs.map(() => "?").join(", ")})`,
+    input.principalId,
+    ...refs,
+  );
+  for (const row of rows) {
+    const key = `${row.source}:${row.ref}`;
+    if (wanted.has(key) && !texts.has(key)) texts.set(key, row.text);
+  }
+  return texts;
+}

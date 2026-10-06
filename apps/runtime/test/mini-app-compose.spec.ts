@@ -16,7 +16,7 @@ import {
   composeMiniApp,
   findTemplate,
 } from "../src/compose-mini-app.ts";
-import type { JevTelemetry, JevTransport } from "../src/jev-selector.ts";
+import type { JevConfig, JevTelemetry, JevTransport } from "../src/jev-selector.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 
@@ -486,6 +486,57 @@ describe("composeMiniApp", () => {
     );
     expect(byCloudflare.ok && byCloudflare.selectorMode).toBe("jev");
     expect(storedSelector("msg_provider_cloudflare")).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+  });
+
+  it("keeps a surface Cloudflare chose readable and truthful after the node switches back to TypeSafe", async () => {
+    const probabilities = { "overview@1": 0.95, "focused@1": 0.02, "agenda@1": 0.02, none: 0.01 };
+    const clef: JevTransport = async (request) => {
+      const key = Object.keys((request.body as { questions: Record<string, unknown> }).questions)[0] ?? "template";
+      return {
+        status: 200,
+        body: {
+          success: true,
+          errors: [],
+          messages: [],
+          result: { model: "clef", answers: { [key]: { type: "choice", choice: "overview@1", probabilities, confidence: 0.9 } } },
+        },
+      };
+    };
+    const withSelector = (config: Partial<JevConfig>, transport: JevTransport): ComposeDeps => ({
+      ...compose,
+      jev: { deps: { config: { ...compose.jev!.deps.config, ...config }, transport }, budget: compose.jev!.budget },
+    });
+    const cloudflareKey = ["cf", "test", "token"].join("-");
+    const typesafeKey = ["sk", "test", "key"].join("-");
+    const input = { conversationId: CONVERSATION, messageId: "msg_switch_back", principalId: PRINCIPAL, intent: "cho tôi tổng quan" };
+
+    const byCloudflare = await composeMiniApp(
+      withSelector({ provider: "cloudflare", model: "clef", enabled: true, localOnly: false, apiKey: cloudflareKey }, clef),
+      input,
+    );
+    expect(byCloudflare.ok).toBe(true);
+
+    // The operator switches back. The same turn replayed is the surface already stored, and nobody is asked again.
+    const typesafe = forbiddenTransport();
+    const typesafeConfig: Partial<JevConfig> = { provider: "typesafe", model: "jev-1.13.0", enabled: true, localOnly: false, apiKey: typesafeKey };
+    const replayed = await composeMiniApp(withSelector(typesafeConfig, typesafe.transport), input);
+    expect(replayed.ok).toBe(true);
+    if (!replayed.ok || !byCloudflare.ok) return;
+    expect(replayed.compositionId).toBe(byCloudflare.compositionId);
+    expect(replayed.selectorMode).toBe("jev");
+    expect(typesafe.calls).toBe(0);
+
+    // Read back through the strict stored schema: it still says who decided, not the provider configured now.
+    const stored = findCompositionByMessage(db(), input.messageId, PRINCIPAL);
+    expect(stored?.provenance.selector).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+
+    // A new decision on the TypeSafe node is recorded exactly as a default node always recorded one.
+    const fresh = await composeMiniApp(
+      withSelector(typesafeConfig, answeringTransport("overview@1", probabilities).transport),
+      { ...input, messageId: "msg_after_switch" },
+    );
+    expect(fresh.ok && fresh.selectorMode).toBe("jev");
+    expect(findCompositionByMessage(db(), "msg_after_switch", PRINCIPAL)?.provenance.selector).not.toHaveProperty("provider");
   });
 
   it("refuses a template id the host cannot compile rather than falling back silently", async () => {

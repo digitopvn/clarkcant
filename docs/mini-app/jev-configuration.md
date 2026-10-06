@@ -42,7 +42,7 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 | `CLARKCANT_SEARCH_DECIDER` | `rank` | `rank` uses BM25 alone; `jev` asks the selector to choose between results that are close. Any other value falls back to `rank`. |
 | `CLARKCANT_SEARCH_SEMANTIC` | off | `1`/`true` turns on vector retrieval (sqlite-vec + local E5-small), fused with the lexical results by RRF. Off because it was measured: on the Phase 8 corpus it did not improve top-1 and cost precision when the cosine ceiling was loose. |
 | `CLARKCANT_CONTEXT_PLANNER` | on | `off` restores the fixed recap (newest 12 messages) and the fixed memory brief (newest 12 notes), and stops background runs and dispatched task workers from receiving retrieved context. Two improvements stay in both modes: a memory brief that cannot be read gives a turn without it rather than a failed turn, and a turn can be stopped while its context is being read. The recap also reads the newest 40 messages in both modes. On, both are focused on the message being answered, and fall back to the fixed form when nothing matches. `off` also turns off data-class withholding in the recap, the memory brief, retrieved bundles, project instructions and `search_history`; background routing by data class still applies (see [system-architecture.md §7.2](../system-architecture.md)). |
-| `CLARKCANT_CONTEXT_DECIDER` | `rank` | `jev` lets the selector reorder the top 8 matches for the recap and memory brief when their ranking is close, and pick one tool family for a message that names none under progressive disclosure. It is asked only when its answer could change what is sent. When it is asked, text leaves the node for the Jev provider: the message being answered (redacted, at most 300 characters; 400 for a tool-family choice) and each candidate memory note or earlier message (redacted, at most 200 characters). A failure or timeout keeps the deterministic order. Any other value is `rank`. |
+| `CLARKCANT_CONTEXT_DECIDER` | `rank` | `jev` lets the selector reorder the top 8 matches for the recap and memory brief when their ranking is close, and pick one tool family for a message that names none under progressive disclosure. It is asked only when its answer could change what is sent. When it is asked, text leaves the node for the Jev provider: the message being answered (redacted, at most 300 characters; 400 for a tool-family choice) and each candidate memory note or earlier message that is `public` or `internal` as a whole (redacted, at most 200 characters; a more sensitive one is not offered). A failure or timeout keeps the deterministic order. Any other value is `rank`. |
 | `CLARKCANT_TOOL_DISCLOSURE` | `all` | `progressive` offers a conversation the core tools plus the tool families its messages name, growing within a session. Off because it was measured: in the offline estimate it saved schema tokens but cost more once prompt-cache rewrites were counted (see [system-architecture.md §7.3](../system-architecture.md)). Any other value is `all`. |
 | `CLARKCANT_CONDITIONAL_INSTRUCTIONS` | on | `off` stops reading a project's `.clarkcant/instructions.json`, so no conditional instruction is stated to a conversation or a task worker (see [system-architecture.md §7.2](../system-architecture.md)). Any other value is on. |
 | `CLARKCANT_SESSION_POLICY` | `off` | `observe` reports, per turn, whether a conversation's session would be kept or rebuilt and why, as counts on stderr; `rebuild` also rebuilds it, only when the cache is cold, the context large and the subject new (see [system-architecture.md §7.3](../system-architecture.md)). With `CLARKCANT_CONTEXT_DECIDER=jev`, Jev is asked in the unclear band and shown counts only. Any other value is `off`. |
@@ -81,6 +81,15 @@ receives the decision payload, so it is a data-sharing decision as well as a tec
 Cloudflare publishes benchmarks for Clef against Jev. They are the vendor's numbers on the vendor's
 workload, not evidence about this node's decisions, which is why the default has not changed.
 
+**Switching back to TypeSafe.** Unset `CLARKCANT_DECISION_PROVIDER` (or set it to `typesafe`) and
+restart. A surface Cloudflare chose stays readable: a replayed turn returns the stored surface without
+asking any provider, and its provenance still names `provider: "cloudflare"` and `clef`, because it
+records who decided rather than what is configured now. New decisions are recorded as a default node
+records them, with no `provider` field. Rolling the node itself back to a release without Cloudflare
+support is different: that release's stored-surface schema does not know the `provider` field, so it
+refuses to read a surface Cloudflare chose (a replay or refresh of that surface fails). Switch the
+provider back first and keep the release that reads the field for as long as such surfaces matter.
+
 What has not been verified against the live Workers AI service: the exact model id inside a Clef
 response (`clef` and `@cf/cloudflare/clef` are both read as `clef`; anything else is refused as
 drift), and the envelope as Clef returns it, which follows Cloudflare's general REST documentation.
@@ -112,10 +121,42 @@ key, or any host-owned card. The assembled state is capped at 16 KiB and is refu
 rather than sent and rejected. A second check re-scans the serialized state for a credential
 and refuses to send it at all if one survives.
 
-The last step before any provider is called, whichever one is selected, scans the whole serialized
+**The data-class ceiling.** In every decision call, whichever decision it makes and whichever
+provider receives it, the content a person, a file or a record supplied is limited to the classes the
+selector may be shown: `public` and `internal` (`SELECTOR_DATA_CLASSES`, the same limit the context
+planner applies). Content above that is removed before the request is built, never sent and filtered
+afterwards:
+
+- a candidate that stands for a record of the person's data (a search result, a memory note or an
+  earlier message) is offered only when the whole record is within the ceiling. A search result is
+  judged on its whole stored entry, not on the 200-character snippet cut from it, because a value
+  split at the cut no longer looks like what it is. A result left out keeps its ranked place; with
+  fewer than two results left, the provider is not asked at all;
+- free text (the person's words, a directory name, a candidate's description, the person's own
+  guardrail rules) is redacted on the whole text before it is cut, and checked again after the cut.
+  A cut that leaves a shape (ten digits that ran on into letters now end the text) is redacted
+  again, and text still above the ceiling is not sent.
+
+What the host writes itself is exempt from this ceiling, because a dated model id reads as a phone
+number to the shape classifier:
+
+- identifiers: option ids, refs, candidate ids and kinds, the locale, and counts;
+- the host's fixed instructions and option sentences;
+- catalogue descriptions: a model route's `alias (provider/modelId)`, a presentation template's
+  label, a guardrail narrowing's description, and a tool family's `about` line.
+
+These are still covered by the credential check below. Which fields of each decision's request fall
+on which side is listed, field by field, in `apps/runtime/test/decision-request-fields.spec.ts`; a
+new field fails that test until it is placed on one side.
+
+The last step before any provider is called, whichever one is selected, first measures the
+serialized request: one over 64 KiB is not sent, and nothing reads it further. It then scans the whole
 request (state and questions, including option descriptions) for a credential, with the classifier
-the send boundary uses for a model's input. Ids and names that only resemble a token do not count. A hit means the request is not sent at all; the call falls back as any provider failure does, and
-the reason and telemetry carry no part of the value.
+the send boundary uses for a model's input. Ids and names that only resemble a token do not count; an
+HTTP Basic header written as a key and its value (`{"Authorization": "Basic …"}`), as an assignment
+(`headers["Authorization"] = "Basic …"`) or in backticks does. A hit means
+the request is not sent at all; the call falls back as any provider failure does, and the reason and
+telemetry carry no part of the value.
 
 `CLARKCANT_JEV_LOCAL_ONLY=1` disables outbound calls entirely. The composition step then uses the
 deterministic path and the default-model fallback, exactly as it does when the provider is down.
@@ -145,13 +186,15 @@ the release evidence rather than tuned to taste.
 | Unknown provider name, or a Cloudflare model or account id that is missing or malformed | `unavailable`; no network call, and the reason names the setting. |
 | TypeSafe selected with a Cloudflare model id (`clef`, `clef-flash`, or any `@cf/` id) | `unavailable`; no network call, and the reason says to select Cloudflare or unset `CLARKCANT_DECISION_MODEL`. |
 | A credential left anywhere in the request | `unavailable`; no network call, and the reason carries no part of the value. |
+| A request over 64 KiB serialized | `unavailable`; no network call, and the request is not scanned. |
+| Fewer than two search results within the selector's ceiling | The ranking stands; no network call. |
 | Budget exhausted before a call | `unavailable`; no network call. |
 | 401 | `unavailable`, reason names the credential, not the request. |
-| 422 | `unavailable`; the provider's error body is read and discarded. |
+| 422 | `unavailable`; the provider's error body is cancelled unread, and never returned, logged or stored. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
 | A redirect | The call fails rather than follows it, so the credential never reaches a host the endpoint check did not approve. Applies to both providers. |
-| A response over 256 KiB | Not read past the limit (by its declared length, or by counting the stream), and treated as malformed. Applies to both providers. |
+| A response over 256 KiB | Not read past the limit (by its declared length, or by counting the stream), and treated as malformed. The shared call path holds the same limit whatever transport delivered the answer. Applies to both providers. |
 | Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. For Cloudflare, an envelope without `success: true` or without a System One `result` is malformed. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
@@ -227,8 +270,11 @@ which prints a per-ceiling sweep. The numbers belong in a report before the defa
 
 **What a composed surface costs.** One selector batch per composition when no template was named (two
 at most, if the template changes the candidate set), and zero when the model names a template. Search
-costs one call only when `decider = jev`, at least two results are close, and the ranking did not
-already separate them.
+costs one call only when `decider = jev`, at least two results are close, the ranking did not
+already separate them, and at least two results are within the selector's data-class ceiling.
+Judging a result's class costs the search at most one extra read: a lexical result is judged on the
+text the search already returned, results only the vector side found are read back together in one
+query, and only the results about to be offered to the selector are judged.
 
 **Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
 the home directory, and the system ignore list). Changing them needs no restart. What the selector

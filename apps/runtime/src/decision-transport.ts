@@ -121,6 +121,15 @@ function callableTarget(url: string): URL {
 export const MAX_DECISION_RESPONSE_BYTES = 256 * 1024;
 
 /**
+ * The largest decision request this node sends, serialised.
+ *
+ * Every caller bounds its own fields (a selection state is at most 16 KiB, a snippet 200 characters), and a real
+ * request is a few kilobytes. This is the shared call path's own limit, so a caller that forgets a bound cannot hand
+ * the credential check, or a provider, an arbitrarily long text.
+ */
+export const MAX_DECISION_REQUEST_BYTES = 64 * 1024;
+
+/**
  * Reads a response body as text, or gives `undefined` once it is larger than `limit` bytes.
  *
  * The declared length is checked first so an honest oversized answer is refused without reading it; the stream is

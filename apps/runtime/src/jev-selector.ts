@@ -27,6 +27,8 @@ import {
   type DecisionTransportRequest,
   type DecisionTransportResponse,
   EndpointRefusedError,
+  MAX_DECISION_REQUEST_BYTES,
+  MAX_DECISION_RESPONSE_BYTES,
   createFetchTransport,
   validateProviderEndpoint,
 } from "./decision-transport.ts";
@@ -224,35 +226,8 @@ async function callProvider(
   const requestId = (deps.newRequestId ?? defaultRequestId)();
   const questionCount = Object.keys(input.questions).length;
 
-  if (refused !== undefined) {
-    emit(deps, {
-      event: "refusal",
-      requestId,
-      model: deps.config.model,
-      policyVersion: deps.config.policyVersion,
-      durationMs: 0,
-      status: "unavailable",
-      questionCount,
-      reason: refused,
-    });
-    return { ok: false, status: "unavailable", reason: refused };
-  }
-
-  const body = { state: input.state, model: deps.config.model, questions: input.questions };
-  /*
-   * One last look at exactly what would leave the node, whichever provider receives it.
-   *
-   * Each caller redacts its own free text first; this is the backstop for a field that did not, such as an option's
-   * description. It asks the question the send boundary asks of a model's input - does this text carry a credential -
-   * with the same classifier, of every string in the request and of its serialised form. The redactor's broader shapes are left
-   * to the callers: a request is mostly ids and descriptions, and a dated model id reads as a phone number and a
-   * widget called `key-metrics-overview` as a prefixed token, so matching those here would refuse ordinary decisions.
-   *
-   * A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the caller falls
-   * back as it would for any provider failure. Nothing of the value is recorded.
-   */
-  if (carriesCredential(body)) {
-    const reason = "the decision request still carried a credential, so it was not sent";
+  // Nothing was sent. Only the reason is recorded, never any part of the request.
+  const refuse = (reason: string): { ok: false; status: "unavailable"; reason: string } => {
     emit(deps, {
       event: "refusal",
       requestId,
@@ -264,7 +239,37 @@ async function callProvider(
       reason,
     });
     return { ok: false, status: "unavailable", reason };
+  };
+
+  if (refused !== undefined) return refuse(refused);
+
+  const body = { state: input.state, model: deps.config.model, questions: input.questions };
+  /*
+   * The request's own ceiling, measured before anything reads its text. Every caller bounds its fields; this is the
+   * bound that holds when one does not, and it keeps the credential check below from running on an unbounded string.
+   */
+  const requestBytes = serialisedBytes(body);
+  if (requestBytes === undefined || requestBytes > MAX_DECISION_REQUEST_BYTES) {
+    return refuse(
+      requestBytes === undefined
+        ? "the decision request could not be serialised, so it was not sent"
+        : `the decision request was ${requestBytes} bytes, over the ${MAX_DECISION_REQUEST_BYTES}-byte ceiling, so it was not sent`,
+    );
   }
+  /*
+   * One last look at exactly what would leave the node, whichever provider receives it.
+   *
+   * Each caller redacts its own free text first; this is the backstop for a field that did not, such as an option's
+   * description. It asks the question the send boundary asks of a model's input - does this text carry a credential -
+   * with the same classifier, of every string in the request and of its serialised form. The selector's data-class
+   * ceiling (public and internal only) is applied by the callers, to content, before the request is built
+   * (`selectorText`, `selectorMayOffer`): a request is mostly ids and descriptions, and a dated model id reads as a phone
+   * number, so holding every id here to that ceiling would refuse ordinary decisions.
+   *
+   * A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the caller falls
+   * back as it would for any provider failure. Nothing of the value is recorded.
+   */
+  if (carriesCredential(body)) return refuse("the decision request still carried a credential, so it was not sent");
 
   const transport = deps.transport ?? createFetchTransport();
   const startedAt = now();
@@ -285,6 +290,9 @@ async function callProvider(
 
     if (response.status !== 200) {
       /*
+       * The body of a refused call is never read here, whatever the transport handed back: its ceiling is zero bytes. An
+       * error body sometimes echoes the request, and nothing in it changes what this node does next.
+       *
        * A request the provider refused is named together with the model this node pinned.
        *
        * "HTTP 400" on its own leaves an operator guessing whether the key, the body or the pinned id was wrong, and
@@ -308,8 +316,16 @@ async function callProvider(
       return { ok: false, status: "unavailable", reason };
     }
 
-    // The adapter unwraps its provider's envelope; what comes back is System One or nothing.
-    const answered = decisionProviderFor(providerOf(deps.config)).readResponse(response.body);
+    /*
+     * The adapter unwraps its provider's envelope; what comes back is System One or nothing. An answer over the
+     * response ceiling is nothing too, whichever transport produced it: the fetch transport already stops reading
+     * there, and this holds the same line for any other.
+     */
+    const answerBytes = serialisedBytes(response.body);
+    const answered =
+      answerBytes === undefined || answerBytes > MAX_DECISION_RESPONSE_BYTES
+        ? undefined
+        : decisionProviderFor(providerOf(deps.config)).readResponse(response.body);
     if (answered === undefined) {
       const reason = "the provider response did not match the documented answer shape";
       emit(deps, {
@@ -374,6 +390,15 @@ async function callProvider(
     return { ok: false, status: "unavailable", reason };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** UTF-8 bytes of a value as JSON, or `undefined` for one that does not serialise (a cycle, a bigint). */
+function serialisedBytes(value: unknown): number | undefined {
+  try {
+    return Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
+  } catch {
+    return undefined;
   }
 }
 
