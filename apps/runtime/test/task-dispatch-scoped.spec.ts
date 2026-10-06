@@ -48,10 +48,20 @@ const AUTOMATION: IntentOrigin = {
 let cleanup: (() => void | Promise<void>)[] = [];
 
 afterEach(async () => {
-  // Taken first, so a step that throws never leaves its siblings to run again after the next test.
+  // Taken first, so a step that throws never leaves its siblings to run again after the next test. Every step runs even
+  // when one before it threw, so a stuck run still has its node closed and its folders removed; the first error is the
+  // one reported.
   const steps = cleanup.reverse();
   cleanup = [];
-  for (const step of steps) await step();
+  let failed: { cause: unknown } | undefined;
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (cause) {
+      failed ??= { cause };
+    }
+  }
+  if (failed !== undefined) throw failed.cause;
 }, 40_000);
 
 function tempDir(prefix: string): string {
@@ -147,10 +157,10 @@ function commandDeps(fallback: string): CommandToolDeps {
   };
 }
 
-async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<void> {
+async function waitUntil(condition: () => boolean, timeoutMs: number, describe?: () => string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!condition()) {
-    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    if (Date.now() > deadline) throw new Error(describe?.() ?? `condition not met within ${timeoutMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
@@ -158,14 +168,21 @@ async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<v
 /**
  * A dispatcher whose runs end before the test's node and folders go.
  *
- * A run goes on after it reports: it takes its worktrees away, and `git worktree remove` runs in the repository, which
- * is gone from disk before git has exited. Removing the repository while that git still has it as its working
- * directory is refused on Windows, and closing the node under a run that is still writing its lease fails it. Cleanup
- * runs in reverse, so this wait comes before both.
+ * A run goes on after it reports: it takes its worktrees away with `git worktree remove`, run in the repository. The
+ * worktree's folder is gone from disk before that git has exited, and the repository is still its working directory
+ * until it does. Removing the repository then is refused on Windows, and closing the node under a run that is still
+ * writing its lease fails it. Cleanup runs in reverse, so this wait comes before both.
  */
 function dispatcherFor(deps: TaskDispatcherDeps): TaskDispatcher {
   const dispatcher = createTaskDispatcher(deps);
-  cleanup.push(() => waitUntil(() => dispatcher.runningCount() === 0 && dispatcher.queuedCount() === 0, 30_000));
+  cleanup.push(() =>
+    waitUntil(
+      () => dispatcher.runningCount() === 0 && dispatcher.queuedCount() === 0,
+      30_000,
+      () =>
+        `the dispatcher still has ${String(dispatcher.runningCount())} running / ${String(dispatcher.queuedCount())} queued runs after 30 s`,
+    ),
+  );
   return dispatcher;
 }
 

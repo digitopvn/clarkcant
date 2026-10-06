@@ -48,7 +48,7 @@ const PR_URL = "https://github.com/Codertocat/Hello-World/pull/42";
 let dir: string;
 let services: NodeServices;
 let automation: AutomationService;
-let dispatcher: TaskDispatcher;
+let dispatcher: TaskDispatcher | undefined;
 let token: string;
 let originalPath: string | undefined;
 
@@ -170,12 +170,12 @@ function assistantTexts(conversationId: string): string[] {
   });
 }
 
-async function waitUntil<T>(read: () => T | undefined, timeoutMs: number): Promise<T> {
+async function waitUntil<T>(read: () => T | undefined, timeoutMs: number, describe?: () => string): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = read();
     if (value !== undefined) return value;
-    if (Date.now() > deadline) throw new Error(`condition not met within ${String(timeoutMs)}ms`);
+    if (Date.now() > deadline) throw new Error(describe?.() ?? `condition not met within ${String(timeoutMs)}ms`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -282,7 +282,7 @@ async function setUp(testCommand: string): Promise<{ conversationId: string; che
       readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
     },
   );
-  dispatcher = createTaskDispatcher({
+  const made = createTaskDispatcher({
     conductor: services.conductor,
     projectRoots: () => [dir],
     ownedRoots: () => [dir],
@@ -292,7 +292,8 @@ async function setUp(testCommand: string): Promise<{ conversationId: string; che
     timeoutMs: 60_000,
     runWorker: (options) => runWorkerProcess({ ...options, scriptPath: script }),
   });
-  services.conductor.runTask = (input) => dispatcher.dispatch(input);
+  dispatcher = made;
+  services.conductor.runTask = (input) => made.dispatch(input);
 
   const stored = await authed("POST", "/credentials", {
     fields: [
@@ -387,13 +388,22 @@ afterEach(async () => {
   // A run goes on after it reports, taking its worktree away with a `git worktree remove` that runs in the checkout and
   // outlives the worktree's folder. It ends before the node closes under it and its folder is removed, which Windows
   // refuses while that git still has the checkout as its working directory.
-  const current = dispatcher as TaskDispatcher | undefined;
-  if (current !== undefined) {
-    await waitUntil(() => (current.runningCount() === 0 && current.queuedCount() === 0 ? true : undefined), 30_000);
+  const current = dispatcher;
+  dispatcher = undefined;
+  try {
+    if (current !== undefined) {
+      await waitUntil(
+        () => (current.runningCount() === 0 && current.queuedCount() === 0 ? true : undefined),
+        30_000,
+        () =>
+          `the dispatcher still has ${String(current.runningCount())} running / ${String(current.queuedCount())} queued runs after 30 s`,
+      );
+    }
+  } finally {
+    process.env.PATH = originalPath;
+    services.runtime.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
-  process.env.PATH = originalPath;
-  services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }, 40_000);
 
 describe("a labelled issue becomes a draft pull request", () => {
@@ -492,7 +502,7 @@ describe("a labelled issue becomes a draft pull request", () => {
 
     const taskId = await waitUntil(taskIdOfRun, 10_000);
     await waitUntil(() => (listRunningCommands().some((running) => running.taskId === taskId) ? true : undefined), 40_000);
-    expect(dispatcher.stop(taskId)).toBe(true);
+    expect(dispatcher?.stop(taskId)).toBe(true);
 
     const report = await waitUntil(
       () => assistantTexts(conversationId).find((text) => text.includes(`(task ${taskId}):`)),
@@ -522,7 +532,7 @@ describe("a labelled issue becomes a draft pull request", () => {
       80_000,
     );
     const hangingPid = await waitUntil(hangingGhPid, 30_000);
-    expect(dispatcher.stop(taskId)).toBe(true);
+    expect(dispatcher?.stop(taskId)).toBe(true);
 
     const report = await waitUntil(
       () => assistantTexts(conversationId).find((text) => text.includes(`(task ${taskId}):`)),
