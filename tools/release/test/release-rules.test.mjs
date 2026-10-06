@@ -6,8 +6,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { analyzeCommits } from "@semantic-release/commit-analyzer";
+import { generateNotes } from "@semantic-release/release-notes-generator";
 
-import { BRANCHES, COMMIT_ANALYZER_OPTIONS, TAG_FORMAT, planOptions } from "../release-config.mjs";
+import { BRANCHES, COMMIT_ANALYZER_OPTIONS, NOTES_GENERATOR_OPTIONS, TAG_FORMAT, planOptions } from "../release-config.mjs";
 
 const silent = { log: () => {}, warn: () => {}, error: () => {}, success: () => {} };
 
@@ -46,6 +47,37 @@ test("docs, test, chore, ci and style release nothing", async () => {
 test("the dist scope marks a non-releasing type as release-affecting", async () => {
   assert.equal(await releaseOf("chore(dist): bundle the CA roots with the desktop app"), "patch");
   assert.equal(await releaseOf("ci(dist): build the arm64 installer"), "patch");
+});
+
+test("a revert releases only when the reverted commit would have", async () => {
+  const footer = "\n\nThis reverts commit 0123456789abcdef0123456789abcdef01234567.";
+  assert.equal(await releaseOf(`revert: fix(web): keep a/b in step${footer}`), "patch");
+  assert.equal(await releaseOf(`Revert "feat(web): a changelog card"${footer}`), "patch");
+  assert.equal(await releaseOf(`Revert "refactor!: split the conductor"${footer}`), "patch");
+  assert.equal(await releaseOf(`revert: chore(dist): bundle the CA roots${footer}`), "patch");
+  assert.equal(await releaseOf(`Revert "ci(dist): build the arm64 installer"${footer}`), "patch");
+  assert.equal(await releaseOf(`revert: docs: the port note${footer}`), null);
+  assert.equal(await releaseOf(`Revert "chore: tidy the scripts"${footer}`), null);
+  assert.equal(await releaseOf(`Revert "test(runtime): a/b fixture"${footer}`), null);
+  assert.equal(await releaseOf(`Revert "Merge branch 'dev'"${footer}`), null);
+  assert.equal(await releaseOf(`revert!: chore: the old key${footer}`), "major");
+});
+
+test("a release made only by dist-scoped commits has notes listing them", async () => {
+  const commits = ["chore(dist): bundle the CA roots with the desktop app", "ci(dist): build the arm64 installer"].map(
+    (message, index) => ({ hash: String(index + 1).padStart(40, "c"), message, committerDate: "2026-10-06T00:00:00Z" }),
+  );
+  const notes = await generateNotes(NOTES_GENERATOR_OPTIONS, {
+    commits,
+    lastRelease: { gitTag: "v0.2.1" },
+    nextRelease: { version: "0.2.2", gitTag: "v0.2.2" },
+    options: { repositoryUrl: "https://github.com/digitopvn/clarkcant" },
+    cwd: process.cwd(),
+    logger: silent,
+  });
+  assert.match(notes, /### Distribution/);
+  assert.match(notes, /bundle the CA roots with the desktop app/);
+  assert.match(notes, /build the arm64 installer/);
 });
 
 test("the highest commit in a range decides", async () => {

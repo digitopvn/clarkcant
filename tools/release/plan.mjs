@@ -17,7 +17,7 @@
  *
  * No releasing commit since the last release is a plan too: `release: false`, exit 0.
  */
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
@@ -25,10 +25,21 @@ import { Writable } from "node:stream";
 import semanticRelease from "semantic-release";
 
 import { compareReleaseVersions, releaseHistorySchema } from "../../packages/contracts/src/release-notes.ts";
-import { readClarkVersion } from "./clark-version.mjs";
+import { RELEASE_NOTES_PATH, readClarkVersion } from "./clark-version.mjs";
 import { REPO_ROOT, buildHistory, resolveCommit, tagOf } from "./history.mjs";
 import { BASELINE_VERSION, releaseHistory } from "./notes-data.mjs";
 import { planOptions } from "./release-config.mjs";
+
+/** The commit the committed baseline record ends at, which is where the baseline tag belongs; `undefined` if unreadable. */
+function baselineCommit(repoRoot) {
+  try {
+    const parsed = releaseHistorySchema.safeParse(JSON.parse(readFileSync(join(repoRoot, RELEASE_NOTES_PATH), "utf8")));
+    if (!parsed.success) return undefined;
+    return parsed.data.releases.find((release) => release.kind === "baseline" && release.version === BASELINE_VERSION)?.commitRange.to;
+  } catch {
+    return undefined;
+  }
+}
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -60,9 +71,15 @@ function writeSummary(markdown) {
 export async function plan({ repoRoot = REPO_ROOT, out }) {
   // Checked first: without the baseline tag semantic-release would plan 1.0.0 as if nothing had come before.
   if (resolveCommit(repoRoot, tagOf(BASELINE_VERSION)) === undefined) {
+    const tag = tagOf(BASELINE_VERSION);
+    const commit = baselineCommit(repoRoot) ?? "<the commit the embedded baseline record ends at>";
     throw new Error(
-      `the baseline tag ${tagOf(BASELINE_VERSION)} does not exist in this checkout. A maintainer creates it once, on the last ` +
-        "commit before the first release (docs/releases.md, \"Before the first release\"); fetch tags with full history.",
+      `the baseline tag ${tag} does not exist in this checkout, so no release can be planned (without it every commit ` +
+        `would count as new and the first release would be 1.0.0). Nothing was tagged or published. A maintainer creates ` +
+        `it once, on the commit the embedded baseline record ends at: ` +
+        `git tag -a ${tag} ${commit} -m "baseline: history before the first release" && git push origin ${tag}. ` +
+        `Then re-run this workflow (docs/releases.md, "Before the first release"). If the tag exists, the checkout lacks ` +
+        `tags: check out with fetch-depth 0.`,
     );
   }
   const result = await semanticRelease(planOptions({ repositoryUrl: pathToFileURL(repoRoot).href }), {
@@ -137,7 +154,14 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
       planned.release ? `planned ${planned.tag} on ${planned.channel} (${planned.type})\n` : "no release: nothing releasing since the last release\n",
     );
   } catch (error) {
-    process.stderr.write(`release plan failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`release plan failed: ${message}\n`);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      // An annotation puts the reason on the run's page, not only in the log.
+      const escaped = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+      process.stdout.write(`::error title=Release plan failed::${escaped}\n`);
+      writeSummary(`### Release plan failed\n\n${message}`);
+    }
     process.exitCode = 1;
   }
 }

@@ -19,9 +19,10 @@
  *   change to developer tooling only is `chore`, not `build`.
  * - `refactor`: patch. A refactor changes shipped code without changing intended behaviour; it still ships, so an
  *   installed Clark always runs bytes that a version names, and a regression it causes is traceable to a version.
- * - `revert`: patch. A revert of a commit in the same unreleased range cancels both commits (the analyzer drops the
- *   pair), so nothing ships for them; a revert of an already released commit ships as a patch, even when the
- *   reverted commit was a `feat`. Reverting a breaking change is itself breaking and must say so with `!`.
+ * - `revert`: patch when the reverted commit would have released, otherwise nothing. A revert of a commit in the same
+ *   unreleased range cancels both commits (the analyzer drops the pair), so nothing ships for them; a revert of an
+ *   already released commit ships as a patch, even when the reverted commit was a `feat`. Reverting a breaking change
+ *   is itself breaking and must say so with `!`.
  * - `docs`, `test`, `chore`, `ci`, `style`: no release.
  * - Any type with the scope `dist` (for example `chore(dist): bundle the CA roots with the desktop app`): patch.
  *   This is how a change of an otherwise non-releasing type is marked release-affecting.
@@ -46,28 +47,50 @@ export const DIST_SCOPE = "dist";
 /** Types that never release on their own. */
 export const NON_RELEASING_TYPES = ["docs", "test", "chore", "ci", "style"];
 
+/** Types that release a patch or more on their own. */
+export const RELEASING_TYPES = ["feat", "fix", "perf", "build", "refactor", "revert"];
+
 /**
- * Rules for `@semantic-release/commit-analyzer`. Every matching rule is evaluated and the highest release wins, so the
- * `dist` scope lifts a non-releasing type to a patch and a breaking footer lifts anything to a major.
+ * Globs (micromatch, as the analyzer matches string fields) for the header of a reverted commit. `[\s\S]` is used
+ * because `*` would stop at a `/` in the description.
+ */
+const REVERTED_RELEASING_HEADER = `@(${RELEASING_TYPES.join("|")})[(!:]+([\\s\\S])`;
+const REVERTED_DIST_HEADER = `+([a-z])\\(${DIST_SCOPE}\\)[!:]+([\\s\\S])`;
+
+/**
+ * Rules for `@semantic-release/commit-analyzer`. Every matching rule is evaluated in order and the highest release
+ * wins, with one catch the analyzer has: a `release: false` rule matched after a release would cancel it. So the
+ * breaking rule comes first (a major stops the evaluation), then every `false` baseline, then the rules that release.
+ *
+ * A revert releases a patch only when the commit it reverts would have released: `revert: feat: …` and git's own
+ * `Revert "fix(web): …"` ship, `revert: docs: …` and `Revert "chore: …"` do not, and `chore(dist)` reverted ships
+ * again because the dist scope made it release-affecting. A revert whose header names no Conventional Commit releases
+ * nothing.
  */
 export const RELEASE_RULES = [
   { breaking: true, release: "major" },
-  { revert: true, release: "patch" },
+  ...NON_RELEASING_TYPES.map((type) => ({ type, release: false })),
+  { type: "revert", release: false },
+  { revert: true, release: false },
   { type: "feat", release: "minor" },
   { type: "fix", release: "patch" },
   { type: "perf", release: "patch" },
   { type: "build", release: "patch" },
   { type: "refactor", release: "patch" },
-  { type: "revert", release: "patch" },
-  ...NON_RELEASING_TYPES.map((type) => ({ type, release: false })),
+  { type: "revert", subject: REVERTED_RELEASING_HEADER, release: "patch" },
+  { type: "revert", subject: REVERTED_DIST_HEADER, release: "patch" },
+  { revert: true, header: `Revert "${REVERTED_RELEASING_HEADER}`, release: "patch" },
+  { revert: true, header: `Revert "${REVERTED_DIST_HEADER}`, release: "patch" },
   { scope: DIST_SCOPE, release: "patch" },
 ];
 
 /**
- * Release-note sections, in the order they are written. Hidden types never appear in notes; they never release
- * either, so a note can only list what a release actually shipped.
+ * Release-note sections, in the order they are written. A non-releasing type with the dist scope released, so it is
+ * listed under Distribution; the scoped entries come first because the notes generator uses the first match. Without
+ * the scope those types are hidden: they never release, so a note can only list what a release actually shipped.
  */
 export const NOTE_SECTIONS = [
+  ...NON_RELEASING_TYPES.map((type) => ({ type, scope: DIST_SCOPE, section: "Distribution" })),
   { type: "feat", section: "Features" },
   { type: "fix", section: "Bug Fixes" },
   { type: "perf", section: "Performance Improvements" },

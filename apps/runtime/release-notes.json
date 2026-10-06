@@ -4,7 +4,7 @@
     "version": "0.2.1",
     "channel": "source"
   },
-  "source": "https://github.com/digitopvn/clarkcant/releases",
+  "source": "https://github.com/digitopvn/clarkcant/commits/806c39686b2b531a4671f519e7d8072041b2a494",
   "releases": [
     {
       "version": "0.2.1",

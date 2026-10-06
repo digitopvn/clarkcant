@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { releaseHistorySchema } from "../../packages/contracts/src/release-notes.ts";
+import { RELEASE_NOTES_BOUNDS, releaseHistorySchema } from "../../packages/contracts/src/release-notes.ts";
 import { RELEASE_NOTES_PATH, clarkVersionDrift, clarkVersionManifests, readClarkVersion, stampVersion } from "../release/clark-version.mjs";
-import { BASELINE_VERSION, BOUNDS, releaseEntries, releaseHistory, releaseRecord } from "../release/notes-data.mjs";
+import { BASELINE_VERSION, BOUNDS, historySource, releaseEntries, releaseHistory, releaseRecord } from "../release/notes-data.mjs";
 import { stampPlan } from "../release/stamp.mjs";
 
 /**
@@ -109,6 +109,11 @@ describe("release-note records", () => {
     expect(omittedEntries).toBe(0);
   });
 
+  it("use the contract's bounds, so the builder never writes a record the schema refuses", () => {
+    const { artifacts: _artifacts, ...contractBounds } = RELEASE_NOTES_BOUNDS;
+    expect(BOUNDS).toEqual(contractBounds);
+  });
+
   it("stay within the contract's bounds, counting what they leave out", () => {
     const many = Array.from({ length: BOUNDS.entries + 5 }, (_, index) => commit(`b${String(index)}`, "fix", `fix ${String(index)}`));
     const record = releaseRecord({
@@ -139,6 +144,32 @@ describe("release-note records", () => {
     expect(baseline).toMatchObject({ kind: "baseline", artifacts: [] });
     expect(baseline).not.toHaveProperty("channel");
   });
+
+  it("point at the baseline's commits until a release is published, then at the releases", () => {
+    const baseline = releaseRecord({
+      version: BASELINE_VERSION,
+      baseline: true,
+      date: "2026-10-06",
+      previousVersion: null,
+      commitRange: { from: null, to: RANGE.from },
+      notes: "history",
+      commits: [],
+    });
+    const release = releaseRecord({
+      version: "0.3.0",
+      date: "2026-10-07",
+      previousVersion: BASELINE_VERSION,
+      commitRange: { from: RANGE.from, to: RANGE.to },
+      notes: "## 0.3.0",
+      commits: [commit("a1", "feat", "a changelog card")],
+    });
+    expect(releaseHistory({ version: BASELINE_VERSION, channel: "source", releases: [baseline] }).source).toBe(
+      `https://github.com/digitopvn/clarkcant/commits/${RANGE.from}`,
+    );
+    expect(releaseHistory({ version: "0.3.0", channel: "stable", releases: [release, baseline] }).source).toBe(
+      "https://github.com/digitopvn/clarkcant/releases",
+    );
+  });
 });
 
 describe("the record the runtime embeds", () => {
@@ -150,6 +181,7 @@ describe("the record the runtime embeds", () => {
     expect(baseline?.version).toBe(BASELINE_VERSION);
     expect(baseline?.commitRange.to).toMatch(/^[0-9a-f]{40}$/);
     expect(baseline?.entries.length).toBeGreaterThan(0);
+    expect(embedded.source).toBe(historySource(embedded.releases));
   });
 });
 

@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,11 @@ const PLAN = fileURLToPath(new URL("../plan.mjs", import.meta.url));
 
 /** Run the plan on a repository: the plan it wrote, or the failure it reported. */
 async function plan({ repoRoot, out: dir }) {
-  const run = spawnSync(process.execPath, [PLAN, "--repo", repoRoot, "--out", dir], { encoding: "utf8" });
+  // Without the Actions variables: a test plan must not write outputs, summaries or annotations into the job running it.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !["GITHUB_ACTIONS", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"].includes(name)),
+  );
+  const run = spawnSync(process.execPath, [PLAN, "--repo", repoRoot, "--out", dir], { encoding: "utf8", env });
   if (run.status !== 0) throw new Error(run.stderr);
   return JSON.parse(readFileSync(join(dir, "plan.json"), "utf8"));
 }
@@ -139,4 +143,37 @@ test("without the baseline tag, planning refuses instead of starting at 1.0.0", 
   const root = repository();
   commit(root, "fix: a fix");
   await assert.rejects(plan({ repoRoot: root, out: out(root) }), /baseline tag v0\.2\.1/);
+});
+
+test("the refusal names the commit the baseline tag belongs on and the command that creates it", async () => {
+  const root = repository();
+  const tip = git(root, "rev-parse", "HEAD");
+  mkdirSync(join(root, "apps", "runtime"), { recursive: true });
+  writeFileSync(
+    join(root, "apps", "runtime", "release-notes.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      build: { version: "0.2.1", channel: "source" },
+      source: `https://github.com/digitopvn/clarkcant/commits/${tip}`,
+      releases: [
+        {
+          version: "0.2.1",
+          kind: "baseline",
+          date: "2026-10-06",
+          previousVersion: null,
+          commitRange: { from: null, to: tip },
+          notes: "",
+          entries: [],
+          omittedEntries: 0,
+          artifacts: [],
+        },
+      ],
+    }),
+  );
+  commit(root, "fix: a fix");
+  await assert.rejects(plan({ repoRoot: root, out: out(root) }), (error) => {
+    assert.match(error.message, new RegExp(`git tag -a v0\\.2\\.1 ${tip} `));
+    assert.match(error.message, /Nothing was tagged or published/);
+    return true;
+  });
 });

@@ -100,15 +100,27 @@ export function releaseRecord(input) {
 }
 
 /**
+ * Where the full notes of a history live: its releases, or, while nothing has been published and the newest record is
+ * the baseline, the commit history the baseline was built to (the releases page is empty until then).
+ *
+ * @param {readonly { kind: string, commitRange: { to: string } }[]} releases
+ */
+export function historySource(releases) {
+  const newest = releases[0];
+  return newest?.kind === "baseline" ? `${CANONICAL_REPOSITORY}/commits/${newest.commitRange.to}` : CANONICAL_SOURCE;
+}
+
+/**
  * The record embedded with a build: what the build is, and its releases newest first, at most `BOUNDS.releases`.
  *
  * @param {{ version: string, channel: "stable" | "beta" | "source", releases: ReturnType<typeof releaseRecord>[] }} input
  */
 export function releaseHistory(input) {
+  const releases = input.releases.slice(0, BOUNDS.releases);
   return {
     schemaVersion: 1,
     build: { version: input.version, channel: input.channel },
-    source: CANONICAL_SOURCE,
-    releases: input.releases.slice(0, BOUNDS.releases),
+    source: historySource(releases),
+    releases,
   };
 }
