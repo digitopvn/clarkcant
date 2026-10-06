@@ -228,6 +228,8 @@ Ba đường A/B/C dùng chung một adapter, một policy confidence và một 
 
 A, B, C, E, F và G nằm ở `apps/runtime/src/jev-decider.ts`; D ở `apps/runtime/src/jev-selector.ts`, cùng adapter và cùng policy. E là một quyết định chứ không phải một quy tắc vì ba câu trả lời không thay thế được cho nhau: steer đổi việc đang làm, interrupt vứt nó đi, background tiêu thêm một call cho việc người dùng có thể không định tách ra. Khi không đủ chắc, E nghiêng về `interrupt` — hướng lấy lại được, thay vì hướng im lặng. Cấu hình và vận hành: [mini-app/jev-configuration.md](mini-app/jev-configuration.vi.md).
 
+Jev là provider mặc định của vai trò quyết định này, không phải bản thân vai trò. Phần riêng của từng provider — endpoint, credential, model được ghim và cách mở envelope response của nhà cung cấp — nằm sau một interface adapter nhỏ (`DecisionProvider` trong `apps/runtime/src/decision-provider.ts`), với hai adapter là TypeSafe Jev và Cloudflare Clef trên Workers AI. Mọi điểm gọi ở trên dựng các lựa chọn, bước che dữ liệu và fallback trước khi adapter tham gia, rồi đọc lại cùng một câu trả lời System One, nên chọn Clef (chỉ qua cấu hình tường minh của người vận hành) chỉ đổi bên nhận payload, không bao giờ đổi những gì được đưa ra để chọn hay nơi một lời từ chối fallback về.
+
 **Trạng thái đo được (2026-09-17).** Cấu trúc trên đã có trong repo, và ba con số quyết định cấu hình đã đo thay vì suy đoán:
 
 | Lớp | Trạng thái | Số đo / lý do |

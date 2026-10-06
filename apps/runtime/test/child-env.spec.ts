@@ -9,6 +9,7 @@ const SOURCE: NodeJS.ProcessEnv = {
   SSH_AUTH_SOCK: "/tmp/agent.sock",
   GH_TOKEN: "token-from-dotenv",
   TYPESAFE_API_KEY: "node-provider-key",
+  CLOUDFLARE_API_TOKEN: "node-decision-token",
   MY_OWN_SETTING: "person-set-this",
 };
 
@@ -45,6 +46,8 @@ describe("what a terminal inherits", () => {
     expect(env["MY_OWN_SETTING"]).toBe("person-set-this");
     expect(env).not.toHaveProperty("GH_TOKEN");
     expect(env).not.toHaveProperty("TYPESAFE_API_KEY");
+    // The decision provider's token is a key the node reads, whichever provider is selected.
+    expect(env).not.toHaveProperty("CLOUDFLARE_API_TOKEN");
   });
 
   it("reads the withheld names each time, so a secret stored after boot is withheld from the next shell", () => {
@@ -64,5 +67,6 @@ describe("what a terminal inherits", () => {
       }),
     );
     expect(withheldVariables().has("TYPESAFE_API_KEY")).toBe(true);
+    expect(withheldVariables().has("CLOUDFLARE_API_TOKEN")).toBe(true);
   });
 });

@@ -2699,8 +2699,8 @@ with their state, as Restore would, and there is then nothing left to restore.
 ### Quickstart outside this repository
 
 `@clarkcant/widget-cli` (the `clark` command) and `@clarkcant/widget-sdk` are built from this repository as npm
-packages that need no ClarkCant checkout. **Status: no version is on npm yet.** The release workflow below exists, but
-until it has run, installing from the registry fails; install the archives built from a checkout instead (see
+packages that need no ClarkCant checkout. Both are on npm: `@clarkcant/widget-cli` 0.1.0 and `@clarkcant/widget-sdk`
+0.2.0. To try changes that are not released yet, install the archives built from a checkout instead (see
 [Before a release](#before-a-release)).
 
 On a clean machine with Node 22.19 or later and pnpm (`corepack enable pnpm`), on macOS, Windows or Linux:
@@ -2771,10 +2771,12 @@ skipped, so a rerun publishes only what is missing. A version npm already has wi
 before either package is published, so a changed package always needs a new version.
 
 The publish job runs in the `npm-release` GitHub environment. Its maintainers must restrict that environment's
-deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the intended
+deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the
 credential: once each package's trusted publisher on npmjs.com names this repository and workflow, no npm secret is
-needed. A package's first version, published before a trusted publisher can be set on it, needs the environment's
-`NPM_TOKEN` secret, which reaches only the publish step.
+needed. Both packages have that trusted publisher, limited to the `npm-release` environment, and the environment holds no
+npm secret. The versions on npm today (`@clarkcant/widget-cli` 0.1.0 with an empty `0.0.0-stage` placeholder npm made while
+publishing it, and `@clarkcant/widget-sdk` 0.2.0) were published by hand, because npm only lets a trusted publisher be
+set on a package that already exists, so they carry no provenance; every release from the workflow does.
 
 ### init
 

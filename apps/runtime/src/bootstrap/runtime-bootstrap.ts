@@ -588,7 +588,12 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   process.stderr.write(`session transcripts: ${sessionsDirectory(deps.dataDir)}\n`);
   process.stderr.write(
     deps.services.jev.config.enabled
-      ? `selector: ${deps.services.jev.config.model} pinned, ${deps.services.jev.config.timeoutMs} ms per turn\n`
+      ? `selector: ${deps.services.jev.config.model} pinned${
+          // Named only when it is not the default, so a default node prints the line it always has.
+          deps.services.jev.config.provider === undefined || deps.services.jev.config.provider === "typesafe"
+            ? ""
+            : ` on ${deps.services.jev.config.provider}`
+        }, ${deps.services.jev.config.timeoutMs} ms per turn\n`
       : "selector: disabled (no credential or local-only); composed surfaces use the deterministic path\n",
   );
   process.stderr.write(

@@ -23,7 +23,7 @@ Trước khi sửa UI/UX, đọc [DESIGN.vi.md](../DESIGN.vi.md) để giữ đ�
 7. [Browser & Computer Use](browser-computer-use.vi.md): core/pack boundary, driver, node targeting và takeover.
 8. [Implementation plan](implementation-plan.vi.md): dependencies, work packages, gates, acceptance scenarios.
 9. [Research & decisions](research-and-decisions.vi.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
-10. [Jev selector](mini-app/jev-configuration.vi.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
+10. [Jev selector](mini-app/jev-configuration.vi.md): vận hành và privacy của lớp quyết định — chọn TypeSafe Jev hay Cloudflare Clef, cấu hình, phần gửi ra ngoài, telemetry, fallback.
 11. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
 12. [Giao diện mở](open-interfaces.vi.md) ([English](open-interfaces.md)): API, MCP, WebSocket, CLI cho ứng dụng bên thứ ba và công cụ AI.
 13. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
@@ -54,7 +54,7 @@ Một lần chạy workflow thủ công (`gh workflow run ci.yml -f e2e_specs="a
 
 Các thay đổi có code vẫn chạy toàn bộ Vitest trên cả hai phiên bản Node; không chọn test theo package vì nhiều ràng buộc an toàn đi xuyên package. Lệnh kiểm tra hành trình và yêu cầu hoàn tất thay đổi UI nằm trong [AGENTS.md](../AGENTS.md); CI đã có browser E2E và desktop smoke, nhưng fixture không chứng minh provider thật hoạt động. Kết quả BLOCKED phải được đọc cùng điều kiện còn thiếu.
 
-Các suite live chỉ chạy khi bật opt-in. Khi đã bật mà thiếu credential/model hoặc không nhận được bằng chứng từ provider, smoke/calibration thất bại với lý do `BLOCKED`, không chuyển sang PASS nhờ fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) và [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) sở hữu điều kiện thực thi; một HTTP lỗi chung không chứng minh từ chối đúng model.
+Các suite live chỉ chạy khi bật opt-in. Khi đã bật mà thiếu credential/model hoặc không nhận được bằng chứng từ provider, smoke/calibration thất bại với lý do `BLOCKED`, không chuyển sang PASS nhờ fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts), [Clef live smoke](../apps/runtime/test/clef-live.spec.ts) và [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) sở hữu điều kiện thực thi; một HTTP lỗi chung không chứng minh từ chối đúng model.
 
 Chạy `node tools/scan-secret-history.mjs` để kiểm tra lịch sử Git đã tải đầy đủ; [script quét](../tools/scan-secret-history.mjs) sở hữu các mẫu nhận diện và giới hạn đầu ra. Phạm vi gồm các phiên bản tệp còn truy cập được trong lịch sử, kể cả tài liệu và tệp đã xóa; đây là kiểm tra theo mẫu, không chứng minh mọi loại bí mật đều được phát hiện. Clone nông hoặc kho Git không đọc được làm kiểm tra thất bại. Kết quả chỉ nêu mã đối tượng và loại mẫu, không in giá trị bí mật.
 

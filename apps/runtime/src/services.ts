@@ -93,6 +93,7 @@ import {
   createJevBudget,
   jevConfigFromEnv,
 } from "./jev-selector.ts";
+import type { StoredCredential } from "./decision-provider.ts";
 
 /**
  * Composition root.
@@ -389,8 +390,8 @@ export function newId(prefix: string): string {
  * node asked a provider to decide, and it holds no request body, so nothing here needs retention
  * or redaction at rest. It is also the counter the tests read.
  */
-function buildJevRuntime(options: RuntimeOptions, storedJevKey?: () => string | undefined): JevRuntime {
-  const config: JevConfig = { ...jevConfigFromEnv(process.env, storedJevKey), ...(options.jev?.config ?? {}) };
+function buildJevRuntime(options: RuntimeOptions, storedCredential?: StoredCredential): JevRuntime {
+  const config: JevConfig = { ...jevConfigFromEnv(process.env, storedCredential), ...(options.jev?.config ?? {}) };
   const telemetry: JevTelemetry[] = [];
   let providerCalls = 0;
 

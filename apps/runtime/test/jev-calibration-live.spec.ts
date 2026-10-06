@@ -35,7 +35,8 @@ import type { RuntimeCandidate } from "../src/runtime-candidates.ts";
  */
 
 const LIVE = process.env.CLARKCANT_JEV_LIVE === "1";
-const config = jevConfigFromEnv(process.env);
+// Pinned to TypeSafe: this corpus was calibrated against Jev, and another provider would need its own run.
+const config = jevConfigFromEnv({ ...process.env, CLARKCANT_DECISION_PROVIDER: "typesafe" });
 
 interface Score {
   correct: number;
