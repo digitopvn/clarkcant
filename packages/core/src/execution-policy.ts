@@ -187,7 +187,13 @@ export type PolicyDecision =
       audit: boolean;
     }
   | { kind: "ask"; reason: string; approvalSpec: ApprovalSpec }
-  | { kind: "deny"; reason: string };
+  | { kind: "deny"; reason: string; refusal: PolicyRefusal };
+
+/** Why the policy refused, as data: what the person is told is worded from this in their own language. */
+export type PolicyRefusal =
+  | { code: "prohibited" }
+  | { code: "rule"; category: EffectCategory }
+  | { code: "unknown-mode"; mode: string };
 
 /**
  * Categories whose effect reaches past this machine or cannot be undone by running something else.
@@ -258,6 +264,7 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
     return {
       kind: "deny",
       reason: "this node refuses every effect, so no category is exempt",
+      refusal: { code: "prohibited" },
     };
   }
 
@@ -278,6 +285,7 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
     return {
       kind: "deny",
       reason: `a rule refuses ${action.category} effects on this machine`,
+      refusal: { code: "rule", category: action.category },
     };
   }
 
@@ -385,6 +393,7 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
       return {
         kind: "deny",
         reason: `the execution mode "${String(question.policy.mode)}" is not one this build knows`,
+        refusal: { code: "unknown-mode", mode: String(question.policy.mode) },
       };
   }
 }
