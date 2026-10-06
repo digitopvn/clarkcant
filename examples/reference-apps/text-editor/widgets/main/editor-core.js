@@ -325,7 +325,7 @@ export const HOST_SECRET_PATTERNS = Object.freeze([
   /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
   /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g,
   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
-  /\b(?:\+?\d[\s-]?){9,}\b/g,
+  /(?<![\w+(]|[A-Za-z]-|\d\)?[\s-]?)(?:[(+]{0,2}\d\)?[\s-]?){9,}(?<=\d)\b/g,
 ]);
 
 /**

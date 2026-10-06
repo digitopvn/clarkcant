@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { containsSecretShape, redactSecrets } from "../src/index.ts";
+import { SECRET_SHAPES, containsSecretShape, redactSecrets } from "../src/index.ts";
 
 // Built from parts so no scanner reads a literal secret in this file.
 const BASE64_WITH_SLASH = `${"QWxhZGRpbjpvcGVuIHNlc2FtZQ"}/${"Zm9vYmFyYmF6cXV4"}`;
@@ -29,5 +29,33 @@ describe("secret-shaped text", () => {
 
   it("still redacts the home directory a path names", () => {
     expect(redactSecrets("/Users/someone/projects/app")).toBe("[redacted]");
+  });
+
+  it("keeps a dated model id whole and still redacts a whole phone number", () => {
+    expect(redactSecrets("dùng claude-sonnet-4-5-20250929 nhé")).toBe("dùng claude-sonnet-4-5-20250929 nhé");
+    // Assembled here so no scanner reads a literal phone number in this file.
+    const phone = `(555) ${["123", "4567"].join("-")}`;
+    expect(redactSecrets(`gọi ${phone} nhé`)).toBe("gọi [redacted] nhé");
+    expect(redactSecrets(`gọi +84 ${["912", "345", "678"].join("-")}`)).toBe("gọi [redacted]");
+  });
+
+  it("reads a hostile run of digits and separators with the phone shape in linear time", () => {
+    const phone = SECRET_SHAPES.find((shape) => shape.label === "phone")?.pattern;
+    expect(phone).toBeDefined();
+    if (phone === undefined) return;
+    // Sized so that trying the shape again from every digit of a run would take minutes, not milliseconds.
+    const hostile = [
+      { text: `a-${"1-".repeat(100_000)}x`, matches: false },
+      { text: "1-".repeat(100_000), matches: true },
+      { text: `${"(1)".repeat(100_000)}a`, matches: true },
+      { text: `${"+(".repeat(100_000)}1`, matches: false },
+      { text: `${"1".repeat(200_000)}a`, matches: false },
+      { text: `${"12345678a ".repeat(50_000)}`, matches: false },
+    ];
+    const started = performance.now();
+    for (const { text, matches } of hostile) {
+      expect(new RegExp(phone.source, phone.flags).test(text), text.slice(0, 12)).toBe(matches);
+    }
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });

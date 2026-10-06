@@ -51,7 +51,13 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   },
   { label: "windows-path", pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g },
   { label: "email", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
-  { label: "phone", pattern: /\b(?:\+?\d[\s-]?){9,}\b/g },
+  // Nine or more digits joined by single spaces or dashes, with an optional `+` and area-code parentheses. The run is
+  // read from its own start only: not after a word character, `+` or `(`, not after a digit and its separator (so no
+  // tail of a run is tried on its own), and not after a letter and a dash, which makes it part of an identifier such
+  // as the dated model id `claude-sonnet-4-5-20250929`. Each digit is one step with a fixed, optional prefix and
+  // suffix, and only a run's first character may start a match, so the shape stays linear on any input. A match ends
+  // on a digit, so the space after a number is left in place.
+  { label: "phone", pattern: /(?<![\w+(]|[A-Za-z]-|\d\)?[\s-]?)(?:[(+]{0,2}\d\)?[\s-]?){9,}(?<=\d)\b/g },
 ];
 
 /**

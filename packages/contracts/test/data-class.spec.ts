@@ -48,6 +48,35 @@ describe("the class of a text", () => {
     expect(dataClassOfText("file ở C:\\Users\\duy\\notes.txt")).toBe("confidential");
   });
 
+  it("is confidential for a phone number however it is written", () => {
+    // Assembled here so no scanner reads a literal phone number in this file.
+    const phones = [
+      `+84 ${["912", "345", "678"].join("-")}`,
+      `(555) ${["123", "4567"].join("-")}`,
+      ["555", "123", "4567"].join("-"),
+      ["0912", "345", "678"].join(" "),
+      `call ${["555", "123", "4567"].join("-")} tomorrow`,
+      `số ${["0912", "345", "678"].join("")}.`,
+    ];
+    for (const text of phones) expect(dataClassOfText(text), text).toBe("confidential");
+  });
+
+  it("is internal for a dated model id, which only looks like a run of digits", () => {
+    const ids = [
+      "claude-sonnet-4-5-20250929",
+      "claude-opus-4-1-20250805",
+      "claude-haiku-4-5-20251001",
+      "claude-3-5-sonnet-20241022",
+      "gpt-4o-2024-08-06",
+      "o3-2025-04-16",
+      "jev-1.13.0",
+    ];
+    for (const id of ids) {
+      expect(dataClassOfText(`switched the model to ${id}`), id).toBe("internal");
+      expect(redactSecrets(`model ${id} answered`), id).toBe(`model ${id} answered`);
+    }
+  });
+
   it("is internal for everything else, including identifiers and digests", () => {
     expect(dataClassOfText("Dự án dùng SQLite.")).toBe("internal");
     expect(dataClassOfText("the key_value_store module and npm-registry-url")).toBe("internal");
