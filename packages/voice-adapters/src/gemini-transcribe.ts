@@ -49,6 +49,13 @@ const MAX_AUDIO_FRAME_BYTES = 512 * 1024;
 const DEFAULT_MAX_REOPENS = 3;
 /** How long a connection may take to complete setup before it counts as failed to open. */
 export const DEFAULT_TRANSCRIBE_SETUP_TIMEOUT_MS = 5000;
+/**
+ * How long a reopened session has to continue a sentence the closed one was in.
+ *
+ * A session can end exactly as a sentence does. With nothing more said, the carried words would wait for the next
+ * sentence and be joined to it; past this pause they are the whole sentence.
+ */
+export const DEFAULT_TRANSCRIBE_CARRY_TIMEOUT_MS = 1500;
 /** Audio kept while a session reopens - ten seconds of PCM16 at 16 kHz mono - and sent once it is listening again. */
 const RECONNECT_BACKLOG_BYTES = 10 * 32_000;
 /** How long a connection must have worked before its close counts as the provider's limit rather than a fault. */
@@ -149,6 +156,8 @@ export interface GeminiTranscribeOptions {
   maxReopens?: number;
   /** How long one connection may take to complete setup. */
   setupTimeoutMs?: number;
+  /** How long a reopened session has to continue the sentence the closed one was in, before that part is final. */
+  carryTimeoutMs?: number;
 }
 
 export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
@@ -161,8 +170,11 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
   readonly #now: () => Instant;
   readonly #maxReopens: number;
   readonly #setupTimeoutMs: number;
+  readonly #carryTimeoutMs: number;
 
   #socket: LiveSocket | undefined;
+  /** Ends the wait for a reopened session to continue the carried sentence. */
+  #carryTimer: ReturnType<typeof setTimeout> | undefined;
   #setupTimer: ReturnType<typeof setTimeout> | undefined;
   /**
    * The utterance a closed session was in the middle of.
@@ -203,6 +215,7 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     this.#now = options.now ?? nowInstant;
     this.#maxReopens = options.maxReopens ?? DEFAULT_MAX_REOPENS;
     this.#setupTimeoutMs = options.setupTimeoutMs ?? DEFAULT_TRANSCRIBE_SETUP_TIMEOUT_MS;
+    this.#carryTimeoutMs = options.carryTimeoutMs ?? DEFAULT_TRANSCRIBE_CARRY_TIMEOUT_MS;
     this.capabilities = {
       provider: this.provider,
       model: this.model,
@@ -241,6 +254,7 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     const socket = this.#socket;
     this.#socket = undefined;
     this.#clearSetupTimer();
+    this.#clearCarryTimer();
     this.#backlog = [];
     this.#backlogBytes = 0;
     // A `start` still waiting for setup is released rather than left pending for ever: stopping is how a caller that
@@ -356,6 +370,7 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
    */
   #closed(info: { code: number; reason: string }): void {
     this.#clearSetupTimer();
+    this.#clearCarryTimer();
     if (this.#readyAtMs === undefined) {
       this.#setState("failed");
       this.#rejectPending(new Error(`transcription socket closed before setup (${info.code}${info.reason === "" ? "" : `: ${info.reason}`})`));
@@ -405,6 +420,28 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     this.#setupTimer = undefined;
   }
 
+  /** Give the reopened session a short while to continue the carried sentence; past it, the carried words are final. */
+  #armCarry(): void {
+    this.#clearCarryTimer();
+    if (this.#carry === undefined || this.#carry.trim() === "") return;
+    this.#carryTimer = setTimeout(() => {
+      this.#carryTimer = undefined;
+      const carry = this.#carry?.trim();
+      this.#carry = undefined;
+      if (carry === undefined || carry === "" || this.#stopped) return;
+      this.#interim = undefined;
+      this.#emit(carry, true, "session-end");
+      this.#utterance += 1;
+      this.#revision = 0;
+    }, this.#carryTimeoutMs);
+  }
+
+  #clearCarryTimer(): void {
+    if (this.#carryTimer === undefined) return;
+    clearTimeout(this.#carryTimer);
+    this.#carryTimer = undefined;
+  }
+
   /** A reading of the current utterance, after whatever a closed session had already heard of it. */
   #withCarry(text: string): string {
     const carry = this.#carry?.trim();
@@ -426,18 +463,22 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
         this.#readyAtMs = Date.now();
         this.#setState("listening");
         this.#sendBacklog();
+        this.#armCarry();
         const pending = this.#pendingReady;
         this.#pendingReady = undefined;
         pending?.resolve();
         return;
       }
       case "interim": {
+        // The reopened session is still in the carried sentence.
+        this.#clearCarryTimer();
         const text = this.#withCarry(event.text);
         this.#interim = text;
         this.#emit(text, false);
         return;
       }
       case "final": {
+        this.#clearCarryTimer();
         const text = this.#withCarry(event.text);
         this.#carry = undefined;
         this.#interim = undefined;
@@ -460,14 +501,14 @@ export class GeminiTranscribeLiveAdapter implements SpeechRecognitionAdapter {
     }
   }
 
-  #emit(text: string, isFinal: boolean): void {
+  #emit(text: string, isFinal: boolean, settledBy: "provider" | "session-end" = "provider"): void {
     const utterance = recognizedUtteranceSchema.parse({
       voiceSessionId: this.#sessionId,
       utteranceId: `${this.#sessionId}:s${this.#utterance}`,
       revision: this.#revision,
       isFinal,
       text: text.slice(0, 8000),
-      ...(isFinal ? { settledBy: "provider" } : {}),
+      ...(isFinal ? { settledBy } : {}),
       provider: this.provider,
       model: this.model,
       contextApplied: this.#contextApplied,

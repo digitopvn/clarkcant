@@ -67,7 +67,7 @@ class FakeSocket implements LiveSocket {
 const CREDENTIAL = "test-transcribe-credential";
 const CONTEXT = buildRecognitionContext({ symbols: ["useVoiceSession"], packages: ["@clarkcant/voice-adapters"] });
 
-function harness(options: { maxReopens?: number; setupTimeoutMs?: number } = {}) {
+function harness(options: { maxReopens?: number; setupTimeoutMs?: number; carryTimeoutMs?: number } = {}) {
   const sockets: FakeSocket[] = [];
   const urls: string[] = [];
   let created: (() => void) | undefined;
@@ -93,7 +93,7 @@ function harness(options: { maxReopens?: number; setupTimeoutMs?: number } = {})
   return { adapter, sockets, urls, utterances, states, nextSocket };
 }
 
-async function started(options: { maxReopens?: number } = {}) {
+async function started(options: { maxReopens?: number; carryTimeoutMs?: number } = {}) {
   const h = harness(options);
   const socketCreated = h.nextSocket();
   const starting = h.adapter.start({ sessionId: "voice-1", tokenProvider: async () => CREDENTIAL, context: CONTEXT });
@@ -222,6 +222,39 @@ describe("a transcription session", () => {
       ["voice-1:s0", false, "mở file index chấm ts"],
       ["voice-1:s0", true, "mở file index chấm ts giúp tui"],
     ]);
+  });
+
+  it("finalizes a carried sentence on its own when the session ended exactly as the sentence did", async () => {
+    const { socket, utterances, nextSocket } = await started({ carryTimeoutMs: 20 });
+    socket.deliver({ serverContent: { interimInputTranscription: { text: "chạy pnpm test" } } });
+    const reopened = nextSocket();
+    socket.drop(1000, "session limit");
+    const second = await reopened;
+    second.open();
+    second.deliver({ setupComplete: {} });
+
+    // Nothing more is said: the carried words are the whole sentence, not the start of the next one.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    second.deliver({ serverContent: { inputTranscription: { text: "mở file index" } } });
+    expect(utterances.filter((utterance) => utterance.isFinal).map((utterance) => [utterance.utteranceId, utterance.text, utterance.settledBy])).toEqual([
+      ["voice-1:s0", "chạy pnpm test", "session-end"],
+      ["voice-1:s1", "mở file index", "provider"],
+    ]);
+  });
+
+  it("does not finalize a carried sentence the reopened session goes on with", async () => {
+    const { socket, utterances, nextSocket } = await started({ carryTimeoutMs: 20 });
+    socket.deliver({ serverContent: { interimInputTranscription: { text: "mở file" } } });
+    const reopened = nextSocket();
+    socket.drop(1000, "session limit");
+    const second = await reopened;
+    second.open();
+    second.deliver({ setupComplete: {} });
+    second.deliver({ serverContent: { interimInputTranscription: { text: "index" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    second.deliver({ serverContent: { inputTranscription: { text: "index chấm ts" } } });
+    expect(utterances.filter((utterance) => utterance.isFinal).map((utterance) => utterance.text)).toEqual(["mở file index chấm ts"]);
   });
 
   it("leaves an unfinished hypothesis as the last interim, not a final, when recognition cannot continue", async () => {

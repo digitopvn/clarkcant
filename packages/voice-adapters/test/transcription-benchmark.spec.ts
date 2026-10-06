@@ -93,9 +93,10 @@ describe("the normaliser on the corpus", () => {
     expect(unstableReferences(corpus)).toEqual([]);
   });
 
-  it("carries negative entries - near neighbours, embedded names, a person's name - and leaves each one alone", () => {
+  it("carries negative entries - near neighbours, embedded names, a person's name, other versions - and leaves each one alone", () => {
     const negatives = corpus.utterances.filter((utterance) => utterance.categories.includes("negative"));
-    expect(negatives.length).toBeGreaterThanOrEqual(5);
+    expect(negatives.length).toBeGreaterThanOrEqual(7);
+    expect(negatives.filter((utterance) => utterance.categories.includes("version")).length).toBeGreaterThanOrEqual(2);
     const context = corpusContext(corpus);
     for (const utterance of negatives) {
       expect(utterance.recognizers["simulated-live-baseline"]).toBe(utterance.reference);

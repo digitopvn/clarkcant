@@ -97,6 +97,8 @@ const JOINER = /[._/\\@#:-]/u;
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 /** Text that is already written as code: inner capitals, a joiner between letters, or digits in a word. */
 const IDENTIFIER_SHAPED = /\p{Ll}\p{Lu}|[\p{L}\p{N}][._/\\@#-][\p{L}\p{N}]|\p{L}\p{N}|\p{N}\p{L}/u;
+/** A version or number: never near-matched, since one character is the whole difference between two of them. */
+const HAS_DIGIT = /\p{N}/u;
 
 const lexicons = new WeakMap<RecognitionContext, Lexicon>();
 
@@ -314,6 +316,9 @@ function strongestRule(forms: readonly Form[]): Rule {
  *
  * Word for word, so a slip never absorbs a neighbour: "a pull request" is three words and `pull request` two, and the
  * "a" is the person's, not a typo in the term.
+ *
+ * A word carrying a digit never slips: one character is the whole difference between two versions, so "claude opus 3"
+ * is another model the person named, not a mis-hearing of `claude-opus-4`.
  */
 function isSlipOf(termWords: readonly string[], heard: readonly string[]): boolean {
   if (termWords.length !== heard.length) return false;
@@ -322,6 +327,7 @@ function isSlipOf(termWords: readonly string[], heard: readonly string[]): boole
     const want = termWords[index]!;
     const got = heard[index]!;
     if (want === got) continue;
+    if (HAS_DIGIT.test(want) || HAS_DIGIT.test(got)) return false;
     // A plural is the same word used correctly, not a slip.
     if (got === `${want}s` || !withinOneEdit(want, got)) return false;
     slips += 1;

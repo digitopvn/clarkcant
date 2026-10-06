@@ -10,7 +10,7 @@
     "symbols": ["attachVoiceGateway", "foldTranscriptUpdate", "redactSecrets", "VoiceProviderAdapter", "useVoiceSession", "handleUserMessage", "voiceSession", "voice_session", "getUser"],
     "issues": ["#468", "#509"],
     "tools": ["control_app", "web_search"],
-    "models": ["gemini-3.8-live", "gemini-3.5-transcribe-live", "claude-sonnet-4-5", "gpt-5"],
+    "models": ["gemini-3.8-live", "gemini-3.5-transcribe-live", "claude-sonnet-4-5", "claude-opus-4", "gpt-5"],
     "providers": ["Anthropic", "OpenAI", "Google"]
   },
   "utterances": [
@@ -87,6 +87,8 @@
     { "id": "u071", "categories": ["code-switch", "path", "negative", "embedded"], "reference": "so sánh gemini-live.tsx với gemini-live.ts", "terms": [{ "text": "gemini-live.ts", "kind": "path" }], "recognizers": { "simulated-live-baseline": "so sánh gemini-live.tsx với gemini-live.ts" } },
     { "id": "u072", "categories": ["code-switch", "negative", "person-name"], "reference": "hỏi anh Jeff bên design xem màu này ổn không", "terms": [], "recognizers": { "simulated-live-baseline": "hỏi anh Jeff bên design xem màu này ổn không" } },
     { "id": "u073", "categories": ["english", "glossary", "negative"], "reference": "open a pull request for this fix", "terms": [{ "text": "pull request", "kind": "glossary" }], "recognizers": { "simulated-live-baseline": "open a pull request for this fix" } },
-    { "id": "u074", "categories": ["code-switch", "command", "command-guard"], "reference": "chạy git rebase lên main đi", "terms": [{ "text": "git rebase", "kind": "command" }], "recognizers": { "simulated-live-baseline": "chạy git re base lên main đi" } }
+    { "id": "u074", "categories": ["code-switch", "command", "command-guard"], "reference": "chạy git rebase lên main đi", "terms": [{ "text": "git rebase", "kind": "command" }], "recognizers": { "simulated-live-baseline": "chạy git re base lên main đi" } },
+    { "id": "u075", "categories": ["code-switch", "model", "negative", "version"], "reference": "đổi sang claude opus 3 thử xem", "terms": [], "recognizers": { "simulated-live-baseline": "đổi sang claude opus 3 thử xem" } },
+    { "id": "u076", "categories": ["code-switch", "model", "negative", "version"], "reference": "claude opus 5 ra chưa vậy", "terms": [], "recognizers": { "simulated-live-baseline": "claude opus 5 ra chưa vậy" } }
   ]
 }

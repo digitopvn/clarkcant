@@ -147,6 +147,15 @@ describe("refusing to guess", () => {
     expect(normalized("dùng playwrigt để test")).toBe("dùng Playwright để test");
   });
 
+  it("never turns one version into another", () => {
+    const context = buildRecognitionContext({ models: ["claude-opus-4"] });
+    for (const sentence of ["đổi sang claude opus 3 đi", "đổi sang claude opus 5 đi", "dùng claude opus 45 nhé"]) {
+      expect(normalizeTranscript(sentence, context).text).toBe(sentence);
+    }
+    // The same model said as it is spelled is still written canonically.
+    expect(normalizeTranscript("đổi sang claude opus 4 đi", context).text).toBe("đổi sang claude-opus-4 đi");
+  });
+
   it("leaves a person's name alone even when it sounds like a term", () => {
     expect(normalized("Jeff quyết định thế nào")).toBe("Jeff quyết định thế nào");
     expect(normalized("hỏi anh Jeff bên design")).toBe("hỏi anh Jeff bên design");
