@@ -58,6 +58,14 @@ export const automationTargetIdSchema = targetIdSchema;
 export const observationIdSchema = prefixed("obs");
 export const voiceSessionIdSchema = prefixed("voice");
 export const receiptIdSchema = prefixed("rcpt");
+/** An agent runtime this node can run work through, by Clark's own name for it, never the runtime's. */
+export const runtimeIdSchema = prefixed("rt");
+/** One session inside an agent runtime, by Clark's own name for it; the runtime's native id stays with its adapter. */
+export const runtimeSessionIdSchema = prefixed("rsess");
+/** One thing discovery found that might help, before anything about it is decided. */
+export const capabilityCandidateIdSchema = prefixed("cand");
+/** One question asking the person to widen what Clark may reach. */
+export const reachExpansionPlanIdSchema = prefixed("rxp");
 
 export type NodeId = z.infer<typeof nodeIdSchema>;
 export type PrincipalId = z.infer<typeof principalIdSchema>;
@@ -88,6 +96,10 @@ export type AutomationTargetId = z.infer<typeof targetIdSchema>;
 export type ObservationId = z.infer<typeof observationIdSchema>;
 export type VoiceSessionId = z.infer<typeof voiceSessionIdSchema>;
 export type ReceiptId = z.infer<typeof receiptIdSchema>;
+export type RuntimeId = z.infer<typeof runtimeIdSchema>;
+export type RuntimeSessionId = z.infer<typeof runtimeSessionIdSchema>;
+export type CapabilityCandidateId = z.infer<typeof capabilityCandidateIdSchema>;
+export type ReachExpansionPlanId = z.infer<typeof reachExpansionPlanIdSchema>;
 
 /**
  * Instants are ISO 8601 in UTC. Wall-clock ordering is never used to resolve

@@ -82,3 +82,7 @@ export * from "./implementation-status.ts";
 export * from "./signals.ts";
 export * from "./delegation.ts";
 export * from "./read-context.ts";
+export * from "./runtime-fabric.ts";
+export * from "./capability-discovery.ts";
+export * from "./reach-expansion.ts";
+export * from "./execution-envelope.ts";
