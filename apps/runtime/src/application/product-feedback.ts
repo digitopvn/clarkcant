@@ -401,7 +401,8 @@ function settled(record: FeedbackReportRecord, previousStatus: FeedbackReportRec
  * Found by its marker: published. GitHub unreadable, GitHub having answered that it filed it, or too little time since
  * the attempt for an absence to mean anything: still unknown. Absent from GitHub's own list well after the attempt:
  * it was never filed, which is `failed` and retryable — the person's Send again is then the first time it is filed.
- * The time measured is the attempt's own, from the ledger, so checking again and again never moves it.
+ * The time measured is the attempt's own, from the ledger, so checking again and again never moves it. Without that
+ * ledger entry there is no attempt time to measure from, so an absence means nothing and the report stays unknown.
  */
 async function reconcileAttempt(
   services: FeedbackServices,
@@ -411,6 +412,8 @@ async function reconcileAttempt(
   options: PublishOptions,
 ): Promise<FeedbackReportRecord> {
   const effect = record.effectId === undefined ? undefined : getEffect(services.runtime.db, record.effectId);
+  // Without the ledger entry the search still runs from the report's last change: a marker found is proof whatever the
+  // window, while a marker not found proves nothing and is answered as unknown below.
   const attemptedAt = effect?.preparedAt ?? record.updatedAt;
   const lookup = await findByMarker(client, record.draft, attemptedAt);
   if (lookup.kind === "found") {
@@ -427,7 +430,17 @@ async function reconcileAttempt(
       ).slice(0, 600),
     });
   }
-  const settledFiled = effect?.state === "confirmed";
+  if (effect === undefined) {
+    return save(services, record, "unknown", {
+      status: "unknown",
+      reportId: record.reportId,
+      reason: say(
+        "Không còn bản ghi về lần gửi trước, nên không biết chắc nó đã tới GitHub hay chưa. Báo cáo không được gửi lại.",
+        "The record of the earlier attempt is missing, so whether it reached GitHub cannot be told. The report is not sent again.",
+      ).slice(0, 600),
+    });
+  }
+  const settledFiled = effect.state === "confirmed";
   const tooSoon = Date.now() - Date.parse(attemptedAt) < (options.reconcileGraceMs ?? FEEDBACK_RECONCILE_GRACE_MS);
   if (settledFiled || tooSoon) {
     return save(services, record, "unknown", {
@@ -445,7 +458,7 @@ async function reconcileAttempt(
       ).slice(0, 600),
     });
   }
-  if (effect !== undefined) settleObserved(services, effect, "failed", "GitHub's list holds no issue or comment with the report's marker");
+  settleObserved(services, effect, "failed", "GitHub's list holds no issue or comment with the report's marker");
   return save(services, record, "failed", {
     status: "failed",
     reportId: record.reportId,
@@ -520,6 +533,7 @@ export async function publishFeedback(
       operationDigest,
       conversationId: input.conversationId,
       description,
+      approvedBy: "person",
     },
   );
 

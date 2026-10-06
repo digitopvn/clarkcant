@@ -32,6 +32,12 @@ describe("a request's fit with the product philosophy", () => {
     ["Thêm thanh bên cho các phiên", "aligned-with-constraints"],
     ["Make the orb glow brighter", "aligned"],
     ["The orbit animation is slow", "aligned"],
+    ["Just for fun, add a theme", "aligned"],
+    ["Only for power users: a compact layout", "aligned"],
+    ["Add global shortcuts only on macOS", "aligned-with-constraints"],
+    ["A Windows-only tray menu", "aligned-with-constraints"],
+    ["Make it just for Linux", "aligned-with-constraints"],
+    ["Thêm phím tắt chỉ trên Windows", "aligned-with-constraints"],
   ])("reads %j as %s", (text, verdict) => {
     expect(classifyPhilosophy(text, undefined).verdict).toBe(verdict);
   });

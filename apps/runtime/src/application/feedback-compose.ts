@@ -132,6 +132,9 @@ const SECRET = String.raw`(?:secrets?|api[- ]?keys?|credentials?|cookies?|raw ip
 const SURFACE = String.raw`(?:widgets?|extensions?|plugins?|ti[eệ]n [ií]ch(?: m[oở] r[oộ]ng)?)`;
 const HAND_OVER = String.raw`(?:give|gives|giving|pass|passes|passing|send|sends|expose|exposes|exposing|hand|hands|share|shares|access|accesses|read|reads|receive|receives|get|gets|inject|injects|c[aấ]p|đ[uư]a|truy[eề]n|l[oộ]|chia s[eẻ]|nh[aậ]n|đ[oọ]c|truy c[aậ]p|l[aấ]y)`;
 
+/** An operating system a request could be scoped to. */
+const OS = String.raw`(?:mac(?:os)?|os x|windows|win(?:dows )?1[01]|linux|omarchy|ubuntu|arch linux)`;
+
 const PHILOSOPHY_RULES: readonly PhilosophyRule[] = [
   {
     pattern: edged(String.raw`<(?:sidebar|side bar|dashboard|thanh b[eê]n|b[aả]ng (?:đ|d)i[eề]u khi[eể]n|permanent (?:panel|picker)|session picker)>`),
@@ -186,7 +189,10 @@ const PHILOSOPHY_RULES: readonly PhilosophyRule[] = [
     },
   },
   {
-    pattern: edged(String.raw`<(?:only on|just for|mac[- ]?only|windows[- ]?only|linux[- ]?only|ch[iỉ] (?:tr[eê]n|cho) (?:mac|windows|linux))>`),
+    // A request scoped to one operating system, not any "only" or "just for": "just for fun" names no platform.
+    pattern: edged(
+      String.raw`<(?:only|just|exclusively) (?:on|for|in) (?:the )?${OS}>|<${OS}[- ]only>|<ch[iỉ] (?:tr[eê]n|cho|d[aà]nh cho) ${OS}>`,
+    ),
     verdict: "aligned-with-constraints",
     invariant: "Cross-platform by default",
     note: "Keep the logic portable and put the platform part behind an adapter, with explicit behaviour on the other systems.",

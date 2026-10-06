@@ -441,7 +441,7 @@ describe("publishing a report on the person's press", () => {
     const executed = allRows<{ document: string }>(services.runtime.db, "SELECT document FROM events WHERE kind = 'effect.executed'").map(
       (row) => JSON.parse(row.document) as { category: string; because: string },
     );
-    expect(executed).toEqual(expect.arrayContaining([expect.objectContaining({ category: "external-write", because: expect.stringContaining("pressed") })]));
+    expect(executed).toEqual(expect.arrayContaining([expect.objectContaining({ category: "external-write", approvedBy: "person", because: expect.stringContaining("pressed") })]));
   });
 });
 
@@ -478,8 +478,10 @@ describe("after a restart", () => {
   it("establishes that a report never arrived once the grace has passed, and leaves sending it again to the person", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.parse(AT));
+    github.fail("createIssue", { kind: "no-answer", applied: false });
     const { draft } = await prepared(bug("Fonts render blurry"));
-    stopMidSend(draft.reportId);
+    expect((await press(draft.reportId)).ok).toBe(true);
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.status).toBe("unknown");
     vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
 
     await reconcileFeedbackAtStart(services, FAST);
@@ -488,7 +490,38 @@ describe("after a restart", () => {
     expect(record?.status).toBe("failed");
     expect(record?.publication).toMatchObject({ status: "failed", retryable: true });
     expect(cardsIn().map((card) => card.publication?.status)).toEqual(["failed"]);
+    expect(github.writes()).toHaveLength(1);
+  });
+
+  it("keeps a report unknown when the record of its attempt is missing, however long ago, and sends nothing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    const { draft } = await prepared(bug("Scrollbar flickers"));
+    stopMidSend(draft.reportId);
+    vi.setSystemTime(Date.parse(AT) + 60 * MINUTE);
+
+    await reconcileFeedbackAtStart(services, FAST);
+
+    const record = getFeedbackReport(services.runtime.db, draft.reportId);
+    expect(record?.status).toBe("unknown");
+    expect(record?.publication).toMatchObject({ status: "unknown" });
+    expect(cardsIn().map((card) => card.publication?.status)).toEqual(["unknown"]);
     expect(github.writes()).toHaveLength(0);
+  });
+
+  it("keeps a report unknown, never offering Send again, when GitHub's list is too long to read through", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const { draft } = await prepared(bug("Tray icon goes missing"));
+    await press(draft.reportId);
+    vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
+    github.fail("findIssue", { kind: "no-answer" });
+
+    const checked = await press(draft.reportId, "check");
+
+    expect(checked.ok && checked.publication.status).toBe("unknown");
+    expect(github.writes()).toHaveLength(1);
   });
 
   it("says nothing new about a report already known to be unknown that is still unknown", async () => {

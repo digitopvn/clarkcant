@@ -55,9 +55,12 @@ export interface FeedbackGithubClient {
   createIssue(input: { title: string; body: string; labels: readonly string[] }): Promise<{ number: number; url: string }>;
   createComment(issueNumber: number, body: string): Promise<{ id: number; url: string }>;
   getComment(id: number): Promise<GithubComment | undefined>;
-  /** The issue updated since `since` whose body carries `marker`, scanning a bounded number of pages. */
+  /**
+   * The issue updated since `since` whose body carries `marker`. `undefined` only when GitHub's whole list was read;
+   * a list longer than the bounded scan throws instead, because an unread page may hold it.
+   */
   findIssueWithMarker(marker: string, since: Instant): Promise<GithubIssue | undefined>;
-  /** The comment on `issueNumber` updated since `since` whose body carries `marker`. */
+  /** The comment on `issueNumber` updated since `since` whose body carries `marker`; bounded the same way. */
   findCommentWithMarker(issueNumber: number, marker: string, since: Instant): Promise<GithubComment | undefined>;
   /** What GitHub's timeline shows of work on the issue: open pull requests referencing it, and anyone claiming it. */
   issueActivity(issueNumber: number): Promise<IssueActivity>;
@@ -235,7 +238,12 @@ export function createGithubRestClient(options: {
       }
       if (value.length < 100) return undefined;
     }
-    return undefined;
+    // Every page read was full, so the list goes on: what was not read may hold the marker, and "not found" here would
+    // offer to file the report a second time. Saying GitHub could not be checked keeps it unknown instead.
+    throw new FeedbackGithubError(
+      "no-answer",
+      `GitHub listed more than ${String(MARKER_SCAN_PAGES * 100)} items changed since the attempt, too many to read through`,
+    );
   };
 
   return {

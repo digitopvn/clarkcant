@@ -99,6 +99,24 @@ describe("the REST client", () => {
     expect(seen[0]?.url.searchParams.get("state")).toBe("all");
   });
 
+  it("says GitHub could not be checked, not that the report is absent, when the list runs past the pages it reads", async () => {
+    const marker = feedbackMarker("rpt_far");
+    const full = Array.from({ length: 100 }, (_, index) => issue(1000 + index, { pull_request: {} }));
+    const { fetch, seen } = scripted(() => json(full));
+
+    await expect(
+      createGithubRestClient({ repository: REPO, fetch }).findIssueWithMarker(marker, "2026-10-06T09:00:00.000Z" as Instant),
+    ).rejects.toBeInstanceOf(FeedbackGithubError);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("answers absent once the last page of the list has been read", async () => {
+    const marker = feedbackMarker("rpt_absent");
+    const { fetch } = scripted((url) => json(url.searchParams.get("page") === "1" ? Array.from({ length: 100 }, (_, index) => issue(index + 1)) : [issue(500)]));
+
+    expect(await createGithubRestClient({ repository: REPO, fetch }).findIssueWithMarker(marker, "2026-10-06T09:00:00.000Z" as Instant)).toBeUndefined();
+  });
+
   it("reads open pull requests and a claim comment from the issue's timeline", async () => {
     const { fetch } = scripted(() =>
       json([

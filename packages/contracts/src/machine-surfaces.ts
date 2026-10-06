@@ -74,9 +74,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "packages" && third === "connection")
       );
     case 4:
-      // POST /feedback/reports/:id/publish: filing a report on GitHub with the person's token, from the Feedback Composer's
-      // Create issue. A machine surface that wants a report filed asks Clark, whose `report_feedback` is decided by the
-      // execution policy like any other external write.
+      // POST /feedback/reports/:id/publish: filing a report on GitHub with the person's token, only on the person's own
+      // Create issue press. Nothing else files one: a machine surface, or Clark through `report_feedback`, can only
+      // prepare a report and show it to the person.
       if (first === "feedback" && second === "reports" && fourth === "publish") return true;
       // POST /packages/approvals/:id/decision: a capability for an installed generation, or an install the policy asked about
       return first === "packages" && second === "approvals" && fourth === "decision";

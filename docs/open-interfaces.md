@@ -236,7 +236,8 @@ that card reads as used from then on, after a reload too. A write whose answer n
 offers Check again (`intent: "check"`), which only looks for the marker and never sends; checking a report never sent
 is `409 NOTHING_SENT`. Once GitHub's own list shows the marker absent at least two minutes after the attempt (the
 attempt's time, not the last check's), the report becomes `failed` with `retryable`, and its card offers Send again,
-which files it for the first time; nothing is sent while GitHub cannot be checked. When the node starts, every report
+which files it for the first time. Nothing is sent while GitHub cannot be checked, and an absence is not trusted when
+GitHub's list is too long to read through or the ledger no longer holds the attempt: the report stays `unknown`. When the node starts, every report
 left `publishing` or `unknown` is checked the same way, and a settled outcome is written into its conversation as a
 result card. The other statuses are `needs-access` (no `github_token`; with `manualUrl`, GitHub's prefilled new-issue
 page) and `refused`. The write is an `external-write` effect in the action ledger, and the execution policy applies to

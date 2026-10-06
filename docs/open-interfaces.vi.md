@@ -238,8 +238,9 @@ cáo. `intent` mặc định là `send`; `answers` nêu thẻ mà cú bấm nằ
 khi tải lại. Lần ghi không nhận được phản hồi là `unknown`, và thẻ của nó có nút Kiểm tra lại (`intent: "check"`), chỉ
 tìm dấu và không bao giờ gửi; kiểm tra một báo cáo chưa từng gửi trả `409 NOTHING_SENT`. Khi danh sách của chính GitHub
 cho thấy không có dấu ít nhất hai phút sau lần thử (tính từ lúc thử gửi, không phải lần kiểm tra gần nhất), báo cáo
-chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi nó lần đầu tiên; không gửi gì khi chưa kiểm tra được
-GitHub. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
+chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi nó lần đầu tiên. Không gửi gì khi chưa kiểm tra được
+GitHub, và việc không thấy dấu không được tin khi danh sách của GitHub quá dài để đọc hết hoặc sổ hiệu ứng không còn
+ghi lần thử: báo cáo vẫn là `unknown`. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
 ngũ được ghi vào hội thoại của nó thành thẻ kết quả. Các trạng thái khác là `needs-access` (chưa có `github_token`; kèm
 `manualUrl`, trang tạo issue của GitHub đã điền sẵn) và `refused`. Lần ghi là một hiệu ứng `external-write` trong sổ
 hiệu ứng, và policy thực thi áp dụng cho cú bấm của người dùng: luật hay lệnh cấm từ chối thì báo cáo là `refused` và
