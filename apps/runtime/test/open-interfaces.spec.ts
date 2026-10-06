@@ -16,7 +16,9 @@ import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
 import { isWidgetArtifactWritePayload } from "../src/application/machine-artifact-writes.ts";
 import { isWidgetPerformPayload } from "../src/application/widget-actions.ts";
 import { recordNodeNotice } from "../src/notices.ts";
+import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { MCP_PROTOCOL_VERSIONS } from "../src/open-interfaces.ts";
+import { handleMcpRoute } from "../src/routes/mcp.ts";
 import { createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -281,6 +283,60 @@ describe("MCP endpoint", () => {
     const afterStale = await read(conversationId, clamped);
     expect(afterStale.content[0]?.text).toContain("fourth question");
     expect(afterStale.structuredContent.cursor).toBe(8);
+  });
+
+  it("delivers a message stored while a stale cursor is being read, on the next read", async () => {
+    const created = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_conversation", arguments: {} } });
+    const conversationId = (created.body as { result: { structuredContent: { conversationId: string } } }).result.structuredContent
+      .conversationId;
+    const store = (content: string): void => {
+      appendMessage(
+        services.runtime.db,
+        {
+          messageId: services.conductor.newId("msg") as never,
+          conversationId: conversationId as never,
+          role: "user",
+          blocks: [{ type: "text", format: "plain", content, streaming: false }],
+          authorNodeId: services.runtime.identity.nodeId,
+          createdAt: "2026-10-06T00:00:00.000Z" as never,
+          delivery: "accepted",
+        },
+        nextMessageSequence(services.runtime.db, conversationId),
+      );
+    };
+    store("already there");
+
+    type Result = { result: { content: { text: string }[]; structuredContent: { cursor: number; messages: unknown[] } } };
+    const gateway: GatewayDeps = { services, now: () => "2026-10-06T00:00:00.000Z", newConversationId: () => "conv_unused" };
+    // The tool's reads go through this dispatch, so a message can be stored between its first timeline read and the next.
+    let timelineReads = 0;
+    const readThroughRace = async (after: number): Promise<Result["result"]> => {
+      const answered = await handleMcpRoute({
+        request: {
+          method: "POST",
+          path: "/mcp",
+          query: {},
+          headers: { authorization: `Bearer ${token()}` },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "read_conversation", arguments: { conversationId, after } } }),
+        },
+        dispatch: async (inner) => {
+          const response = await handleRequest(gateway, inner);
+          if (inner.path.endsWith("/timeline")) {
+            timelineReads += 1;
+            if (timelineReads === 1) store("stored between the reads");
+          }
+          return response;
+        },
+      });
+      return (answered?.body as Result).result;
+    };
+
+    const stale = await readThroughRace(999_999);
+    expect(stale.structuredContent.messages).toEqual([]);
+    expect(stale.structuredContent.cursor).toBe(1);
+    const next = await readThroughRace(stale.structuredContent.cursor);
+    expect(next.content[0]?.text).toContain("stored between the reads");
+    expect(next.structuredContent.cursor).toBe(2);
   });
 
   it("reads the newest messages of a long conversation when no cursor is given", async () => {

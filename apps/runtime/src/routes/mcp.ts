@@ -324,21 +324,25 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
       // first page of a long one never reaches it.
       const after = typeof args.after === "number" ? args.after : undefined;
       const path = `/conversations/${encodeURIComponent(args.conversationId)}/timeline`;
+      type Page = { window?: { toSequence?: number; hasNewer?: boolean }; messages?: unknown[] };
+      // An empty page echoes an `after` beyond the newest message - a guess, or an event cursor kept from before - and
+      // reading on with it would skip every message written until the conversation caught up, so the cursor is capped
+      // at the newest message. That newest message is read before the page, never after: a message stored between the
+      // two reads is then above the cap and comes with the next read, instead of becoming the cap and never arriving.
+      let newestBefore: number | undefined;
+      if (after !== undefined) {
+        const newest = await call("GET", path, undefined, { window: "latest", limit: "1" });
+        if (newest.status >= 400) return refused(newest);
+        newestBefore = (newest.body as Page).window?.toSequence ?? 0;
+      }
       const read = await call("GET", path, undefined, after === undefined ? { window: "latest" } : { after: String(after) });
       if (read.status >= 400) return refused(read);
       // The cursor handed back is the message sequence `after` takes, read from the page's window. The timeline's own
       // `cursor` is the event replay cursor, a different number: passed back as `after`, it skipped messages.
-      type Page = { window?: { toSequence?: number; hasNewer?: boolean }; messages?: unknown[] };
       const timeline = read.body as Page;
-      let cursor = timeline.window?.toSequence ?? 0;
-      // A page that reaches the end echoes an `after` beyond the newest message - a guess, or an event cursor kept from
-      // before - and reading on with it would skip every message written until the conversation caught up. The cursor
-      // never goes past the newest message there is.
-      if (after !== undefined && timeline.window?.hasNewer !== true) {
-        const newest = await call("GET", path, undefined, { window: "latest", limit: "1" });
-        if (newest.status >= 400) return refused(newest);
-        cursor = Math.min(cursor, (newest.body as Page).window?.toSequence ?? 0);
-      }
+      const empty = (timeline.messages ?? []).length === 0;
+      const cursor =
+        after !== undefined && newestBefore !== undefined && empty ? Math.min(after, newestBefore) : (timeline.window?.toSequence ?? 0);
       const text = (timeline.messages ?? [])
         .map((message) => {
           const record = message as { role?: string; blocks?: MessageBlock[] };
