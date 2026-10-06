@@ -11,6 +11,8 @@ Không còn thiết kế “desktop app có một helper, sau này đưa helper 
 
 Core không cố biến toàn bộ mạng thành một máy tính có filesystem và database chung. Mỗi node có danh tính, quyền, credentials và tài nguyên riêng. Sự liền mạch nằm ở giao tiếp, delegation và presentation; không nằm ở việc giấu mọi sự khác biệt hay tự copy secrets.
 
+Hướng đi kế tiếp — nhiều agent runtime thay thế được, khám phá năng lực, một lần đồng ý trước khi mở rộng phạm vi, việc định kỳ và tự cải thiện — được mô tả là **kiến trúc mục tiêu, chưa ship** trong [adaptive-substrate.vi.md](adaptive-substrate.vi.md). Tài liệu này vẫn mô tả những gì đang chạy.
+
 ## 2. Sơ đồ tổng quan
 
 ```mermaid
