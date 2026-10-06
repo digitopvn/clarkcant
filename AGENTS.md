@@ -77,6 +77,10 @@ helps the user.
 
 UX and useful autonomy outrank exposing technical machinery.
 
+AI must make the agent runtime simpler, not more complex: simple enough that
+anyone can open it and get work done without learning a single new concept or
+term. A new capability that asks the user to learn a new word is not finished.
+
 Simple outside does not mean hidden. Everything the user may need is
 summonable from the conversation and arrives as an **agent message with widget
 UIs (a mini app)**: past and background sessions, provider sign-in and
@@ -108,6 +112,31 @@ state, resumability, checkpoints, bounded retries, and safe recovery.
 
 Autonomy never overrides hard security boundaries, isolation, credentials,
 external consent, or explicit user policy.
+
+### Built for stronger models and better tools
+
+Models, and the tools around them, improve fast. Design every new feature,
+capability, or Clark-specific optimization for the next generation, not only
+this one.
+
+Before building, ask two questions:
+
+- **Will a stronger model soon do this on its own?** Prefer giving the model a
+  capability, context, or a clean contract over hard-coding the behavior. Keep
+  compensating scaffolding thin, say what it compensates for, and make it easy
+  to delete when models no longer need it.
+- **Will a better solution appear elsewhere?** Put the feature behind a typed
+  capability, adapter, or extension facet, so a newer model, provider, tool,
+  MCP server, or community extension can run beside it or replace it without
+  rewriting its callers.
+
+Generalize at the right level: name the underlying capability, not the product
+or vendor that provides it today. Prefer designs that get simpler as models get
+stronger.
+
+ClarkCant is not an "everything app". It does not try to own every feature; it
+orchestrates the best available models, tools, and extensions behind one simple
+conversation, and adopts better ones as they appear.
 
 ### Philosophy-change gate
 
