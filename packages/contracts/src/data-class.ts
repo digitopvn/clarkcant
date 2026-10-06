@@ -220,6 +220,15 @@ export function dataClassOfText(text: string): DataClass {
  */
 export function dataClassesOfText(text: string): readonly DataClass[] {
   const found = new Set<DataClass>(["internal"]);
+  for (const view of jsonViewsOf(text)) {
+    classifyShapes(view, found);
+    if (found.has("confidential") && found.has("secret")) break;
+  }
+  return DATA_CLASSES.filter((value) => found.has(value));
+}
+
+/** Adds to `found` the class of every personal and credential shape a text carries. */
+function classifyShapes(text: string, found: Set<DataClass>): void {
   for (const shape of SECRET_SHAPES) {
     const credential = CREDENTIAL_SHAPES.has(shape.label);
     const dataClass: DataClass | undefined = credential ? "secret" : PERSONAL_SHAPES.has(shape.label) ? "confidential" : undefined;
@@ -242,7 +251,64 @@ export function dataClassesOfText(text: string): readonly DataClass[] {
                 : matches.length > 0;
     if (hit) found.add(dataClass);
   }
-  return DATA_CLASSES.filter((value) => found.has(value));
+}
+
+/** How many levels of JSON string escaping are read through: a JSON text inside a JSON string inside a JSON string. */
+const JSON_ESCAPE_LEVELS = 3;
+
+/** One JSON escape sequence: a quote, a backslash, a slash, a control character, or a UTF-16 code unit. */
+const JSON_ESCAPE = /\\(?:(["\\/])|([bfnrt])|u([0-9A-Fa-f]{4}))/g;
+const JSON_CONTROL: Readonly<Record<string, string>> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+
+/**
+ * The text as written, and as it reads once each level of JSON string escaping is taken off it.
+ *
+ * A tool that answers with JSON in its text escapes every string in it, so `password="…"` inside a value arrives as
+ * `password=\"…\"`, and a JSON document carried as a string arrives with its own quotes escaped; the shapes are written
+ * for the text a person reads. Each view is only read in addition to the text, so it can add a class and never take one
+ * away. Linear: each level is one pass, and a level is only taken while it changes something.
+ *
+ * A credential written across two fields of one object, `{"name": "password", "value": "…"}`, is read as the
+ * `name="value"` it stands for, so the same named-secret shape decides it.
+ */
+function jsonViewsOf(text: string): string[] {
+  const views = [text];
+  let current = text;
+  for (let level = 0; level < JSON_ESCAPE_LEVELS && current.includes("\\"); level += 1) {
+    const next = current.replace(JSON_ESCAPE, (_escape, literal?: string, control?: string, unit?: string) =>
+      literal ?? (control === undefined ? String.fromCharCode(Number.parseInt(unit ?? "0", 16)) : JSON_CONTROL[control] ?? " "),
+    );
+    if (next === current) break;
+    views.push(next);
+    current = next;
+  }
+  const pairs = views.flatMap(namedFieldPairsOf);
+  if (pairs.length > 0) views.push(pairs.join("\n"));
+  return views;
+}
+
+/** A JSON object with no object inside it: where a field's name and its value sit side by side. */
+const FLAT_JSON_OBJECT = /\{[^{}]*\}/g;
+/** The field naming what a sibling `value` field holds, written as an identifier. */
+const NAME_FIELD = /"(?:name|key|field|id)"\s*:\s*"([A-Za-z][\w.-]*)"/;
+/** The field holding the value a sibling field names. */
+const VALUE_FIELD = /"value"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+
+/**
+ * Every `{"name": "…", "value": "…"}` object in a text, as the `name="value"` assignment it stands for. The name must
+ * be an identifier, so a label such as `"reset password"` beside a button's text is not read as an assignment, and
+ * only the named-secret shape can make one a credential: a field that names anything else is ordinary data.
+ */
+function namedFieldPairsOf(text: string): string[] {
+  if (!text.includes('"value"')) return [];
+  const pairs: string[] = [];
+  for (const object of text.matchAll(FLAT_JSON_OBJECT)) {
+    const name = NAME_FIELD.exec(object[0])?.[1];
+    if (name === undefined) continue;
+    const value = VALUE_FIELD.exec(object[0])?.[1];
+    if (value !== undefined) pairs.push(`${name}="${value}"`);
+  }
+  return pairs;
 }
 
 /**
