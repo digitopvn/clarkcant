@@ -73,6 +73,22 @@ describe("the live reading kept while a recognizer is the source", () => {
     expect(shadow.take()).toBe("rồi chạy test");
   });
 
+  it("answers the newest sentence whole when a final matched it only after passing over another", () => {
+    const { shadow } = shadowAt();
+    // The live reading of the delivered sentence is too far off to match, and the next one looks like it.
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nhé bạn", isFinal: false });
+    shadow.delivered("chạy lại test đi nha");
+    expect(shadow.take()).toBe("chạy lại test đi nhé bạn");
+  });
+
+  it("answers again a sentence too short to tell apart, rather than risk losing it", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "đồng ý", isFinal: true });
+    shadow.delivered("đồng ý");
+    expect(shadow.take()).toBe("đồng ý");
+  });
+
   it("answers every undelivered sentence when nothing is unclear, and starts empty afterwards", () => {
     const { shadow } = shadowAt();
     shadow.hear({ utteranceId: "s:u1", text: "mở file voice session", isFinal: true });

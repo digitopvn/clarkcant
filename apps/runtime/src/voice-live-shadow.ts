@@ -19,9 +19,9 @@
  * - two readings match only when they differ by a few characters, never by a whole word;
  * - a final whose live reading has not arrived waits only for the live sentence in progress and the next one, and only
  *   for a few seconds, so it cannot match an unrelated sentence later;
- * - when a final never found its live reading, the alignment after the cursor is unclear: only the newest live
- *   sentence is answered, since it is the one the recognizer was in the middle of, and an older one may already have
- *   been answered under a different reading.
+ * - when a final never found its live reading, or matched only after passing over a live sentence it did not match,
+ *   the alignment is unclear: only the newest live sentence is answered, whole, since it is the one the recognizer was
+ *   in the middle of, and an older one may already have been answered under a different reading.
  */
 
 const MAX_SENTENCES = 16;
@@ -136,25 +136,46 @@ export class LiveShadow {
       remainders.push({ ordinal: sentence.ordinal, text });
     }
     const unclear = this.#unclear || this.#pending.length > 0;
-    const newest = this.#sentences.at(-1)?.ordinal;
-    const answer = unclear ? remainders.filter((remainder) => remainder.ordinal === newest) : remainders;
+    const answer = unclear ? this.#newestWhole() : remainders.map((remainder) => remainder.text).join(" ");
     this.#sentences = [];
     this.#pending = [];
     this.#cursor = { ordinal: this.#nextOrdinal, offset: 0 };
     this.#unclear = false;
-    return answer.map((remainder) => remainder.text).join(" ");
+    return answer;
+  }
+
+  /**
+   * The newest live sentence from its start, when the cursor cannot be trusted.
+   *
+   * The cursor may stand partway into it on the strength of a match that belonged to an earlier sentence, so the
+   * whole sentence is answered rather than its tail. Nothing is answered if the live session is still catching up with
+   * a final already delivered.
+   */
+  #newestWhole(): string {
+    const newest = this.#sentences.at(-1);
+    if (newest === undefined || newest.ordinal < this.#cursor.ordinal) return "";
+    const text = newest.text.trim();
+    const heard = words(text).map((word) => word.text);
+    if (heard.length === 0 || this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) return "";
+    return text;
   }
 
   /** Move the cursor past the live reading of `said`, if one starts at or after it. */
   #align(said: readonly string[], lastOrdinal: number): boolean {
+    let passedOver = false;
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal || sentence.ordinal > lastOrdinal) continue;
       const from = sentence.ordinal === this.#cursor.ordinal ? this.#cursor.offset : 0;
       const heard = words(sentence.text, from);
       const covered = coveredWords(said, heard.map((word) => word.text));
-      if (covered === 0) continue;
+      if (covered === 0) {
+        if (heard.length > 0) passedOver = true;
+        continue;
+      }
       this.#cursor = { ordinal: sentence.ordinal, offset: heard[covered - 1]!.end };
-      this.#unclear = false;
+      // Passing over an unmatched live sentence means this final may be that sentence's, read too differently to
+      // match, and the one it did match only looks like it: where the cursor now stands is not known for certain.
+      this.#unclear = passedOver;
       return true;
     }
     return false;
