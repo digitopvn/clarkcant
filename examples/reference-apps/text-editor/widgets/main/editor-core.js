@@ -314,7 +314,7 @@ export const HOST_SECRET_PATTERNS = Object.freeze([
   /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g,
   /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g,
   /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
-  /\bAuthorization["']?\s*:\s*["']?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi,
+  /\bAuthorization["'`]?\]?\s*[:=]\s*["'`]?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi,
   /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/:@]+:(?!\$\{|<|\{\{|\*+@)[^\s/@]+@/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g,
   /\b(?:sk|pk|rk|ghp|gho|npm|xox[baprs]|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi,
@@ -324,7 +324,7 @@ export const HOST_SECRET_PATTERNS = Object.freeze([
   /\b[A-Fa-f0-9]{32,}\b/g,
   /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
   /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g,
-  /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g,
+  /\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g,
   /\b(?:\+?\d[\s-]?){9,}\b/g,
 ]);
 

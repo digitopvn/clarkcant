@@ -24,9 +24,10 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   { label: "google-api-key", pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
   { label: "sendgrid-key", pattern: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
   // An HTTP Basic header's value, which is a user and password in base64. Only after the header name: "Basic" alone is a
-  // word in ordinary prose. The name and its value may each be quoted, so a header written as a key and its value
-  // (`{"Authorization": "Basic …"}`, `authorization: 'Basic …'`) is the same header.
-  { label: "basic-auth", pattern: /\bAuthorization["']?\s*:\s*["']?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi },
+  // word in ordinary prose. The name and its value may each be quoted, in any of the three quotes, and the header may be
+  // a key and its value or an assignment to one (`{"Authorization": "Basic …"}`, `authorization: \`Basic …\``,
+  // `headers["Authorization"] = "Basic …"`): each is the same header.
+  { label: "basic-auth", pattern: /\bAuthorization["'`]?\]?\s*[:=]\s*["'`]?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/gi },
   // A password in a URL (`postgres://user:pass@host`), before the email shape reads `pass@host` as an address. A
   // template placeholder (`${password}`, `<password>`, `{{password}}`) or a masked `***` is not a password.
   // The scheme is at most 32 characters: unbounded, every word boundary in a long `a-a-a-…` run started a scan to the
@@ -55,9 +56,10 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
     pattern: /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
   },
   { label: "windows-path", pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g },
-  // Bounded at the lengths an address may have (RFC 5321: 64 for the local part, 255 for the domain), for the same
-  // reason as the scheme above: an unbounded local part is scanned to the end of the run from every boundary inside it.
-  { label: "email", pattern: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g },
+  // Bounded for the same reason as the scheme above: an unbounded local part is scanned to the end of the run from every
+  // boundary inside it. RFC 5321 allows 64 characters before the `@` and 255 after; the local part is given twice that,
+  // because a mail system that accepts a longer one still delivers to it, and the bound only has to be finite.
+  { label: "email", pattern: /\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]{1,252}\.[A-Za-z]{2,63}\b/g },
   { label: "phone", pattern: /\b(?:\+?\d[\s-]?){9,}\b/g },
 ];
 
