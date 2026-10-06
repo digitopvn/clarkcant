@@ -200,6 +200,139 @@ describe("the class of a text", () => {
   });
 });
 
+describe("the class of JSON carried as text", () => {
+  const PASSWORD_NAME = ["pass", "word"].join("");
+  const API_KEY_NAME = ["api", "key"].join("_");
+  const VALUE = ["hunter", "22x"].join("");
+
+  it("is secret for a quoted credential inside a JSON string, at every level of escaping", () => {
+    const note = `db ${PASSWORD_NAME}="${VALUE}"`;
+    const once = JSON.stringify({ note });
+    const twice = JSON.stringify({ result: once });
+    const thrice = JSON.stringify([twice]);
+    // The escaped quotes hide the shape from the text as written.
+    expect(once).toContain('\\"');
+    for (const text of [once, twice, thrice]) expect(dataClassOfText(text), text).toBe("secret");
+  });
+
+  it("is secret for a token an escape beside it hides from the text as written", () => {
+    // Written as JSON, the line break becomes `\n`, and `ngithub_pat_…` is not a token's start.
+    const text = JSON.stringify({ note: `token:\n${GITHUB_PAT}` });
+    expect(text).toContain("\\ngithub");
+    expect(dataClassOfText(text)).toBe("secret");
+  });
+
+  it("is secret for a credential field of a JSON object, nested or carried as a string", () => {
+    const config = { service: "billing", auth: { [API_KEY_NAME]: VALUE, region: "ap-southeast-1" } };
+    expect(dataClassOfText(JSON.stringify(config))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify(config, null, 2))).toBe("secret");
+    expect(dataClassOfText(`Kết quả: ${JSON.stringify({ body: JSON.stringify(config) })}`)).toBe("secret");
+    expect(dataClassOfText(JSON.stringify({ text: JSON.stringify({ auth: { accessToken: "x", access_token: VALUE } }) }))).toBe(
+      "secret",
+    );
+  });
+
+  it("is secret for a credential written across a name field and a value field", () => {
+    const fields = [{ name: "user", value: "duy" }, { value: VALUE, name: PASSWORD_NAME }];
+    expect(dataClassOfText(JSON.stringify({ fields }))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify({ body: JSON.stringify({ fields }) }))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify([{ key: API_KEY_NAME, value: VALUE }]))).toBe("secret");
+  });
+
+  it("reads every field that could name the value, not only the first", () => {
+    expect(dataClassOfText(JSON.stringify({ id: "f1", name: PASSWORD_NAME, value: VALUE }))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify({ key: "db", name: PASSWORD_NAME, value: VALUE }))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify({ field: "login", id: API_KEY_NAME, value: VALUE }))).toBe("secret");
+  });
+
+  it("reads field names in any case, and a parameter path as a name", () => {
+    // AWS SSM parameters and AWS tags write `Name`, `Key` and `Value`.
+    const parameter = { Name: `/prod/db/${PASSWORD_NAME}`, Type: "SecureString", Value: VALUE };
+    expect(dataClassOfText(JSON.stringify({ Parameters: [parameter] }))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify({ Tags: [{ Key: API_KEY_NAME, Value: VALUE }] }))).toBe("secret");
+    expect(dataClassOfText(JSON.stringify({ body: JSON.stringify({ NAME: PASSWORD_NAME, VALUE }) }))).toBe("secret");
+    // The same shapes naming anything else stay ordinary data.
+    const ordinary = {
+      Parameters: [{ Name: "/prod/db/host", Type: "String", Value: "db-01.internal.example" }],
+      Tags: [{ Key: "Environment", Value: "production-2026" }, { Key: "Owner", Value: "platform-team-7" }],
+    };
+    expect(dataClassOfText(JSON.stringify(ordinary))).toBe("internal");
+  });
+
+  it("never makes one shape out of two neighbouring assignments", () => {
+    const fields = [
+      { name: "header", value: "Authorization" },
+      { name: "scheme", value: ": Basic" },
+      { name: "note", value: PASSWORD_NAME },
+      { name: "sep", value: "=" },
+      { name: "phone", value: "0901" },
+      { name: "rest", value: "234567" },
+    ];
+    expect(dataClassOfText(JSON.stringify({ fields }))).toBe("internal");
+  });
+
+  it("does not take a whole masked display for a credential", () => {
+    const masked = ["••••••••", "••••1234", "1234••••", "****abcd", `${["sk", "live"].join("-")}-…a1b2`, `${"sk"}-…abcd`];
+    for (const value of masked) {
+      expect(dataClassOfText(`${PASSWORD_NAME} = "${value}"`), value).toBe("internal");
+      expect(dataClassOfText(JSON.stringify({ name: API_KEY_NAME, value })), value).toBe("internal");
+    }
+  });
+
+  it("still takes a value that only holds a mask character for a credential", () => {
+    const values = [
+      `${VALUE}…`,
+      ["Tr0ub4dor", "horse"].join("•"),
+      ["pa", "rd-and-more"].join("••••"),
+      `${["sk", "live"].join("_")}_…0c…`,
+      ["ab", "cdefgh12"].join("…"),
+    ];
+    for (const value of values) expect(dataClassOfText(`${PASSWORD_NAME} = "${value}"`), value).toBe("secret");
+    // A lone elision is no masked display either: as a URL's password, the one place a value that short is read, it is
+    // still a value.
+    expect(dataClassOfText(["postgres://app", "…@db.example.com/x"].join(":"))).toBe("secret");
+  });
+
+  it("keeps a credential secret beside an ellipsis or a bullet in prose and in a URL", () => {
+    expect(dataClassOfText(`the db ${PASSWORD_NAME}=${VALUE}… and then it failed`)).toBe("secret");
+    expect(dataClassOfText(`${PASSWORD_NAME}="${VALUE}•horse"`)).toBe("secret");
+    expect(dataClassOfText(`${["postgres://app", VALUE].join(":")}…@db.example.com/x`)).toBe("secret");
+  });
+
+  it("finds a personal shape behind escaping as well", () => {
+    expect(dataClassesOfText(JSON.stringify({ body: JSON.stringify({ owner: "duy@example.com" }) }))).toEqual([
+      "internal",
+      "confidential",
+    ]);
+  });
+
+  it("is not secret for ordinary JSON, placeholders, schemas or a field that names something else", () => {
+    const texts = [
+      JSON.stringify({ city: "Huế", celsius: 31, note: 'he said "the password is long enough" and left' }),
+      JSON.stringify({ body: JSON.stringify({ [PASSWORD_NAME]: "changeme", [API_KEY_NAME]: "your_api_key" }) }),
+      JSON.stringify({ body: JSON.stringify({ [PASSWORD_NAME]: "${DB_PASSWORD}" }) }),
+      JSON.stringify({ properties: { [PASSWORD_NAME]: { type: "string", minLength: 8 } } }),
+      JSON.stringify({ fields: [{ name: PASSWORD_NAME, type: "password", label: "Mật khẩu" }] }),
+      JSON.stringify({ fields: [{ name: PASSWORD_NAME, value: "" }, { name: PASSWORD_NAME, value: "example" }] }),
+      JSON.stringify({ fields: [{ name: "reset password", value: "Submitted" }, { name: "city", value: "Huế-2026-x" }] }),
+      JSON.stringify({ path: "C:\\Program Files\\node", commit: "4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4f9a8b7c" }),
+      "a backslash \\ on its own, and \\u0041 written out",
+    ];
+    for (const text of texts) expect(dataClassOfText(text), text).toBe("internal");
+  });
+
+  it("stays linear on a large result", () => {
+    // Sized so that one quadratic step over its rows, escapes or unclosed braces would take minutes, not milliseconds.
+    const rows = Array.from({ length: 4_000 }, (_, index) => ({ name: `row_${String(index)}`, value: `v${String(index)}` }));
+    const large = JSON.stringify({ body: JSON.stringify({ rows, note: "\\".repeat(10_000) + "{".repeat(10_000) }) });
+    expect(large.length).toBeGreaterThan(200_000);
+    const started = performance.now();
+    expect(dataClassOfText(large)).toBe("internal");
+    expect(dataClassOfText(`${large}${JSON.stringify({ name: PASSWORD_NAME, value: VALUE })}`)).toBe("secret");
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
+});
+
 describe("what a model profile may receive", () => {
   it("is everything but secret for a profile that says nothing", () => {
     expect(allowedDataClassesFor({})).toEqual(["public", "internal", "confidential"]);

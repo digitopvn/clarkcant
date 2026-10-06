@@ -154,16 +154,22 @@ const PLACEHOLDER_WORDS = new Set([
 
 /**
  * Whether a credential-shaped value is an obvious placeholder: `your_api_key`, `example`, `changeme`, `YOURTOKENHERE`,
- * `xxxxxxxx`, `********`. Conservative on purpose — a miss here costs a refused turn, a wrong hit costs a credential — so
- * only a value with no digit can be one, and only when it is a known stand-in word, addresses the reader about a generic
- * credential (`your_api_key`, `insert_your_token_here`, `replace_password`), ends in
+ * `xxxxxxxx`, `********`, `••••••••`, `sk-…abcd`. Conservative on purpose — a miss here costs a refused turn, a wrong
+ * hit costs a credential — so a value is one only when the whole of it is a masked display (see `MASKED_VALUE`), or has
+ * no digit and is a known stand-in word, addresses the reader about a generic credential (`your_api_key`, `insert_your_token_here`, `replace_password`), ends in
  * `<key|token|secret|password|value>here`, or is at least four of one repeated mask character. A value that merely
  * starts with `your` (`YourMomsMaidenNameIsSecret`) is a value.
  */
+// A credential as an interface shows it: optional issued-style prefix, then >=4 mask bullets with <=4 visible
+// characters on one side, or one elision followed by 2-4 visible characters. A trailing ellipsis never qualifies, so
+// `hunter22x…` cut short in prose, or a password that merely holds a `•`, is still a value.
+const MASKED_VALUE = /^(?:[A-Za-z]{2,4}(?:[-_][A-Za-z]{2,6})?[-_])?(?:[•*]{4,}[A-Za-z0-9]{0,4}|[A-Za-z0-9]{0,4}[•*]{4,}|…[A-Za-z0-9]{2,4})$/;
+
 function isPlaceholderValue(raw: string): boolean {
   const value = raw.trim().replace(/^["']|["']$/g, "");
   if (value === "") return true;
   if (/^(.)\1{3,}$/.test(value) && /^[x*.#-]$/i.test(value[0] ?? "")) return true;
+  if (MASKED_VALUE.test(value)) return true;
   if (/\d/.test(value)) return false;
   const word = value.toLowerCase().replace(/[-_. ]/g, "");
   if (PLACEHOLDER_WORDS.has(word)) return true;
@@ -220,7 +226,24 @@ export function dataClassOfText(text: string): DataClass {
  */
 export function dataClassesOfText(text: string): readonly DataClass[] {
   const found = new Set<DataClass>(["internal"]);
+  const views = jsonViewsOf(text);
+  for (const view of views) {
+    classifyShapes(view, found);
+    if (found.has("confidential") && found.has("secret")) break;
+  }
+  // An assignment read from a name field and a value field is new only as an assignment: the value itself, and every
+  // other shape, was already read in the view it came from.
+  if (!found.has("secret")) {
+    const assignments = namedFieldAssignmentsOf(views);
+    if (assignments !== "") classifyShapes(assignments, found, "named-secret");
+  }
+  return DATA_CLASSES.filter((value) => found.has(value));
+}
+
+/** Adds to `found` the class of every personal and credential shape a text carries, or of the one shape named. */
+function classifyShapes(text: string, found: Set<DataClass>, only?: string): void {
   for (const shape of SECRET_SHAPES) {
+    if (only !== undefined && shape.label !== only) continue;
     const credential = CREDENTIAL_SHAPES.has(shape.label);
     const dataClass: DataClass | undefined = credential ? "secret" : PERSONAL_SHAPES.has(shape.label) ? "confidential" : undefined;
     if (dataClass === undefined || found.has(dataClass)) continue;
@@ -242,7 +265,112 @@ export function dataClassesOfText(text: string): readonly DataClass[] {
                 : matches.length > 0;
     if (hit) found.add(dataClass);
   }
-  return DATA_CLASSES.filter((value) => found.has(value));
+}
+
+/** How many levels of JSON string escaping are read through: a JSON text inside a JSON string inside a JSON string. */
+const JSON_ESCAPE_LEVELS = 3;
+
+/** What each one-character JSON escape stands for: a quote, a backslash, a slash, or a control character. */
+const JSON_ESCAPED: Readonly<Record<string, string>> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+const HEX4 = /^[0-9A-Fa-f]{4}$/;
+
+/**
+ * A text with one level of JSON string escaping taken off: `\"` is `"`, `\\` is `\`, `\n` a line break, `\u00e9` an
+ * `é`. A backslash that starts no escape is kept as written. One pass, from backslash to backslash, without a callback a
+ * match: a text of nothing but escapes is read as fast as any other.
+ */
+function unescapeJsonOnce(text: string): string {
+  let out = "";
+  let from = 0;
+  let at = text.indexOf("\\");
+  while (at !== -1 && at + 1 < text.length) {
+    const next = text[at + 1] ?? "";
+    let replacement = JSON_ESCAPED[next];
+    let length = 2;
+    if (replacement === undefined && next === "u") {
+      const unit = text.slice(at + 2, at + 6);
+      if (HEX4.test(unit)) {
+        replacement = String.fromCharCode(Number.parseInt(unit, 16));
+        length = 6;
+      }
+    }
+    if (replacement === undefined) {
+      at = text.indexOf("\\", at + 1);
+      continue;
+    }
+    out += text.slice(from, at) + replacement;
+    from = at + length;
+    at = text.indexOf("\\", from);
+  }
+  return from === 0 ? text : out + text.slice(from);
+}
+
+/**
+ * The text as written, and as it reads once each level of JSON string escaping is taken off it.
+ *
+ * A tool that answers with JSON in its text escapes every string in it, so `password="…"` inside a value arrives as
+ * `password=\"…\"`, and a JSON document carried as a string arrives with its own quotes escaped; the shapes are written
+ * for the text a person reads. Each view is only read in addition to the text, so it can add a class and never take one
+ * away. Linear: each level is one pass over the whole text, never a cut of it. The first level is taken when the text
+ * has any backslash, because `\n` before a token hides its word boundary; a deeper one only while an escaped quote is
+ * left, which is what a JSON string inside a JSON string leaves behind.
+ *
+ * Every shape is read on every view. Even a token that holds no escapable character can be hidden by an escape beside
+ * it (`\nghp_…` reads as the word `nghp_…`), so no shape is skipped on a derived view.
+ */
+function jsonViewsOf(text: string): string[] {
+  const views = [text];
+  let current = text;
+  for (let level = 0; level < JSON_ESCAPE_LEVELS && current.includes(level === 0 ? "\\" : '\\"'); level += 1) {
+    const next = unescapeJsonOnce(current);
+    if (next === current) break;
+    views.push(next);
+    current = next;
+  }
+  return views;
+}
+
+/**
+ * A credential written across two fields of one object, `{"name": "password", "value": "…"}`, as the `name="value"`
+ * it stands for, so the same named-secret shape decides it: every such assignment in the views, one a line, each once
+ * though the same object is unescaped in several views; `""` for none.
+ *
+ * Every line is `name="…"` ending in its closing quote, and the name starts with a letter or `/`. The named-secret
+ * shape runs from a name to its `[:=]`, which comes before that line's opening quote, and its value stops at a quote,
+ * so a line and the next never make one match together.
+ */
+function namedFieldAssignmentsOf(views: readonly string[]): string {
+  const pairs = new Set<string>();
+  for (const view of views) namedFieldPairsOf(view, pairs);
+  return [...pairs].join("\n");
+}
+
+/** A JSON object with no object inside it: where a field's name and its value sit side by side. */
+const FLAT_JSON_OBJECT = /\{[^{}]*\}/g;
+/**
+ * A field naming what a sibling `value` field holds: an identifier, or a parameter path such as AWS SSM's
+ * `/prod/db/password`. Field names are read in any case, as AWS writes `Name`, `Key` and `Value`.
+ */
+const NAME_FIELD = /"(?:name|key|field|id)"\s*:\s*"([A-Za-z/][\w./-]*)"/gi;
+/** The field holding the value a sibling field names. */
+const VALUE_FIELD = /"value"\s*:\s*"((?:[^"\\]|\\.)*)"/i;
+/** A `value` field written unescaped: only a view holding one can hold a pair. */
+const UNESCAPED_VALUE_FIELD = /"value"/i;
+
+/**
+ * Adds to `pairs` every `{"name": "…", "value": "…"}` object in a text, as the `name="value"` assignment it stands
+ * for — once for each field that could be the name, so `{"id": "f1", "name": "password", "value": "…"}` is read as
+ * `password="…"` too. A name must be an identifier or a path, so a label such as `"reset password"` beside a button's
+ * text is not read as an assignment, and only the named-secret shape can make one a credential: a field that names
+ * anything else is ordinary data.
+ */
+function namedFieldPairsOf(text: string, pairs: Set<string>): void {
+  if (!UNESCAPED_VALUE_FIELD.test(text)) return;
+  for (const object of text.matchAll(FLAT_JSON_OBJECT)) {
+    const value = VALUE_FIELD.exec(object[0])?.[1];
+    if (value === undefined) continue;
+    for (const name of object[0].matchAll(NAME_FIELD)) pairs.add(`${name[1] ?? ""}="${value}"`);
+  }
 }
 
 /**

@@ -232,6 +232,17 @@ describe("a service tool that returns a structured result", () => {
     }
   });
 
+  it("is withheld when the credential is in JSON the service wrote as its text, or split across fields of its value", async () => {
+    await startHost();
+    const call = await agentSession();
+    for (const shape of ["json-text-secret", "json-text-fields", "structured-fields"]) {
+      const result = await call({ action: "invoke", ref: FORECAST, args: { city: "Huế", shape } });
+      expect(result.text, shape).toMatch(/^\[The result of this call carries secret data/);
+      expect(result, shape).not.toHaveProperty("structuredContent");
+      expect(JSON.stringify(result), shape).not.toContain(["hunter", "22x"].join(""));
+    }
+  });
+
   it("drops an output schema the node cannot use and keeps the tool working", async () => {
     await startHost();
     expect(getCapability({ db, nodeId: NODE }, COUNT, NODE)?.outputSchema).toBeUndefined();
