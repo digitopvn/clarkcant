@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_EXECUTION_POLICY_CONFIG,
   type FeedbackCard,
   type Instant,
   SLASH_COMMANDS,
@@ -13,6 +14,7 @@ import {
   isPersonOnlyRoute,
   parseSlashCommand,
 } from "@clarkcant/contracts";
+import { EXECUTION_POLICY_PREFERENCE_KEY, writeRegisteredPreference } from "@clarkcant/core";
 import { messagesSince } from "@clarkcant/storage";
 
 import { reportArgument } from "../src/application/slash-commands.ts";
@@ -23,7 +25,8 @@ import { createFakeGithub, type FakeGithub } from "../src/test-support/fake-gith
 
 /**
  * Every way of reporting reaches the one report service: `/report`, the composer's routes, and `report_feedback` for a
- * sentence or voice. Each is proven here to end in the same truthful result card, against an in-process GitHub.
+ * sentence or voice. Clark's ways prepare and show; only the person's press on the publish route files, and each ends
+ * in the same truthful result card, against an in-process GitHub.
  */
 
 const AT = "2026-10-06T09:00:00.000Z" as Instant;
@@ -93,17 +96,26 @@ describe("/report", () => {
     expect(github.writes()).toHaveLength(0);
   });
 
-  it("files a bug from its words and answers with the issue it was read back as", async () => {
+  it("prepares a bug from its words and shows the exact issue, filing it only on the person's press", async () => {
     const response = await call("POST", `/conversations/${conversationId}/messages`, { text: "/report bug the orb freezes after waking from sleep" });
     expect(response.status).toBe(200);
 
-    const card = feedbackCards().at(-1);
-    expect(card?.stage).toBe("result");
-    expect(card?.publication?.status).toBe("published");
-    expect(card?.eligibility).toMatchObject({ eligible: false, code: "handling-unavailable" });
+    const draft = feedbackCards().at(-1);
+    expect(draft?.stage).toBe("compose");
+    expect(draft?.title).toBe("bug: the orb freezes after waking from sleep");
+    expect(draft?.preview?.body).toContain("Not known yet.");
+    expect(github.writes()).toHaveLength(0);
+
+    const pressed = await call("POST", `/feedback/reports/${draft?.reportId ?? ""}/publish`, { conversationId, answers: draft?.cardId });
+    expect(pressed.status).toBe(200);
+    const result = feedbackCards().at(-1);
+    expect(result?.stage).toBe("result");
+    expect(result?.answers).toBe(draft?.cardId);
+    expect(result?.publication?.status).toBe("published");
+    expect(result?.eligibility).toMatchObject({ eligible: false, code: "handling-unavailable" });
     const [issue] = [...github.issues.values()];
     expect(issue?.title).toBe("bug: the orb freezes after waking from sleep");
-    expect(issue?.body).toContain("Not known yet.");
+    expect(issue?.body).toBe(draft?.preview?.body);
   });
 });
 
@@ -127,12 +139,52 @@ describe("the report routes", () => {
     expect(feedbackCards().at(-1)?.publication?.status).toBe("published");
   });
 
+  it("checks on a report without sending it, and has nothing to check on one never sent", async () => {
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const prepared = await call("POST", "/feedback/reports", { request: { kind: "bug", description: "Dock icon bounces forever", source: "composer" }, conversationId });
+    const { draft } = prepared.body as { draft: { reportId: string } };
+
+    const never = await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId, intent: "check" });
+    expect(never.status).toBe(409);
+    expect(github.writes()).toHaveLength(0);
+
+    const sent = await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId });
+    expect((sent.body as { publication: { status: string } }).publication.status).toBe("unknown");
+    const checked = await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId, intent: "check" });
+    expect((checked.body as { publication: { status: string } }).publication.status).toBe("unknown");
+    expect(github.writes()).toHaveLength(1);
+  });
+
+  it("lets the execution policy refuse the person's press, and says so on the card", async () => {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, prohibition: "all" },
+        source: "user",
+      },
+    );
+    if (!written.ok) throw new Error(written.message);
+    const prepared = await call("POST", "/feedback/reports", { request: { kind: "bug", description: "Clipboard paste loses images", source: "composer" }, conversationId });
+    const { draft } = prepared.body as { draft: { reportId: string } };
+
+    const pressed = await call("POST", `/feedback/reports/${draft.reportId}/publish`, { conversationId });
+
+    expect(pressed.status).toBe(200);
+    expect(feedbackCards().at(-1)?.publication?.status).toBe("refused");
+    expect(github.writes()).toHaveLength(0);
+  });
+
   it("refuses a report that is not valid, and one that does not exist", async () => {
     const invalid = await call("POST", "/feedback/reports", { request: { kind: "bug", description: "", source: "composer" } });
     expect(invalid.status).toBe(400);
 
     const missing = await call("POST", "/feedback/reports/rpt_missing/publish", { conversationId });
     expect(missing.status).toBe(404);
+
+    const unknownIntent = await call("POST", "/feedback/reports/rpt_missing/publish", { conversationId, intent: "approve" });
+    expect(unknownIntent.status).toBe(400);
   });
 
   it("keeps publishing to the person: a machine surface cannot file a report", () => {
@@ -152,26 +204,39 @@ describe("report_feedback", () => {
     return await execute(params);
   }
 
-  it("files from voice through the same service, and records that it came by voice", async () => {
+  it("prepares from voice through the same service and shows it; the person's press files it, marked as voice", async () => {
     const result = await run({ kind: "bug", description: "Clark stops listening after a long pause" }, "voice");
 
     const card = feedbackCardSchema.parse(result.hostCard);
-    expect(card.publication?.status).toBe("published");
+    expect(card.stage).toBe("compose");
+    expect(card.preview?.body).toContain("_Filed from ClarkCant (voice)._");
+    expect(result.text).toContain("Do not say it was filed");
+    expect(github.writes()).toHaveLength(0);
+
+    await call("POST", `/feedback/reports/${card.reportId ?? ""}/publish`, { conversationId, answers: card.cardId });
     const [issue] = [...github.issues.values()];
-    expect(issue?.body).toContain("_Filed from ClarkCant (voice)._");
+    expect(issue?.body).toBe(card.preview?.body);
   });
 
-  it("puts the composer in the conversation on compose, and files nothing", async () => {
-    const result = await run({ action: "compose", kind: "feature", description: "Export a conversation as Markdown" });
+  it("never files, even when a call still asks it to, and says so", async () => {
+    const result = await run({ action: "file", kind: "feature", description: "Export a conversation as Markdown" });
 
     expect(feedbackCardSchema.parse(result.hostCard).stage).toBe("compose");
+    expect(result.text).toContain("no longer files reports");
     expect(github.writes()).toHaveLength(0);
   });
 
-  it("refuses a report that is not valid, and says nothing was filed", async () => {
+  it("offers no way to file in its contract", () => {
+    const parameters = tool().parameters as { properties: Record<string, unknown> };
+
+    expect(parameters.properties).not.toHaveProperty("action");
+    expect(tool().description).toContain("It does not file anything");
+  });
+
+  it("refuses a report that is not valid, and says nothing was prepared or filed", async () => {
     const result = await run({ kind: "complaint", description: "x" });
 
-    expect(result.text).toContain("Nothing was filed");
+    expect(result.text).toContain("Nothing was prepared or filed");
     expect(github.writes()).toHaveLength(0);
   });
 });

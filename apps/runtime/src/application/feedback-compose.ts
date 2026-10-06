@@ -25,25 +25,52 @@ import type { GithubIssue } from "./feedback-github.ts";
 
 type Locale = "vi" | "en";
 
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** Text with any half of a surrogate pair replaced, so it encodes (`encodeURIComponent` throws on one). */
+export function wellFormed(text: string): string {
+  return text.replace(LONE_SURROGATE, "\uFFFD");
+}
+
+/** At most `max` UTF-16 units of `text`, never ending inside a surrogate pair. */
+export function cutText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * Stop a handle in shared text from notifying anyone: a word joiner after `@` keeps `@name` readable while GitHub no
+ * longer reads it as a mention. An e-mail address (a letter before the `@`) is left as it is.
+ */
+export function neutraliseMentions(text: string): string {
+  return text.replace(/(^|[^\p{L}\p{N}_`/])@(?=[\p{L}\p{N}])/gu, "$1@\u2060");
+}
+
 /**
  * Make text safe to leave the machine: the shared secret redaction (`redactSecrets`, the same patterns every other
- * outbound path uses), then the home directory, which no pattern can know, replaced by `~`.
+ * outbound path uses), then the home directory, which no pattern can know, replaced by `~` — compared without case on
+ * Windows, whose paths are — and handles neutralised so a report pings nobody.
  */
-export function scrubOutbound(text: string, homeDirectory: string | undefined): string {
+export function scrubOutbound(text: string, homeDirectory: string | undefined, platform: NodeJS.Platform = process.platform): string {
   let clean = redactSecrets(text);
   if (homeDirectory !== undefined && homeDirectory.length > 3) {
     for (const form of new Set([homeDirectory, homeDirectory.replace(/\\/gu, "/"), homeDirectory.replace(/\//gu, "\\")])) {
-      clean = clean.split(form).join("~");
+      clean = clean.replace(new RegExp(escapeRegExp(form), platform === "win32" ? "giu" : "gu"), "~");
     }
   }
-  return clean;
+  return neutraliseMentions(clean);
 }
 
 /** Text cut to `max` characters on a word where one is near, with an ellipsis when anything was cut. */
 export function excerpt(text: string, max: number): string {
   const single = text.replace(/\s+/gu, " ").trim();
   if (single.length <= max) return single;
-  const cut = single.slice(0, max - 1);
+  const cut = cutText(single, max - 1);
   const space = cut.lastIndexOf(" ");
   return `${space > max * 0.6 ? cut.slice(0, space) : cut}…`;
 }
@@ -85,57 +112,98 @@ export function diagnosticLines(diagnostics: SafeDiagnostics | undefined, locale
 /**
  * The product's invariants a request can run into, by what it asks for. Each rule names the invariant it touches and
  * whether meeting it is a constraint on the implementation or a conflict with the product itself. Matched in English and
- * Vietnamese, with and without diacritics.
+ * Vietnamese, with and without diacritics. Word edges are Unicode-aware: `\b` only knows ASCII letters, so it never
+ * sees the edge of "ẩn".
  */
 interface PhilosophyRule {
   pattern: RegExp;
   verdict: Exclude<PhilosophyVerdict, "aligned">;
   invariant: string;
   note: string;
+  vi: { invariant: string; note: string };
 }
+
+/** A pattern whose `<` and `>` are Unicode word edges. */
+function edged(source: string): RegExp {
+  return new RegExp(source.replaceAll("<", "(?<![\\p{L}\\p{N}_])").replaceAll(">", "(?![\\p{L}\\p{N}_])"), "iu");
+}
+
+const SECRET = String.raw`(?:secrets?|api[- ]?keys?|credentials?|cookies?|raw ipc|(?:access |auth |oauth |github |api )?tokens?(?! (?:usage|count|counts|cost|costs|limit|limits|budget|spend|per)>)|m[aậ]t kh[aẩ]u|kh[oó]a api)`;
+const SURFACE = String.raw`(?:widgets?|extensions?|plugins?|ti[eệ]n [ií]ch(?: m[oở] r[oộ]ng)?)`;
+const HAND_OVER = String.raw`(?:give|gives|giving|pass|passes|passing|send|sends|expose|exposes|exposing|hand|hands|share|shares|access|accesses|read|reads|receive|receives|get|gets|inject|injects|c[aấ]p|đ[uư]a|truy[eề]n|l[oộ]|chia s[eẻ]|nh[aậ]n|đ[oọ]c|truy c[aậ]p|l[aấ]y)`;
 
 const PHILOSOPHY_RULES: readonly PhilosophyRule[] = [
   {
-    pattern: /\b(sidebar|side bar|dashboard|thanh b[eê]n|b[aả]ng (?:đ|d)i[eề]u khi[eể]n|permanent (?:panel|picker)|session picker)\b/iu,
+    pattern: edged(String.raw`<(?:sidebar|side bar|dashboard|thanh b[eê]n|b[aả]ng (?:đ|d)i[eề]u khi[eể]n|permanent (?:panel|picker)|session picker)>`),
     verdict: "aligned-with-constraints",
     invariant: "Conversation stays the primary surface",
     note: "Deliver it as something summoned into the conversation (a slash command, a sentence or voice returning a widget), not as permanent chrome.",
+    vi: {
+      invariant: "Cuộc trò chuyện vẫn là bề mặt chính",
+      note: "Đưa nó vào cuộc trò chuyện khi được gọi (lệnh gạch chéo, một câu nói hoặc giọng nói trả về widget), không thành khung cố định.",
+    },
   },
   {
-    pattern: /\b(always (?:ask|confirm)|confirm(?:ation)? (?:before|for) every|h[oỏ]i (?:l[aạ]i )?tr[uư][oớ]c m[oọ]i|lu[oô]n h[oỏ]i)\b/iu,
+    pattern: edged(String.raw`<(?:always (?:ask|confirm)|confirm(?:ation)? (?:before|for) every|h[oỏ]i (?:l[aạ]i )?tr[uư][oớ]c m[oọ]i|lu[oô]n h[oỏ]i)>`),
     verdict: "aligned-with-constraints",
     invariant: "Autonomy by default; Jev/policy owns escalation",
     note: "Express it as an execution-policy preference the person sets, not a confirmation added in one feature.",
+    vi: {
+      invariant: "Tự chủ là mặc định; Jev/chính sách quyết định khi nào hỏi",
+      note: "Diễn đạt nó thành một tuỳ chọn chính sách thực thi do người dùng đặt, không thêm hộp xác nhận riêng cho một tính năng.",
+    },
   },
   {
-    pattern: /\b(remove|delete|hide|drop|b[oỏ]|x[oó]a|[aẩ]n) (?:the )?(?:animated )?orb\b/iu,
+    pattern: edged(String.raw`<(?:remove|delete|hide|drop|b[oỏ]|x[oó]a|[aẩ]n) (?:the |c[aá]i )?(?:animated )?orb>`),
     verdict: "material-conflict",
     invariant: "The animated Orb is ClarkCant's signature identity",
     note: "The Orb stays; personalization may change its palette, effects and motion, and reduced motion always wins.",
+    vi: {
+      invariant: "Orb động là bản sắc đặc trưng của ClarkCant",
+      note: "Orb được giữ lại; cá nhân hoá có thể đổi bảng màu, hiệu ứng và chuyển động, và chế độ giảm chuyển động luôn được ưu tiên.",
+    },
   },
   {
-    pattern: /\b(widgets?|extensions?|plugins?)\b[^.]{0,60}\b(secrets?|tokens?|api keys?|credentials?|cookies?|raw ipc)\b/iu,
+    pattern: edged(
+      String.raw`<${SURFACE}>[^.]{0,60}<${HAND_OVER}>[^.]{0,40}<${SECRET}|<${HAND_OVER}>[^.]{0,40}<${SURFACE}>[^.]{0,40}<${SECRET}`,
+    ),
     verdict: "material-conflict",
     invariant: "Untrusted widgets never receive raw secrets, privileged cookies or generic IPC",
     note: "Use a host-owned capability or a scoped, short-lived token through the broker instead of handing the secret over.",
+    vi: {
+      invariant: "Widget không tin cậy không bao giờ nhận bí mật thô, cookie đặc quyền hay IPC chung",
+      note: "Dùng một năng lực do host sở hữu, hoặc token ngắn hạn có phạm vi qua broker, thay vì trao bí mật.",
+    },
   },
   {
-    pattern: /\b(bypass|skip) (?:the )?(?:code )?review|push (?:directly )?to main|hot[- ]?patch(?:ing)? (?:itself|the running)|self[- ]?approv/iu,
+    pattern: edged(String.raw`<(?:bypass|skip) (?:the )?(?:code )?review>|<push (?:directly )?to main>|<hot[- ]?patch(?:ing)? (?:itself|the running)>|<self[- ]?approv`),
     verdict: "material-conflict",
     invariant: "No AI surface approves its own privileged action; code changes go through a pull request",
     note: "Self-improvement goes through an issue, a branch and a reviewed pull request, never a direct change to the running product.",
+    vi: {
+      invariant: "Không bề mặt AI nào tự duyệt hành động đặc quyền của chính nó; thay đổi mã đi qua pull request",
+      note: "Tự cải tiến đi qua issue, nhánh và pull request đã review, không bao giờ sửa thẳng sản phẩm đang chạy.",
+    },
   },
   {
-    pattern: /\b(only on|just for|mac[- ]?only|windows[- ]?only|linux[- ]?only|ch[iỉ] (?:tr[eê]n|cho) (?:mac|windows|linux))\b/iu,
+    pattern: edged(String.raw`<(?:only on|just for|mac[- ]?only|windows[- ]?only|linux[- ]?only|ch[iỉ] (?:tr[eê]n|cho) (?:mac|windows|linux))>`),
     verdict: "aligned-with-constraints",
     invariant: "Cross-platform by default",
     note: "Keep the logic portable and put the platform part behind an adapter, with explicit behaviour on the other systems.",
+    vi: {
+      invariant: "Đa nền tảng là mặc định",
+      note: "Giữ phần logic chạy được mọi nơi, đặt phần riêng của nền tảng sau một adapter, và nói rõ cách hoạt động trên các hệ khác.",
+    },
   },
   {
-    pattern: /\b(ignore|disable|b[oỏ] qua) (?:the )?reduced[- ]motion\b/iu,
+    pattern: edged(String.raw`<(?:ignore|disable|b[oỏ] qua|t[aắ]t) (?:the )?(?:reduced[- ]motion|gi[aả]m chuy[eể]n đ[oộ]ng)>`),
     verdict: "material-conflict",
     invariant: "Reduced motion always wins",
     note: "Motion can be personalized, but a person's reduced-motion setting is never overridden.",
+    vi: {
+      invariant: "Giảm chuyển động luôn được ưu tiên",
+      note: "Chuyển động có thể cá nhân hoá, nhưng thiết lập giảm chuyển động của người dùng không bao giờ bị ghi đè.",
+    },
   },
 ];
 
@@ -146,7 +214,8 @@ const VERDICT_RANK: Record<PhilosophyVerdict, number> = { aligned: 0, "aligned-w
  * stricter of the two stands, so a model can raise a concern but cannot talk one away.
  */
 export function classifyPhilosophy(text: string, model: FeedbackRequest["philosophy"]): PhilosophyFit {
-  const constraints = PHILOSOPHY_RULES.filter((rule) => rule.pattern.test(text));
+  const normalised = text.normalize("NFC");
+  const constraints = PHILOSOPHY_RULES.filter((rule) => rule.pattern.test(normalised));
   let verdict: PhilosophyVerdict = "aligned";
   for (const rule of constraints) if (VERDICT_RANK[rule.verdict] > VERDICT_RANK[verdict]) verdict = rule.verdict;
   if (model !== undefined && VERDICT_RANK[model.verdict] > VERDICT_RANK[verdict]) verdict = model.verdict;
@@ -155,6 +224,36 @@ export function classifyPhilosophy(text: string, model: FeedbackRequest["philoso
     constraints: constraints.map((rule) => ({ invariant: rule.invariant, note: rule.note })),
     ...(model?.note === undefined ? {} : { assessment: model.note }),
   };
+}
+
+/**
+ * A fit as a person reads it on the host's card, in their language. The issue on GitHub keeps the English the rules
+ * are written in; a constraint this build has no rule for (an older report's) is shown as it was written.
+ */
+export function localisePhilosophy(fit: PhilosophyFit, locale: Locale): PhilosophyFit {
+  if (locale === "en") return fit;
+  return {
+    ...fit,
+    constraints: fit.constraints.map((constraint) => {
+      const rule = PHILOSOPHY_RULES.find((entry) => entry.invariant === constraint.invariant);
+      return rule === undefined ? constraint : { invariant: rule.vi.invariant, note: rule.vi.note };
+    }),
+  };
+}
+
+const BASIS = {
+  fingerprint: { en: "same error fingerprint", vi: "cùng dấu vân lỗi" },
+  duplicate: { en: "nearly the same title and description", vi: "tiêu đề và mô tả gần như trùng" },
+  similar: { en: "similar title and description", vi: "tiêu đề và mô tả tương tự" },
+} as const;
+
+/** Related issues as a person reads them on the host's card, the basis of each match in their language. */
+export function localiseRelated(related: readonly FeedbackRelated[], locale: Locale): FeedbackRelated[] {
+  if (locale === "en") return [...related];
+  return related.map((entry) => {
+    const basis = Object.values(BASIS).find((known) => known.en === entry.basis);
+    return basis === undefined ? entry : { ...entry, basis: basis.vi };
+  });
 }
 
 const STOP_WORDS = new Set(
@@ -219,7 +318,7 @@ export function rankRelated(
     scored.set(issue.number, {
       issue: issueRef(issue),
       relation: duplicate ? "duplicate" : "related",
-      basis: fingerprintMatch ? "same error fingerprint" : score >= DUPLICATE_SCORE ? "nearly the same title and description" : "similar title and description",
+      basis: fingerprintMatch ? BASIS.fingerprint.en : score >= DUPLICATE_SCORE ? BASIS.duplicate.en : BASIS.similar.en,
       score: fingerprintMatch ? 1 : score,
     });
   }
@@ -231,12 +330,15 @@ export function rankRelated(
   };
 }
 
-/** The issue title: the person's own when they gave one, else the start of their description, prefixed by kind. */
+/**
+ * The issue title: the person's own when they gave one, else the start of their description, prefixed by kind. A
+ * sentence's capital is lowered to follow the prefix; an acronym's ("API key") is not.
+ */
 export function reportTitle(kind: FeedbackKind, request: Pick<FeedbackRequest, "title" | "description">): string {
   const prefix = kind === "bug" ? "bug: " : "feat: ";
   const own = excerpt(request.title ?? request.description, 120);
   const stripped = own.replace(/^(?:bug|feat|feature)\s*:\s*/iu, "");
-  return `${prefix}${stripped.charAt(0).toLowerCase()}${stripped.slice(1)}`;
+  return `${prefix}${stripped.replace(/^\p{Lu}(?=\p{Ll})/u, (first) => first.toLowerCase())}`;
 }
 
 function section(heading: string, body: string | undefined): string[] {
@@ -352,12 +454,16 @@ export function composeOccurrenceComment(input: {
   ].join("\n");
 }
 
-/** GitHub's own new-issue page, prefilled with the same redacted title and body, cut to fit a URL. */
+/**
+ * GitHub's own new-issue page, prefilled with the same redacted title and body, cut to fit a URL. Cut between
+ * characters, never inside one: half an emoji cannot be encoded into a URL at all.
+ */
 export function manualIssueUrl(repository: string, title: string, body: string, labels: readonly string[]): string {
   const base = `https://github.com/${repository}/issues/new`;
   const query = (text: string): string =>
-    `?title=${encodeURIComponent(title)}&labels=${encodeURIComponent(labels.join(","))}&body=${encodeURIComponent(text)}`;
-  let text = body;
-  while (text.length > 0 && (base + query(text)).length > 7800) text = text.slice(0, Math.floor(text.length * 0.8));
-  return base + query(text === body ? body : `${text}\n\n…`);
+    `?title=${encodeURIComponent(wellFormed(title))}&labels=${encodeURIComponent(labels.join(","))}&body=${encodeURIComponent(text)}`;
+  const full = wellFormed(body);
+  let text = full;
+  while (text.length > 0 && (base + query(text)).length > 7800) text = cutText(text, Math.floor(text.length * 0.8));
+  return base + query(text === full ? full : `${text}\n\n…`);
 }

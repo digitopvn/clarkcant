@@ -179,7 +179,7 @@ function commentFromRaw(raw: { id?: unknown; html_url?: unknown; body?: unknown 
 }
 
 /** Five minutes before `since`, so a write whose clock and GitHub's disagree a little is still in the scan. */
-function scanSince(since: Instant): string {
+export function scanSince(since: Instant): string {
   return new Date(Date.parse(since) - 5 * 60_000).toISOString();
 }
 

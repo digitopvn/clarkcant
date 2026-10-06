@@ -699,22 +699,29 @@ export interface BlockActions {
    */
   onFeedbackPreview?: (input: { cardId: string; request: FeedbackRequestInput }) => void;
   /**
-   * Create issue on the composer, or Check again / Try again on a result: the person's own decision to file, through
-   * the person-only publish route. With `reportId` it publishes that report (which first finds out what an earlier
-   * attempt came to); with `request` it prepares the report first, unless the preview already did for the same words.
+   * Create issue on the composer, Send again on a result (`intent: "send"`, the default), or Check again (`"check"`,
+   * which only finds out and never sends): the person's own press, through the person-only publish route. With
+   * `reportId` it acts on that report; with `request` it prepares the report first, unless the preview — or an earlier
+   * press that did not get through — already did for the same words.
    */
-  onFeedbackCreate?: (input: { cardId: string; request?: FeedbackRequestInput; reportId?: string }) => void;
+  onFeedbackCreate?: (input: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: "send" | "check" }) => void;
   /** What each feedback card's press came to, keyed by card id. */
   feedback?: Readonly<Record<string, FeedbackCardState>>;
+  /**
+   * Feedback cards a later result card answers. Messages are never rewritten, so a used composer or an older result
+   * still reads as pressable in storage; the answer in the transcript is what says otherwise, including after a reload.
+   */
+  answeredFeedbackCards?: readonly string[];
 }
 
 /** Where a press on a feedback card stands. The outcome itself arrives as a new result card in the transcript. */
 export type FeedbackCardState =
   | { status: "preparing" }
   | { status: "prepared"; requestKey: string; draft: FeedbackDraft; diagnostics: DiagnosticLine[] }
-  | { status: "publishing" }
+  | { status: "publishing"; intent: "send" | "check" }
   | { status: "done"; publication: FeedbackPublication }
-  | { status: "failed"; message: string };
+  /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
+  | { status: "failed"; message: string; reportId?: string; requestKey?: string };
 
 /** What one press on a command card came to. */
 export type CommandActionState =

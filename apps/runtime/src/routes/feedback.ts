@@ -1,7 +1,13 @@
 import { type Instant, feedbackPrepareRequestSchema, feedbackPublishRequestSchema, feedbackReportIdSchema } from "@clarkcant/contracts";
 import { getConversation, getFeedbackReport } from "@clarkcant/storage";
 
-import { type PublishOptions, prepareFeedback, publishAndDescribe } from "../application/product-feedback.ts";
+import {
+  type FeedbackServices,
+  type PublishOptions,
+  prepareFeedback,
+  publishAndDescribe,
+  reconcileUnsettledFeedback,
+} from "../application/product-feedback.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { appendHostReply } from "./conversations.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -15,12 +21,14 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *       safe diagnostics in the person's words.
  *   GET /feedback/reports/:reportId
  *       the report as it stands: `{ draft, status, publication? }`.
- *   POST /feedback/reports/:reportId/publish { conversationId }
- *       file it — or, for one sent before without a trustworthy answer, find out by its marker what that came to —
- *       and write the result card into the conversation. Answers `{ publication, eligibility?, messageId, timeline }`.
+ *   POST /feedback/reports/:reportId/publish { conversationId, intent?: "send" | "check", answers? }
+ *       `send` (the default) files it, unless the execution policy refuses external writes; a report sent before without
+ *       a trustworthy answer is only looked for by its marker, never sent again from here. `check` only looks. Either
+ *       way the result card is written into the conversation. Answers `{ publication, eligibility?, messageId,
+ *       timeline }`.
  *
- * Publishing from here is the person's own Create issue, so it is person-only (`isPersonOnlyRoute`): an AI client or a
- * remote surface that wants a report filed asks Clark, whose `report_feedback` the execution policy decides.
+ * Publishing from here is the person's own press on the host's card, so it is person-only (`isPersonOnlyRoute`): Clark,
+ * an AI client or a remote surface can prepare a report and show it, and never file one.
  */
 export interface FeedbackRouteDeps {
   services: NodeServices;
@@ -76,17 +84,20 @@ export async function handleFeedbackRoutes(deps: FeedbackRouteDeps): Promise<Gat
     const body = readJson(request);
     if (!body.ok) return body.response;
     const parsed = feedbackPublishRequestSchema.safeParse(body.value);
-    if (!parsed.success) return fail(400, "INVALID_SCHEMA", "conversationId is required");
-    const { conversationId } = parsed.data;
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return fail(400, "INVALID_SCHEMA", `${issue?.path.join(".") || "request"}: ${issue?.message ?? "invalid"}`);
+    }
+    const { conversationId, intent, answers } = parsed.data;
     if (getConversation(services.runtime.db, conversationId) === undefined) {
       return fail(404, "CONVERSATION_NOT_FOUND", `no conversation ${conversationId}`);
     }
     const described = await publishAndDescribe(
       services,
-      { reportId: reportId.data, conversationId, authority: { kind: "person" }, at },
+      { reportId: reportId.data, conversationId, intent, ...(answers === undefined ? {} : { answers }), at },
       deps.publishOptions,
     );
-    if (!described.ok) return fail(described.status ?? 409, described.code ?? "REPORT_FAILED", described.text);
+    if (!described.ok) return fail(described.status, described.code, described.text);
     const appended = appendHostReply(services, {
       conversationId,
       blocks: [{ type: "text", format: "plain", content: described.text, streaming: false }, ...described.blocks],
@@ -101,4 +112,31 @@ export async function handleFeedbackRoutes(deps: FeedbackRouteDeps): Promise<Gat
   }
 
   return fail(404, "NOT_FOUND", `no feedback handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * At start: find out what every report the node stopped in the middle of sending — or left unknown — came to, by its
+ * marker and without sending anything, and say so in the report's conversation when that is news. A conversation since
+ * deleted takes its reports with it, so there is nowhere left to say it and nothing is written.
+ */
+export async function reconcileFeedbackAtStart(
+  services: FeedbackServices & Pick<NodeServices, "search">,
+  options: PublishOptions = {},
+): Promise<{ checked: number; announced: number }> {
+  const at = (): Instant => new Date().toISOString() as Instant;
+  return await reconcileUnsettledFeedback(
+    services,
+    {
+      at,
+      announce: (conversationId, text, blocks) => {
+        if (getConversation(services.runtime.db, conversationId) === undefined) return;
+        appendHostReply(services, {
+          conversationId,
+          blocks: [{ type: "text", format: "plain", content: text, streaming: false }, ...blocks],
+          at: at(),
+        });
+      },
+    },
+    options,
+  );
 }

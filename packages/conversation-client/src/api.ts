@@ -2665,8 +2665,16 @@ export class GatewayClient {
    * File a prepared report — the person's own Create issue — or find out what an earlier attempt came to. The result
    * card is written into the conversation and comes back in the timeline.
    */
-  async publishFeedback(reportId: string, conversationId: string): Promise<FeedbackPublishResponse & { timeline: Timeline }> {
-    const body = await this.#call<{ timeline: Timeline }>("POST", `/feedback/reports/${encodeURIComponent(reportId)}/publish`, { conversationId });
+  async publishFeedback(
+    reportId: string,
+    conversationId: string,
+    options: { intent?: "send" | "check"; answers?: string } = {},
+  ): Promise<FeedbackPublishResponse & { timeline: Timeline }> {
+    const body = await this.#call<{ timeline: Timeline }>("POST", `/feedback/reports/${encodeURIComponent(reportId)}/publish`, {
+      conversationId,
+      ...(options.intent === undefined ? {} : { intent: options.intent }),
+      ...(options.answers === undefined ? {} : { answers: options.answers }),
+    });
     return { ...feedbackPublishResponseSchema.parse(body), timeline: body.timeline };
   }
 

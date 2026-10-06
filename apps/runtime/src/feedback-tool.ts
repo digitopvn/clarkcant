@@ -1,15 +1,19 @@
-import { type FeedbackRequest, type Instant, type TurnOrigin, feedbackRequestSchema } from "@clarkcant/contracts";
+import { type FeedbackRequest, type Instant, feedbackRequestSchema } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
-import { type FeedbackServices, feedbackComposeCard, fileFeedback } from "./application/product-feedback.ts";
+import { type FeedbackServices, composeFeedback } from "./application/product-feedback.ts";
 
 /**
  * `report_feedback`: a bug report or a feature request about ClarkCant itself, from a sentence or from voice (#510).
  *
  * The same service `/report` and the Feedback Composer reach (`application/product-feedback.ts`), so the model only
- * says what the person said, section by section. Diagnostics, redaction, the repository, duplicates, the publish and its
- * outcome are the host's: the model cannot add a diagnostic, aim a report elsewhere, or claim it was filed. Filing is an
- * external write the execution policy decides, like any other.
+ * says what the person said, section by section. Diagnostics, redaction, the repository and duplicates are the host's:
+ * the model cannot add a diagnostic, aim a report elsewhere, or claim it was filed.
+ *
+ * The tool prepares and shows; it never files. Its answer is the host's composer card holding the exact redacted
+ * issue, and only the person's own Create issue on that card publishes it. Publishing conversation content is public and
+ * cannot be taken back, and a turn — possibly steered by text it read — must not approve its own external write.
+ * Earlier builds had a `file` action; it is gone, and a call that still asks for it is told so and gets the card.
  */
 
 export interface FeedbackToolDeps {
@@ -17,12 +21,8 @@ export interface FeedbackToolDeps {
   conversationId: string;
   /** Which surface the message came in on, read at call time: the tool list outlives any one message. */
   channel: () => "voice" | "chat";
-  /** Who asked for the turn, handed to the execution policy. Absent is the person. */
-  origin?: () => TurnOrigin | undefined;
   now?: () => Instant;
 }
-
-const ACTIONS = ["file", "compose"] as const;
 
 const sectionText = { type: "string", maxLength: 2000 } as const;
 
@@ -32,22 +32,21 @@ export function createFeedbackTool(input: FeedbackToolDeps): ToolDefinition {
     name: "report_feedback",
     label: "Báo lỗi / đề xuất",
     description:
-      "File a bug report or a feature request about ClarkCant itself on its GitHub repository, when the person asks to " +
-      "report a problem with Clark or wants Clark to have a capability. Use action compose to put the Feedback Composer " +
-      "in the conversation for the person to review and send; use file to prepare and send it now. Fill only what the " +
-      "person actually said: never invent reproduction steps, expected behaviour, frequency or impact — leave a field out " +
-      "and the issue says it is not known yet. Do not paste transcripts, prompts, files, logs or paths; the host adds " +
-      "safe diagnostics itself and redacts secrets. For a feature, keep the person's outcome and give your reading of its " +
-      "fit with ClarkCant's philosophy (aligned, aligned-with-constraints, material-conflict) — a conflict is still filed " +
-      "as asked. The host searches for duplicates and adds to an open duplicate instead of opening another. Filing follows " +
-      "the execution policy: it may run now, wait on an approval card only the person can approve, or be refused; the " +
-      "result says which, and says the issue exists only once GitHub was read back holding it.",
+      "Prepare a bug report or a feature request about ClarkCant itself for its GitHub repository, when the person asks to " +
+      "report a problem with Clark or wants Clark to have a capability. It does not file anything: it puts the exact " +
+      "redacted issue in the conversation as the host's card, and the report is filed only if the person reads it and " +
+      "presses Create issue. Fill only what the person actually said: never invent reproduction steps, expected " +
+      "behaviour, frequency or impact — leave a field out and the issue says it is not known yet. Do not paste " +
+      "transcripts, prompts, files, logs or paths; the host adds safe diagnostics itself and redacts secrets. For a " +
+      "feature, keep the person's outcome and give your reading of its fit with ClarkCant's philosophy (aligned, " +
+      "aligned-with-constraints, material-conflict) — a conflict is still prepared as asked. The host searches for " +
+      "duplicates and, when an open one exists, the card offers to add to it instead of opening another. Never say the " +
+      "report was filed: say it is ready for the person to check and send.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["kind", "description"],
       properties: {
-        action: { type: "string", enum: [...ACTIONS], description: "file (default) or compose." },
         kind: { type: "string", enum: ["bug", "feature"] },
         description: { type: "string", maxLength: 4000, description: "What the person said, in their words." },
         title: { type: "string", maxLength: 200, description: "A short title, only if the person's words suggest one." },
@@ -89,47 +88,26 @@ export function createFeedbackTool(input: FeedbackToolDeps): ToolDefinition {
         },
       },
     },
-    promptSnippet: "report_feedback — file a bug report or feature request about ClarkCant (only what the person said)",
+    promptSnippet: "report_feedback — prepare a bug report or feature request about ClarkCant for the person to check and send",
     execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
-      const action = params.action === undefined ? "file" : params.action;
-      if (action !== "file" && action !== "compose") return { text: `"${String(action)}" is not an action; use file or compose.` };
       const source = input.channel() === "voice" ? "voice" : "chat";
-      const { action: _action, ...fields } = params;
+      // `action` is no longer a parameter. A call that still sends one is not refused for it, and is told the truth.
+      const { action, ...fields } = params;
+      const askedToFile = action === "file";
       const parsed = feedbackRequestSchema.safeParse({ ...fields, source });
       if (!parsed.success) {
         const issue = parsed.error.issues[0];
-        return { text: `The report is not valid: ${issue?.path.join(".") || "report"}: ${issue?.message ?? "invalid"}. Nothing was filed.` };
+        return { text: `The report is not valid: ${issue?.path.join(".") || "report"}: ${issue?.message ?? "invalid"}. Nothing was prepared or filed.` };
       }
       const request: FeedbackRequest = parsed.data;
-      const services = input.services();
-      if (action === "compose") {
-        const card = feedbackComposeCard(services, { kind: request.kind, description: request.description, source, at: now });
-        return {
-          text: "The Feedback Composer is in the conversation. Nothing is filed until the person presses Create issue.",
-          hostCard: card as unknown as Record<string, unknown>,
-        };
-      }
-      const origin = input.origin?.();
-      const filed = await fileFeedback(services, {
-        request,
-        conversationId: input.conversationId,
-        authority: origin === undefined ? { kind: "policy" } : { kind: "policy", origin },
-        at: now,
-      });
-      if (!filed.ok) return { text: `${filed.text} Nothing was filed.` };
-      // The result card, and after it the host's approval card when the policy asks the person first.
-      const [card, ...rest] = filed.blocks;
-      const status = filed.publication.status;
-      const caution =
-        status === "published"
-          ? ""
-          : status === "approval-required"
-            ? " Do not say it was filed: it waits on the person's approval."
-            : " Do not say it was filed.";
+      const composed = await composeFeedback(input.services(), { request, conversationId: input.conversationId, at: now });
+      if (!composed.ok) return { text: `${composed.text} Nothing was prepared or filed.` };
+      const [card] = composed.blocks;
       return {
-        text: `${filed.text}${caution}`,
+        text:
+          `${composed.text} Do not say it was filed: it is filed only if the person presses Create issue on the card.` +
+          (askedToFile ? " (This tool no longer files reports itself; it prepared the report instead.)" : ""),
         ...(card === undefined ? {} : { hostCard: card as unknown as Record<string, unknown> }),
-        ...(rest.length === 0 ? {} : { hostBlocks: rest as unknown as Record<string, unknown>[] }),
       };
     },
   };

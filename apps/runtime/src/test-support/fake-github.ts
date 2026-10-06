@@ -8,6 +8,7 @@ import {
   type GithubIssue,
   type GithubFailureKind,
   type IssueActivity,
+  scanSince,
 } from "../application/feedback-github.ts";
 
 /**
@@ -18,7 +19,8 @@ import {
  * `https://github.com/<repository>` like the real ones, but nothing it holds exists anywhere else.
  *
  * Faults are scripted per operation, so a test can make a create time out after GitHub kept it (the case the marker
- * exists for), refuse it, or never reach it.
+ * exists for), refuse it, or never reach it. The marker lookups honour `since` as GitHub's lists do, with the same
+ * allowance the real client asks for, so a window that starts too late misses the report here as it would there.
  */
 
 export type FakeGithubOperation = "search" | "getIssue" | "createIssue" | "createComment" | "getComment" | "findIssue" | "findComment" | "activity";
@@ -33,7 +35,7 @@ export interface FakeGithubFault {
 }
 
 export interface FakeGithub extends FeedbackGithub {
-  issues: Map<number, GithubIssue & { comments: GithubComment[]; createdAt: string; activity: IssueActivity }>;
+  issues: Map<number, GithubIssue & { comments: Array<GithubComment & { createdAt: string }>; createdAt: string; activity: IssueActivity }>;
   calls: Array<{ operation: FakeGithubOperation; detail?: string }>;
   /** Whether a writer is available: `false` behaves like a node with no `github_token`. */
   writable: boolean;
@@ -132,7 +134,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
       let created: { id: number; url: string } | undefined;
       if (keep) {
         nextComment += 1;
-        const comment = { id: nextComment, url: `${issue.url}#issuecomment-${String(nextComment)}`, body };
+        const comment = { id: nextComment, url: `${issue.url}#issuecomment-${String(nextComment)}`, body, createdAt: now() };
         issue.comments.push(comment);
         created = { id: comment.id, url: comment.url };
       }
@@ -145,23 +147,25 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
       if (found !== undefined) raise(found);
       for (const issue of issues.values()) {
         const comment = issue.comments.find((entry) => entry.id === id);
-        if (comment !== undefined) return { ...comment };
+        if (comment !== undefined) return { id: comment.id, url: comment.url, body: comment.body };
       }
       return undefined;
     },
-    async findIssueWithMarker(marker) {
+    async findIssueWithMarker(marker, since) {
       calls.push({ operation: "findIssue", detail: marker });
       const found = fault("findIssue");
       if (found !== undefined) raise(found);
-      const issue = [...issues.values()].find((entry) => entry.body.includes(marker));
+      const from = Date.parse(scanSince(since));
+      const issue = [...issues.values()].find((entry) => Date.parse(entry.createdAt) >= from && entry.body.includes(marker));
       return issue === undefined ? undefined : view(issue);
     },
-    async findCommentWithMarker(issueNumber, marker) {
+    async findCommentWithMarker(issueNumber, marker, since) {
       calls.push({ operation: "findComment", detail: marker });
       const found = fault("findComment");
       if (found !== undefined) raise(found);
-      const comment = issues.get(issueNumber)?.comments.find((entry) => entry.body.includes(marker));
-      return comment === undefined ? undefined : { ...comment };
+      const from = Date.parse(scanSince(since));
+      const comment = issues.get(issueNumber)?.comments.find((entry) => Date.parse(entry.createdAt) >= from && entry.body.includes(marker));
+      return comment === undefined ? undefined : { id: comment.id, url: comment.url, body: comment.body };
     },
     async issueActivity(issueNumber) {
       calls.push({ operation: "activity", detail: String(issueNumber) });

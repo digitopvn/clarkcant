@@ -58,6 +58,17 @@ export function installRefusalState(
 }
 
 /**
+ * The report a feedback press for these words should act on, when an earlier press already has one: the preview's, or
+ * that of a press that did not get through — which the node may already have sent, so preparing a second report for
+ * the same words could file it twice. Different words are a different report.
+ */
+export function feedbackReportToReuse(previous: FeedbackCardState | undefined, requestKey: string): string | undefined {
+  if (previous?.status === "prepared" && previous.requestKey === requestKey) return previous.draft.reportId;
+  if (previous?.status === "failed" && previous.reportId !== undefined && previous.requestKey === requestKey) return previous.reportId;
+  return undefined;
+}
+
+/**
  * Every action a card in the transcript can take, as one object.
  *
  * A card is a pure function of the props it is given — asserted directly by its own test file —
@@ -531,28 +542,53 @@ export function useBlockActions({
   );
 
   const createFeedback = useCallback(
-    ({ cardId, request, reportId }: { cardId: string; request?: FeedbackRequestInput; reportId?: string }) => {
+    ({ cardId, request, reportId, intent = "send" }: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: "send" | "check" }) => {
       if (conversationId === undefined) return;
       const previous = feedbackRef.current[cardId];
-      settleFeedback(cardId, { status: "publishing" });
+      const requestKey = request === undefined ? undefined : JSON.stringify(request);
+      settleFeedback(cardId, { status: "publishing", intent });
+      // The report this press is about. A press that did not get through keeps its report, so pressing again for the
+      // same words acts on that one — which the node may already have sent — and never prepares a second.
+      let acting: string | undefined = reportId;
       const reportOf = async (): Promise<string> => {
         if (reportId !== undefined) return reportId;
-        if (request === undefined) throw new Error(t("commandCard.failed"));
-        if (previous?.status === "prepared" && previous.requestKey === JSON.stringify(request)) return previous.draft.reportId;
-        return (await client.prepareFeedback(request, conversationId)).draft.reportId;
+        if (request === undefined || requestKey === undefined) throw new Error(t("commandCard.failed"));
+        return feedbackReportToReuse(previous, requestKey) ?? (await client.prepareFeedback(request, conversationId)).draft.reportId;
       };
       void reportOf()
-        .then((id) => client.publishFeedback(id, conversationId))
+        .then((id) => {
+          acting = id;
+          return client.publishFeedback(id, conversationId, { intent, answers: cardId });
+        })
         .then(
           (result) => {
             applyTimeline(result.timeline);
             settleFeedback(cardId, { status: "done", publication: result.publication });
           },
-          (error: unknown) => failFeedback(cardId, error),
+          (error: unknown) =>
+            settleFeedback(cardId, {
+              status: "failed",
+              message: error instanceof Error ? error.message : t("commandCard.failed"),
+              ...(acting === undefined ? {} : { reportId: acting }),
+              ...(requestKey === undefined ? {} : { requestKey }),
+            }),
         );
     },
-    [applyTimeline, client, conversationId, failFeedback, settleFeedback, t],
+    [applyTimeline, client, conversationId, settleFeedback, t],
   );
+
+  /** Feedback cards a later result card answers: read from the transcript, which is never rewritten. */
+  const answeredFeedbackCards = useMemo(() => {
+    const answered = new Set<string>();
+    for (const message of timeline?.messages ?? []) {
+      for (const block of message.blocks) {
+        if (block.type !== "feedback-card") continue;
+        const answers = (block as { answers?: unknown }).answers;
+        if (typeof answers === "string") answered.add(answers);
+      }
+    }
+    return [...answered];
+  }, [timeline]);
 
   return useMemo<BlockActions>(
     () => ({
@@ -604,8 +640,10 @@ export function useBlockActions({
       onSignInCancel: cancelSignIn,
       ...(conversationId === undefined ? {} : { onFeedbackPreview: previewFeedback, onFeedbackCreate: createFeedback }),
       feedback,
+      answeredFeedbackCards,
     }),
     [
+      answeredFeedbackCards,
       conversationId,
       createFeedback,
       feedback,

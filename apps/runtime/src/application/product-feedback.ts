@@ -19,11 +19,10 @@ import {
   type MessageBlock,
   type PhilosophyFit,
   type SafeDiagnostics,
-  type TurnOrigin,
   advanceEffect,
   feedbackMarker,
 } from "@clarkcant/contracts";
-import { applyTaskEvent, decideExecution, readExecutionPolicy, recordEffectExecution, requestApproval } from "@clarkcant/core";
+import { applyTaskEvent, decideExecution, readExecutionPolicy, recordEffectExecution } from "@clarkcant/core";
 import {
   activeTaskGoalsMentioningIssue,
   appendEvent,
@@ -34,6 +33,7 @@ import {
   insertFeedbackReport,
   payloadDigest,
   transaction,
+  unsettledFeedbackReports,
   updateFeedbackReport,
   upsertEffect,
   type FeedbackReportRecord,
@@ -52,6 +52,8 @@ import {
   excerpt,
   issueRef,
   keywordsOf,
+  localisePhilosophy,
+  localiseRelated,
   manualIssueUrl,
   rankRelated,
   reportTitle,
@@ -81,8 +83,9 @@ import {
  *   3. **Eligibility.** Whether Clark may offer to handle the issue. Every check is real; this build's last answer is
  *      that handling is not available yet, because the backend it needs (#402, #508) does not exist.
  *
- * Who decides a publish: the person, when they press Create issue on the host's composer (a person-only route) or
- * approve the host's card; otherwise the execution policy, as for any external write.
+ * Who decides a publish: only the person, by pressing Create issue on the host's card (a person-only route), with the
+ * execution policy still able to refuse external writes. Clark, `/report bug …` and voice prepare and show; they never
+ * file, so nothing a model wrote is published before the person has read it.
  */
 
 export type FeedbackServices = Pick<NodeServices, "runtime" | "conductor" | "currentModel" | "feedbackGithub">;
@@ -91,8 +94,6 @@ type Locale = "vi" | "en";
 
 /** How long after a write with no answer an absent marker is trusted to mean GitHub never filed it. */
 export const FEEDBACK_RECONCILE_GRACE_MS = 2 * 60_000;
-/** How long the host's approval card for a report stays answerable. */
-const APPROVAL_TTL_MS = 15 * 60_000;
 const CAPABILITY_REF = "clark.feedback.publish";
 
 /** The node's GitHub for reports: the injected one (tests, the browser fixture) or the person's own. */
@@ -244,11 +245,15 @@ export async function prepareFeedback(
   return { ok: true, draft, diagnostics: diagnosticLines(diagnostics, localeOf(services, input.at)) };
 }
 
-/** Who decided this publish: the person (their Create issue, or their approval), or the execution policy for Clark. */
-export type PublishAuthority = { kind: "person" } | { kind: "policy"; origin?: TurnOrigin };
+/**
+ * What a press asks for. `send` files the report (or, while an earlier attempt's outcome is unknown, only finds out what
+ * it came to); `check` only finds out and never sends. Nothing else publishes: Clark prepares a report and shows it,
+ * and only the person's press on the host's card files it.
+ */
+export type PublishIntent = "send" | "check";
 
 export type PublishOutcome =
-  | { ok: true; publication: FeedbackPublication; record: FeedbackReportRecord; approvalCard?: MessageBlock }
+  | { ok: true; publication: FeedbackPublication; record: FeedbackReportRecord; previousStatus: FeedbackReportRecord["status"] }
   | { ok: false; status: 404 | 409; code: string; message: string };
 
 export interface PublishOptions {
@@ -264,7 +269,7 @@ function sleep(ms: number): Promise<void> {
   return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** What an approval for a report covers: exactly this title and body, to exactly this place. */
+/** What a publish of a report covers: exactly this title and body, to exactly this place. */
 export function feedbackPublishDigest(draft: FeedbackDraft): string {
   return payloadDigest(
     asJsonValue({
@@ -342,15 +347,19 @@ type MarkerLookup =
   | { kind: "absent" }
   | { kind: "lookup-failed"; reason: string };
 
-/** Find the report on GitHub by its marker: the new issue it opened, or its comment on the duplicate. */
-async function findByMarker(client: FeedbackGithubClient, draft: FeedbackDraft, since: Instant): Promise<MarkerLookup> {
+/**
+ * Find the report on GitHub by its marker: the new issue it opened, or its comment on the duplicate. `attemptedAt` is
+ * when the write was first handed to the ledger, which no later check moves, so the window always reaches back past
+ * the moment GitHub could have created it.
+ */
+async function findByMarker(client: FeedbackGithubClient, draft: FeedbackDraft, attemptedAt: Instant): Promise<MarkerLookup> {
   const marker = feedbackMarker(draft.reportId);
   try {
     if (draft.duplicateOf !== undefined) {
-      const comment = await client.findCommentWithMarker(draft.duplicateOf.number, marker, since);
+      const comment = await client.findCommentWithMarker(draft.duplicateOf.number, marker, attemptedAt);
       return comment === undefined ? { kind: "absent" } : { kind: "found", issue: draft.duplicateOf, commentUrl: comment.url };
     }
-    const issue = await client.findIssueWithMarker(marker, since);
+    const issue = await client.findIssueWithMarker(marker, attemptedAt);
     return issue === undefined ? { kind: "absent" } : { kind: "found", issue: issueRef(issue) };
   } catch (cause) {
     return { kind: "lookup-failed", reason: cause instanceof Error ? cause.message : String(cause) };
@@ -382,25 +391,91 @@ function published(record: FeedbackReportRecord, found: { issue: FeedbackIssueRe
   };
 }
 
+function settled(record: FeedbackReportRecord, previousStatus: FeedbackReportRecord["status"]): PublishOutcome {
+  return { ok: true, publication: record.publication as FeedbackPublication, record, previousStatus };
+}
+
 /**
- * Publish a prepared report, or find out what an earlier publish of it came to.
+ * Find out what an attempt whose answer never arrived came to, without sending anything.
  *
- * A report already published answers with what it is. One sent before without a trustworthy answer is looked for by
- * its marker first, and sent again only once GitHub's own list shows it absent well after the attempt — and never when
- * GitHub itself answered that it was filed.
+ * Found by its marker: published. GitHub unreadable, GitHub having answered that it filed it, or too little time since
+ * the attempt for an absence to mean anything: still unknown. Absent from GitHub's own list well after the attempt:
+ * it was never filed, which is `failed` and retryable — the person's Send again is then the first time it is filed.
+ * The time measured is the attempt's own, from the ledger, so checking again and again never moves it.
+ */
+async function reconcileAttempt(
+  services: FeedbackServices,
+  record: FeedbackReportRecord,
+  client: FeedbackGithubClient,
+  say: (vi: string, en: string) => string,
+  options: PublishOptions,
+): Promise<FeedbackReportRecord> {
+  const effect = record.effectId === undefined ? undefined : getEffect(services.runtime.db, record.effectId);
+  const attemptedAt = effect?.preparedAt ?? record.updatedAt;
+  const lookup = await findByMarker(client, record.draft, attemptedAt);
+  if (lookup.kind === "found") {
+    if (effect !== undefined) settleObserved(services, effect, "confirmed", `GitHub holds the report's marker in #${String(lookup.issue.number)}`);
+    return save(services, record, "published", published(record, lookup));
+  }
+  if (lookup.kind === "lookup-failed") {
+    return save(services, record, "unknown", {
+      status: "unknown",
+      reportId: record.reportId,
+      reason: say(
+        `Chưa kiểm tra được GitHub (${lookup.reason}). Báo cáo không được gửi lại cho tới khi biết chắc.`,
+        `GitHub could not be checked (${lookup.reason}). The report is not sent again until it is known.`,
+      ).slice(0, 600),
+    });
+  }
+  const settledFiled = effect?.state === "confirmed";
+  const tooSoon = Date.now() - Date.parse(attemptedAt) < (options.reconcileGraceMs ?? FEEDBACK_RECONCILE_GRACE_MS);
+  if (settledFiled || tooSoon) {
+    return save(services, record, "unknown", {
+      status: "unknown",
+      reportId: record.reportId,
+      reason: (settledFiled
+        ? say(
+            "GitHub đã trả lời là đã nhận, nhưng chưa tìm thấy báo cáo theo dấu của nó. Kiểm tra lại sau ít phút.",
+            "GitHub answered that it was filed, but the report cannot be found by its marker yet. Check again in a few minutes.",
+          )
+        : say(
+            "Chưa thấy báo cáo trên GitHub. Có thể GitHub vẫn đang xử lý; kiểm tra lại sau ít phút. Báo cáo không được gửi lại trước đó.",
+            "The report is not on GitHub yet. GitHub may still be processing it; check again in a few minutes. It is not sent again before then.",
+          )
+      ).slice(0, 600),
+    });
+  }
+  if (effect !== undefined) settleObserved(services, effect, "failed", "GitHub's list holds no issue or comment with the report's marker");
+  return save(services, record, "failed", {
+    status: "failed",
+    reportId: record.reportId,
+    reason: say(
+      "GitHub không có báo cáo này: lần gửi trước chưa tới nơi. Chưa có gì được tạo; Gửi lại sẽ gửi nó lần đầu.",
+      "GitHub does not hold this report: the earlier attempt never arrived. Nothing was created; Send again files it for the first time.",
+    ).slice(0, 600),
+    retryable: true,
+  });
+}
+
+/**
+ * Publish a prepared report on the person's press, or find out what an earlier publish of it came to.
+ *
+ * The press is the person's decision, and the execution policy still has its say: a policy that refuses external
+ * writes, or prohibits effects, refuses this one too; one that would ask first is answered by the press itself. A
+ * report already published answers with what it is. One sent before without a trustworthy answer is only looked for,
+ * never sent again from here (`reconcileAttempt`).
  */
 export async function publishFeedback(
   services: FeedbackServices,
-  input: { reportId: string; conversationId: string; authority: PublishAuthority; at: () => Instant },
+  input: { reportId: string; conversationId: string; intent: PublishIntent; at: () => Instant },
   options: PublishOptions = {},
 ): Promise<PublishOutcome> {
   let record = getFeedbackReport(services.runtime.db, input.reportId);
   if (record === undefined || record.principalId !== services.runtime.identity.ownerPrincipalId) {
     return { ok: false, status: 404, code: "REPORT_NOT_FOUND", message: `no report ${input.reportId} on this node` };
   }
-  if (record.status === "published" && record.publication?.status === "published") {
-    return { ok: true, publication: record.publication, record };
-  }
+  const previousStatus = record.status;
+  if (record.status === "published" && record.publication?.status === "published") return settled(record, previousStatus);
   const github = feedbackGithubOf(services);
   const locale = localeOf(services, input.at);
   const say = sayIn(locale);
@@ -409,127 +484,61 @@ export async function publishFeedback(
     return { ok: false, status: 409, code: "WRONG_REPOSITORY", message: `reports go to ${FEEDBACK_REPOSITORY} only` };
   }
 
-  // An earlier attempt that never got a trustworthy answer: look before anything is sent again.
+  // An earlier attempt that never got a trustworthy answer: find out, and send nothing.
   if (record.status === "publishing" || record.status === "unknown") {
-    const effect = record.effectId === undefined ? undefined : getEffect(services.runtime.db, record.effectId);
-    const lookup = await findByMarker(github.reader(), draft, record.updatedAt);
-    if (lookup.kind === "found") {
-      if (effect !== undefined) settleObserved(services, effect, "confirmed", `GitHub holds the report's marker in #${String(lookup.issue.number)}`);
-      record = save(services, record, "published", published(record, lookup));
-      return { ok: true, publication: record.publication as FeedbackPublication, record };
-    }
-    if (lookup.kind === "lookup-failed") {
-      const publication: FeedbackPublication = {
-        status: "unknown",
-        reportId: record.reportId,
-        reason: say(
-          `Chưa kiểm tra được GitHub (${lookup.reason}). Báo cáo không được gửi lại cho tới khi biết chắc.`,
-          `GitHub could not be checked (${lookup.reason}). The report is not sent again until it is known.`,
-        ).slice(0, 600),
-      };
-      record = save(services, record, "unknown", publication);
-      return { ok: true, publication: record.publication ?? publication, record };
-    }
-    const effectState = effect?.state;
-    const settledFiled = effectState === "confirmed";
-    // Measured on the same clock the attempt was stamped with.
-    const tooSoon = Date.parse(ledgerNow()) - Date.parse(record.updatedAt) < (options.reconcileGraceMs ?? FEEDBACK_RECONCILE_GRACE_MS);
-    if (settledFiled || tooSoon) {
-      const publication: FeedbackPublication = {
-        status: "unknown",
-        reportId: record.reportId,
-        reason: (settledFiled
-          ? say(
-              "GitHub đã trả lời là đã nhận, nhưng chưa tìm thấy báo cáo theo dấu của nó. Kiểm tra lại sau ít phút.",
-              "GitHub answered that it was filed, but the report cannot be found by its marker yet. Check again in a few minutes.",
-            )
-          : say(
-              "Chưa thấy báo cáo trên GitHub. Có thể GitHub vẫn đang xử lý; kiểm tra lại sau ít phút, nó không được gửi lại trước đó.",
-              "The report is not on GitHub yet. GitHub may still be processing it; check again in a few minutes. It is not sent again before then.",
-            )
-        ).slice(0, 600),
-      };
-      record = save(services, record, "unknown", publication);
-      return { ok: true, publication: record.publication ?? publication, record };
-    }
-    // Absent from GitHub's own list well after the attempt: it was never filed, and sending it now is the first time.
-    if (effect !== undefined) settleObserved(services, effect, "failed", "GitHub's list holds no issue or comment with the report's marker");
+    return settled(await reconcileAttempt(services, record, github.reader(), say, options), previousStatus);
+  }
+  if (input.intent === "check") {
+    // Nothing was sent that could be looked for: the report stands as it is.
+    return record.publication === undefined
+      ? { ok: false, status: 409, code: "NOTHING_SENT", message: "this report has not been sent, so there is nothing on GitHub to look for" }
+      : settled(record, previousStatus);
   }
 
-  // Who decides. The person's Create issue or approval is the decision; Clark's request is the policy's.
+  // The person pressed; the execution policy decides whether a press may write to GitHub on this node.
   const operationDigest = feedbackPublishDigest(draft);
   const description = describeWrite(draft, locale);
-  if (input.authority.kind === "policy") {
-    const origin = input.authority.origin;
-    const execution = readExecutionPolicy({ db: services.runtime.db, now: input.at }, services.runtime.identity.ownerPrincipalId);
-    const decided = decideExecution({
-      policy: execution,
-      action: { kind: "effect", category: "external-write", operationDigest },
-      intent: origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin },
-    });
-    if (decided.kind === "deny") {
-      const publication: FeedbackPublication = { status: "refused", reportId: record.reportId, reason: decided.reason.slice(0, 600) };
-      record = save(services, record, "draft", publication);
-      return { ok: true, publication: record.publication ?? publication, record };
-    }
-    const coordination = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: input.at, newId: services.conductor.newId };
-    if (decided.kind === "ask") {
-      const approval = requestApproval(coordination, {
-        operationDigest,
-        operationDescription: description.slice(0, 2000),
-        effectCategory: "external-write",
-        ttlMs: APPROVAL_TTL_MS,
-      });
-      const publication: FeedbackPublication = { status: "approval-required", reportId: record.reportId, approvalId: approval.approvalId };
-      record = save(services, record, "draft", publication);
-      const approvalCard = {
-        type: "approval-card",
-        owner: "host",
-        approvalId: approval.approvalId,
-        operationDescription: approval.operationDescription,
-        operationDigest: approval.operationDigest,
-        payload: JSON.stringify({ kind: "feedback-publish", reportId: record.reportId }),
-        effectCategory: "external-write",
-        expiresAt: approval.expiresAt,
-        decider: approval.decider,
-        decision: approval.decision,
-        ...(origin === undefined ? {} : { origin }),
-      } as MessageBlock;
-      return { ok: true, publication: record.publication ?? publication, record, approvalCard };
-    }
-    recordEffectExecution(coordination, {
+  const execution = readExecutionPolicy({ db: services.runtime.db, now: input.at }, services.runtime.identity.ownerPrincipalId);
+  const asked = decideExecution({
+    policy: execution,
+    action: { kind: "effect", category: "external-write", operationDigest },
+    intent: { kind: "interactive" },
+  });
+  if (asked.kind === "deny") {
+    record = save(services, record, "draft", { status: "refused", reportId: record.reportId, reason: asked.reason.slice(0, 600) });
+    return settled(record, previousStatus);
+  }
+  // The question an "ask" policy would put is the one the person just answered by pressing on the host's card.
+  const decision = asked.kind === "ask" ? { kind: "execute" as const, reason: "the person pressed to file it on the host's card", audit: true } : asked;
+  recordEffectExecution(
+    { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: input.at, newId: services.conductor.newId },
+    {
       principalId: services.runtime.identity.ownerPrincipalId,
       mode: execution.mode,
-      decision: decided,
+      decision,
       category: "external-write",
       operationDigest,
       conversationId: input.conversationId,
-      description: `Clark: ${description}`,
-      ...(origin === undefined ? {} : { origin }),
-    });
-  }
+      description,
+    },
+  );
 
   const current = record;
   const attempt = github.withWriter((client) => sendAndReadBack(services, client, current, input.conversationId, description, options));
   if (!attempt.ok) {
     const body = draft.duplicateOf === undefined ? draft.body : (draft.occurrence ?? draft.body);
-    const publication: FeedbackPublication = {
+    record = save(services, record, "draft", {
       status: "needs-access",
       reportId: record.reportId,
       reason: say(
         `Chưa gửi được: ${attempt.reason}. Thêm token GitHub (secret “github_token”) để Clark gửi giúp, hoặc tự mở issue với nội dung đã chuẩn bị.`,
         `Not filed: ${attempt.reason}. Add a GitHub token (secret “github_token”) for Clark to file it, or open the issue yourself with the prepared text.`,
       ).slice(0, 600),
-      manualUrl:
-        draft.duplicateOf === undefined
-          ? manualIssueUrl(draft.repository, draft.title, body, draft.labels)
-          : draft.duplicateOf.url,
-    };
-    record = save(services, record, "draft", publication);
-    return { ok: true, publication: record.publication ?? publication, record };
+      manualUrl: draft.duplicateOf === undefined ? manualIssueUrl(draft.repository, draft.title, body, draft.labels) : draft.duplicateOf.url,
+    });
+    return settled(record, previousStatus);
   }
-  const sent = await attempt.result;
-  return { ok: true, publication: sent.publication as FeedbackPublication, record: sent };
+  return settled(await attempt.result, previousStatus);
 }
 
 /** The write itself, inside the token's one use: ledger first, then GitHub, then GitHub read back. */
@@ -562,6 +571,7 @@ async function sendAndReadBack(
       retryable: true,
     });
   }
+  const attemptedAt = opened.effect.preparedAt;
   let sending = save(services, record, "publishing", { status: "unknown", reportId: record.reportId, reason: "sending" }, opened.effect.effectId);
 
   let written: { issueNumber: number; commentId?: number };
@@ -588,7 +598,7 @@ async function sendAndReadBack(
       });
     }
     // Sent, and no answer to trust. Look once now; otherwise it is unknown and found again by its marker.
-    const lookup = await findByMarker(client, draft, sending.updatedAt);
+    const lookup = await findByMarker(client, draft, attemptedAt);
     if (lookup.kind === "found") {
       settleActionEffect(services, opened, { kind: "answered", evidence: `GitHub holds the report's marker in #${String(lookup.issue.number)}` });
       return save(services, sending, "published", published(sending, lookup));
@@ -749,7 +759,7 @@ export async function checkHandlingEligibility(
   );
 }
 
-/** The Feedback Composer, summoned into the conversation: kind, starting words, and exactly what would be shared. */
+/** The Feedback Composer, summoned blank into the conversation: kind, starting words, and exactly what would be shared. */
 export function feedbackComposeCard(
   services: FeedbackServices,
   input: { kind?: FeedbackKind; description?: string; source: FeedbackRequest["source"]; at: () => Instant },
@@ -769,12 +779,42 @@ export function feedbackComposeCard(
   };
 }
 
+/**
+ * A prepared report as the host's composer card: the exact redacted issue — or the comment on the open issue it
+ * duplicates — that Create issue would file, what goes with it, and what was found already filed. The card is the
+ * only way this report is filed: the person reads it and presses, or nothing is sent.
+ */
+export function feedbackDraftCard(services: FeedbackServices, input: { draft: FeedbackDraft; at: () => Instant }): FeedbackCard {
+  const { draft } = input;
+  const locale = localeOf(services, input.at);
+  return {
+    type: "feedback-card",
+    owner: "host",
+    cardId: services.conductor.newId("card"),
+    stage: "compose",
+    repository: draft.repository,
+    kind: draft.kind,
+    diagnostics: diagnosticLines(draft.diagnostics, locale),
+    reportId: draft.reportId,
+    title: draft.title,
+    preview: {
+      body: draft.duplicateOf === undefined ? draft.body : (draft.occurrence ?? draft.body),
+      ...(draft.duplicateOf === undefined ? {} : { duplicateOf: draft.duplicateOf }),
+      ...(draft.relatedSearch.state === "unavailable" ? { searchUnavailable: draft.relatedSearch.reason.slice(0, 300) } : {}),
+    },
+    related: localiseRelated(draft.related, locale),
+    ...(draft.philosophy === undefined ? {} : { philosophy: localisePhilosophy(draft.philosophy, locale) }),
+    updatedAt: input.at(),
+  };
+}
+
 /** What a publish came to, as the host's card, written when it happened. */
 export function feedbackResultCard(
   services: FeedbackServices,
-  input: { record: FeedbackReportRecord; publication: FeedbackPublication; eligibility?: HandlingEligibility; at: () => Instant },
+  input: { record: FeedbackReportRecord; publication: FeedbackPublication; eligibility?: HandlingEligibility; answers?: string; at: () => Instant },
 ): FeedbackCard {
   const { draft } = input.record;
+  const locale = localeOf(services, input.at);
   return {
     type: "feedback-card",
     owner: "host",
@@ -782,12 +822,13 @@ export function feedbackResultCard(
     stage: "result",
     repository: draft.repository,
     kind: draft.kind,
-    diagnostics: diagnosticLines(draft.diagnostics, localeOf(services, input.at)),
+    diagnostics: diagnosticLines(draft.diagnostics, locale),
     reportId: draft.reportId,
     title: draft.title,
+    ...(input.answers === undefined ? {} : { answers: input.answers }),
     publication: input.publication,
-    related: draft.related,
-    ...(draft.philosophy === undefined ? {} : { philosophy: draft.philosophy }),
+    related: localiseRelated(draft.related, locale),
+    ...(draft.philosophy === undefined ? {} : { philosophy: localisePhilosophy(draft.philosophy, locale) }),
     ...(input.eligibility === undefined ? {} : { eligibility: input.eligibility }),
     updatedAt: input.at(),
   };
@@ -810,11 +851,6 @@ export function describePublication(publication: FeedbackPublication, locale: Lo
       return say(`Chưa gửi được báo cáo. ${publication.reason}`, `The report was not filed. ${publication.reason}`);
     case "needs-access":
       return publication.reason;
-    case "approval-required":
-      return say(
-        "Báo cáo đã sẵn sàng; chính sách thực thi muốn bạn duyệt trước khi gửi lên GitHub. Chưa có gì được gửi.",
-        "The report is ready; your execution policy asks you to approve it before it goes to GitHub. Nothing has been sent.",
-      );
     case "refused":
       return say(`Chính sách thực thi không cho gửi lên GitHub: ${publication.reason}. Chưa có gì được gửi.`, `Your execution policy does not allow writing to GitHub: ${publication.reason}. Nothing was sent.`);
   }
@@ -826,27 +862,53 @@ function landedIssue(publication: FeedbackPublication): number | undefined {
 }
 
 /**
- * Prepare and publish in one go, and build what the conversation shows: the sentence, the result card, and the host's
- * approval card when the policy asks. Used by `/report bug …`, by `report_feedback` and by an approved card.
+ * Prepare a report and show it: the one thing `/report bug …`, `report_feedback` and voice do. Nothing is sent. The
+ * answer is the host's composer card holding the exact redacted issue; the person's Create issue on it is what files it,
+ * so text a model wrote never leaves the machine unseen.
  */
-export async function fileFeedback(
+export async function composeFeedback(
   services: FeedbackServices,
-  input: { request: FeedbackRequest; conversationId: string; authority: PublishAuthority; at: () => Instant },
-  options: PublishOptions = {},
-): Promise<{ ok: true; text: string; blocks: MessageBlock[]; publication: FeedbackPublication } | { ok: false; text: string }> {
-  const locale = localeOf(services, input.at);
+  input: { request: FeedbackRequest; conversationId: string; at: () => Instant },
+): Promise<{ ok: true; text: string; blocks: MessageBlock[]; draft: FeedbackDraft } | { ok: false; text: string }> {
   const prepared = await prepareFeedback(services, { request: input.request, conversationId: input.conversationId, at: input.at });
   if (!prepared.ok) return { ok: false, text: prepared.message };
-  return await publishAndDescribe(services, { reportId: prepared.draft.reportId, conversationId: input.conversationId, authority: input.authority, at: input.at, locale }, options);
+  const say = sayIn(localeOf(services, input.at));
+  const { draft } = prepared;
+  const where =
+    draft.duplicateOf === undefined
+      ? say(`một issue mới trên ${draft.repository}`, `a new issue on ${draft.repository}`)
+      : say(
+          `một bình luận trên issue #${String(draft.duplicateOf.number)} đang mở mà nó trùng`,
+          `a comment on #${String(draft.duplicateOf.number)}, the open issue it duplicates`,
+        );
+  return {
+    ok: true,
+    text: say(
+      `Báo cáo đã sẵn sàng, đúng như sẽ được gửi: ${where}. Chưa có gì được gửi; bấm Tạo issue trên thẻ để gửi.`,
+      `The report is ready, exactly as it would be filed: ${where}. Nothing has been sent; press Create issue on the card to file it.`,
+    ),
+    blocks: [feedbackDraftCard(services, { draft, at: input.at }) as MessageBlock],
+    draft,
+  };
 }
 
-/** Publish an existing report and describe it, with eligibility when it landed. */
+/** Publish an existing report on the person's press, or check on it, and describe it, with eligibility when it landed. */
 export async function publishAndDescribe(
   services: FeedbackServices,
-  input: { reportId: string; conversationId: string; authority: PublishAuthority; at: () => Instant; locale?: Locale },
+  input: { reportId: string; conversationId: string; intent: PublishIntent; answers?: string; at: () => Instant },
   options: PublishOptions = {},
-): Promise<{ ok: true; text: string; blocks: MessageBlock[]; publication: FeedbackPublication; eligibility?: HandlingEligibility } | { ok: false; text: string; status?: number; code?: string }> {
-  const locale = input.locale ?? localeOf(services, input.at);
+): Promise<
+  | {
+      ok: true;
+      text: string;
+      blocks: MessageBlock[];
+      publication: FeedbackPublication;
+      eligibility?: HandlingEligibility;
+      previousStatus: FeedbackReportRecord["status"];
+    }
+  | { ok: false; text: string; status: number; code: string }
+> {
+  const locale = localeOf(services, input.at);
   const outcome = await publishFeedback(services, input, options);
   if (!outcome.ok) return { ok: false, text: outcome.message, status: outcome.status, code: outcome.code };
   const issueNumber = landedIssue(outcome.publication);
@@ -858,75 +920,55 @@ export async function publishAndDescribe(
           ...(outcome.record.draft.philosophy === undefined ? {} : { philosophy: outcome.record.draft.philosophy }),
           at: input.at,
         });
-  const card = feedbackResultCard(services, { record: outcome.record, publication: outcome.publication, ...(eligibility === undefined ? {} : { eligibility }), at: input.at });
+  const card = feedbackResultCard(services, {
+    record: outcome.record,
+    publication: outcome.publication,
+    ...(eligibility === undefined ? {} : { eligibility }),
+    ...(input.answers === undefined ? {} : { answers: input.answers }),
+    at: input.at,
+  });
   return {
     ok: true,
     text: describePublication(outcome.publication, locale),
-    blocks: [card as MessageBlock, ...(outcome.approvalCard === undefined ? [] : [outcome.approvalCard])],
+    blocks: [card as MessageBlock],
     publication: outcome.publication,
     ...(eligibility === undefined ? {} : { eligibility }),
+    previousStatus: outcome.previousStatus,
   };
-}
-
-/** Whether an approval card's payload is a report waiting to be filed. */
-export function isFeedbackPublishPayload(payload: string): boolean {
-  try {
-    return (JSON.parse(payload) as { kind?: unknown }).kind === "feedback-publish";
-  } catch {
-    return false;
-  }
-}
-
-/** The refusal receipt for a denied report card, in the person's language. */
-export function deniedFeedbackLabel(locale: Locale): string {
-  return sayIn(locale)("Đã từ chối: báo cáo không được gửi lên GitHub.", "Refused: the report was not sent to GitHub.");
 }
 
 /**
- * File a report the person approved on the host's card. The draft is hashed again against the digest the decision
- * covered, so what is filed is what was shown, and a refusal the person set since still stands.
+ * After a restart: every report a send was handed off for and that GitHub has not yet been seen to hold is looked for
+ * by its marker — never sent — and what it came to is said in its conversation when that is news: always for one the
+ * node stopped in the middle of sending (nobody was told anything), and for one already known as unknown only when it
+ * has since settled.
  */
-export async function runApprovedFeedbackPublish(
+export async function reconcileUnsettledFeedback(
   services: FeedbackServices,
-  input: { payload: string; expectedDigest: string; approvalId: string; conversationId: string; at: () => Instant },
+  input: { at: () => Instant; announce: (conversationId: string, text: string, blocks: MessageBlock[]) => void },
   options: PublishOptions = {},
-): Promise<{ ok: true; blocks: MessageBlock[]; description: string } | { ok: false; code: string; message: string }> {
-  const startedAt = input.at();
-  let reportId: unknown;
-  try {
-    reportId = (JSON.parse(input.payload) as { reportId?: unknown }).reportId;
-  } catch {
-    return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload is not readable" };
+): Promise<{ checked: number; announced: number }> {
+  let checked = 0;
+  let announced = 0;
+  for (const record of unsettledFeedbackReports(services.runtime.db)) {
+    if (record.principalId !== services.runtime.identity.ownerPrincipalId) continue;
+    const effect = record.effectId === undefined ? undefined : getEffect(services.runtime.db, record.effectId);
+    const conversationId = record.conversationId ?? (effect === undefined ? undefined : getTask(services.runtime.db, effect.taskId)?.conversationId);
+    const described = await publishAndDescribe(
+      services,
+      { reportId: record.reportId, conversationId: conversationId ?? "", intent: "check", at: input.at },
+      options,
+    );
+    checked += 1;
+    if (!described.ok || conversationId === undefined) continue;
+    const news = described.previousStatus === "publishing" || described.publication.status !== "unknown";
+    if (!news) continue;
+    try {
+      input.announce(conversationId, described.text, described.blocks);
+      announced += 1;
+    } catch (cause) {
+      process.stderr.write(`feedback: could not write what ${record.reportId} came to (${cause instanceof Error ? cause.message : String(cause)})\n`);
+    }
   }
-  if (typeof reportId !== "string") return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload names no report" };
-  const record = getFeedbackReport(services.runtime.db, reportId);
-  if (record === undefined) return { ok: false, code: "REPORT_NOT_FOUND", message: `no report ${reportId} on this node` };
-  if (feedbackPublishDigest(record.draft) !== input.expectedDigest) {
-    return { ok: false, code: "APPROVAL_FORGED", message: "the report changed after it was displayed; the decision does not cover what would be sent" };
-  }
-  const execution = readExecutionPolicy({ db: services.runtime.db, now: input.at }, services.runtime.identity.ownerPrincipalId);
-  const now = decideExecution({
-    policy: execution,
-    action: { kind: "effect", category: "external-write", operationDigest: input.expectedDigest },
-    intent: { kind: "interactive" },
-  });
-  if (now.kind === "deny") return { ok: false, code: "POLICY_REFUSED", message: now.reason };
-  const described = await publishAndDescribe(services, { reportId, conversationId: input.conversationId, authority: { kind: "person" }, at: input.at }, options);
-  if (!described.ok) return { ok: false, code: described.code ?? "REPORT_FAILED", message: described.text };
-  // The receipt carries the approval id, so the card it answered reads as decided, including after a reload.
-  const receipt = {
-    type: "tool-activity",
-    toolCallId: `feedback-${input.approvalId}`,
-    name: "report_feedback",
-    label: described.text.slice(0, 300),
-    status: "done",
-    args: { approvalId: input.approvalId, decision: "granted", reportId },
-    startedAt,
-    endedAt: input.at(),
-  } as MessageBlock;
-  return {
-    ok: true,
-    blocks: [receipt, ...described.blocks],
-    description: `filed product report ${reportId} on ${record.draft.repository} after the person approved it`,
-  };
+  return { checked, announced };
 }

@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Reporting a bug from the conversation, as a person does it: `/report` summons the Feedback Composer, Preview shows
- * the issue exactly as it would be filed, and Create issue answers with a result card naming the issue GitHub was read
- * back holding.
+ * Reporting a bug from the conversation, as a person does it: `/report` summons the Feedback Composer (with words, a
+ * prepared issue), Preview shows the issue exactly as it would be filed, and only the person's Create issue files it,
+ * answered with a result card naming the issue GitHub was read back holding.
  *
  * The node files to an in-process GitHub (`CC_GITHUB_FIXTURE`), so nothing reaches the real repository; what the
  * browser proves is the path from the composer to the host's card and the truth of what that card claims.
@@ -76,4 +76,35 @@ test("a bug is previewed, filed, and answered with the issue GitHub holds", asyn
   // Handling is reported with its reason, and nothing offers to start it.
   await expect(result.locator('[data-feedback-eligibility="handling-unavailable"]')).toBeVisible();
   await expect(result.locator("button")).toHaveCount(0);
+  // The composer it answered is a record now: nothing offers to file the same report twice.
+  await expect(card).toHaveAttribute("data-feedback-answered", "true");
+  await expect(card.locator("[data-feedback-create]")).toHaveCount(0);
+});
+
+test("/report with its words prepares the issue, and only the person's press files it", async ({ page }) => {
+  await openApp(page);
+  const results = page.locator('.cc-row[data-role="assistant"] [data-feedback-stage="result"]');
+  const before = await results.count();
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await composer.fill("/report bug the dock icon keeps bouncing after Clark answers");
+  await composer.press("Enter");
+
+  const prepared = page.locator('.cc-row[data-role="assistant"] [data-feedback-prepared]').last();
+  await expect(prepared).toBeVisible({ timeout: 20_000 });
+  await expect(prepared).toContainText("bug: the dock icon keeps bouncing");
+  // Prepared is not filed: no new result exists until the person presses.
+  await expect(results).toHaveCount(before);
+
+  await prepared.locator("[data-feedback-create]").click();
+  await expect(results).toHaveCount(before + 1, { timeout: 20_000 });
+  await expect(results.last()).toHaveAttribute("data-feedback-status", "published");
+
+  // The prepared card is used now, and stays a record after a reload.
+  await expect(prepared.locator("[data-feedback-create]")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator("[data-composer]")).toBeVisible();
+  const reloaded = page.locator('.cc-row[data-role="assistant"] [data-feedback-prepared]').last();
+  await expect(reloaded).toBeVisible({ timeout: 20_000 });
+  await expect(reloaded.locator("[data-feedback-create]")).toHaveCount(0);
 });

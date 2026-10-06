@@ -7,6 +7,7 @@ import {
   feedbackCardSchema,
   feedbackMarker,
   feedbackPublicationSchema,
+  feedbackPublishRequestSchema,
   feedbackReportIdSchema,
   feedbackRequestSchema,
   handlingEligibilitySchema,
@@ -59,5 +60,22 @@ describe("product report contracts", () => {
         updatedAt: "2026-10-06T09:00:00.000Z",
       }).success,
     ).toBe(false);
+  });
+
+  it("has no state in which a report waits on anyone's approval but the person's own press", () => {
+    expect(feedbackPublicationSchema.safeParse({ status: "approval-required", reportId: "rpt_a1", approvalId: "appr_1" }).success).toBe(false);
+  });
+
+  it("publishes on a press unless the press only checks, and takes no other intent", () => {
+    expect(feedbackPublishRequestSchema.parse({ conversationId: "conv_1" })).toEqual({ conversationId: "conv_1", intent: "send" });
+    expect(feedbackPublishRequestSchema.parse({ conversationId: "conv_1", intent: "check", answers: "card_1" }).intent).toBe("check");
+    expect(feedbackPublishRequestSchema.safeParse({ conversationId: "conv_1", intent: "approve" }).success).toBe(false);
+  });
+
+  it("carries a prepared report's exact preview on the composer, and which card a result answers", () => {
+    const base = { type: "feedback-card", owner: "host", cardId: "card_1", repository: FEEDBACK_REPOSITORY, diagnostics: [], updatedAt: "2026-10-06T09:00:00.000Z" };
+    expect(feedbackCardSchema.safeParse({ ...base, stage: "compose", reportId: "rpt_a1", title: "bug: x", preview: { body: "x" } }).success).toBe(true);
+    expect(feedbackCardSchema.safeParse({ ...base, stage: "compose", preview: { body: "x", extra: true } }).success).toBe(false);
+    expect(feedbackCardSchema.safeParse({ ...base, stage: "result", answers: "card_0" }).success).toBe(true);
   });
 });

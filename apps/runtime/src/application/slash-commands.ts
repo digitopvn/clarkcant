@@ -18,7 +18,7 @@ import { conversationLabel } from "../composer-suggestions.ts";
 import { startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { nodeWork } from "../work-supervisor.ts";
-import { feedbackComposeCard, fileFeedback } from "./product-feedback.ts";
+import { composeFeedback, feedbackComposeCard } from "./product-feedback.ts";
 
 /**
  * The host's answers to the composer's slash commands.
@@ -200,9 +200,10 @@ export function reportArgument(argument: string): { kind?: FeedbackKind; text: s
 }
 
 /**
- * `/report`: alone, or with only a kind, the Feedback Composer; with a kind and words, the report itself, filed through
- * the same service as every other way of reporting and decided by the execution policy like any external write.
- * Words without a kind open the composer with them, so the person picks Bug or Feature rather than Clark guessing.
+ * `/report`: alone, or with only a kind, the Feedback Composer; with a kind and words, the report prepared through the
+ * same service as every other way of reporting and shown as it would be filed. Nothing is sent: the person's Create
+ * issue on that card files it. Words without a kind open the composer with them, so the person picks Bug or Feature
+ * rather than Clark guessing.
  */
 async function reportAnswer(
   services: SlashServices,
@@ -226,15 +227,14 @@ async function reportAnswer(
       }),
     };
   }
-  const filed = await fileFeedback(services, {
+  const composed = await composeFeedback(services, {
     request: { kind, description: text.slice(0, 4000), source: "slash", includeDiagnostics: true },
     conversationId,
-    authority: { kind: "policy" },
     at,
   });
-  if (!filed.ok) return { text: filed.text };
-  const [result, ...rest] = filed.blocks;
-  return { text: filed.text, card: result as FeedbackCard, extraBlocks: rest };
+  if (!composed.ok) return { text: composed.text };
+  const [draft, ...rest] = composed.blocks;
+  return { text: composed.text, card: draft as FeedbackCard, extraBlocks: rest };
 }
 
 type Say = (vi: string, en: string) => string;

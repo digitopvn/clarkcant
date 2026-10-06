@@ -194,7 +194,7 @@ describe("the states that do exist for these cards", () => {
     expect(findAll(card, "data-feedback-issue")).toHaveLength(1);
     // A published report has nothing to retry, and handling is reported, never offered.
     expect(findAll(card, "data-feedback-check")).toHaveLength(0);
-    expect(findAll(card, "data-feedback-retry")).toHaveLength(0);
+    expect(findAll(card, "data-feedback-send-again")).toHaveLength(0);
   });
 
   it("publishes a marker for every action a card offers, so nothing is reachable only by guessing coordinates", () => {

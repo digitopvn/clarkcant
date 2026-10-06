@@ -208,13 +208,16 @@ A bug report or a feature request about ClarkCant itself is filed from the conve
 `digitopvn/clarkcant` only: the target comes from trusted configuration, and no request field can aim it elsewhere.
 `/report` alone (or with only a kind) summons the Feedback Composer, a host-owned `feedback-card`: Bug or Feature, the
 person's words, and "What will be shared" one disclosure away. `/report bug ...`, `/report feature ...` (also `lỗi`,
-`tính năng`), a sentence to Clark and voice all reach the same service through the model tool `report_feedback`.
+`tính năng`) reach the same report service through the slash-command handler; a sentence to Clark and voice reach it
+through the model tool `report_feedback`. Each of these only prepares: it shows the issue exactly as it would be filed,
+with Create issue, and sends nothing. Only the person's press on that card files a report; Clark, its tool and voice
+cannot.
 
 | Method | Path | Body and answer |
 |---|---|---|
 | POST | `/feedback/reports` | `{ request, conversationId? }` — `201 { draft, diagnostics }`. Prepares and keeps a draft; nothing is filed |
 | GET | `/feedback/reports/{reportId}` | `{ draft, status, publication? }` |
-| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId }` — `{ publication, eligibility?, messageId, timeline }`, with the result card written into the conversation. **Person-only** |
+| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId, intent?: "send" \| "check", answers? }` — `{ publication, eligibility?, messageId, timeline }`, with the result card written into the conversation. **Person-only** |
 
 `request` is `{ kind: "bug" | "feature", description, source, includeDiagnostics?, title?, subsystem?, bug?, feature?,
 evidence?, error?, philosophy? }`. Sections nobody spoke to are left out of the issue, and a reproduction nobody gave
@@ -228,13 +231,19 @@ rules and the model's reading are combined and the stricter stands, and a confli
 Before filing, open issues and issues closed in the last 90 days are searched. A strong match on an open issue (the same
 error fingerprint, or nearly the same title and description) makes the publish a comment on that issue instead of a new
 one. `publication.status` is `published` only after GitHub is read back holding the report's hidden marker
-`<!-- clark-report:rpt_... -->`. A write whose answer never arrived is `unknown`: publishing again first looks for the
-marker, and sends again only once GitHub's own list shows it absent at least two minutes after the attempt, never while
-GitHub cannot be checked. The other statuses are `failed` (with `retryable`), `needs-access` (no `github_token`; with
-`manualUrl`, GitHub's prefilled new-issue page), `approval-required` and `refused`. The write is an `external-write`
-effect in the action ledger. The person's Create issue is their decision; `/report bug ...`, a sentence and voice are
-decided by the execution policy, which may ask with a host approval card or refuse. The token is the GitHub credential
-the person set for signal sources, read through the secret broker as consumer `feedback:github`.
+`<!-- clark-report:rpt_... -->`. `intent` defaults to `send`; `answers` names the card the press was on, so
+that card reads as used from then on, after a reload too. A write whose answer never arrived is `unknown`, and its card
+offers Check again (`intent: "check"`), which only looks for the marker and never sends; checking a report never sent
+is `409 NOTHING_SENT`. Once GitHub's own list shows the marker absent at least two minutes after the attempt (the
+attempt's time, not the last check's), the report becomes `failed` with `retryable`, and its card offers Send again,
+which files it for the first time; nothing is sent while GitHub cannot be checked. When the node starts, every report
+left `publishing` or `unknown` is checked the same way, and a settled outcome is written into its conversation as a
+result card. The other statuses are `needs-access` (no `github_token`; with `manualUrl`, GitHub's prefilled new-issue
+page) and `refused`. The write is an `external-write` effect in the action ledger, and the execution policy applies to
+the person's press: a rule or prohibition that denies it makes the report `refused` with nothing sent, and a policy that
+would ask is answered by the press itself, recorded as such. The token is the GitHub credential the person set for
+signal sources, read through the secret broker as consumer `feedback:github`. `@handles` in the person's words are
+neutralised so filing a report notifies nobody.
 
 A published report carries `eligibility`: whether Clark may handle the issue. The checks are the repository, open
 state, epic (`suggestion: "plan-split"`), assignees, in-progress, `external-gate` and `blocked` labels, open pull

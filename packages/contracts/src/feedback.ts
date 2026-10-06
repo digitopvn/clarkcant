@@ -184,10 +184,13 @@ export type FeedbackDraft = z.infer<typeof feedbackDraftSchema>;
  *
  *   - `published` — GitHub was read back and holds the issue or comment carrying this report's marker;
  *   - `unknown` — sent, and no answer this node can trust yet; it is found again by its marker, never sent twice;
- *   - `failed` — GitHub refused it or it never left; `retryable` says whether trying again can help;
+ *   - `failed` — GitHub refused it, it never left, or GitHub's own list shows the unanswered attempt never arrived;
+ *     `retryable` says whether sending it again can help;
  *   - `needs-access` — this node has no GitHub token it may use for reports; nothing was sent;
- *   - `approval-required` — the execution policy asks first; the host's approval card is in the conversation;
  *   - `refused` — the execution policy refuses external writes on this node; nothing was sent.
+ *
+ * There is no "waiting for approval": only the person's own press on the host's card publishes a report, and that
+ * press is the decision.
  */
 export const feedbackPublicationSchema = z.discriminatedUnion("status", [
   z.strictObject({
@@ -212,7 +215,6 @@ export const feedbackPublicationSchema = z.discriminatedUnion("status", [
     /** GitHub's own new-issue page, prefilled with the same redacted title and body, for the person to file by hand. */
     manualUrl: z.url().max(8000),
   }),
-  z.strictObject({ status: z.literal("approval-required"), reportId: feedbackReportIdSchema, approvalId: z.string().min(1).max(128) }),
   z.strictObject({ status: z.literal("refused"), reportId: feedbackReportIdSchema, reason: z.string().min(1).max(600) }),
 ]);
 export type FeedbackPublication = z.infer<typeof feedbackPublicationSchema>;
@@ -275,8 +277,11 @@ export const HANDLING_PREREQUISITES: readonly IssueMention[] = [
  *
  *   - `compose` is the Feedback Composer: Bug or Feature, the person's words, whether safe diagnostics go with it and
  *     exactly which, and Create issue. Summoned by a bare `/report`, by asking, or by Clark; never a screen of its own.
+ *     When Clark or `/report bug …` already prepared the report, the card carries it (`reportId`, `title`, `preview`):
+ *     the exact redacted issue that Create issue would file, which is the only way that report is filed.
  *   - `result` is what a publish came to, written when it happened: the issue, what was shared, what was found already
- *     filed, and whether Clark may offer to handle it. Messages are immutable, so trying again writes a new card.
+ *     filed, and whether Clark may offer to handle it. Messages are immutable, so trying again writes a new card, and
+ *     `answers` names the card whose press it answers, so that card reads as used after a reload.
  */
 export const feedbackCardSchema = z.strictObject({
   type: z.literal("feedback-card"),
@@ -289,9 +294,19 @@ export const feedbackCardSchema = z.strictObject({
   description: z.string().min(1).max(4000).optional(),
   /** What safe diagnostics would be (compose) or were (result) shared. Empty when none are. */
   diagnostics: z.array(diagnosticLineSchema).max(16),
-  /** `result`: the report it is about. */
+  /** The report it is about: the prepared one (`compose`) or the published one (`result`). */
   reportId: feedbackReportIdSchema.optional(),
   title: z.string().min(1).max(256).optional(),
+  /** `compose`, prepared: exactly what Create issue would send — the body, or the comment on the duplicate it found. */
+  preview: z
+    .strictObject({
+      body: z.string().min(1).max(60_000),
+      duplicateOf: feedbackIssueRefSchema.optional(),
+      searchUnavailable: z.string().min(1).max(300).optional(),
+    })
+    .optional(),
+  /** `result`: the card whose press this answers. */
+  answers: z.string().min(1).max(128).optional(),
   publication: feedbackPublicationSchema.optional(),
   related: z.array(feedbackRelatedSchema).max(10).optional(),
   philosophy: philosophyFitSchema.optional(),
@@ -306,9 +321,15 @@ export const feedbackPrepareRequestSchema = z.strictObject({
   conversationId: z.string().min(1).max(128).optional(),
 });
 
-/** `POST /feedback/reports/:reportId/publish`: publish it, and write the result card into this conversation. */
+/**
+ * `POST /feedback/reports/:reportId/publish`, the person's press: publish it (`send`, the default) or only find out what
+ * an earlier send came to (`check`, which never sends), and write the result card into this conversation. `answers`
+ * names the card pressed.
+ */
 export const feedbackPublishRequestSchema = z.strictObject({
   conversationId: z.string().min(1).max(128),
+  intent: z.enum(["send", "check"]).default("send"),
+  answers: z.string().min(1).max(128).optional(),
 });
 
 /** What `POST /feedback/reports` answers: the draft exactly as it would be filed, and its diagnostics as a person reads them. */

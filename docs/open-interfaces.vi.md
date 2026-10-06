@@ -210,14 +210,16 @@ cùng route xác nhận bằng `403 PERSON_ONLY`; app intent do agent yêu cầu
 Báo lỗi hoặc đề xuất tính năng cho chính ClarkCant được gửi từ hội thoại, và chỉ tới repo chuẩn `digitopvn/clarkcant`:
 đích đến lấy từ cấu hình tin cậy, không trường nào trong yêu cầu đổi được nó. `/report` một mình (hoặc chỉ kèm loại)
 gọi Feedback Composer, một `feedback-card` do host sở hữu: Lỗi hay Tính năng, lời của người dùng, và mục "Những gì sẽ
-được chia sẻ" mở ra khi cần. `/report bug ...`, `/report feature ...` (hoặc `lỗi`, `tính năng`), một câu nói với Clark
-và giọng nói đều đi tới cùng một service qua công cụ model `report_feedback`.
+được chia sẻ" mở ra khi cần. `/report bug ...`, `/report feature ...` (hoặc `lỗi`, `tính năng`) đi tới cùng service
+báo cáo qua bộ xử lý lệnh slash; một câu nói với Clark và giọng nói đi tới đó qua công cụ model `report_feedback`. Các
+cách này chỉ chuẩn bị: chúng hiện issue đúng như sẽ được gửi, kèm nút Create issue, và không gửi gì. Chỉ cú bấm của
+người dùng trên thẻ đó mới gửi báo cáo; Clark, công cụ của nó và giọng nói đều không thể.
 
 | Method | Path | Body và phản hồi |
 |---|---|---|
 | POST | `/feedback/reports` | `{ request, conversationId? }` — `201 { draft, diagnostics }`. Chuẩn bị và lưu bản nháp; chưa gửi gì |
 | GET | `/feedback/reports/{reportId}` | `{ draft, status, publication? }` |
-| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId }` — `{ publication, eligibility?, messageId, timeline }`, kèm thẻ kết quả ghi vào hội thoại. **Chỉ người dùng** |
+| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId, intent?: "send" \| "check", answers? }` — `{ publication, eligibility?, messageId, timeline }`, kèm thẻ kết quả ghi vào hội thoại. **Chỉ người dùng** |
 
 `request` là `{ kind: "bug" | "feature", description, source, includeDiagnostics?, title?, subsystem?, bug?, feature?,
 evidence?, error?, philosophy? }`. Phần nào không ai nói tới thì bị bỏ khỏi issue, và bước tái hiện không ai đưa ra
@@ -232,13 +234,18 @@ dẫn thư mục home hay thông tin đăng nhập, và mọi văn bản gửi r
 Trước khi gửi, các issue đang mở và issue đóng trong 90 ngày gần nhất được tìm. Khớp mạnh với một issue đang mở (cùng
 dấu vân lỗi, hoặc gần như cùng tiêu đề và mô tả) thì bình luận vào issue đó thay vì tạo issue mới.
 `publication.status` chỉ là `published` sau khi đọc lại GitHub và thấy dấu ẩn `<!-- clark-report:rpt_... -->` của báo
-cáo. Lần ghi không nhận được phản hồi là `unknown`: gửi lại sẽ tìm dấu trước, và chỉ gửi lần nữa khi danh sách của
-chính GitHub cho thấy không có nó ít nhất hai phút sau lần thử, không bao giờ gửi khi chưa kiểm tra được GitHub. Các
-trạng thái khác là `failed` (kèm `retryable`), `needs-access` (chưa có `github_token`; kèm `manualUrl`, trang tạo issue
-của GitHub đã điền sẵn), `approval-required` và `refused`. Lần ghi là một hiệu ứng `external-write` trong sổ hiệu ứng.
-Nút Create issue của người dùng là quyết định của họ; `/report bug ...`, câu nói và giọng nói do policy thực thi quyết
-định, policy có thể hỏi bằng thẻ duyệt của host hoặc từ chối. Token là thông tin đăng nhập GitHub người dùng đã đặt cho
-nguồn signal, đọc qua secret broker với consumer `feedback:github`.
+cáo. `intent` mặc định là `send`; `answers` nêu thẻ mà cú bấm nằm trên, để từ đó thẻ ấy hiện là đã dùng, kể cả sau
+khi tải lại. Lần ghi không nhận được phản hồi là `unknown`, và thẻ của nó có nút Kiểm tra lại (`intent: "check"`), chỉ
+tìm dấu và không bao giờ gửi; kiểm tra một báo cáo chưa từng gửi trả `409 NOTHING_SENT`. Khi danh sách của chính GitHub
+cho thấy không có dấu ít nhất hai phút sau lần thử (tính từ lúc thử gửi, không phải lần kiểm tra gần nhất), báo cáo
+chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi nó lần đầu tiên; không gửi gì khi chưa kiểm tra được
+GitHub. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
+ngũ được ghi vào hội thoại của nó thành thẻ kết quả. Các trạng thái khác là `needs-access` (chưa có `github_token`; kèm
+`manualUrl`, trang tạo issue của GitHub đã điền sẵn) và `refused`. Lần ghi là một hiệu ứng `external-write` trong sổ
+hiệu ứng, và policy thực thi áp dụng cho cú bấm của người dùng: luật hay lệnh cấm từ chối thì báo cáo là `refused` và
+không gửi gì, còn policy lẽ ra sẽ hỏi thì chính cú bấm là câu trả lời, và được ghi lại như vậy. Token là thông tin đăng
+nhập GitHub người dùng đã đặt cho nguồn signal, đọc qua secret broker với consumer `feedback:github`. Các `@handle`
+trong lời người dùng được vô hiệu hoá để việc gửi báo cáo không thông báo cho ai.
 
 Báo cáo đã gửi kèm `eligibility`: Clark có được tự xử lý issue hay không. Các kiểm tra gồm repo, trạng thái mở, epic
 (`suggestion: "plan-split"`), người được giao, nhãn in-progress, `external-gate` và `blocked`, pull request đang mở,
