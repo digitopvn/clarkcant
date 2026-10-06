@@ -11,6 +11,7 @@ import { type Database, dismissNotificationsByKeyPrefix, recordNotification } fr
 
 import { ownerLocale } from "./host-text.ts";
 import { noticeText } from "./notice-text.ts";
+import { type TaskSettledReason, taskSettledText } from "./task-settled-text.ts";
 
 /**
  * Writing a notice into the person's inbox, from anywhere on this node.
@@ -126,14 +127,16 @@ export function workerNoticeKey(taskId: string): string {
  *
  * A cancellation was the person's own doing, so it is information rather than something that went wrong;
  * "uncertain" is a warning because the task may or may not have had its effect, and that is worth a look. The task id
- * is the dedup key and never the title: it is an internal handle, and the title is what a person reads first. The title
- * is in the owner's `language` (Vietnamese when none is named); the body is the task's own message.
+ * is the dedup key and never the title: it is an internal handle, and the title is what a person reads first. Title and
+ * body are in the owner's `language` (Vietnamese when none is named): a message the host wrote is worded from its
+ * `reason`, and only the run's own words (or a peer's) are shown as they were written.
  */
 export function workerSettledNotice(input: {
   taskId: string;
   conversationId: string;
   outcome: "succeeded" | "failed" | "cancelled" | "uncertain";
   message: string;
+  reason?: TaskSettledReason;
   at: Instant;
   language?: AppIntentLocale;
 }): NodeNotice {
@@ -142,7 +145,7 @@ export function workerSettledNotice(input: {
     category: "result",
     severity: WORKER_SEVERITY[input.outcome],
     title: noticeText(input.language).workerOutcome[input.outcome],
-    body: input.message,
+    body: taskSettledText(input, input.language),
     conversationId: input.conversationId,
     subject: { kind: "task", taskId: input.taskId, conversationId: input.conversationId },
     dedupKey: workerNoticeKey(input.taskId),
