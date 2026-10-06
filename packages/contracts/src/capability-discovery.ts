@@ -1,9 +1,17 @@
 import { z } from "zod";
 
-import { packageSourceSchema } from "./directory.ts";
 import { capabilityReadinessSchema, capabilityRefSchema } from "./grants.ts";
+import { absoluteHostPathSchema } from "./host-path.ts";
 import { networkOriginProblem, networkOriginSchema } from "./network-origin.ts";
-import { capabilityCandidateIdSchema, digestSchema, instantSchema, nodeIdSchema, runtimeIdSchema } from "./primitives.ts";
+import {
+  capabilityCandidateIdSchema,
+  digestSchema,
+  discoveryProviderIdSchema,
+  instantSchema,
+  nodeIdSchema,
+  runtimeIdSchema,
+  semverSchema,
+} from "./primitives.ts";
 import type { AcquisitionPlan } from "./reach-expansion.ts";
 
 /**
@@ -65,8 +73,8 @@ export const provenanceTrustSchema = z.enum(["verified", "publisher-claimed", "u
 export type ProvenanceTrust = z.infer<typeof provenanceTrustSchema>;
 
 export const candidateProvenanceSchema = z.strictObject({
-  /** The discovery provider that produced the candidate, by its own id. */
-  providerId: z.string().min(1).max(80),
+  /** The discovery provider that produced the candidate. */
+  providerId: discoveryProviderIdSchema,
   /** Where the metadata came from: a URL, a directory name, `local`. Said to the person as it is. */
   origin: z.string().min(1).max(500),
   trust: provenanceTrustSchema,
@@ -77,35 +85,102 @@ export const candidateProvenanceSchema = z.strictObject({
 export type CandidateProvenance = z.infer<typeof candidateProvenanceSchema>;
 
 /**
- * An address an acquisition reads from: encrypted unless it is this machine, and with no credentials in it, because the
- * URL is shown to the person and stored with the plan.
+ * Why an address is not one an acquisition may read from, or `undefined` when it is: encrypted unless it is this
+ * machine, and with no credentials in it, because the URL is shown to the person and stored with the plan. Never
+ * throws: what discovery found is untrusted, and a malformed address is a refusal, not an exception.
  */
+export function acquisitionUrlProblem(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "is not a URL";
+  }
+  if (url.username !== "" || url.password !== "") return "must not carry credentials";
+  const origin = networkOriginProblem(url.origin);
+  return origin === undefined ? undefined : `has an origin that ${origin}`;
+}
+
 export const acquisitionUrlSchema = z
-  .url()
+  .string()
+  .min(1)
   .max(1000)
-  .refine(
-    (value) => {
-      const url = new URL(value);
-      return url.username === "" && url.password === "" && networkOriginProblem(url.origin) === undefined;
-    },
-    { error: "must be https (or http on loopback), with no credentials in it" },
-  );
+  .refine((value) => acquisitionUrlProblem(value) === undefined, {
+    error: (issue) => `address ${JSON.stringify(issue.input)} ${acquisitionUrlProblem(String(issue.input)) ?? "is invalid"}`,
+  });
+
+/** An npm package name: optional scope, lower case, no path tricks, at most 214 characters as npm allows. */
+export const NPM_PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+
+/** A full git commit id (SHA-1 or SHA-256). A branch or tag names a moving target; a commit does not. */
+export const GIT_COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * A package in a form that names exactly one set of bytes: an absolute local path, an https git repository at a full
+ * commit id, or an npm package at an exact version. A subset of `PackageSource`, so an acquisition goes through the
+ * existing install path unchanged.
+ *
+ * A tag, a branch or a version range is refused rather than resolved: turning a tag into its commit is the resolver's
+ * job (external discovery providers), and it does so before the candidate is offered, so the plan a person consents to
+ * names the commit.
+ */
+export const verifiablePackageSourceSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("local"), path: absoluteHostPathSchema }),
+  z.strictObject({
+    kind: z.literal("git"),
+    url: acquisitionUrlSchema.refine((value) => value.startsWith("https://"), { error: "a git repository is read over https" }),
+    ref: z.string().regex(GIT_COMMIT_PATTERN, { error: "must be a full commit id, not a branch, tag or short id" }),
+  }),
+  z.strictObject({
+    kind: z.literal("npm"),
+    name: z.string().max(214).regex(NPM_PACKAGE_NAME_PATTERN, { error: "must be an npm package name" }),
+    version: semverSchema,
+  }),
+]);
+export type VerifiablePackageSource = z.infer<typeof verifiablePackageSourceSchema>;
+
+/** The package managers a command-line tool may be acquired from. One per platform family, plus language registries. */
+export const cliPackageManagerSchema = z.enum([
+  "npm",
+  "pypi",
+  "cargo",
+  "go",
+  "homebrew",
+  "winget",
+  "scoop",
+  "apt",
+  "dnf",
+  "pacman",
+]);
+export type CliPackageManager = z.infer<typeof cliPackageManagerSchema>;
+
+/**
+ * A package name a manager could hold: starts with a letter, digit or `@`, then only name characters. No whitespace,
+ * no leading `-` (which a command line reads as an option), no shell metacharacters. Each manager's own naming rules
+ * are the resolver's to check.
+ */
+export const CLI_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9@][A-Za-z0-9._/@+-]*$/;
+
+/**
+ * An exact version: at least `major.minor`, an optional leading `v` (Go modules) and an optional build or revision
+ * suffix (`1.2.3-1`, `1.2.3_1`). Ranges, tags such as `latest` and anything with whitespace are refused.
+ */
+export const EXACT_VERSION_PATTERN = /^v?\d+(?:\.\d+){1,3}(?:[-+_][0-9A-Za-z.+_-]+)?$/;
 
 /**
  * The verifiable forms a candidate may be acquired in. There is deliberately no form for a command to run or a script
  * to download: an instruction found somewhere is never an acquisition.
  */
 export const acquisitionSourceSchema = z.discriminatedUnion("kind", [
-  /** A package from a local path, an exact git revision or an exact registry version. */
-  z.strictObject({ kind: z.literal("package"), source: packageSourceSchema }),
+  z.strictObject({ kind: z.literal("package"), source: verifiablePackageSourceSchema }),
   /** A downloadable artifact pinned by digest. */
   z.strictObject({ kind: z.literal("artifact"), url: acquisitionUrlSchema, digest: digestSchema }),
-  /** A command-line tool from a package manager, at an exact version. */
+  /** A command-line tool from a known package manager, at an exact version. */
   z.strictObject({
     kind: z.literal("cli-package"),
-    manager: z.string().min(1).max(40),
-    name: z.string().min(1).max(200),
-    version: z.string().min(1).max(80),
+    manager: cliPackageManagerSchema,
+    name: z.string().max(200).regex(CLI_PACKAGE_NAME_PATTERN, { error: "must be a package name, not an option or a command" }),
+    version: z.string().max(80).regex(EXACT_VERSION_PATTERN, { error: "must be an exact version, not a range or a tag" }),
   }),
   z.strictObject({ kind: z.literal("mcp-endpoint"), url: acquisitionUrlSchema }),
   z.strictObject({ kind: z.literal("webmcp"), origin: networkOriginSchema }),
@@ -162,6 +237,13 @@ export const capabilityCandidateSchema = z
         code: "custom",
         path: ["availability"],
         message: `a candidate found in ${candidate.source} is not on this node, so it cannot already be available`,
+      });
+    }
+    if (candidate.availability === "available" && (candidate.requires.install || candidate.requires.credential)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["availability"],
+        message: "a candidate that still needs an install or a credential is not available yet",
       });
     }
     if (candidate.source === "internet" && candidate.provenance.trust !== "unverified") {
@@ -231,7 +313,7 @@ export type CapabilityQuery = z.infer<typeof capabilityQuerySchema>;
  * the host's own install, connection and policy paths.
  */
 export interface CapabilityProvider {
-  readonly providerId: string;
+  readonly providerId: CandidateProvenance["providerId"];
   /** The sources this provider's candidates come from. */
   readonly sources: readonly CapabilitySource[];
   inventory(query: CapabilityQuery): Promise<CapabilityCandidate[]>;

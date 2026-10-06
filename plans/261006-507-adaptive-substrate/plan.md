@@ -30,14 +30,16 @@ typed contracts and target-architecture docs; no user-visible behaviour.
 ## Phases
 
 0. [phase-00-contracts-and-docs.md](phase-00-contracts-and-docs.md) — completed (contracts + target-architecture docs).
-1. Canonical runtime fabric — [draft](child-issues/01-runtime-fabric.md); blocked by #402.
+1. Canonical runtime fabric and the transient Work Plan mini app (epic §10) —
+   [draft](child-issues/01-runtime-fabric.md); blocked by #402; #496 related, not blocking.
 2. Resource & capability graph — [draft](child-issues/02-capability-graph.md).
 3. Capability gap resolver and reach expansion — [draft](child-issues/03-gap-resolver-reach-expansion.md).
 4. External discovery providers — [draft](child-issues/04-external-discovery.md); depends on #194.
 5. Standing intent v2 — [draft](child-issues/05-standing-intent-v2.md).
 6. Signal-source ecosystem — [draft](child-issues/06-signal-sources.md).
 7. Delivery router — [draft](child-issues/07-delivery-router.md); depends on #199.
-8. Session insights / improvement observer — [draft](child-issues/08-improvement-observer.md).
+8. Cross-runtime session context via the #433 context planner (epic §9), session insights and improvement observer —
+   [draft](child-issues/08-improvement-observer.md).
 9. Skill evolution — [draft](child-issues/09-skill-evolution.md).
 10. Core self-improvement workflow — [draft](child-issues/10-core-self-improvement.md).
 

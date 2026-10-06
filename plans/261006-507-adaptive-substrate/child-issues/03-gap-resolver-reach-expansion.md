@@ -25,6 +25,8 @@ acquire/connect/enable through the existing canonical paths, verify, and resume 
 - One coherent consent surface (host-owned mini app) showing goal, recommendation, alternatives, actions, filesystem
   scope, network origins, data recipients, credentials by name, trust lane, and `once | task | standing` choices.
 - Consent binding via `ReachConsent` / `consentDoesNotCover`; standing preferences remembered through Jev/policy memory.
+  The consent store owns what the contract cannot: spending a `once` consent so it is used a single time, and revoking
+  `task` and `standing` consents.
 - Verify the acquired capability (readiness) before resuming; report failures truthfully.
 
 ## Acceptance criteria

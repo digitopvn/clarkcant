@@ -5,7 +5,7 @@ Labels: `enhancement` · Parent: #507 (Phase 4)
 ## Summary
 
 Add external `CapabilityProvider`s whose candidates are untrusted metadata, resolved only into verifiable
-`AcquisitionSource` forms (exact package, pinned git revision, digested artifact, known MCP/WebMCP endpoint, OpenAPI
+`AcquisitionSource` forms (exact package, git commit over https, digested artifact, known MCP/WebMCP endpoint, OpenAPI
 document, exact CLI package) and acquired only through the Phase 3 reach gate.
 
 ## Dependencies
@@ -21,7 +21,8 @@ document, exact CLI package) and acquired only through the Phase 3 reach gate.
 - MCP/WebMCP endpoint discovery; API/OpenAPI and CLI package discovery.
 - Internet candidate discovery with provenance (`trust: unverified`), bounded by `DiscoveryBudget`.
 - Resolution of web results into verifiable acquisition forms; anything that cannot be resolved stays an unverified
-  suggestion and never an executable plan.
+  suggestion and never an executable plan. Providers resolve git tags and branches to a full commit id and version
+  ranges or `latest` to an exact version before offering a candidate; the contract refuses the unresolved forms.
 
 ## Acceptance criteria
 

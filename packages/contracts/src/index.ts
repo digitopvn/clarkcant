@@ -20,6 +20,7 @@ export * from "./protocol.ts";
 export * from "./errors.ts";
 export * from "./envelope.ts";
 export * from "./grants.ts";
+export * from "./host-path.ts";
 export * from "./tasks.ts";
 export * from "./effects.ts";
 export * from "./install.ts";

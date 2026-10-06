@@ -99,6 +99,17 @@ describe("a runtime session synopsis", () => {
     expect(
       runtimeSessionSynopsisSchema.safeParse({ ...synopsis, stateSource: "stored-history", state: "completed" }).success,
     ).toBe(true);
+    expect(runtimeSessionSynopsisSchema.safeParse({ ...synopsis, stateSource: "stored-history", state: "idle" }).success).toBe(false);
+    expect(runtimeSessionSynopsisSchema.safeParse({ ...synopsis, stateSource: "stored-history", state: "unknown" }).success).toBe(true);
+  });
+
+  it("refuses process supervision as the source for a session Clark only observes", () => {
+    const result = runtimeSessionSynopsisSchema.safeParse({ ...synopsis, stateSource: "process-supervision" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["stateSource"]);
+    expect(
+      runtimeSessionSynopsisSchema.safeParse({ ...synopsis, authority: "managed", stateSource: "process-supervision" }).success,
+    ).toBe(true);
   });
 
   it("refuses a field it does not define, such as a transcript", () => {

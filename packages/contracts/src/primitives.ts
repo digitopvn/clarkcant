@@ -66,6 +66,8 @@ export const runtimeSessionIdSchema = prefixed("rsess");
 export const capabilityCandidateIdSchema = prefixed("cand");
 /** One question asking the person to widen what Clark may reach. */
 export const reachExpansionPlanIdSchema = prefixed("rxp");
+/** One discovery provider: this node's inventory, a directory, a runtime's plugin list. */
+export const discoveryProviderIdSchema = prefixed("dprov");
 
 export type NodeId = z.infer<typeof nodeIdSchema>;
 export type PrincipalId = z.infer<typeof principalIdSchema>;
@@ -100,6 +102,7 @@ export type RuntimeId = z.infer<typeof runtimeIdSchema>;
 export type RuntimeSessionId = z.infer<typeof runtimeSessionIdSchema>;
 export type CapabilityCandidateId = z.infer<typeof capabilityCandidateIdSchema>;
 export type ReachExpansionPlanId = z.infer<typeof reachExpansionPlanIdSchema>;
+export type DiscoveryProviderId = z.infer<typeof discoveryProviderIdSchema>;
 
 /**
  * Instants are ISO 8601 in UTC. Wall-clock ordering is never used to resolve

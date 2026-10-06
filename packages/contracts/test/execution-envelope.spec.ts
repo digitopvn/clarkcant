@@ -92,6 +92,38 @@ describe("an envelope handed on", () => {
     expect(envelopeWidening(write, read)).toEqual(["the folder /repo (write)"]);
   });
 
+  it("lets a folder cover the folders inside it, segment by segment, and nothing outside it", () => {
+    const outer = envelope({ resources: [{ kind: "folder", path: "/srv/reports", access: "read" }] });
+    const inside = (path: string, access: "read" | "write" = "read") => envelope({ resources: [{ kind: "folder", path, access }] });
+    expect(envelopeWidening(inside("/srv/reports/2026/q3"), outer)).toEqual([]);
+    expect(envelopeWidening(inside("/srv/reports/2026", "write"), outer)).toEqual(["the folder /srv/reports/2026 (write)"]);
+    expect(envelopeWidening(inside("/srv/reportsOld"), outer)).toEqual(["the folder /srv/reportsOld (read)"]);
+    expect(envelopeWidening(inside("/srv"), outer)).toEqual(["the folder /srv (read)"]);
+    expect(envelopeWidening(inside("/srv/reports/../secrets"), outer)).toEqual(["the folder /srv/reports/../secrets (read)"]);
+    const windows = envelope({ resources: [{ kind: "folder", path: "C:\\Reports", access: "write" }] });
+    expect(envelopeWidening(inside("c:\\Reports\\2026"), windows)).toEqual([]);
+  });
+
+  it("does not let a folder cover a repository inside it, or a repository cover a folder", () => {
+    const folder = envelope({ resources: [{ kind: "folder", path: "/repo", access: "write" }] });
+    const repository = envelope({ resources: [{ kind: "repository", path: "/repo" }] });
+    expect(envelopeWidening(repository, folder)).toEqual(["the repository /repo"]);
+    expect(envelopeWidening(folder, repository)).toEqual(["the folder /repo (write)"]);
+  });
+
+  it("allows what every entry for the same delivery target allows together", () => {
+    const split = envelope({
+      deliveryTargets: [
+        { kind: "inbox", on: ["succeeded"] },
+        { kind: "inbox", on: ["failed"] },
+      ],
+    });
+    expect(envelopeWidening(envelope({ deliveryTargets: [{ kind: "inbox", on: ["succeeded", "failed"] }] }), split)).toEqual([]);
+    expect(envelopeWidening(envelope({ deliveryTargets: [{ kind: "inbox", on: ["report"] }] }), split)).toEqual([
+      "delivery of report to inbox",
+    ]);
+  });
+
   it("reads absent data classes as the default classes, which exclude secrets", () => {
     expect(envelopeWidening(envelope({ dataClasses: ["secret"] }), envelope({}))).toEqual(["secret data"]);
     expect(envelopeWidening(envelope({}), envelope({ dataClasses: ["public"] }))).toEqual(["internal data", "confidential data"]);

@@ -165,8 +165,11 @@ export type SessionStateSource = z.infer<typeof sessionStateSourceSchema>;
 export const runtimeSessionStateSchema = z.enum(["running", "waiting-input", "idle", "completed", "failed", "stopped", "unknown"]);
 export type RuntimeSessionState = z.infer<typeof runtimeSessionStateSchema>;
 
-/** The states that claim a session is alive right now. */
-const LIVE_SESSION_STATES: readonly RuntimeSessionState[] = ["running", "waiting-input"];
+/**
+ * The states that claim something about a session right now: alive, or alive and resting. Stored history can say a
+ * session ended, never that it is running, waiting or idle.
+ */
+const LIVE_SESSION_STATES: readonly RuntimeSessionState[] = ["running", "waiting-input", "idle"];
 
 /** The most capability refs or artifact refs one synopsis lists. A synopsis is a summary, not an inventory. */
 export const RUNTIME_SESSION_SYNOPSIS_LIST_MAX = 16;
@@ -220,6 +223,13 @@ export const runtimeSessionSynopsisSchema = z
         code: "custom",
         path: ["state"],
         message: `a session read from stored history cannot be said to be ${synopsis.state}; say unknown`,
+      });
+    }
+    if (synopsis.authority === "observed" && synopsis.stateSource === "process-supervision") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["stateSource"],
+        message: "the host supervises only processes it started or attached to; an observed session is not one of them",
       });
     }
   });

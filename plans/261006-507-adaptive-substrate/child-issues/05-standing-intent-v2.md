@@ -25,7 +25,7 @@ bounded by an `ExecutionEnvelope` (`packages/contracts/src/execution-envelope.ts
 
 ## Acceptance criteria
 
-- [ ] "Every weekday at 8:00 Asia/Saigon" fires deterministically across DST/timezone changes and restarts.
+- [ ] "Every weekday at 8:00 Asia/Ho_Chi_Minh" fires deterministically across DST/timezone changes and restarts.
 - [ ] A routine runs with only capabilities/connections, no folder.
 - [ ] Restart or delivery retry never duplicates Task creation or silently replays an unknown effect.
 - [ ] A run never exceeds its envelope; widening is refused or asked about.

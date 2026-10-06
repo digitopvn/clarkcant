@@ -1,4 +1,4 @@
-# feat(runtime): session insights and improvement observer over observable evidence
+# feat(runtime): cross-runtime session context, session insights and improvement observer
 
 Labels: `enhancement` · Parent: #507 (Phase 8)
 
@@ -17,6 +17,9 @@ records only when enough evidence exists.
 
 ## Scope
 
+- Cross-runtime session context (epic §9): Main Clark carries only bounded `RuntimeSessionSynopsis` records; the #433
+  context planner decides on demand which runtime session history matters to the current turn and loads it lazily,
+  redacted, data-class checked and with provenance. No transcript enters Main Clark context by default.
 - Events: task completed/failed, user correction, capability failure or missing, runtime/model fallback, repeated
   retry, repeated approval, effect unknown, context miss, cost/latency outlier, recurring routing error.
 - Bounded, redacted, provenance-bearing history; no hidden chain-of-thought.
@@ -24,6 +27,8 @@ records only when enough evidence exists.
 
 ## Acceptance criteria
 
+- [ ] Asked about work another runtime did, Clark answers from that session's history selected by the context planner,
+      within the token budget, redacted, citing the session; unrelated sessions add nothing to context.
 - [ ] Hypotheses cite the evidence that motivated them (e.g. "5/14 reviews needed a correction for X").
 - [ ] One failed run never changes active behaviour on its own.
 - [ ] Session data stays bounded and classified; secrets never enter observer storage.

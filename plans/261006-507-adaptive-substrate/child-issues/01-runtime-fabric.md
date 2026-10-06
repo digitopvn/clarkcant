@@ -15,7 +15,9 @@ than one agent runtime, using the Phase 0 contracts in `packages/contracts/src/r
   backend API first.
 - Phase 0 contracts (#507).
 - Unblocks: #495 (side work dispatches through the fabric), Phase 2 runtime inventories, Phase 8.
-- Coordinates with #209 (placement stays host-owned) and #125 (runtime simplification).
+- Coordinates with #209 (placement stays host-owned).
+- Related, not blocking: #496 (in-conversation widget dev sessions) for how a transient mini app is composed and
+  updated in the conversation; the Work Plan below reuses whatever widget surface exists when this phase lands.
 
 ## Scope
 
@@ -28,6 +30,10 @@ than one agent runtime, using the Phase 0 contracts in `packages/contracts/src/r
   trait by trait; `unknown` stays `unknown`.
 - Session authority `managed | attached | observed` enforced through `maySessionAct`; observed sessions are read-only.
 - Produce `RuntimeSessionSynopsis` records; never inject transcripts into Main Clark context by default.
+- Transient Work Plan mini app (epic §10): when Clark runs work in parallel, it shows the work as an agent message with
+  widgets — what is being done, by which step, with progress, Stop and results — describing work, not runtimes. It
+  appears for the duration of the work and folds into the conversation afterwards; runtime, model and session ids are
+  progressive detail. Summonable by asking; never a permanent dashboard.
 
 ## Acceptance criteria
 
@@ -37,6 +43,8 @@ than one agent runtime, using the Phase 0 contracts in `packages/contracts/src/r
 - [ ] An observed session cannot be steered, stopped or resumed through Clark.
 - [ ] Replacing the runtime that runs a task class does not change Task/Run product semantics or user-facing wording.
 - [ ] No runtime, session or model identifier is required in the normal user journey; they are progressive detail.
+- [ ] Parallel work shows as a transient Work Plan mini app in the conversation, with live progress and a working Stop;
+      it is summonable by text, voice or slash command and leaves no permanent chrome behind.
 - [ ] Windows, macOS and Linux CI pass for portable paths; OS-specific runtime discovery sits behind an adapter.
 - [ ] Architecture docs EN/VI updated; `system-architecture.png` "Pi Session" relabelled runtime-neutral.
 

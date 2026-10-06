@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { DEFAULT_ALLOWED_DATA_CLASSES, dataClassSchema } from "./data-class.ts";
 import { capabilityRefSchema } from "./grants.ts";
+import { absoluteHostPathProblem, hostPathWithin } from "./host-path.ts";
 import { connectionIdSchema, effectCategorySchema, nodeIdSchema } from "./primitives.ts";
 import { runtimeFeatureNameSchema } from "./runtime-fabric.ts";
 import { taskResourceSchema, type TaskResource } from "./tasks.ts";
@@ -109,16 +110,31 @@ function missing<T>(inner: readonly T[] | undefined, outer: readonly T[] | undef
   return (inner ?? []).filter((item) => !allowed.has(key(item)));
 }
 
-/** What a resource is, by kind and path. */
-function resourceKey(resource: TaskResource): string {
-  return JSON.stringify(resource.kind === "folder" ? ["folder", resource.path, resource.access] : ["repository", resource.path]);
+/**
+ * Whether `outer` grants `inner`. A repository is granted only by the same repository. A folder is granted by the same
+ * folder or one that contains it, with the same access or write (which covers reading). Containment is compared segment
+ * by segment and only between absolute normalized paths; any other path must match exactly, because a relative or
+ * unnormalized path cannot be placed inside another without the machine that resolves it.
+ *
+ * A task resource names a path without a node, so two machines' folders at the same path compare as the same folder.
+ * Binding resources to a node is #209's; until then an envelope that needs to tell nodes apart restricts
+ * `executor.nodeIds`.
+ */
+function resourceCovers(outer: TaskResource, inner: TaskResource): boolean {
+  if (outer.kind === "repository" || inner.kind === "repository") {
+    return outer.kind === inner.kind && outer.path === inner.path;
+  }
+  if (outer.access === "read" && inner.access === "write") return false;
+  if (outer.path === inner.path) return true;
+  return (
+    absoluteHostPathProblem(outer.path) === undefined &&
+    absoluteHostPathProblem(inner.path) === undefined &&
+    hostPathWithin(inner.path, outer.path)
+  );
 }
 
-/** What a resource grants: itself, and for a folder it may write, reading it too. */
-function resourceCovers(resource: TaskResource): string[] {
-  return resource.kind === "folder" && resource.access === "write"
-    ? [resourceKey(resource), resourceKey({ ...resource, access: "read" })]
-    : [resourceKey(resource)];
+function targetKey(target: DeliveryTarget): string {
+  return JSON.stringify(target.kind === "channel" ? [target.kind, target.connectionId, target.target] : [target.kind]);
 }
 
 /**
@@ -130,9 +146,8 @@ function resourceCovers(resource: TaskResource): string[] {
  */
 export function envelopeWidening(inner: ExecutionEnvelope, outer: ExecutionEnvelope): string[] {
   const out: string[] = [];
-  const outerResources = new Set((outer.resources ?? []).flatMap(resourceCovers));
   for (const resource of inner.resources ?? []) {
-    if (!outerResources.has(resourceKey(resource))) {
+    if (!(outer.resources ?? []).some((granted) => resourceCovers(granted, resource))) {
       out.push(`the ${resource.kind} ${resource.path}${resource.kind === "folder" ? ` (${resource.access})` : ""}`);
     }
   }
@@ -161,9 +176,14 @@ export function envelopeWidening(inner: ExecutionEnvelope, outer: ExecutionEnvel
     if (own === undefined || own > bound) out.push(`${limit} above ${String(bound)}`);
   }
 
-  const targetKey = (target: DeliveryTarget): string =>
-    JSON.stringify(target.kind === "channel" ? [target.kind, target.connectionId, target.target] : [target.kind]);
-  const outerTargets = new Map((outer.deliveryTargets ?? []).map((target) => [targetKey(target), new Set(target.on)]));
+  // The same target may be listed more than once; what it may be told is everything those entries allow together.
+  const outerTargets = new Map<string, Set<DeliveryOutcome>>();
+  for (const target of outer.deliveryTargets ?? []) {
+    const key = targetKey(target);
+    const allowed = outerTargets.get(key) ?? new Set<DeliveryOutcome>();
+    for (const outcome of target.on) allowed.add(outcome);
+    outerTargets.set(key, allowed);
+  }
   for (const target of inner.deliveryTargets ?? []) {
     const allowed = outerTargets.get(targetKey(target));
     const label = target.kind === "channel" ? `${target.target} on ${target.connectionId}` : target.kind;
