@@ -11,6 +11,7 @@
  */
 
 export * from "./task-service.ts";
+export * from "./task-settle-reason.ts";
 export * from "./effect-reconciliation.ts";
 export * from "./browser-press.ts";
 export * from "./control-sessions.ts";
