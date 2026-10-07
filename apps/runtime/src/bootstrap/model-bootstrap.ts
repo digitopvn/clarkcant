@@ -623,6 +623,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           newId: deps.services().conductor.newId,
           now: () => instantSchema.parse(new Date().toISOString()),
         },
+        // "Report this bug" or "I wish Clark could…": the same report service `/report` and the composer use. It
+        // prepares and shows; only the person's press on the host's card files it, so no turn origin is needed.
+        feedback: {
+          services: deps.services,
+          conversationId: turn.conversationId,
+          channel: turn.channel,
+        },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.

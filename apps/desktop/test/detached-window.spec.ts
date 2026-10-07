@@ -138,6 +138,19 @@ describe("the detached bootstrap", () => {
     expect(reviewed.ok).toBe(false);
     expect(reviewed.ok === false ? reviewed.reason : "").toContain("bootstrap");
   });
+
+  it("refuses to detach a widget that runs in its own frame", () => {
+    // The window holds no credential, so an isolated frame there could not save its state or renew its URL.
+    const reviewed = reviewDetachedBootstrap(
+      detachedBootstrap({
+        instanceRef: "widget_1",
+        title: "Khung riêng",
+        live: { kind: "isolated-frame", instanceId: "widget_1", frame: { url: "/widgets/frame" } },
+      }),
+    );
+    expect(reviewed.ok).toBe(false);
+    expect(reviewed.ok === false ? reviewed.reason : "").toContain("own frame");
+  });
 });
 
 describe("the detached window itself", () => {

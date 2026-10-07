@@ -797,6 +797,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.detached.reattach": "Gắn lại vào hội thoại",
   "widgets.detached.actionDetached": "Hành động này không còn được gắn với widget.",
   "widgets.detached.serverRefused": "Máy chủ từ chối hành động này.",
+  "widgets.detached.isolatedFrame": "Widget này chạy trong khung riêng nên chỉ mở được trong hội thoại.",
 
   // ConversationPinSurfaces.tsx
   "widgets.pins.unpin": "Bỏ ghim",
@@ -1790,6 +1791,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.detached.reattach": "Reattach to the conversation",
   "widgets.detached.actionDetached": "This action is no longer attached to the widget.",
   "widgets.detached.serverRefused": "The server refused this action.",
+  "widgets.detached.isolatedFrame": "This widget runs in its own frame, so it can only be shown in the conversation.",
 
   "widgets.pins.unpin": "Unpin",
   "widgets.pins.untitled": "Pinned widget",

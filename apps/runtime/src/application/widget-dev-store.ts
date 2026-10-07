@@ -11,7 +11,14 @@ import {
   widgetDevStopReasonSchema,
   type DirectoryEntry,
 } from "@clarkcant/contracts";
-import { directoryIndexPath, readDirectory, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
+import {
+  directoryIndexPath,
+  listingKey,
+  readDirectory,
+  readDirectoryIndex,
+  type DirectoryIndexState,
+  type DirectoryOrigin,
+} from "@clarkcant/core";
 
 /**
  * Where a node keeps its live widget authoring sessions, and the directory view they add to.
@@ -161,17 +168,31 @@ export function devListings(dataDir: string): DirectoryEntry[] {
 }
 
 /**
+ * The source every dev listing names. Like any other source, it is recorded on what is installed from it and checked by
+ * the install path, so an install from a row that named another source (a marketplace card) never takes a session's
+ * build of the same id and version, and a session's own install names this source to take its build.
+ */
+export const WIDGET_DEV_DIRECTORY_SOURCE: DirectoryOrigin = {
+  id: "widget-dev",
+  kind: "widget-dev",
+  label: "this node's widget dev sessions",
+};
+
+/**
  * The directory as this node resolves installed packages: every configured source (`readDirectory`), with the listings
- * of its widget dev sessions in front. With no source configured and no sessions, the answer is the directory's own
- * `not-configured`. The person's own index file that cannot be read keeps the directory unreadable rather than shrinking
- * to the dev listings; remote sources that have nothing to list yet (never fetched, unreachable) do not hide a session's
- * generations, since local development must work without any marketplace.
+ * of its widget dev sessions in front, each owned by `WIDGET_DEV_DIRECTORY_SOURCE`. With no source configured and no
+ * sessions, the answer is the directory's own `not-configured`. The person's own index file that cannot be read keeps
+ * the directory unreadable rather than shrinking to the dev listings; remote sources that have nothing to list yet (never
+ * fetched, unreachable) do not hide a session's generations, since local development must work without any marketplace.
  */
 export function readNodeDirectory(dataDir: string, env: NodeJS.ProcessEnv = process.env): DirectoryIndexState {
   const index = readDirectory({ env, dataDir });
   const dev = devListings(dataDir);
   if (dev.length === 0) return index;
-  if (index.kind === "not-configured") return { kind: "configured", directory: widgetDevStoreDir(dataDir), entries: dev };
+  const devOrigins = dev.map((entry): [string, DirectoryOrigin] => [listingKey(entry), WIDGET_DEV_DIRECTORY_SOURCE]);
+  if (index.kind === "not-configured") {
+    return { kind: "configured", directory: widgetDevStoreDir(dataDir), entries: dev, origins: new Map(devOrigins) };
+  }
   if (index.kind === "unreadable") {
     const indexPath = directoryIndexPath(env);
     if (indexPath !== undefined && readDirectoryIndex(indexPath).kind !== "configured") return index;
@@ -179,10 +200,12 @@ export function readNodeDirectory(dataDir: string, env: NodeJS.ProcessEnv = proc
       kind: "configured",
       directory: index.directory,
       entries: dev,
+      origins: new Map(devOrigins),
       ...(index.sources === undefined ? {} : { sources: index.sources }),
     };
   }
-  return { ...index, entries: [...dev, ...index.entries] };
+  // The dev listings come first, so the same listing key is the session's: the entry found first is the one it names.
+  return { ...index, entries: [...dev, ...index.entries], origins: new Map([...(index.origins ?? []), ...devOrigins]) };
 }
 
 /**

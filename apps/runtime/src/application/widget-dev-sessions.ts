@@ -17,6 +17,7 @@ import {
   activeGeneration,
   cachedLocalSnapshotPath,
   devConsentScopeOf,
+  devRootState,
   getPreference,
   pinInstance,
   readDirectory,
@@ -35,6 +36,7 @@ import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
 import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
 import {
+  WIDGET_DEV_DIRECTORY_SOURCE,
   WIDGET_DEV_SNAPSHOTS_MAX,
   WIDGET_DEV_STORE_MAX,
   readDevSessions,
@@ -518,15 +520,17 @@ export function createWidgetDevSessions(
             const approval = approvalState(consentApproval);
             return approval !== undefined && approval.decision === "granted" && approval.operationDigest === scope ? consentApproval : undefined;
           })();
+    // The session installs its own listing, so it names the dev source: a listing another source owns is never taken.
+    const sourceId = WIDGET_DEV_DIRECTORY_SOURCE.id;
     const approved: ApprovedInstall | undefined =
-      granted === undefined ? undefined : { approvalId: granted, digest: scope, localDigest: latest.generation.digest };
+      granted === undefined ? undefined : { approvalId: granted, digest: scope, localDigest: latest.generation.digest, sourceId };
     const intent = intentOf(stored);
 
     let outcome: Awaited<ReturnType<typeof installPackage>>;
     try {
       outcome = await installPackage(
         packageInstallDepsOf(services()),
-        { packageId: latest.listing.packageId, version: latest.listing.version, contentDigest: latest.generation.digest },
+        { packageId: latest.listing.packageId, version: latest.listing.version, contentDigest: latest.generation.digest, sourceId },
         { consentScope: scope, ...(approved === undefined ? {} : { approved }), ...(intent === undefined ? {} : { intent }) },
       );
     } catch (cause) {
@@ -665,18 +669,15 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * Whether a live session's folder has gone (deleted or renamed); when it has, the session is stopped as `folder-gone`
-   * before anything is built or installed from it. A platform watcher does not always report this (Windows reports
-   * nothing), so the check is made before each build is followed, not only on a watcher error.
+   * Whether a live session's folder has gone (deleted, renamed, or replaced by another folder at the same path while it
+   * was watched); when it has, the session is stopped as `folder-gone` before anything is built or installed from it. A
+   * platform watcher does not always report this (Windows reports nothing), so the check is made before each build is
+   * followed, not only on a watcher error. The session's engine answers, since it knows which folder it watches; a folder
+   * that could not be looked at this time (a busy or locked folder on Windows) is not taken as gone.
    */
   const stoppedIfGone = (sessionId: string, root: string): boolean => {
-    let present: boolean;
-    try {
-      present = statSync(root).isDirectory();
-    } catch {
-      present = false;
-    }
-    if (present) return false;
+    const engine = live.get(sessionId)?.engine;
+    if (!(engine === undefined ? devRootState(root) === "gone" : engine.rootGone())) return false;
     if (live.has(sessionId)) {
       markStopped(sessionId, "folder-gone");
       process.stderr.write(`widget dev: ${root} is gone, so its session was stopped; what it ran keeps running\n`);

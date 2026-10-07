@@ -1,8 +1,10 @@
+import type * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
@@ -12,7 +14,16 @@ import {
   type WidgetDefinition,
   type WidgetDevSessionView,
 } from "@clarkcant/contracts";
-import { EXECUTION_POLICY_PREFERENCE_KEY, setPreference, writeRegisteredPreference } from "@clarkcant/core";
+import {
+  DIRECTORY_FEED_FORMAT,
+  EXECUTION_POLICY_PREFERENCE_KEY,
+  OFFICIAL_MARKETPLACE_FEED_URL,
+  customFeedId,
+  listInstalledPackages,
+  refreshDirectory,
+  setPreference,
+  writeRegisteredPreference,
+} from "@clarkcant/core";
 
 import { createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
 import { WIDGET_DEV_STORE_MAX, readDevSessions, writeDevSessions } from "../src/application/widget-dev-store.ts";
@@ -20,6 +31,20 @@ import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+
+/** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
+const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  const statSync = ((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+    if (statFailure.path !== undefined && resolve(String(path)) === statFailure.path) {
+      throw Object.assign(new Error(`EPERM: operation not permitted, stat '${String(path)}'`), { code: "EPERM" });
+    }
+    return actual.statSync(path, options);
+  }) as typeof actual.statSync;
+  return { ...actual, statSync, default: { ...actual, statSync } };
+});
 
 /**
  * A live widget authoring session, driven over the HTTP API the app uses.
@@ -177,6 +202,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  statFailure.path = undefined;
   services.widgetDev?.close();
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true });
@@ -643,5 +669,159 @@ describe("a widget dev session", () => {
     // Bounded: the node looks for the folder at least once a second (`DEV_ENGINE_ROOT_CHECK_MS`), and on every change.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+  });
+
+  it("stops a watched session as folder-gone when its folder is deleted and made again before anything looks", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // In one turn of the event loop: the path names a folder again, but not the one being watched.
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    writePackage("<!doctype html><p>a new folder</p>\n");
+    const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+  });
+
+  it("keeps a watched session live through a folder it cannot look at for a moment", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    statFailure.path = resolve(root);
+    const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    expect(rebuilt.status).toBe(200);
+    expect(session(rebuilt).status).toBe("live");
+    statFailure.path = undefined;
+
+    // Still watched: the next save builds and runs.
+    writePackage("<!doctype html><p>second</p>\n");
+    const next = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
+    expect(next).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+});
+
+describe("the directory a widget dev session lists its builds in", () => {
+  const restoreEnv: Record<string, string | undefined> = {};
+  const servers: Server[] = [];
+
+  /** Set (or, with no value, remove) a directory setting for this test only. */
+  function setEnv(name: string, value?: string): void {
+    if (!(name in restoreEnv)) restoreEnv[name] = process.env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+
+  /** A marketplace feed on loopback that lists this package's id and version under another publisher's archive. */
+  async function startFeed(): Promise<string> {
+    const listing = {
+      packageId: PACKAGE,
+      version: VERSION,
+      displayName: "Timer",
+      description: "Someone else's timer.",
+      source: { kind: "npm", name: "timer", version: VERSION },
+      publisher: { id: "someone-else", sourceUrl: "https://example.org", license: "MIT" },
+      preview: {},
+      facets: ["ui"],
+      isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
+      platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+      hostApi: { min: 1, max: 1 },
+      permissionsSummary: [],
+      riskTier: "isolated-ui",
+      sizeBytes: 1024,
+      digest: `sha256:${"1".repeat(64)}`,
+    };
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ format: DIRECTORY_FEED_FORMAT, entries: [listing], nextCursor: null }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("the feed did not bind");
+    return `http://127.0.0.1:${String(address.port)}/api/v1/directory`;
+  }
+
+  const installedSource = () =>
+    listInstalledPackages({
+      db: services.runtime.db,
+      nodeId: services.runtime.identity.nodeId,
+      now: () => new Date().toISOString() as Instant,
+      newId: (prefix: string) => `${prefix}_x`,
+    }).find((installed) => installed.packageId === PACKAGE)?.directorySource;
+
+  /** Every address the node fetched that is not this machine's loopback; none of them is reached. */
+  let offLoopback: string[];
+
+  beforeEach(() => {
+    // The node's defaults: no index file, no feed of the person's own, and the official Marketplace on.
+    setEnv("CC_DIRECTORY_INDEX");
+    setEnv("CC_DIRECTORY_MARKETPLACES");
+    setEnv("CC_OFFICIAL_MARKETPLACE");
+    // A test run never reaches the live Marketplace: it answers as an unavailable one, and only loopback feeds are real.
+    offLoopback = [];
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (new URL(url).origin.startsWith("http://127.0.0.1")) return realFetch(input, init);
+      offLoopback.push(url);
+      return Promise.resolve(new Response("unavailable in tests", { status: 503 }));
+    });
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    for (const [name, value] of Object.entries(restoreEnv)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      delete restoreEnv[name];
+    }
+    await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))));
+  });
+
+  it("activates and serves the folder on a fresh node whose Marketplace was never fetched", async () => {
+    const conversationId = await conversation();
+    const started = session(await call("POST", "/widget-dev/sessions", { root, conversationId }));
+    expect(started).toMatchObject({ status: "live", activation: { state: "active", generation: 1 } });
+
+    const frame = await live(conversationId, started.placed?.instanceId ?? "");
+    expect(await served(frame.frame.url)).toContain("first");
+  });
+
+  it("refuses to activate while the person's index file cannot be read", async () => {
+    const indexPath = join(dir, "index.json");
+    writeFileSync(indexPath, "[ {broken");
+    setEnv("CC_DIRECTORY_INDEX", indexPath);
+
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.activation).toMatchObject({ state: "refused", code: "DIRECTORY_UNREADABLE" });
+    expect(started.running).toBeUndefined();
+    // The install looked for the listing in the Marketplace too, so the Marketplace was on.
+    expect(offLoopback.some((url) => url.startsWith(OFFICIAL_MARKETPLACE_FEED_URL))).toBe(true);
+  });
+
+  it("names its own source, so an install from a row naming a marketplace never takes the session's build", async () => {
+    const feedUrl = await startFeed();
+    setEnv("CC_DIRECTORY_MARKETPLACES", feedUrl);
+
+    // The feed was never fetched, so nothing tells the session the id and version are listed elsewhere.
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.activation).toMatchObject({ state: "active", generation: 1 });
+    expect(installedSource()).toMatchObject({ id: "widget-dev", kind: "widget-dev" });
+
+    // Fetched now, the marketplace lists the same id and version; the person presses Install on its card.
+    await refreshDirectory({ env: process.env, dataDir: join(dir, "node") });
+    expect(offLoopback.some((url) => url.startsWith(OFFICIAL_MARKETPLACE_FEED_URL))).toBe(true);
+    const pressed = await call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION, sourceId: customFeedId(feedUrl) });
+    expect(pressed.status).toBe(409);
+    expect(pressed.body).toMatchObject({ code: "DIRECTORY_SOURCE_CHANGED" });
+    expect(installedSource()?.id).toBe("widget-dev");
+
+    // And the session's next build is refused for the id the directory now lists.
+    writePackage("<!doctype html><p>second</p>\n");
+    const rebuilt = session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`));
+    expect(rebuilt.activation).toMatchObject({ code: "PACKAGE_LISTED" });
   });
 });

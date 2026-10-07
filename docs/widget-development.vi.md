@@ -2181,6 +2181,11 @@ Detach không reset state/subscription/media.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
 
+Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
+thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
+semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
+Việc detach một isolated frame được theo dõi ở [#577](https://github.com/digitopvn/clarkcant/issues/577).
+
 Audio/call/player không được duplicate playback khi chuyển surface.
 
 ---
@@ -2878,7 +2883,9 @@ Dev host mô phỏng một node. Để xem widget trên chính node, hãy nhờ 
 hẹn giờ"), hoặc gọi `POST /widget-dev/sessions` với tư cách chủ máy
 ([giao diện mở](open-interfaces.vi.md#phiên-phát-triển-widget)). Node theo dõi thư mục bằng cùng build engine mà dev host
 dùng: mỗi thay đổi đọc được thành một gói trở thành một generation bất biến mang tên theo digest các tệp của nó, được sao
-chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Không có gì
+chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Các listing
+đó mang nguồn riêng, `widget-dev`, được ghi lên generation đã cài, nên bấm Cài trên một dòng marketplace liệt kê cùng id
+và version sẽ bị từ chối thay vì cài các tệp của phiên. Không có gì
 đi qua npm, Marketplace hay một directory index, và không có gì được phát hành. Thư mục `node_modules` ở gốc bị loại khỏi
 mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
 
@@ -3617,8 +3624,8 @@ soạn thảo không bao giờ bỏ tệp mà người dùng đã chọn. Ctrl+S
 rồi gọi `attachToConversation`.
 
 *Ghi đè tệp gốc* chỉ được đưa ra trong frame nơi tệp được chọn, và chỉ cho đến khi frame đó được tải lại: host giữ
-handle của máy tính cho tệp đã chọn trong bộ nhớ, bên cạnh đúng frame đó, và không bao giờ lưu nó lại. Sau khi tải lại,
-trong một bản đã ghim hoặc trong một cửa sổ tách riêng, máy tính chỉ đưa ra Lưu thành.
+handle của máy tính cho tệp đã chọn trong bộ nhớ, bên cạnh đúng frame đó, và không bao giờ lưu nó lại. Sau khi tải lại
+hoặc trong một bản đã ghim, máy tính chỉ đưa ra Lưu thành.
 
 **Những gì Clark được cho xem.** Trình soạn thảo công bố một câu tóm tắt ("Editing notes.txt: 3 lines, with unsaved
 changes.") và các giá trị `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` và

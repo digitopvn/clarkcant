@@ -114,6 +114,14 @@ export function reviewDetachedBootstrap(payload) {
     // rather than as a detach that could not be prepared.
     return { ok: false, reason: "a detached window needs the widget host bootstrap it is a view of" };
   }
+  if (payload.live.kind === "isolated-frame") {
+    /*
+     * A widget in its own frame cannot run here. Its frame saves state, publishes what it shows and renews its URL
+     * through the conversation's credential, and this window holds none — so it would open as a frame that cannot
+     * save. Refused here as well as unoffered in the conversation, so no caller can open one.
+     */
+    return { ok: false, reason: "a widget that runs in its own frame stays in the conversation" };
+  }
   if (typeof payload.instanceRef !== "string" || payload.instanceRef === "") {
     // A detached window with no instance reference has nothing to show, and an empty frame would read as a widget
     // that failed to load rather than as a request that made no sense.

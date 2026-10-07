@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in ClarkCant does not work as it should.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The quickest way to report a bug is from inside ClarkCant: type `/report bug ...` or tell Clark what went wrong. Clark fills in safe diagnostics, removes secrets, and checks for duplicates for you.
+
+        Filing here by hand? Only write what you actually saw. Leave out a section you do not know: "not known yet" is more useful than a guess. Never paste tokens, API keys, transcripts or private file contents.
+
+        Tiếng Việt cũng được.
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: What you saw, in your own words.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What was expected
+      description: What you expected to happen instead.
+    validations:
+      required: false
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Only steps you have actually followed. Write "Not known yet." if you do not know them.
+      placeholder: Not known yet.
+    validations:
+      required: false
+  - type: input
+    id: frequency
+    attributes:
+      label: How often
+      description: For example every time, sometimes, once.
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What this blocks or costs you.
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: An error message or a short excerpt you chose to share. Check it for secrets and personal paths first.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: The ClarkCant version, operating system and architecture, runtime, language and input mode (typed or voice), and the subsystem, provider and model if you know them.
+      placeholder: |
+        ClarkCant version:
+        Operating system:
+        Runtime:
+        Language / input:
+        Model:
+        Subsystem:
+    validations:
+      required: false

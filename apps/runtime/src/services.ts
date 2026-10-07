@@ -96,6 +96,7 @@ import {
 } from "./jev-selector.ts";
 import { liveDecisionConfig } from "./decision-config.ts";
 import type { StoredCredential } from "./decision-provider.ts";
+import type { FeedbackGithub } from "./application/feedback-github.ts";
 
 /**
  * Composition root.
@@ -354,6 +355,12 @@ export interface NodeServices {
    * runs it.
    */
   updateCheckFixture?: { run(): Promise<{ packageUpdates: number }> };
+  /**
+   * Where product reports are filed (`application/product-feedback.ts`). Absent on a real node, which files to
+   * ClarkCant's own repository with the person's `github_token`; present only in a test, or on a node started with
+   * `CC_GITHUB_FIXTURE=1` (`test-support/fake-github.ts`), where it is an in-process GitHub that reaches no network.
+   */
+  feedbackGithub?: FeedbackGithub;
 }
 
 /**
