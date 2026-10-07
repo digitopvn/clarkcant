@@ -20,7 +20,12 @@ export function stampPlan(repoRoot, plan) {
   if (typeof plan.version !== "string" || plan.history?.build?.version !== plan.version || !Array.isArray(plan.history?.releases)) {
     throw new Error("the plan does not carry a version with a matching release history");
   }
-  stampVersion(repoRoot, { version: plan.version, channel: plan.history.build.channel, releases: plan.history.releases });
+  stampVersion(repoRoot, {
+    version: plan.version,
+    channel: plan.history.build.channel,
+    releases: plan.history.releases,
+    source: plan.history.source,
+  });
   const drift = clarkVersionDrift(repoRoot);
   if (drift.length > 0) throw new Error(`stamping left the build carrying more than one version: ${drift.join("; ")}`);
   return plan.version;
