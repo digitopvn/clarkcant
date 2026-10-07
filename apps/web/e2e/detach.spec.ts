@@ -115,6 +115,31 @@ test("the detached window draws the instance the host handed over, and asks it t
   expect(calls).toContain("release");
 });
 
+test("a widget in its own frame is refused by name rather than crashing the window", async ({ page }) => {
+  /*
+   * The conversation does not offer Detach for an isolated widget and the host refuses one, so this window is reached
+   * only past both. It holds no credential to save that frame's state, so it mounts no frame and says why.
+   */
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await stubBridge(page, {
+    ok: true,
+    bootstrap: {
+      ...BOOTSTRAP,
+      live: { kind: "isolated-frame", instanceId: "widget_detached_1", frame: { url: "/widgets/frame" }, bindings: [] },
+    },
+  });
+  await page.goto("/?detached=1");
+
+  const surface = page.locator("[data-detached-surface='true']");
+  await expect(surface).toHaveAttribute("data-detached-unsupported", "isolated-frame");
+  await expect(surface.locator("iframe")).toHaveCount(0);
+  await page.locator("[data-detached-release='true']").click();
+  const calls = await page.evaluate(() => (window as unknown as { __detachedCalls: Recorded[] }).__detachedCalls);
+  expect(calls).toContain("release");
+  expect(errors).toEqual([]);
+});
+
 test("a window that was handed nothing says so instead of showing an empty frame", async ({ page }) => {
   // "The host refused" and "the widget is blank" look identical on screen and mean opposite things.
   await stubBridge(page, { ok: false, refused: "this window is not showing a detached instance" });

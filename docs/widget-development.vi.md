@@ -2181,6 +2181,10 @@ Detach không reset state/subscription/media.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
 
+Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
+thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
+semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
+
 Audio/call/player không được duplicate playback khi chuyển surface.
 
 ---

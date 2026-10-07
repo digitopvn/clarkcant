@@ -2185,6 +2185,11 @@ Detach does not reset state/subscriptions/media.
 
 Closing a detached window only moves presentation ownership; it does not delete the instance.
 
+Only composed widgets can be detached today. A widget that runs in its own (isolated) frame stays in the
+conversation: a detached window holds no credential, and that frame needs the conversation's credential to save
+state, publish its semantic view and renew its URL. The conversation does not offer Detach for it, and the desktop
+host refuses its bootstrap.
+
 Audio/call/player must not duplicate playback when moving between surfaces.
 
 ---
