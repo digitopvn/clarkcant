@@ -1,0 +1,23 @@
+{
+  "name": "@clarkcant/release-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Release planning for ClarkCant: semantic-release with Conventional Commits, isolated from the app workspace so the app never inherits this dependency tree.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "plan": "node plan.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@semantic-release/commit-analyzer": "13.0.1",
+    "@semantic-release/release-notes-generator": "14.1.1",
+    "conventional-changelog-conventionalcommits": "9.3.1",
+    "conventional-commits-filter": "5.0.0",
+    "conventional-commits-parser": "6.4.0",
+    "semantic-release": "25.0.9"
+  }
+}

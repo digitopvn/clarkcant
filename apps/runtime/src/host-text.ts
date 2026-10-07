@@ -3,6 +3,15 @@ import type { Database } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "./app-intents.ts";
 
+/** What kept a channel reply from being sent, so the sentence names the cause and the fix that matches it. */
+export type ChannelNotSentCause =
+  | { kind: "connection-gone" }
+  | { kind: "revoked" }
+  | { kind: "no-adapter" }
+  | { kind: "policy"; reason: string }
+  | { kind: "provider"; reason: string }
+  | { kind: "ledger" };
+
 /**
  * The words this node writes into a conversation itself, in the person's interface language.
  *
@@ -232,6 +241,31 @@ export interface HostText {
     failed: Record<AppIntentConfirmationFailure, string>;
     declined: string;
   };
+  /** What the host says in a conversation about a channel bound to it: a reply it did not send, a message it lost. */
+  channels: {
+    /** A reply that stayed here and did not reach the channel, worded by what actually stopped it. */
+    replyNotSent: (provider: string, cause: ChannelNotSentCause) => string;
+    /**
+     * A reply handed to the channel with no answer the node can trust; never sent again. `recorded` is whether the
+     * effect ledger holds it as unknown — only then does the inbox ask about it.
+     */
+    replyUnknown: (provider: string, recorded: boolean) => string;
+    /**
+     * A message whose turn had started when the node stopped; it is not answered twice. `partlySent` is whether some of
+     * Clark's reply had already reached the channel.
+     */
+    interrupted: (provider: string, partlySent: boolean) => string;
+    /** Turn-starting messages beyond what one thread holds while it waits. */
+    dropped: (provider: string, count: number) => string;
+    /** The card the owner decides on: someone who is not them asked Clark to use a tool. */
+    toolCard: (provider: string, label: string, tool: string) => string;
+    /** The receipt when the owner refuses such a call. */
+    toolRefused: string;
+    /** The receipt when an approved call could not be carried on (the binding or the payload changed). */
+    toolApprovedNotRun: (reason: string) => string;
+    /** The host-written line the turn after an approval answers. */
+    toolApprovedLine: string;
+  };
   /** The Tools tab: the agent's own tools, which this node did not define, and the note under them. */
   toolsTab: {
     agentTools: Readonly<Record<"read" | "write" | "edit" | "bash", { label: string; description: string }>>;
@@ -301,6 +335,7 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   search_files: "Search files on this machine",
   search_history: "Search this machine's history",
   set_map_tiles: "Map tiles",
+  show_changelog: "See what's new in Clark",
   show_view: "Show a view",
   start_browser_task: "Work in the browser",
   stop_work: "Stop running work",
@@ -581,6 +616,39 @@ const VI: HostText = {
     },
     declined: "Tôi đã bỏ qua câu lệnh đó.",
   },
+  channels: {
+    replyNotSent: (provider, cause) => {
+      const kept = "Câu trả lời vẫn ở đây.";
+      switch (cause.kind) {
+        case "connection-gone":
+          return `Câu trả lời này chưa được gửi sang ${provider}: kết nối ${provider} không còn trên node này. ${kept} Kết nối lại ${provider} nếu muốn Clark trả lời ở đó.`;
+        case "revoked":
+          return `Câu trả lời này chưa được gửi sang ${provider}: kết nối ${provider} đã bị thu hồi. ${kept} Kết nối lại để Clark trả lời ở đó.`;
+        case "no-adapter":
+          return `Câu trả lời này chưa được gửi sang ${provider}: node này chưa cài phần kết nối ${provider}. ${kept} Cài lại nó rồi Clark trả lời được ở đó.`;
+        case "policy":
+          return `Câu trả lời này chưa được gửi sang ${provider} vì chính sách của bạn: ${cause.reason}. ${kept} Đổi lại trong Cài đặt → Điều khiển nếu muốn Clark trả lời ở đó.`;
+        case "provider":
+          return `${provider} từ chối câu trả lời này: ${cause.reason}. ${kept} Clark không tự gửi lại.`;
+        case "ledger":
+          return `Câu trả lời này chưa được gửi sang ${provider}: node không ghi được nó vào sổ hành động, và không gửi điều gì nó không ghi lại được. ${kept}`;
+      }
+    },
+    replyUnknown: (provider, recorded) =>
+      recorded
+        ? `Câu trả lời này đã được giao cho ${provider} nhưng không nhận được xác nhận, nên không rõ nó đã tới chưa. Clark không gửi lại; hộp thư hỏi bạn nó có tới không.`
+        : `Câu trả lời này đã được giao cho ${provider} nhưng không nhận được xác nhận, nên không rõ nó đã tới chưa, và node cũng không ghi được điều đó vào sổ hành động. Clark không gửi lại; bạn kiểm tra trên ${provider} giúp nhé.`,
+    interrupted: (provider, partlySent) =>
+      partlySent
+        ? `Node dừng khi đang trả lời một tin nhắn từ ${provider}: một phần câu trả lời đã tới đó, phần còn lại thì chưa. Tin nhắn vẫn ở đây; Clark không trả lời lại hai lần.`
+        : `Một tin nhắn từ ${provider} đến ngay trước khi node dừng và chưa được trả lời. Tin nhắn vẫn ở đây; Clark không trả lời lại hai lần.`,
+    dropped: (provider, count) =>
+      `${String(count)} tin nhắn cũ từ ${provider} bị bỏ qua vì đến quá dồn dập; Clark trả lời những tin mới nhất.`,
+    toolCard: (provider, label, tool) => `Một người không phải bạn trên ${provider} nhờ Clark dùng “${label}” (${tool})`,
+    toolRefused: "Đã từ chối: việc người gửi trên kênh nhờ không được làm. Không có gì được chạy.",
+    toolApprovedNotRun: (reason) => `Đã duyệt, nhưng không làm được: ${reason}. Không có gì được chạy.`,
+    toolApprovedLine: "Chủ node đã duyệt việc người gửi nhờ.",
+  },
   toolsTab: {
     agentTools: {
       read: { label: "Đọc tệp", description: "Đọc nội dung một tệp trong thư mục làm việc." },
@@ -851,6 +919,39 @@ const EN: HostText = {
       CONFIRMATION_ALREADY_USED: "This confirmation has already been used.",
     },
     declined: "I skipped that command.",
+  },
+  channels: {
+    replyNotSent: (provider, cause) => {
+      const kept = "The reply stays here.";
+      switch (cause.kind) {
+        case "connection-gone":
+          return `This reply was not sent to ${provider}: the ${provider} connection is no longer on this node. ${kept} Connect ${provider} again if Clark should answer there.`;
+        case "revoked":
+          return `This reply was not sent to ${provider}: the ${provider} connection was revoked. ${kept} Reconnect it for Clark to answer there.`;
+        case "no-adapter":
+          return `This reply was not sent to ${provider}: this node has no ${provider} connector installed. ${kept} Install it again and Clark can answer there.`;
+        case "policy":
+          return `This reply was not sent to ${provider} because of your policy: ${cause.reason}. ${kept} Change it in Settings → Control if Clark should answer there.`;
+        case "provider":
+          return `${provider} refused this reply: ${cause.reason}. ${kept} Clark does not send it again on its own.`;
+        case "ledger":
+          return `This reply was not sent to ${provider}: the node could not record it in the action ledger, and it sends nothing it cannot record. ${kept}`;
+      }
+    },
+    replyUnknown: (provider, recorded) =>
+      recorded
+        ? `This reply was handed to ${provider} with no confirmation, so whether it arrived is unknown. Clark does not send it again; the inbox asks you whether it arrived.`
+        : `This reply was handed to ${provider} with no confirmation, so whether it arrived is unknown, and the node could not record that in the action ledger. Clark does not send it again; please check ${provider} yourself.`,
+    interrupted: (provider, partlySent) =>
+      partlySent
+        ? `The node stopped while answering a message from ${provider}: part of the reply had reached it, the rest had not. The message is kept here; Clark does not answer it twice.`
+        : `A message from ${provider} arrived just before the node stopped and was not answered. It is kept here; Clark does not answer it twice.`,
+    dropped: (provider, count) =>
+      `${String(count)} older messages from ${provider} were skipped because they arrived too quickly; Clark answered the newest.`,
+    toolCard: (provider, label, tool) => `Someone who is not you on ${provider} asked Clark to use “${label}” (${tool})`,
+    toolRefused: "Refused: what the sender on the channel asked for was not done. Nothing ran.",
+    toolApprovedNotRun: (reason) => `Approved, but it could not go ahead: ${reason}. Nothing ran.`,
+    toolApprovedLine: "The owner approved what the sender asked for.",
   },
   toolsTab: {
     agentTools: {

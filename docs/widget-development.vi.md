@@ -3042,6 +3042,64 @@ dài) được đếm mà không được nêu tên. Mỗi tên được hiển 
 được. Việc xuất bản vẫn nghiêm ngặt: mục mà `clark widget publish` viết ra được kiểm tra bằng `directoryEntrySchema` nghiêm
 ngặt, nơi một trường lạ là lỗi chứ không phải định dạng mới hơn.
 
+**Nguồn directory và định dạng feed.** Directory của một node được ghép từ các nguồn, theo thứ tự ưu tiên
+([directory-sources.ts](../packages/core/src/directory-sources.ts)):
+
+1. file index mà `CC_DIRECTORY_INDEX` trỏ tới, được đọc đúng như mô tả ở trên;
+2. từng feed marketplace hoặc catalog trong `CC_DIRECTORY_MARKETPLACES` (các URL HTTPS ngăn cách bằng dấu phẩy hoặc
+   khoảng trắng; HTTP thường chỉ được dùng tới loopback của chính máy này), theo thứ tự đã ghi;
+3. feed của ClarkCant Marketplace chính thức, `https://marketplace.clarkcant.cc/api/v1/directory`, bật mặc định và
+   tắt bằng `CC_OFFICIAL_MARKETPLACE=off`.
+
+Một package id thuộc về nguồn đầu tiên liệt kê nó: các listing của nguồn sau cho cùng id bị bỏ ra và được đếm là
+`shadowed`, nên một marketplace không thể thêm version, hay một bản cập nhật, cho gói mà index hoặc catalog của chính
+bạn đã nêu. Một nguồn từ xa chỉ được tải khi có người yêu cầu điều gì đó: một lần tìm (khi bản sao đã cũ hơn 15 phút),
+một lần cài listing không có trong bản sao (cũ hơn một phút), và lần kiểm tra cập nhật, vốn chỉ làm mới những nguồn mà
+node này đã từng tải. Bản sao tốt gần nhất được giữ trong `<dataDir>/directory-cache/` cùng thời điểm tải; một lần làm
+mới thất bại vẫn liệt kê bản đó với trạng thái `stale`, kèm lý do. Nguồn chưa từng được tải là `not-fetched`; nguồn
+không kết nối được và không có bản sao là `unreachable`; địa chỉ trả 404, 405 hoặc 501 là `unsupported`; feed không
+phải directory hợp lệ là `unreadable` — không bao giờ là một danh sách rỗng trông như "không tìm thấy gì".
+
+Thứ tự ưu tiên chỉ có nghĩa khi các nguồn đứng trước đọc được, nên một nguồn không đọc được không bao giờ nhường các
+package id của nó cho nguồn sau:
+
+- File index bị hỏng (ví dụ đang lưu dở khi bạn sửa) làm cả directory thành `unreadable`, như trước khi có marketplace.
+  Không tìm hay cài gì từ marketplace cho tới khi file được sửa, vì file có thể nêu bất kỳ package id nào.
+- Một marketplace hoặc catalog không có gì để liệt kê (`not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`,
+  và không có bản sao trước đó) vẫn để các nguồn sau được liệt kê, và card tìm kiếm nêu tên nó. Một listing từ nguồn
+  sau chỉ được cài khi bạn bấm Cài trên chính dòng của nó, dòng đó có nêu nguồn. `POST /packages/install` không kèm lựa
+  chọn đó sẽ trả `409 DIRECTORY_SOURCE_UNREAD` và nêu tên cả hai nguồn.
+- Mỗi gói ghi lại nguồn mà nó được cài từ đó. Lần kiểm tra cập nhật chỉ đề xuất các version mới hơn từ chính nguồn đó,
+  và thông báo cập nhật nêu tên nguồn. Cài cùng package id từ một nguồn khác sẽ trả `409 DIRECTORY_SOURCE_CHANGED`,
+  trừ khi bạn bấm Cài trên dòng của nguồn đó. Gói được cài trước khi nguồn được ghi lại đến từ file index của bạn, vì
+  lúc đó đó là nguồn duy nhất, nên được coi là cài từ file index: gói chỉ nhận cập nhật từ file, không có thông báo cập
+  nhật khi file không liệt kê gói, và chỉ chuyển sang nguồn khác khi bạn bấm Cài trên dòng của nguồn đó.
+- Một lần cài mà policy hỏi bạn sẽ ghi lại nguồn sở hữu listing lúc bạn được hỏi. Nếu tới lúc bạn chấp thuận, một nguồn
+  khác đã sở hữu listing đó, kể cả với nội dung y hệt, việc chấp thuận trả `409 DIRECTORY_SOURCE_CHANGED`, không có gì
+  được cài và câu hỏi rời khỏi inbox; cài lại sẽ hỏi về nguồn mới.
+
+Khi không đọc được nguồn nào (ví dụ chỉ bật Marketplace chính thức và nó chưa phục vụ feed), directory là
+`unreadable`. Lý do nêu tên từng nguồn, vì sao nó lỗi, và cách thiết lập một file index hoặc một catalog.
+
+Một feed ([marketplace-directory.ts](../packages/core/src/marketplace-directory.ts)) phục vụ các mục directory theo
+đúng dạng ở trên, có thể chia trang:
+
+    GET <feed url>                  → { "format": "clarkcant-directory@1", "entries": [<entry>, …], "nextCursor": "<opaque>" | null }
+    GET <feed url>?cursor=<opaque>  → trang kế tiếp
+
+Một mảng JSON trần (tệp tĩnh trên bất kỳ host HTTPS nào) được đọc như feed một trang, nên một tổ chức có thể công bố
+catalog riêng mà không cần chạy dịch vụ. Các mục được đọc theo cùng quy tắc như file index, cộng thêm hai quy tắc:
+listing từ xa không được nêu một đường dẫn trên máy này (`source.kind: "local"`), và Marketplace chính thức chỉ liệt kê
+gói npm. Một lần làm mới có giới hạn (10 giây, 8 MiB mỗi trang, 20 trang, 5.000 mục) và feed vượt giới hạn bị từ chối
+toàn bộ. Yêu cầu không mang credential, cookie hay header định danh, địa chỉ có username hoặc password bị từ chối, và
+redirect không được đi theo. Feed chỉ được gọi tên bằng host và path; với địa chỉ không phân tích được, mọi thứ từ dấu
+`?` hoặc `#` đầu tiên và mọi thứ trước dấu `@` đều bị cắt bỏ, nên token trong địa chỉ không bao giờ xuất hiện trong
+nhãn, thông báo lỗi, card tìm kiếm hay `GET /packages`. Một listing vẫn chỉ là con trỏ: cài nó sẽ resolve lại đúng version npm, kiểm tra
+integrity của registry và `digest` của mục (content digest của runtime mà `clark widget pack` ghi là
+`npm.contentDigest`), đọc `clarkcant.json` đã tải về và hỏi policy, y như với listing trong file. Không gì trong một
+listing cấp được quyền. Marketplace chính thức chưa phục vụ feed này; cho tới khi có, nguồn đó báo `unsupported` bằng
+tên.
+
 Pi package catalog là tham khảo tốt về discovery: package có manifest resources và preview image/video, được chia sẻ qua npm/git và index trong catalog. ClarkCant nên giữ ergonomics đó nhưng executable widget mặc định isolated thay vì full-process trust.
 
 ---
@@ -3185,7 +3243,13 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   `declaredReach` (những gì gói được phép chạm tới khi cài) và các khai báo `widgetAppearance` của listing, theo đúng
   schema của mục trong directory, nên dòng đó hiển thị chúng trước khi bấm Cài. Một card không khớp với contract của nó
   bị bỏ khỏi câu trả lời, và node ghi log `host card dropped` kèm loại card và đường dẫn các trường lỗi, không bao giờ
-  kèm giá trị. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
+  kèm giá trị. Search đọc mọi nguồn directory đã cấu hình cùng lúc (file index, các marketplace được cấu hình và
+  Marketplace chính thức; xem "Nguồn directory và định dạng feed" ở §18) và bỏ ra, có đếm, những listing không chạy
+  được trên host này (nền tảng hoặc host API). Các dòng đến từ nhiều nguồn ghi rõ nguồn nào liệt kê chúng (`origin`),
+  và một nguồn đang cũ, chưa được tải, không kết nối được, không hỗ trợ hoặc không đọc được thì được nêu tên trên card
+  (`sources`) thay vì trông như kết quả rỗng. `search_directory` với `packageId` liệt kê mọi version của một gói kèm
+  đầy đủ thông tin listing để agent thuật lại — cùng tool và cùng card, không phải một đường khám phá thứ hai. Vẫn
+  không có registry artifact của ClarkCant: listing trỏ tới npm, git hoặc một đường dẫn, và byte đến từ đó.
 - Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
   nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
 - Detach/attach: cửa sổ host tách rời của desktop **đã có thật** (`apps/desktop/src/main.mjs` mở nó qua
