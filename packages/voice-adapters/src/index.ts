@@ -27,6 +27,7 @@ import {
  */
 
 export type { VoiceProviderAdapter } from "./provider.ts";
+export { DEFAULT_LIVE_MODEL } from "./protocol.ts";
 export {
   GeminiLiveAdapter,
   globalSocketFactory,
@@ -41,13 +42,61 @@ export {
   GEMINI_TTS_FLASH_MODEL,
   GEMINI_TTS_MAX_INPUT_TOKENS,
   GeminiTtsClient,
+  GeminiTtsSynthesisAdapter,
   type FetchLike,
   type GeminiTtsOptions,
   type GeminiTtsRequest,
   type GeminiTtsResult,
   type GeminiTtsSampleRate,
 } from "./gemini-tts.ts";
-
+export type { SpeechRecognitionAdapter, SpeechSynthesisAdapter } from "./recognition.ts";
+export {
+  GEMINI_TRANSCRIBE_LIVE_MODEL,
+  GEMINI_TRANSCRIBE_MAX_VOCABULARY,
+  GeminiTranscribeLiveAdapter,
+  type GeminiTranscribeOptions,
+  buildTranscribeSetupMessage,
+  parseTranscribeMessage,
+  transcribeVocabulary,
+} from "./gemini-transcribe.ts";
+export {
+  CODING_GLOSSARY,
+  type VocabularySources,
+  buildRecognitionContext,
+  vocabularyFromText,
+  vocabularyTerm,
+} from "./coding-vocabulary.ts";
+export { type NormalizationResult, normalizeTranscript } from "./transcript-normalizer.ts";
+export {
+  DEFAULT_RETRY_TIMEOUT_MS,
+  LOW_CONFIDENCE_THRESHOLD,
+  type SettledUtterance,
+  type UtteranceRetry,
+  UtteranceAudioBuffer,
+  focusContext,
+  preferAlternative,
+  recognizerRetry,
+  settleUtterance,
+  settleUtteranceNow,
+} from "./utterance-settlement.ts";
+export {
+  type BenchmarkCorpus,
+  type CorpusUtterance,
+  type RecognizerBenchmark,
+  benchmarkRecognizer,
+  corpusContext,
+  formatBenchmarkReport,
+  parseCorpus,
+  recognizersIn,
+  unstableReferences,
+} from "./transcription-benchmark.ts";
+export {
+  BENCHMARK_TERM_KINDS,
+  characterErrorRate,
+  scoreTranscripts,
+  termPreserved,
+  wordErrorRate,
+} from "./transcription-metrics.ts";
 
 export interface VoiceSessionState {
   sessionId: string;
