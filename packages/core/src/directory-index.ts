@@ -4,6 +4,8 @@ import {
   readDirectoryEntry,
   unreadListingFields,
   type DirectoryEntry,
+  type DirectorySourceKind,
+  type DirectorySourceState,
   type UnreadEntryFields,
   type UnreadListingFields,
 } from "@clarkcant/contracts";
@@ -37,14 +39,45 @@ export type DirectoryIndexState =
        * `listingKey`. Absent or without a key means the node read all of that entry. Read it with `unreadFieldsOf`.
        */
       unreadFields?: ReadonlyMap<string, UnreadEntryFields>;
+      /**
+       * Which configured source listed each entry, keyed by `listingKey`, when the state was composed from several
+       * sources (`readDirectory`). Read it with `originOf`. Absent when the state is a single index file read directly.
+       */
+      origins?: ReadonlyMap<string, DirectoryOrigin>;
+      /** Every configured source with its own named state, in precedence order. Absent for a single file read directly. */
+      sources?: readonly DirectorySourceStatus[];
     }
   /** No index is configured. A state, not an empty result list: "nothing configured" is not "nothing found". */
   | { kind: "not-configured"; reason: string }
   /** An index is configured and could not be used. Named, because the fix is the user's. */
-  | { kind: "unreadable"; directory: string; reason: string };
+  | { kind: "unreadable"; directory: string; reason: string; sources?: readonly DirectorySourceStatus[] };
+
+
+/** Where a listing came from: which configured source, of which kind, under the name a person recognises. */
+export interface DirectoryOrigin {
+  /** Stable id of the source on this node (`local`, `official`, `custom-<hash>`). */
+  id: string;
+  kind: DirectorySourceKind;
+  /** The index file's path, or the marketplace's name or address. */
+  label: string;
+}
+
+/** The state of one source (`directorySourceStateSchema`), with what it contributes and why it is not `ready`. */
+export interface DirectorySourceStatus {
+  origin: DirectoryOrigin;
+  state: DirectorySourceState;
+  /** How many listings this source contributes. */
+  entryCount: number;
+  /** When the listed copy of a remote source was fetched. */
+  fetchedAt?: string;
+  /** Why the source is not `ready`, in words a person can act on. */
+  reason?: string;
+  /** Listings left out because a source earlier in precedence lists the same package id. */
+  shadowed?: number;
+}
 
 /** Which listing a set of unread fields belongs to: the package, the version and the artifact it names. */
-function listingKey(entry: Pick<DirectoryEntry, "packageId" | "version" | "digest">): string {
+export function listingKey(entry: Pick<DirectoryEntry, "packageId" | "version" | "digest">): string {
   return JSON.stringify([entry.packageId, entry.version, entry.digest]);
 }
 
@@ -87,6 +120,16 @@ export function readDirectoryIndex(path: string | undefined): DirectoryIndexStat
       reason: `could not read the directory index: ${error instanceof Error ? error.message : "unknown error"}`,
     };
   }
+  return readDirectoryCandidates(path, parsed);
+}
+
+/**
+ * Read a parsed index — a JSON array of entries — the way `readDirectoryIndex` reads a file. Shared with the remote
+ * sources (`marketplace-directory.ts`), so a feed is held to exactly the rules a file is: unknown fields dropped and
+ * named, a known field with a bad value refusing the whole index.
+ */
+export function readDirectoryCandidates(directory: string, parsed: unknown): DirectoryIndexState {
+  const path = directory;
   if (!Array.isArray(parsed)) {
     return { kind: "unreadable", directory: path, reason: "the directory index is not a JSON array of entries" };
   }

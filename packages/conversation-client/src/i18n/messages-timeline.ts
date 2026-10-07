@@ -181,6 +181,12 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.marketplace.lane.service": "dịch vụ",
   "blocks.marketplace.lane.declarative": "khai báo",
   "blocks.marketplace.lane.trustedNative": "native tin cậy",
+  "blocks.marketplace.listedBy": "liệt kê bởi {label}",
+  "blocks.marketplace.sourceState.stale": "đang hiện bản đã tải trước đó",
+  "blocks.marketplace.sourceState.notFetched": "chưa được tải",
+  "blocks.marketplace.sourceState.unreachable": "không kết nối được",
+  "blocks.marketplace.sourceState.unsupported": "không cung cấp directory cho ClarkCant",
+  "blocks.marketplace.sourceState.unreadable": "không đọc được",
 
   // blocks.tsx — session preview frame + control session card
   "blocks.session.loadingScreenshot": "Đang tải ảnh chụp màn hình…",
@@ -1179,6 +1185,12 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.marketplace.lane.service": "service",
   "blocks.marketplace.lane.declarative": "declarative",
   "blocks.marketplace.lane.trustedNative": "trusted native",
+  "blocks.marketplace.listedBy": "listed by {label}",
+  "blocks.marketplace.sourceState.stale": "showing an earlier copy",
+  "blocks.marketplace.sourceState.notFetched": "not fetched yet",
+  "blocks.marketplace.sourceState.unreachable": "could not be reached",
+  "blocks.marketplace.sourceState.unsupported": "serves no ClarkCant directory",
+  "blocks.marketplace.sourceState.unreadable": "could not be read",
 
   "blocks.session.loadingScreenshot": "Loading screenshot…",
   "blocks.session.screenshotAlt": "Screenshot of session {label}{taken}",

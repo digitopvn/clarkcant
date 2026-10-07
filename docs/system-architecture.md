@@ -486,8 +486,8 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
   - **Update checks** (`apps/runtime/src/update-checks.ts`) are a periodic job, started from
     `bootstrap/runtime-bootstrap.ts` on an `unref()` timer (it does not keep the process alive) and stopped when the
     node closes. It compares the version of installed packages/widgets (`listInstalledPackages`, `packages/core`)
-    with the available directory index (`readDirectoryIndex`, the same resolver the installer uses — no second
-    resolver). The Pi SDK is not checked: it is pinned exactly in `packages/pi-adapter` and ships with ClarkCant, so
+    with the available directory (`readDirectory`, every configured source composed, the same read the installer uses — no
+    second resolver); before each pass it refreshes the remote sources this node fetched before. The Pi SDK is not checked: it is pinned exactly in `packages/pi-adapter` and ships with ClarkCant, so
     nothing in the inbox could act on a newer one; every pass retires (ordinary dismissal) any `update:pi:` notice a
     node wrote before. A directory often lists several versions of the same package: every entry for that package is
     filtered through the same preflight the installer runs (`entryFitsHost` for host API/platform, plus a non-empty

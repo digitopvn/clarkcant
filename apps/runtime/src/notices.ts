@@ -216,6 +216,8 @@ export function packageUpdateNotice(input: {
   currentVersion: string;
   newVersion: string;
   sourceKind: "npm" | "git" | "local";
+  /** The directory source that lists the new version, named so the person sees who published it. */
+  sourceLabel?: string;
   lane: RiskLane;
   at: Instant;
   language?: AppIntentLocale;
@@ -226,7 +228,7 @@ export function packageUpdateNotice(input: {
     category: "update",
     severity: "info",
     title: say.title(input.packageId),
-    body: say.body(input.currentVersion, input.newVersion, input.sourceKind, say.lane[input.lane]),
+    body: say.body(input.currentVersion, input.newVersion, input.sourceKind, say.lane[input.lane], input.sourceLabel),
     subject: { kind: "package", packageId: input.packageId, version: input.newVersion, source: input.sourceKind },
     dedupKey: `${packageUpdateKeyPrefix(input.sourceKind, input.packageId)}${input.newVersion}`,
     at: input.at,

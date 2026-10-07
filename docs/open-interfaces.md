@@ -690,6 +690,27 @@ A file name in `Content-Disposition` is sent as RFC 6266 describes: an ASCII `fi
 percent-encoded UTF-8 in `filename*`. Bidi controls are dropped from both, a percent sign becomes `_` in the ASCII
 name, and a name longer than 120 characters is shortened before its extension, which is always kept.
 
+**Where listings come from.** The directory a node searches and installs from is composed of sources: the index
+file `CC_DIRECTORY_INDEX` names, each feed in `CC_DIRECTORY_MARKETPLACES`, and the official ClarkCant Marketplace
+(on unless `CC_OFFICIAL_MARKETPLACE=off`); precedence, refresh and the feed format are in
+[directory metadata](widget-development.md#18-directory-metadata). The `marketplace-results` card carries
+`origin: { kind, label }` on each row when the card holds several sources (`kind` is `local-file`,
+`custom-marketplace` or `official-marketplace`), and `sources: [{ kind, label, state, fetchedAt?, reason? }]` for each
+source that did not fully answer (`state` is `stale`, `not-fetched`, `unreachable`, `unsupported` or `unreadable`).
+Each row also carries `sourceId` (`local`, `official` or `custom-<hash>`), which the Install button sends back.
+`search_directory` takes an optional `packageId` and then lists every version of that package with its details.
+`POST /packages/install` refreshes a remote source once when the listing is missing from the node's copy, answers
+`404 NOT_IN_DIRECTORY` naming any source that did not answer, and `409 DIRECTORY_UNREADABLE` when no source could be
+read or the index file is broken. It takes an optional `sourceId`: the source the person chose by pressing Install on a
+row. Without one, it answers `409 DIRECTORY_SOURCE_UNREAD` when an earlier source could not be read, and
+`409 DIRECTORY_SOURCE_CHANGED` when the package is installed from a different source. With one, it answers
+`409 DIRECTORY_SOURCE_CHANGED` when another source owns the listing by now. The node records the source on the
+installed generation (`directorySource`), and update notices come only from that source; a generation installed
+before sources were recorded counts as installed from the index file. An install approval holds the source that owned
+the listing when the person was asked, and `POST /packages/approvals/{id}/decision` with `granted` answers
+`409 DIRECTORY_SOURCE_CHANGED` when another source owns it by then. A listing from a marketplace installs through
+exactly the same checks as one from a file.
+
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
 Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
 restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.

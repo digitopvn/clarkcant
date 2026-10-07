@@ -1986,11 +1986,13 @@ export class GatewayClient {
    *
    * `contentDigest` is what a listing by a path on this machine showed of its files, sent back so the node installs
    * those files or refuses (`DIGEST_MISMATCH`) when they changed since. The node digests the files itself either way.
+   * `sourceId` is the directory source the listing's row named; the node installs only from that source.
    */
   installPackage(
     packageId: string,
     version: string,
     contentDigest?: string,
+    sourceId?: string,
   ): Promise<{
     installed?: { packageId: string; version: string };
     code?: string;
@@ -2001,7 +2003,12 @@ export class GatewayClient {
     verified?: string;
   }> {
     return this.#changedPackages(
-      this.#call("POST", "/packages/install", { packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) }),
+      this.#call("POST", "/packages/install", {
+        packageId,
+        version,
+        ...(contentDigest === undefined ? {} : { contentDigest }),
+        ...(sourceId === undefined ? {} : { sourceId }),
+      }),
     );
   }
 

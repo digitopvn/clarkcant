@@ -35,7 +35,7 @@ import {
   semanticProposalSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
-import {
+import { readDirectory,
   activeGenerations,
   activePackageVersions,
   installedDirectoryEntries,
@@ -43,7 +43,6 @@ import {
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
-  directoryIndexPath,
   findIsolatedFrame,
   getActionBinding,
   getInstance,
@@ -57,7 +56,6 @@ import {
   mintFrameGrant,
   pinInstance,
   prepareFrameState,
-  readDirectoryIndex,
   readSnapshotForDisplay,
   readyCapabilities,
   releaseLiveOwner,
@@ -226,7 +224,7 @@ function frameOffscreen(
 }
 
 export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
   /*
    * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
    * newest listing is not what is installed: the frame must load the code of the active generation, or rolling back

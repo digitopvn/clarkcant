@@ -1,4 +1,4 @@
-import type { DependencyLockBinding, DirectoryEntry, Instant, Platform } from "@clarkcant/contracts";
+import type { DependencyLockBinding, DirectoryEntry, DirectorySourceRef, Instant, Platform } from "@clarkcant/contracts";
 
 import { installFromSource, type InstallOutcome } from "./install-from-source.ts";
 import type { InstallDeps } from "./install-lifecycle.ts";
@@ -43,6 +43,8 @@ export interface InstallFromEntryRequest {
   widgetIds?: readonly string[];
   /** For a local entry: the digest of the snapshot it installs from; see `InstallFromSourceInput.snapshotDigest`. */
   snapshotDigest?: string;
+  /** The directory source the entry was listed by; see `InstallFromSourceInput.directorySource`. */
+  directorySource?: DirectorySourceRef;
 }
 
 /**
@@ -68,6 +70,7 @@ export function installFromEntry(deps: InstallDeps, request: InstallFromEntryReq
     ...(request.dependencyLock === undefined ? {} : { dependencyLock: request.dependencyLock }),
     ...(request.widgetIds === undefined ? {} : { widgetIds: request.widgetIds }),
     ...(request.snapshotDigest === undefined ? {} : { snapshotDigest: request.snapshotDigest }),
+    ...(request.directorySource === undefined ? {} : { directorySource: request.directorySource }),
     // One plan per package version, so two turns that ask for the same package share it rather than installing it
     // twice — which is what the requirement key exists for.
     requirementKey: `pkg:${request.entry.packageId}@${request.entry.version}`,

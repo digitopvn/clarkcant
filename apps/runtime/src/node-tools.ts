@@ -7,9 +7,7 @@ import {
   ORB_PROFILE_NAMES,
   appIntentSchema,
   attachmentIdSchema,
-  canonicalReach,
   colorSchemeSchema,
-  declaredReachIsEmpty,
   describeAppIntent,
   memoryKindSchema,
   memoryScopeSchema,
@@ -18,7 +16,6 @@ import {
   type AppIntentDecision,
   type AppIntentLocale,
   type ConversationId,
-  type DirectoryEntry,
   type ExecutionPolicyConfig,
   type GuardrailConstraint,
   type InboxResponse,
@@ -36,14 +33,11 @@ import {
   requestApproval,
   type CoordinationDeps,
   type ExecutionAuditDeps,
-  readDirectoryIndex,
-  searchDirectory,
-  unreadFieldsOf,
 } from "@clarkcant/core";
 import type { Database } from "@clarkcant/storage";
 
 import { blobsDir, readBlob } from "./blobs.ts";
-import { fitHead, fitTail } from "./card-text.ts";
+import { fitHead } from "./card-text.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "./request-secret.ts";
 import type { InteractionDeps } from "./interactions.ts";
@@ -80,7 +74,9 @@ import { type BrowserTaskToolDeps, createBrowserTaskTool } from "./browser-task-
 import { createWorkTools } from "./work-tools.ts";
 import type { HostControlAcks } from "./host-control-acks.ts";
 import { checkThemeChoice } from "./application/appearance-intents.ts";
-import { localContentDigest } from "./application/package-install.ts";
+import { createSearchDirectoryTool, type SearchDirectoryToolInput } from "./search-directory-tool.ts";
+
+export { createSearchDirectoryTool } from "./search-directory-tool.ts";
 import { preferredAppIntentLocale } from "./app-intents.ts";
 import { hostText } from "./host-text.ts";
 import type { ThemeRegistry } from "./application/themes.ts";
@@ -174,13 +170,14 @@ export function createNodeTools(input: {
    */
   questions?: { newId: (prefix: string) => string };
   /**
-   * Where a directory index is, when this node may search one.
+   * The directory sources this node may search (`readDirectory`): its index file, configured marketplaces and the
+   * official Marketplace.
    *
    * Always present in the runtime, because "no directory configured" is a state the tool reports rather
    * than a reason not to register it: a user who has not configured one should be told that, not left
    * wondering why the agent never looks.
    */
-  directory?: { indexPath: string | undefined; newId: (prefix: string) => string };
+  directory?: SearchDirectoryToolInput;
   /**
    * The app-control channel, when this turn has a foreground surface that could act on it.
    *
@@ -1438,123 +1435,6 @@ export function createRememberTool(input: {
       return { text: `Remembered (${outcome.kind}): ${outcome.text}` };
     },
   };
-}
-
-/**
- * The content digest of a listing's files on this machine, as the card shows it, for the Install button to send back.
- * Nothing for a git or npm listing, whose fetch checks the published digest, or for a path that cannot be digested now
- * (unreadable, linked, or past the size bounds `localContentDigest` keeps a search to — it lists ten rows by default):
- * the install then digests the files itself and refuses such a path by name.
- */
-function listedContentDigest(entry: DirectoryEntry): { contentDigest?: string } {
-  const local = localContentDigest(entry);
-  return local?.ok === true ? { contentDigest: local.digest } : {};
-}
-
-/**
- * Searching the package directory.
- *
- * The producer for the marketplace-results card, and the reason that card is host-owned: a result asserts a digest
- * and a risk lane, and a model that could mint one could draw a listing that looks verified while pointing at bytes
- * nobody has hashed.
- *
- * The tool is a *finder*, never an installer. It hands back sources, and installing one goes through the same
- * resolver, digest check and generation swap as a path typed by hand. Search is how you find a source, not how you
- * authorise one.
- *
- * "No directory configured" and "nothing matched" are reported as the different things they are.
- */
-export function createSearchDirectoryTool(input: {
-  indexPath: string | undefined;
-  newId: (prefix: string) => string;
-}): ToolDefinition {
-  return {
-    name: "search_directory",
-    label: "Tìm gói trong directory",
-    description:
-      "Search the configured package directory for a widget or package to install. Each result carries its source, " +
-      "version, digest and risk lane. Installing one still goes through the normal install path. If no directory is " +
-      "configured this says so, which is not the same as finding nothing.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["query"],
-      properties: {
-        query: { type: "string", description: "What to look for. An empty string browses the directory." },
-      },
-    },
-    promptSnippet: "search_directory — find a package in the directory, then install it by its source",
-    execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
-      const query = typeof params.query === "string" ? params.query.trim() : "";
-      const state = readDirectoryIndex(input.indexPath);
-      if (state.kind === "not-configured") return { text: state.reason };
-      if (state.kind === "unreadable") return { text: `Không đọc được directory: ${state.reason}` };
-
-      const results = searchDirectory({ entries: state.entries, query });
-      // A listing with fields this node does not read is shown without them, and said so on its row and here.
-      const partlyRead = results.filter((entry) => unreadFieldsOf(state, entry) !== undefined).length;
-      return {
-        text:
-          (results.length === 0
-            ? `Không có gói nào trong ${state.directory} khớp “${query}”.`
-            : `Tìm thấy ${results.length} gói trong ${state.directory}.`) +
-          (partlyRead === 0
-            ? ""
-            : ` ${partlyRead} gói có thông tin mà bản Clark này không đọc được; thẻ kết quả ghi rõ, và bản Clark mới hơn sẽ hiện đủ.`),
-        // The conductor drops a host card that fails its contract, so every value here fits it: the query and the
-        // directory name are shortened, and every row field already has the same or a tighter bound in the directory
-        // entry, `version` included (`directoryVersionSchema`); a listing whose version is longer is refused when read.
-        hostCard: {
-          type: "marketplace-results",
-          owner: "host",
-          cardId: input.newId("market"),
-          query: fitCardQuery(query),
-          directory: fitDirectoryName(state.directory),
-          results: results.map((entry) => {
-            // The names of what the listing says that this node does not read, never their values.
-            const unreadFields = unreadFieldsOf(state, entry);
-            return {
-            packageId: entry.packageId,
-            version: entry.version,
-            displayName: entry.displayName,
-            description: entry.description,
-            source: entry.source,
-            digest: entry.digest,
-            // A path on this machine is shown with the content of its files now; Install is refused if they changed since.
-            ...listedContentDigest(entry),
-            riskTier: entry.riskTier,
-            ...(entry.widgetAppearance === undefined ? {} : { widgetAppearance: entry.widgetAppearance }),
-            // What installing lets it reach, shown before the Install press; the install refuses an artifact that differs.
-            ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
-              ? {}
-              : { declaredReach: canonicalReach(entry.declaredReach) }),
-            ...(unreadFields === undefined ? {} : { unreadFields }),
-            // A directory entry may repeat a kind; the card lists each once, which also keeps it within its bound.
-            facets: [...new Set(entry.facets)],
-            platforms: [...new Set(entry.platforms)],
-            };
-          }),
-        },
-      };
-    },
-  };
-}
-
-/** The card's bounds for the echoed query and the directory's name (`marketplaceResultsBlockSchema`). */
-const CARD_QUERY_MAX = 200;
-const CARD_DIRECTORY_MAX = 300;
-
-/**
- * A query too long for the card keeps its start behind an ellipsis, so the "no match" note does not show a cut query
- * as what was searched. The search itself used the whole query.
- */
-function fitCardQuery(query: string): string {
-  return fitHead(query, CARD_QUERY_MAX);
-}
-
-/** A directory path too long for the card keeps its end, which names the index, behind an ellipsis. */
-function fitDirectoryName(directory: string): string {
-  return fitTail(directory, CARD_DIRECTORY_MAX);
 }
 
 /**
