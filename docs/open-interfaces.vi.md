@@ -302,11 +302,13 @@ chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi
 GitHub. Dấu được tìm trong các issue do tài khoản đã gửi lần ghi đó mở (`creator`: login từ `GET /user` được node
 ghi lại lúc gửi, nên thay `github_token` sau đó cũng không làm mất báo cáo), tối đa ba trang 100 mục. Khi không có login
 được ghi lại, node hỏi chủ hiện tại của token; token mà GitHub không cho biết chủ (như token cài đặt của GitHub App) thì
-được quét không lọc. Login chỉ nằm trên node và API không bao giờ trả về nó. Khi danh
+được quét không lọc. Login được giữ trên node và chỉ hiện lại cho chính chủ của nó trong liên kết tìm kiếm của trường
+hợp không thể ngã ngũ bên dưới. Khi danh
 sách đó vẫn dài hơn phạm vi đọc, hoặc sổ hiệu ứng không còn ghi lần thử, việc kiểm tra không thể ngã ngũ: báo cáo là
 `unknown` kèm `inconclusive: { since, searchUrl, manualUrl }`, và thẻ ghi "Clark không thể biết GitHub đã giữ báo cáo
-này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó." Thay cho Kiểm tra lại, thẻ dẫn tới các issue người dùng
-đã mở từ lần thử và trang tạo issue đã điền sẵn, cảnh báo rằng gửi lại có thể tạo bản trùng, và có nút Vẫn gửi
+này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó." Thay cho Kiểm tra lại, thẻ dẫn tới các issue mà tài khoản
+đã gửi báo cáo mở từ lần thử (`author:<login>` trong `searchUrl`, hoặc `author:@me` khi không có login được ghi lại) và
+trang tạo issue đã điền sẵn, cảnh báo rằng gửi lại có thể tạo bản trùng, và có nút Vẫn gửi
 (`intent: "send-anyway"`, chỉ nhận cho báo cáo như vậy, nếu không thì `409 NOT_INCONCLUSIVE`), có thể gửi nó hai lần.
 Node không bao giờ tự gửi lại. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
 ngũ được ghi vào hội thoại của nó thành thẻ kết quả. Các trạng thái khác là `needs-access` (chưa có `github_token`; kèm

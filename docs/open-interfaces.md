@@ -297,11 +297,13 @@ which files it for the first time. Nothing is sent while GitHub cannot be checke
 issues opened by the account the write was sent as (`creator`: the `GET /user` login recorded on the node when it was
 sent, so a `github_token` replaced since does not hide it), at most three pages of 100. Without a recorded login the
 token's current owner is asked; a token GitHub will not name an owner for (an App installation token) is scanned
-without the filter. The login stays on the node and is never returned by the API. When that list still runs
+without the filter. The login is kept on the node and is shown back to its owner only in the inconclusive search link
+below. When that list still runs
 past the scan, or the ledger no longer holds the attempt, checking cannot settle it: the report is `unknown` with
 `inconclusive: { since, searchUrl, manualUrl }`, and its card says "Clark can't tell whether GitHub kept this report,
-and checking again won't change that." Instead of Check again it links the issues the person opened since the attempt
-and the prefilled new-issue page, warns that filing again may create a duplicate, and offers Send anyway
+and checking again won't change that." Instead of Check again it links the issues opened since the attempt by the
+account the report was sent as (`author:<login>` in `searchUrl`, or `author:@me` when no login was recorded) and the
+prefilled new-issue page, warns that filing again may create a duplicate, and offers Send anyway
 (`intent: "send-anyway"`, accepted only for such a report, otherwise `409 NOT_INCONCLUSIVE`), which may file it twice.
 The node never sends one again on its own. When the node starts, every report
 left `publishing` or `unknown` is checked the same way, and a settled outcome is written into its conversation as a

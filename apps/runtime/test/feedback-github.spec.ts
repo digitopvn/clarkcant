@@ -124,7 +124,7 @@ describe("the REST client", () => {
 
   it("reads a token GitHub will not name an owner for as a lasting refusal, never echoing the token", async () => {
     const token = "test-installation-token";
-    for (const status of [403, 404]) {
+    for (const status of [401, 403, 404]) {
       const { fetch } = scripted(() => json({ message: "Resource not accessible by integration" }, status));
       const refused = await createGithubRestClient({ repository: REPO, token, fetch }).viewerLogin().catch((cause: unknown) => cause);
 

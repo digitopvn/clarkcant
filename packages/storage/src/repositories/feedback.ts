@@ -28,7 +28,8 @@ export interface FeedbackReportRecord {
   effectId?: string;
   /**
    * The GitHub login the token belonged to when that write was sent, so it is looked for among that account's issues
-   * whoever the token belongs to now. Absent when GitHub would not say. Kept on this node only; never sent or shown.
+   * whoever the token belongs to now. Absent when GitHub would not say. Kept on this node; shown back to its owner only
+   * in the search link of a report whose attempt checking cannot settle.
    */
   attemptLogin?: string;
   createdAt: Instant;
