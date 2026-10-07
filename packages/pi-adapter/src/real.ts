@@ -70,27 +70,16 @@ function takeAgentQueues(agent: SdkAgent): { steering: SdkQueuedMessage[]; follo
   }
 }
 
-/** The text of a queued person's message, as the session keeps its own copy of it; undefined for any other message. */
-function queuedUserText(message: SdkQueuedMessage): string | undefined {
-  if (message.role !== "user") return undefined;
-  if (typeof message.content === "string") return message.content;
-  return message.content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n");
-}
+type SdkImage = NonNullable<NonNullable<Parameters<SdkSession["prompt"]>[1]>["images"]>[number];
 
-/**
- * The queued messages the session holds no text copy of — what a Pi extension queued — with each copied text matched
- * to one message at most, so a steer sent twice is still re-sent twice.
- */
-function withoutCopiedText(messages: readonly SdkQueuedMessage[], copies: string[]): SdkQueuedMessage[] {
-  return messages.filter((message) => {
-    const text = queuedUserText(message);
-    const index = text === undefined ? -1 : copies.indexOf(text);
-    if (index === -1) return true;
-    copies.splice(index, 1);
-    return false;
-  });
+/** The text and pictures of a queued person's message, as the session queued them; undefined for any other message. */
+function queuedUserParts(message: SdkQueuedMessage): { text: string; images: SdkImage[] } | undefined {
+  if (message.role !== "user") return undefined;
+  if (typeof message.content === "string") return { text: message.content, images: [] };
+  return {
+    text: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+    images: message.content.flatMap((part) => (part.type === "image" ? [part] : [])),
+  };
 }
 
 /**
@@ -1055,45 +1044,56 @@ export class RealPiAdapter implements PiAdapter {
    * flag and its settle events — which a bare `agent.continue()` skips. The sentences were already expanded when they
    * were steered, so they are not expanded again. Bounded and checked exactly as a prompt is.
    *
-   * The agent's queue also holds what a Pi extension queued, which the session keeps no text copy of; clearing the
-   * session's queue clears the agent's too. Those messages are put back in the agent's queue, each in the queue it came
-   * from and in its order, and the run Pi starts for the sentences takes them from there, as it takes any queued
-   * message. Each is sent once: the sentences only in the prompt, the extension's messages only from the queue. With no
-   * sentence to send, the first extension message starts the run itself.
+   * The agent's queue also holds what a Pi extension queued, interleaved with the person's steers. Clearing the
+   * session's queue clears the agent's too, so the whole queue is taken off, in the order Pi would deliver it: every
+   * steer, then every follow-up. The run starts from its head. When the head is the person's, it and the person's
+   * messages straight after it in the same queue are joined into one prompt, their pictures kept; when it is an
+   * extension's message, that message starts the run itself. Everything after the head is put back in the queue it came
+   * from, in its order, so a steer stays a steer and a follow-up a follow-up, and the run takes it from there exactly as
+   * Pi takes any queued message — in the default one-at-a-time mode, one steer per model call. Each message is sent
+   * once: from the head only, or from the queue only.
+   *
+   * Every call takes the head off the queue. A head this adapter cannot start a run with is dropped and reported as an
+   * error, so a caller draining the queue in a loop always finishes.
    */
   async continueQueued(sessionId: string): Promise<void> {
     const entry = this.#require(sessionId);
     const { session } = entry;
     if (!session.agent.hasQueuedMessages()) return;
     const queued = takeAgentQueues(session.agent);
-    const { steering, followUp } = session.clearQueue();
-    const copies = [...steering, ...followUp];
-    const extensionSteering = withoutCopiedText(queued.steering, copies);
-    const extensionFollowUp = withoutCopiedText(queued.followUp, copies);
-    const text = [...steering, ...followUp].join("\n\n");
+    // The session's own text copies of the person's messages; the agent's messages carry the same text and pictures.
+    session.clearQueue();
 
-    const starter = text === "" ? (extensionSteering.shift() ?? extensionFollowUp.shift()) : undefined;
-    for (const message of extensionSteering) session.agent.steer(message);
-    for (const message of extensionFollowUp) session.agent.followUp(message);
-
-    if (text !== "") {
-      await this.#bounded(sessionId, () => session.prompt(text, { expandPromptTemplates: false }));
-      return;
+    const headQueue = queued.steering.length > 0 ? queued.steering : queued.followUp;
+    const head = headQueue[0];
+    if (head === undefined) return;
+    let headLength = 1;
+    if (head.role === "user") {
+      while (headQueue[headLength]?.role === "user") headLength += 1;
     }
-    if (starter === undefined) return;
-    if (starter.role === "custom") {
-      const { customType, content, display, details } = starter;
+    const joined = headQueue.splice(0, headLength);
+    for (const message of queued.steering) session.agent.steer(message);
+    for (const message of queued.followUp) session.agent.followUp(message);
+
+    if (head.role === "custom") {
+      const { customType, content, display, details } = head;
       await this.#bounded(sessionId, () => session.sendCustomMessage({ customType, content, display, details }, { triggerTurn: true }));
       return;
     }
-    // A person's message queued past the session, which keeps no copy of it: sent as the prompt it would have been.
-    const starterText = queuedUserText(starter);
-    if (starterText !== undefined && starterText !== "") {
-      await this.#bounded(sessionId, () => session.prompt(starterText, { expandPromptTemplates: false }));
-      return;
+    const parts = joined.flatMap((message) => {
+      const part = queuedUserParts(message);
+      return part === undefined ? [] : [part];
+    });
+    const text = parts.map((part) => part.text).filter((sentence) => sentence !== "").join("\n\n");
+    const images = parts.flatMap((part) => part.images);
+    if (text === "" && images.length === 0) {
+      throw new Error(
+        `worker ${sessionId} held a queued ${head.role} message with nothing to send; it was dropped so the queue can drain`,
+      );
     }
-    // Nothing this adapter can start a run with: left queued for the next run to take, rather than dropped.
-    session.agent.steer(starter);
+    await this.#bounded(sessionId, () =>
+      session.prompt(text, { expandPromptTemplates: false, ...(images.length === 0 ? {} : { images }) }),
+    );
   }
 
   async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
