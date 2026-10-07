@@ -107,7 +107,7 @@ describe("placing a map", () => {
       { kind: "view", operation: MAP_SELECT_OPERATION, args: {} },
       { kind: "view", operation: MAP_VIEW_OPERATION, args: {} },
     ]);
-    const text = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 }).snapshots[0]?.textAlternative ?? "";
+    const text = buildTimeline(services, { conversationId: CONVERSATION }).snapshots[0]?.textAlternative ?? "";
     expect(text).toContain("Chặng giao hàng:");
     expect(text).toContain("- Hà Nội (point) — lat 21.0278, lon 105.8342 — Kho xuất phát");
     expect(text.length).toBeLessThanOrEqual(4_096);
@@ -137,7 +137,7 @@ describe("selection and view state", () => {
       body: { state: { selectedId: "hcm", center: [106.5, 16], zoom: 6 } },
     });
     expect(liveStateOf(services.conductor, instanceId)?.body).toEqual({ selectedId: "hcm", center: [106.5, 16], zoom: 6 });
-    const carried = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 }).instances.find((entry) => entry.instanceId === instanceId);
+    const carried = buildTimeline(services, { conversationId: CONVERSATION }).instances.find((entry) => entry.instanceId === instanceId);
     expect(carried?.state).toEqual({ selectedId: "hcm", center: [106.5, 16], zoom: 6 });
     const document = buildWidgetSemantic(services.conductor, instanceId);
     expect(document).toMatchObject({
