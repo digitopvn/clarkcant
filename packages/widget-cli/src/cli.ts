@@ -7,12 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
-  DEFAULT_RESOURCE_PROFILE,
   PACKAGE_MANIFEST_SCHEMA_VERSION,
-  declaredReachIsEmpty,
-  declaredReachOf,
   directoryEntrySchema,
-  riskLaneFor,
   type DirectoryEntry,
   type PackageManifest,
 } from "@clarkcant/contracts";
@@ -21,7 +17,7 @@ import { runConformance, type ConformanceReport } from "./conformance.ts";
 import type { FrameFacts } from "./dev-shell.ts";
 import { startDevHost } from "./dev-host.ts";
 import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
-import { inspectNpmTarball, installedThemes, readPackage } from "@clarkcant/core";
+import { directoryEntryOf, inspectNpmTarball, installedThemes, readPackage } from "@clarkcant/core";
 import { credentialShaped, pnpmPack, readNpmPackageJson, scaffoldPackageJson } from "./npm-package.ts";
 import { packageFiles } from "./package-files.ts";
 import { packageVersion, skippedFromReference } from "./package-assets.ts";
@@ -513,19 +509,6 @@ function packNpmArchive(
 
 /* --------------------------------------------------------------- publish */
 
-function requestedSummary(permissions: PackageManifest["permissions"]): string[] {
-  const out = permissions.networkOrigins.map((origin) => "network: " + origin);
-  for (const { path, access } of permissions.filesystem) out.push(`filesystem (${access}): ${path}`);
-  if (permissions.microphone) out.push("microphone");
-  if (permissions.camera) out.push("camera");
-  return out;
-}
-
-/** Whether a resource request says anything an absent one does not: another profile, or a GPU. */
-function requestsMoreThanDefault(resources: PackageManifest["resources"]): resources is NonNullable<PackageManifest["resources"]> {
-  return resources !== undefined && (resources.profile !== DEFAULT_RESOURCE_PROFILE || resources.gpu === true);
-}
-
 /**
  * `clark widget publish` — prepare the directory entry.
  *
@@ -576,37 +559,13 @@ function publish(root: string, requested: "npm" | "local" | undefined): number {
     process.stderr.write("clarkcant.json declares no publisher, and a directory entry has to say who a package comes from.");
     return 1;
   }
-  const reach = declaredReachOf(pkg.manifest);
-  const entry: DirectoryEntry = {
-    packageId: pkg.manifest.id,
-    version: pkg.manifest.version,
-    displayName: pkg.manifest.displayName,
-    description: pkg.manifest.description,
+  const entry: DirectoryEntry = directoryEntryOf(pkg.manifest, {
     // The exact npm version the archive will be published as, or the package's own directory for a local entry.
     source: source === "npm" && npm !== undefined ? { kind: "npm", name: npm.name, version: npm.version } : { kind: "local", path: root },
-    // The signature is verified against the artifact, never listed as though the listing vouched for it.
     publisher: { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
-    // Empty rather than absent: a package without preview media is listed, not hidden.
-    preview: {},
-    // The manifest and the directory share one facet vocabulary, so what a listing advertises is what the package holds.
-    facets: [...new Set(pkg.manifest.facets.map((facet) => facet.kind))],
-    // From the manifest, one entry per facet: the install supervisor plans isolation per facet, and this is the
-    // only place that knows the answer without guessing it back out of the strongest lane.
-    isolations: pkg.manifest.facets.map((facet) => ({ facetKind: facet.kind, isolation: facet.isolation })),
-    platforms: pkg.manifest.platforms,
-    hostApi: pkg.manifest.hostApi,
-    permissionsSummary: requestedSummary(pkg.manifest.permissions),
-    // What it reaches beyond its sandbox, shown before install. Binding: an install refuses an artifact that differs.
-    ...(declaredReachIsEmpty(reach) ? {} : { declaredReach: reach }),
-    // The resource profile it requests, so an update can say what changes before it is fetched. Binding in the same way.
-    // Only when it is not the default, which an absent field already means: a node from before this field refuses an
-    // index holding an entry field it does not know, so a default request stays readable by it.
-    ...(requestsMoreThanDefault(pkg.manifest.resources) ? { resources: pkg.manifest.resources } : {}),
-    // From the isolation the facets declare, never from what the publisher says about their own package.
-    riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
     sizeBytes: source === "npm" && npm !== undefined ? npm.unpackedBytes : (artifact?.files ?? []).reduce((sum, file) => sum + file.bytes, 0),
     digest,
-  };
+  });
 
   const parsed = directoryEntrySchema.safeParse(entry);
   if (!parsed.success) {

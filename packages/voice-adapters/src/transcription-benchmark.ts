@@ -7,7 +7,9 @@ import {
   type BenchmarkTerm,
   type BenchmarkTermKind,
   type TranscriptScore,
+  audioExact,
   scoreTranscripts,
+  strictExact,
   termPreserved,
 } from "./transcription-metrics.ts";
 
@@ -45,6 +47,15 @@ export interface RecognizerBenchmark {
   abstained: number;
   /** Utterances where normalisation lost a term the raw text had, or changed one that needed no change. */
   regressions: string[];
+  /**
+   * Utterances whose raw text holds a session term the person did not say: a vocabulary term heard but not said.
+   *
+   * This does not say what put the term there. On a recognizer biased with the vocabulary it may be the bias writing
+   * over speech, which the `vocabulary-bias` entries (a person's name, another model version, a near-neighbour symbol)
+   * exist to catch in an audio run; it may equally be an ordinary mishearing of a term never sent (`git stash` heard
+   * as `git status`).
+   */
+  substitutions: string[];
 }
 
 /** Validate a parsed corpus at the boundary, so a malformed file fails with the utterance that is wrong. */
@@ -94,9 +105,15 @@ export function benchmarkRecognizer(corpus: BenchmarkCorpus, recognizer: string,
   let changes = 0;
   let abstained = 0;
   const regressions: string[] = [];
+  const substitutions: string[] = [];
   for (const utterance of corpus.utterances) {
     const heard = utterance.recognizers[recognizer];
     if (heard === undefined) continue;
+    // Both sides ignore case: a term the reference holds in another casing (`zod` for `Zod`) was said, and a term heard
+    // in another casing (`jev` for `Jev`) was still heard.
+    const said = utterance.reference.toLowerCase();
+    const heardLower = heard.toLowerCase();
+    if (context.terms.some((term) => termPreserved(term.text.toLowerCase(), heardLower) && !termPreserved(term.text.toLowerCase(), said))) substitutions.push(utterance.id);
     const result = normalizeTranscript(heard, context);
     changes += result.changes.length;
     abstained += result.abstained.length;
@@ -106,7 +123,7 @@ export function benchmarkRecognizer(corpus: BenchmarkCorpus, recognizer: string,
     const changedCorrect = heard === utterance.reference && result.text !== heard;
     if (lostTerm || changedCorrect) regressions.push(utterance.id);
   }
-  return { recognizer, raw: scoreTranscripts(raw), normalized: scoreTranscripts(normalized), changes, abstained, regressions };
+  return { recognizer, raw: scoreTranscripts(raw), normalized: scoreTranscripts(normalized), changes, abstained, regressions, substitutions };
 }
 
 /**
@@ -132,13 +149,13 @@ export function formatBenchmarkReport(corpus: BenchmarkCorpus, results: readonly
     `Corpus: ${corpus.utterances.length} utterances, ${corpus.utterances.reduce((sum, utterance) => sum + utterance.terms.length, 0)} technical terms.`,
     `Canonical references the normaliser would change: ${unstable.length}${unstable.length === 0 ? "" : ` (${unstable.join(", ")})`}.`,
     "",
-    "| Recognizer | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Recognizer | Stage | WER | CER | Technical Term Error Rate | Exact (strict) | Exact (audio-tolerant) | Changes | Abstained | Regressions |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const result of results) {
     for (const [stage, score] of [["raw", result.raw], ["normalized", result.normalized]] as const) {
       lines.push(
-        `| ${result.recognizer} | ${stage} | ${percent(score.wer)} | ${percent(score.cer)} | ${percent(score.technicalTermErrorRate)} | ${percent(score.exactUtteranceRate)} | ${stage === "raw" ? "-" : result.changes} | ${stage === "raw" ? "-" : result.abstained} | ${stage === "raw" ? "-" : result.regressions.length} |`,
+        `| ${result.recognizer} | ${stage} | ${percent(score.wer)} | ${percent(score.cer)} | ${percent(score.technicalTermErrorRate)} | ${percent(score.exactUtteranceRate)} | ${percent(score.audioExactUtteranceRate)} | ${stage === "raw" ? "-" : result.changes} | ${stage === "raw" ? "-" : result.abstained} | ${stage === "raw" ? "-" : result.regressions.length} |`,
       );
     }
   }
@@ -150,6 +167,32 @@ export function formatBenchmarkReport(corpus: BenchmarkCorpus, results: readonly
         return bucket === undefined ? "-" : `${bucket.preserved}/${bucket.total}`;
       });
       lines.push(`| ${result.recognizer} | ${stage} | ${cells.join(" | ")} |`);
+    }
+  }
+  lines.push("", "Session terms heard where the person said something else (raw):");
+  for (const result of results) {
+    lines.push(`- ${result.recognizer}: ${result.substitutions.length}${result.substitutions.length === 0 ? "" : ` (${result.substitutions.join(", ")})`}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Every utterance's transcript per recognizer, as heard and normalised, beside the reference, so a failure can be read
+ * rather than inferred from a rate. Only utterances with an output from one of `recognizers` are listed.
+ */
+export function formatTranscripts(corpus: BenchmarkCorpus, recognizers: readonly string[], context = corpusContext(corpus)): string {
+  const mark = (reference: string, text: string): string => (strictExact(reference, text) ? "strict" : audioExact(reference, text) ? "audio-tolerant" : "no");
+  const cell = (text: string): string => text.replace(/\\/gu, "\\\\").replace(/\|/gu, "\\|").replace(/\s+/gu, " ");
+  const lines = ["| Utterance | Source | Transcript | Exact |", "| --- | --- | --- | --- |"];
+  for (const utterance of corpus.utterances) {
+    const heardBy = recognizers.filter((recognizer) => utterance.recognizers[recognizer] !== undefined);
+    if (heardBy.length === 0) continue;
+    lines.push(`| ${utterance.id} | reference | ${cell(utterance.reference)} | - |`);
+    for (const recognizer of heardBy) {
+      const heard = utterance.recognizers[recognizer]!;
+      const normalized = normalizeTranscript(heard, context).text;
+      lines.push(`| ${utterance.id} | ${recognizer} (raw) | ${cell(heard)} | ${mark(utterance.reference, heard)} |`);
+      lines.push(`| ${utterance.id} | ${recognizer} (normalized) | ${cell(normalized)} | ${mark(utterance.reference, normalized)} |`);
     }
   }
   return lines.join("\n");

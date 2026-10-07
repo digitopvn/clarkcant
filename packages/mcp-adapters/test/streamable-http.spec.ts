@@ -20,6 +20,8 @@ import { type StreamableHttpMcpTransport, connectStreamableHttp } from "../src/s
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(here, "fixtures", "reference-http-server.mjs");
+/** The version a host passes; the transport must put it on the wire as given. */
+const CLIENT_VERSION = "3.4.5-test.1";
 
 const open: StreamableHttpMcpTransport[] = [];
 const servers: ChildProcess[] = [];
@@ -63,7 +65,7 @@ async function startServer(mode?: string): Promise<string> {
 
 async function connect(mode?: string, requestTimeoutMs = 5_000): Promise<StreamableHttpMcpTransport> {
   const url = await startServer(mode);
-  const transport = await connectStreamableHttp({ serverId: "reference", url, requestTimeoutMs });
+  const transport = await connectStreamableHttp({ serverId: "reference", clientVersion: CLIENT_VERSION, url, requestTimeoutMs });
   open.push(transport);
   return transport;
 }
@@ -83,6 +85,23 @@ describe("the handshake over HTTP", () => {
     // The session id is what every later request has to echo, and the fixture refuses a request
     // that forgets it - so a transport that dropped it could not list a tool.
     expect(transport.sessionId).toBe("session_reference_1");
+  });
+
+  it("introduces itself at initialize with the version the host passed, not one of its own", async () => {
+    const url = await startServer();
+    const sent: unknown[] = [];
+    const transport = await connectStreamableHttp({
+      serverId: "reference",
+      clientVersion: CLIENT_VERSION,
+      url,
+      requestTimeoutMs: 5_000,
+      fetchImpl: (input, init) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return fetch(input, init);
+      },
+    });
+    open.push(transport);
+    expect(sent[0]).toMatchObject({ method: "initialize", params: { clientInfo: { name: "clarkcant", version: CLIENT_VERSION } } });
   });
 
   it("works against a server that hands out no session at all", async () => {
@@ -136,7 +155,7 @@ describe("failure modes", () => {
     // that followed would therefore succeed, which is what makes this a test of the refusal rather
     // than of a failure that a followed redirect would also produce.
     const url = await startServer("redirect");
-    await expect(connectStreamableHttp({ serverId: "reference", url, requestTimeoutMs: 5_000 })).rejects.toThrow();
+    await expect(connectStreamableHttp({ serverId: "reference", clientVersion: CLIENT_VERSION, url, requestTimeoutMs: 5_000 })).rejects.toThrow();
   });
 
   it("names the tool that did not match the protocol shape", async () => {

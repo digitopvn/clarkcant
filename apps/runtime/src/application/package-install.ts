@@ -41,7 +41,9 @@ import {
   decideExecution,
   declaredWidgetIds,
   deriveGrantedCapabilities,
+  devConsentScopeOf,
   digestOfDirectory,
+  isDevConsentScope,
   directoryProblems,
   originOf,
   sourcesUnreadBefore,
@@ -49,7 +51,6 @@ import {
   fetchGitArtifact,
   fetchNpmArtifact,
   installFromEntry,
-  readDirectory,
   refreshDirectory,
   readExecutionPolicy,
   readPackage,
@@ -58,6 +59,7 @@ import {
   resolveLocalSource,
   snapshotLocalPackage,
   type CoordinationDeps,
+  type ExecutionIntent,
   type DirectoryIndexState,
   type DirectoryOrigin,
   type DirectorySourceStatus,
@@ -65,6 +67,7 @@ import {
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
 import { hostText, ownerLocale } from "../host-text.ts";
+import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
  * Installing a package a directory listed.
@@ -534,7 +537,23 @@ export function sourceRefusal(input: {
 export async function installPackage(
   deps: PackageInstallDeps,
   request: PackageInstallRequest,
-  options: { approved?: ApprovedInstall } = {},
+  options: {
+    approved?: ApprovedInstall;
+    /**
+     * A widget dev session's consent scope (`devConsentScopeOf`), when the listing is one of its generations. The policy
+     * decides, asks about and approves the scope rather than this one artifact: the package and everything it may reach.
+     * A generation that reaches exactly what an approved one did is the same question, already answered; any change to
+     * that reach is a new question. Each install still records the exact files it ran. Refused unless it is the scope of
+     * the listing being installed, so a caller cannot name a scope it was not given.
+     */
+    consentScope?: string;
+    /**
+     * Whose intent the install carries out. Absent is the person asking for this named package on their own surface.
+     * A widget dev session Clark started passes `proposed` (with the turn's origin): Clark chose to install, so the
+     * policy decides it as Clark's own proposal rather than as the person's request.
+     */
+    intent?: ExecutionIntent;
+  } = {},
 ): Promise<PackageInstallOutcome> {
   const { runtime, conductor } = deps;
   const { packageId, version } = request;
@@ -564,14 +583,14 @@ export async function installPackage(
     state.kind === "configured"
       ? state.entries.find((candidate) => candidate.packageId === packageId && candidate.version === version)
       : undefined;
-  let index = readDirectory(directory);
+  let index = readNodeDirectory(runtime.dataDir);
   // Also fetched again when an earlier source has nothing to list: one never fetched may list this package itself.
   const found = listedIn(index);
   const foundOrigin = found === undefined ? undefined : originOf(index, found);
   const behindUnread = foundOrigin !== undefined && sourcesUnreadBefore(index, foundOrigin).length > 0;
   if (found === undefined || behindUnread) {
     await refreshDirectory(directory, { maxAgeMs: MISSING_LISTING_REFRESH_AGE_MS });
-    index = readDirectory(directory);
+    index = readNodeDirectory(runtime.dataDir);
   }
   if (index.kind === "not-configured") return { kind: "refused", status: 409, code: "NO_DIRECTORY", message: index.reason };
   if (index.kind === "unreadable") {
@@ -642,6 +661,16 @@ export async function installPackage(
       message: "the directory entry publishes no digest",
     };
   }
+  if (options.consentScope !== undefined && options.consentScope !== devConsentScopeOf(entry)) {
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DIGEST_MISMATCH",
+      message: `${packageId}@${version} is no longer listed with the reach this install was asked under, so nothing was installed`,
+    };
+  }
+  /** What the policy decides and an approval names: the artifact, or a dev session's consent scope. */
+  const operationDigest = options.consentScope ?? entry.digest;
 
   /*
    * An approved install installs the artifact that was approved and nothing else. The same package and version can
@@ -649,7 +678,7 @@ export async function installPackage(
    * an approval for the new ones: refused before anything is fetched, and the person is asked again on the next try.
    */
   const approved = options.approved;
-  if (approved !== undefined && entry.digest !== approved.digest) {
+  if (approved !== undefined && operationDigest !== approved.digest) {
     return {
       kind: "refused",
       status: 409,
@@ -729,13 +758,13 @@ export async function installPackage(
   const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, principalId);
   const asked = decideExecution({
     policy,
-    action: { kind: "effect", category: "local-write", operationDigest: entry.digest },
+    action: { kind: "effect", category: "local-write", operationDigest },
     /*
-     * True, unlike a command the model proposed: installing *this named package* is what the person asked for,
-     * which is exactly the case Autonomous exists to run without a second question. Guarded and Ask still apply,
-     * because the decision is the policy's to make, not this route's.
+     * By default the person's: installing *this named package* is what the person asked for, which is exactly the case
+     * Autonomous exists to run without a second question. Guarded and Ask still apply, because the decision is the
+     * policy's to make, not this route's. A caller acting on Clark's own proposal says so (`options.intent`).
      */
-    intent: { kind: "interactive" },
+    intent: options.intent ?? { kind: "interactive" },
   });
   /*
    * The question the policy asked has been answered by the person, so it is not asked again: `ask` becomes the
@@ -773,7 +802,7 @@ export async function installPackage(
     const pending = allRows<{ approval_id: string }>(
       runtime.db,
       "SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending' AND task_id IS NULL AND expires_at > ? ORDER BY requested_at, approval_id",
-      entry.digest,
+      operationDigest,
       nowInstant(),
     ).find((row) => {
       // A question asked about another source's listing of the same bytes is another question.
@@ -792,8 +821,11 @@ export async function installPackage(
       pending?.approval_id ??
       transaction(runtime.db, () => {
         const created = requestApproval(coordination, {
-          operationDigest: entry.digest,
-          operationDescription: hostText(ownerLocale(runtime)).approvals.installCard(entry.displayName, entry.version, entry.riskTier),
+          operationDigest,
+          operationDescription:
+            options.consentScope === undefined
+              ? hostText(ownerLocale(runtime)).approvals.installCard(entry.displayName, entry.version, entry.riskTier)
+              : hostText(ownerLocale(runtime)).approvals.devSessionCard(entry.displayName, entry.version, entry.riskTier),
           effectCategory: "local-write",
           ttlMs: INSTALL_APPROVAL_TTL_MS,
         });
@@ -803,6 +835,7 @@ export async function installPackage(
           version: entry.version,
           digest: entry.digest,
           ...(localDigest === undefined ? {} : { localDigest }),
+          ...(options.consentScope === undefined ? {} : { consentScope: options.consentScope }),
           ...(origin === undefined ? {} : { sourceId: origin.id }),
           result: "asked",
         });
@@ -941,12 +974,16 @@ export async function installPackage(
    * would execute that riskier category outright. A capability the policy would ask about (M1) is surfaced back to
    * the caller as pending rather than silently dropped, and one the policy denies is surfaced as denied.
    */
-  const grant = deriveGrantedCapabilities({
+  const derived = deriveGrantedCapabilities({
     requested: manifestRequestedCapabilities,
     riskTier: computedRiskTier,
     policy,
-    intent: { kind: "interactive" },
-    artifactDigest: entry.digest,
+    /*
+     * The install's own intent, except where the person approved this install: the question they answered named the
+     * package and (for a dev session's scope) the capabilities it requests, so their answer is their request.
+     */
+    intent: approved === undefined ? (options.intent ?? { kind: "interactive" }) : { kind: "interactive" },
+    artifactDigest: operationDigest,
   });
 
   /*
@@ -955,24 +992,46 @@ export async function installPackage(
    * install still proceeds without it — the package activates with the narrower granted set — and the caller can
    * see, and later approve, exactly what is still pending.
    */
+  /*
+   * A dev session's generations share one consent scope, so a capability the person granted for that scope is granted
+   * to every generation of it rather than asked again on each save. Only an approval that was granted: one still
+   * pending is reused below, and one denied stays a question for the next generation, as it is for any install.
+   */
+  const scope = options.consentScope;
+  const grantedForScope =
+    scope === undefined || derived.needsApproval.length === 0
+      ? new Set<string>()
+      : new Set(
+          allRows<{ operation_digest: string }>(
+            runtime.db,
+            "SELECT operation_digest FROM approvals WHERE task_id IS NULL AND decision = 'granted' AND substr(operation_digest, 1, ?) = ?",
+            scope.length + 1,
+            `${scope}:`,
+          ).map((row) => row.operation_digest.slice(scope.length + 1)),
+        );
+  const grant = {
+    granted: [...derived.granted, ...derived.needsApproval.filter((ref) => grantedForScope.has(ref))],
+    needsApproval: derived.needsApproval.filter((ref) => !grantedForScope.has(ref)),
+    denied: derived.denied,
+  };
   const pendingCapabilities = grant.needsApproval.map((ref) => {
-    const operationDigest = `${entry.digest}:${ref}`;
+    const capabilityDigest = `${operationDigest}:${ref}`;
     /*
      * A reinstall of the same digest asks the same question every time unless this reuses what is already
      * pending: without this, calling install twice while a capability approval sits unanswered would pile up a
      * second `approvals` row nobody asked for, and the caller would not know which one still matters. Reusing the
-     * row for the same `operationDigest` (this package's digest plus this capability ref) means "install this
+     * row for the same digest (this package's digest, or its dev consent scope, plus this capability ref) means "install this
      * again" and "still waiting on the same grant" read as the one thing they are.
      */
     const existing = runtime.db
       .prepare("SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending'")
-      .get(operationDigest) as { approval_id: string } | undefined;
+      .get(capabilityDigest) as { approval_id: string } | undefined;
     return {
       ref,
       approvalId:
         existing?.approval_id ??
         requestApproval(coordination, {
-          operationDigest,
+          operationDigest: capabilityDigest,
           operationDescription: hostText(ownerLocale(runtime)).approvals.grantCard(ref, entry.displayName, entry.version),
           effectCategory: effectCategoryForLane(computedRiskTier),
           ttlMs: INSTALL_APPROVAL_TTL_MS,
@@ -1065,6 +1124,11 @@ export interface InstallApprovalEvent {
   digest: string;
   /** For a listing by a path on this machine: the content digest of its files when the question was asked. */
   localDigest?: string;
+  /**
+   * For a widget dev session's generation: the consent scope the question was asked about (`devConsentScopeOf`), which
+   * is then what the approval names instead of the artifact digest.
+   */
+  consentScope?: string;
   /** The id of the directory source that owned the listing when the question was asked. */
   sourceId?: string;
   result: InstallApprovalResult;
@@ -1114,7 +1178,14 @@ export function findInstallApprovalRequest(
   db: Database,
   nodeId: string,
   approvalId: string,
-): { packageId: string; version: string; digest: string; localDigest?: string; sourceId?: string } | undefined {
+): {
+  packageId: string;
+  version: string;
+  digest: string;
+  localDigest?: string;
+  consentScope?: string;
+  sourceId?: string;
+} | undefined {
   const row = oneRow<{ document: string }>(
     db,
     `SELECT document FROM events
@@ -1132,6 +1203,7 @@ export function findInstallApprovalRequest(
     version: event.version,
     digest: event.digest,
     ...(event.localDigest === undefined ? {} : { localDigest: event.localDigest }),
+    ...(event.consentScope === undefined ? {} : { consentScope: event.consentScope }),
     ...(typeof event.sourceId === "string" ? { sourceId: event.sourceId } : {}),
   };
 }
@@ -1147,7 +1219,9 @@ export function findInstallApprovalRequest(
  * `:` in a ref — so splitting on the first two `:` is unambiguous rather than a guess.
  */
 function parseCapabilityOperationDigest(operationDigest: string): { digest: string; ref: CapabilityRef } | undefined {
-  const firstColon = operationDigest.indexOf(":");
+  // A dev session's consent scope carries one more segment in front (`widget-dev-scope:sha256:<hex>`).
+  const start = isDevConsentScope(operationDigest) ? operationDigest.indexOf(":") + 1 : 0;
+  const firstColon = operationDigest.indexOf(":", start);
   const secondColon = operationDigest.indexOf(":", firstColon + 1);
   if (firstColon === -1 || secondColon === -1) return undefined;
   const digest = operationDigest.slice(0, secondColon);
@@ -1289,7 +1363,7 @@ export function decideInstallCapabilityApproval(
           // or a genuine retry after the process crashed between the decision and the grant last time) must not
           // get a silent no-op. If the grant is missing from the generation it belongs to, apply it now — this
           // branch is what makes a partial-failure retry actually converge rather than reporting false success.
-          const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+          const generation = generationForApprovalDigest(runtime, parsed.digest);
           if (row.decision === "granted" && generation !== undefined) {
             applyCapabilityGrant(
               deps,
@@ -1324,7 +1398,7 @@ export function decideInstallCapabilityApproval(
       };
     }
 
-    const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+    const generation = generationForApprovalDigest(runtime, parsed.digest);
     if (input.decision === "granted" && generation === undefined) {
       // R2: no active, unsuperseded generation carries this digest (it was superseded by a newer install before
       // the approval was decided, or never activated). There is nowhere to persist the grant, so this is a named
@@ -1440,7 +1514,7 @@ export function listPendingCapabilityApprovals(
   return rows.flatMap((row) => {
     const parsed = parseCapabilityOperationDigest(row.operation_digest);
     if (parsed === undefined) return [];
-    const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+    const generation = generationForApprovalDigest(runtime, parsed.digest);
     if (generation === undefined) return [];
     return [
       {
@@ -1458,6 +1532,22 @@ export function listPendingCapabilityApprovals(
 }
 
 /** The active generation on this node whose digest is the one a capability approval named. Node-scoped by construction. */
+/**
+ * The active generation an install-capability approval's digest names: the one carrying that artifact digest, or, for a
+ * dev session's consent scope, the active generation of a listing with that scope.
+ */
+function generationForApprovalDigest(runtime: PackageInstallDeps["runtime"], digest: string): PackageGeneration | undefined {
+  if (!isDevConsentScope(digest)) return findGenerationByDigest(runtime.db, runtime.identity.nodeId, digest);
+  const index = readNodeDirectory(runtime.dataDir);
+  if (index.kind !== "configured") return undefined;
+  for (const entry of index.entries) {
+    if (devConsentScopeOf(entry) !== digest) continue;
+    const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, entry.digest);
+    if (generation !== undefined) return generation;
+  }
+  return undefined;
+}
+
 function findGenerationByDigest(db: Database, nodeId: string, digest: string): PackageGeneration | undefined {
   const row = oneRow<{ document: string }>(
     db,
@@ -1505,7 +1595,7 @@ export function resolveGenerationGrantedCapabilities(
   if (generation.grantedCapabilities !== null) return generation.grantedCapabilities;
 
   const { runtime } = deps;
-  const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
+  const index = readNodeDirectory(runtime.dataDir);
   const entry =
     index.kind === "configured"
       ? index.entries.find(

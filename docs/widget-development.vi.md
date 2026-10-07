@@ -2877,6 +2877,45 @@ không mở được gì, còn **Provider unavailable** trả về `TOKEN_PROVID
 và log chỉ ghi nhà cung cấp và kết quả, không bao giờ ghi giá trị
 ([dev-resources.spec.ts](../packages/widget-cli/test/dev-resources.spec.ts)).
 
+#### Phát triển trong cuộc hội thoại
+
+Dev host mô phỏng một node. Để xem widget trên chính node, hãy nhờ Clark phát triển một widget ("làm cho tôi một widget
+hẹn giờ"), hoặc gọi `POST /widget-dev/sessions` với tư cách chủ máy
+([giao diện mở](open-interfaces.vi.md#phiên-phát-triển-widget)). Node theo dõi thư mục bằng cùng build engine mà dev host
+dùng: mỗi thay đổi đọc được thành một gói trở thành một generation bất biến mang tên theo digest các tệp của nó, được sao
+chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Không có gì
+đi qua npm, Marketplace hay một directory index, và không có gì được phát hành. Thư mục `node_modules` ở gốc bị loại khỏi
+mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
+
+Clark phát triển widget trong không gian widget riêng của mình (`<dataDir>/widget-workspace`), nơi Clark dựng khung một
+widget mới. Để Clark làm việc với một dự án widget bạn đã có, hãy chép thư mục của nó vào không gian widget. Hiện chưa thể
+chỉ cho Clark một thư mục dự án khác; việc chọn thư mục được theo dõi tại
+[#538](https://github.com/digitopvn/clarkcant/issues/538). Thư mục dữ liệu của chính node không bao giờ được phát triển,
+và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
+dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
+
+Widget hiện trong cuộc hội thoại bằng frame của bản chính thức, với đúng sandbox, bridge, state và migration của bản
+chính thức. Một generation mới chỉ mount lại frame; instance và state của nó được giữ, và state đi qua các migration của
+chính gói khi phiên bản thay đổi. Cạnh frame, host nói bản dựng nào đang hiện và, khi đó không phải bản mới nhất, lý do:
+bản dựng mới bị lỗi (kèm các lỗi), nó đang chờ người dùng trong hộp thư, hoặc chính sách đã từ chối nó. Câu "đang hiện bản
+dựng thành công gần nhất" được nói đúng khi đó là thứ cuộc hội thoại đang hiện.
+
+Chính sách thực thi quyết định mỗi lần cài như mọi lần cài khác. Một phiên do Clark bắt đầu được quyết định như đề xuất
+của chính Clark, nên chế độ có kiểm soát hỏi trước lần cài đầu tiên của nó; còn phiên bắt đầu qua route của chủ máy là
+yêu cầu của bạn. Khi chế độ yêu cầu hỏi, lần cài đầu tiên là một câu hỏi, và mỗi lần dựng làm đổi những gì gói tiếp cận cũng vậy:
+reach đã khai báo, tài nguyên, lane của facet, các facet, quyền, hoặc các capability gói yêu cầu. Một lần dựng chỉ đổi mã
+hay UI dùng lại câu trả lời đó và chạy ngay. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp
+cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
+đã duyệt trong hộp thư thì đã được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một
+thứ khác trên node: một gói đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
+
+Dừng một phiên là dừng theo dõi thư mục; bản dựng cuối vẫn chạy ở nơi nó đã được đặt. Khi node tự dừng theo dõi, dòng
+trạng thái cạnh frame nói lý do. Có thể bộ theo dõi đã bị lỗi, hoặc thư mục đã bị xoá hay đổi tên; node kiểm tra thư mục
+mỗi giây, vì Windows không báo gì. Cũng có thể node đã theo dõi số thư mục tối đa. Sau một lần khởi động lại, thư mục có
+thể không còn là thư mục mà phiên được theo dõi. Một lần dựng có thư mục quá lớn, hoặc chứa liên kết trỏ ra ngoài, sẽ nói
+điều đó và cần đổi gì. Các bản dựng đã bị thay thế được dọn dẹp khi bản mới được cài. Node giữ bản dựng đang chạy và bản mà thao tác quay lại bản
+trước sẽ trở về.
+
 ### test
 
 Chạy conformance suite.
@@ -3222,6 +3261,13 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
   `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
+- Phiên phát triển widget trong cuộc hội thoại (§16, "Phát triển trong cuộc hội thoại"): một build engine dùng chung với
+  dev host, generation bất biến, giữ bản dựng tốt gần nhất, lần cài do chính sách quyết định theo một phạm vi đồng ý gắn
+  với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng không gian widget và thư mục gốc dự án do người dùng cấu hình và được quyết định như đề
+  xuất của Clark, chỉ facet frame và dữ liệu, dọn dẹp các bản dựng đã bị thay thế, chỉ mount lại frame, và trạng thái
+  bản dựng do host sở hữu. Ghim một widget đang phát triển đã
+  chạy được; tách một widget cách ly ra cửa sổ riêng, cùng các điều khiển fixture, viewport, theme và reduced motion của
+  dev host đặt cạnh một frame trên node, thì chưa có.
 - State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).
 - Gỡ / khôi phục / quay về package từ Settings và qua `manage_package` trong hội thoại; dữ liệu được giữ.
 - Câu hỏi capability đang chờ được trả lời trong Settings (do host sở hữu; model không duyệt được). Frame chỉ
@@ -3244,7 +3290,8 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   listing bằng đường dẫn trên máy này còn mang `contentDigest`, digest các tệp của nó lúc được liệt kê, mà nút gửi lại
   để lần cài bị từ chối nếu các tệp đã đổi từ đó; khi ấy dòng đó cho thấy chúng đã đổi và mời tìm lại thay vì cùng nút
   Cài. Lần cài sao chép các tệp vào cache package và package chạy từ bản sao đó, nên những chỉnh sửa sau này ở đường dẫn
-  không thay đổi gì cho tới khi nó được cài lại; vòng chỉnh sửa trực tiếp là `clark widget dev`. Mỗi dòng còn lặp lại
+  không thay đổi gì cho tới khi nó được cài lại; vòng chỉnh sửa trực tiếp là `clark widget dev` hoặc một phiên phát
+  triển widget trong cuộc hội thoại (§16). Mỗi dòng còn lặp lại
   `declaredReach` (những gì gói được phép chạm tới khi cài) và các khai báo `widgetAppearance` của listing, theo đúng
   schema của mục trong directory, nên dòng đó hiển thị chúng trước khi bấm Cài. Một card không khớp với contract của nó
   bị bỏ khỏi câu trả lời, và node ghi log `host card dropped` kèm loại card và đường dẫn các trường lỗi, không bao giờ

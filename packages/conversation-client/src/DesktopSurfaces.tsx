@@ -23,6 +23,7 @@ import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent, composedImageRefs } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
 import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
+import { WidgetDevStatus } from "./widget-dev-status.tsx";
 import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
@@ -621,6 +622,13 @@ export function PinnedLiveSurface({
         aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
       >
         {head}
+        {/*
+          A widget dev session's build: which one is on screen and why it is not the newest, drawn by the host. A new
+          running build re-reads this surface, which remounts only the frame.
+        */}
+        {live.development !== undefined && (
+          <WidgetDevStatus client={client} sessionId={live.development.sessionId} onRunningChange={() => void load()} />
+        )}
         {playbackAllowed && frame !== null && (
           <button
             type="button"
