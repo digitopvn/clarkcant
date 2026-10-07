@@ -58,11 +58,25 @@ describe("the session vocabulary", () => {
     expect(JSON.stringify(context)).not.toContain("coming back");
   });
 
-  it("lets the session's spelling replace the glossary's, and keeps the glossary's aliases", () => {
-    const context = buildRecognitionContext({ tools: ["PNPM"] });
-    expect(context.terms.filter((term) => term.text.toLowerCase() === "pnpm").map((term) => term.text)).toEqual(["PNPM"]);
+  it("keeps one spelling of a word the session and the glossary spell differently: the heavier one, aliases and all", () => {
     const glossary = CODING_GLOSSARY.find((entry) => entry.text === "pnpm");
     expect(glossary?.aliases).toContain("pnp m");
+    // A tool outweighs the glossary, so its spelling stays and the glossary's entry, with its aliases, does not.
+    const heavierSession = buildRecognitionContext({ tools: ["PNPM"] });
+    expect(heavierSession.terms.filter((term) => term.text.toLowerCase() === "pnpm")).toEqual([
+      expect.objectContaining({ text: "PNPM", kind: "tool" }),
+    ]);
+    expect(heavierSession.terms.find((term) => term.text === "PNPM")?.aliases).toBeUndefined();
+    // A repository listed after another outweighs nothing: the glossary's ClarkCant stays, with its aliases.
+    const heavierGlossary = buildRecognitionContext({ repositories: ["other-app", "clarkcant", "web"] });
+    expect(heavierGlossary.terms.filter((term) => term.text.toLowerCase() === "clarkcant")).toEqual([
+      expect.objectContaining({ text: "ClarkCant", kind: "repository", aliases: expect.arrayContaining(["clark cant"]) }),
+    ]);
+  });
+
+  it("adds no glossary spelling beside a word the session already spells two ways by case", () => {
+    const context = buildRecognitionContext({ tools: ["PNPM"], packages: ["Pnpm"] });
+    expect(context.terms.filter((term) => term.text.toLowerCase() === "pnpm").map((term) => term.text).sort()).toEqual(["PNPM", "Pnpm"]);
   });
 
   it("keeps every spelling the session uses when two differ only by case, and each exact spelling once", () => {
@@ -253,6 +267,27 @@ describe("a term the vocabulary spells two ways by case alone", () => {
   it("still restores the case of an unambiguous term in the same vocabulary", () => {
     expect(heard("RedactSecrets có bắt được token không").text).toBe("redactSecrets có bắt được token không");
     expect(heard("userService gọi RedactSecrets").text).toBe("userService gọi redactSecrets");
+  });
+});
+
+describe("a session term spelled one way beside the glossary's spelling", () => {
+  it("keeps ClarkCant when the repository clarkcant is not the active one", () => {
+    const session = buildRecognitionContext({ repositories: ["other-app", "clarkcant", "web"] });
+    expect(normalizeTranscript("sửa clark cant trước", session).text).toBe("sửa ClarkCant trước");
+    expect(normalizeTranscript("Clarkcant build lỗi", session).text).toBe("ClarkCant build lỗi");
+  });
+
+  it("keeps Gemini when the provider gemini is not listed first", () => {
+    const session = buildRecognitionContext({ providers: ["google", "gemini"] });
+    expect(session.terms.filter((term) => term.text.toLowerCase() === "gemini").map((term) => term.text)).toEqual(["Gemini"]);
+    expect(normalizeTranscript("gemini model", session).text).toBe("Gemini model");
+  });
+
+  it("keeps ESLint when the tool eslint comes after many others", () => {
+    const tools = [...Array.from({ length: 30 }, (_, index) => `tool-number-${index}`), "eslint"];
+    const session = buildRecognitionContext({ tools });
+    expect(normalizeTranscript("eslint lỗi", session).text).toBe("ESLint lỗi");
+    expect(normalizeTranscript("Eslint lỗi", session).text).toBe("ESLint lỗi");
   });
 });
 

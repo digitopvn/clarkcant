@@ -144,18 +144,32 @@ export function buildRecognitionContext(sources: VocabularySources, options: Bui
   const maxTerms = Math.max(0, Math.min(options.maxTerms ?? MAX_RECOGNITION_TERMS, MAX_RECOGNITION_TERMS));
   const recent = (sources.recentText ?? []).join("\n").toLowerCase();
   const bySpelling = new Map<string, RecognitionTerm>();
-  const sessionSpellings = new Set<string>();
+  /** The session's own spellings of each word, case aside: `clarkcant`, or `UserService` and `userService`. */
+  const sessionSpellings = new Map<string, Set<string>>();
 
   const offer = (text: string, kind: RecognitionTermKind, position: number, count: number, aliases?: readonly string[], glossary = false): void => {
     const term = vocabularyTerm(text);
     if (term === undefined) return;
-    // The glossary is the floor: when the session itself spells a word another way (a repository called `clarkcant`
-    // beside the glossary's ClarkCant, a dependency called `typescript`), the session's spelling replaces the generic one.
-    if (!glossary) sessionSpellings.add(term.toLowerCase());
-    else if (sessionSpellings.has(term.toLowerCase()) && !bySpelling.has(term)) return;
+    const key = term.toLowerCase();
     const recency = count <= 1 ? 0.2 : 0.2 * (1 - position / count);
-    const mentioned = recent === "" ? 0 : Math.min(0.3, 0.1 * mentions(recent, term.toLowerCase()));
+    const mentioned = recent === "" ? 0 : Math.min(0.3, 0.1 * mentions(recent, key));
     const weight = round(Math.min(1, KIND_BASE[kind] + recency + mentioned));
+    if (!glossary) {
+      sessionSpellings.set(key, (sessionSpellings.get(key) ?? new Set<string>()).add(term));
+    } else {
+      const spellings = sessionSpellings.get(key);
+      if (spellings !== undefined && !spellings.has(term)) {
+        // The session spells this word two ways by case: both are real names, and a third, generic spelling beside them
+        // would only add a guess (#590).
+        if (spellings.size > 1) return;
+        // The session spells it one other way (a repository called `clarkcant` beside the glossary's ClarkCant): one
+        // spelling stays, the heavier one, and a tie keeps the session's.
+        const [only] = spellings;
+        const rival = bySpelling.get(only!);
+        if (rival !== undefined && rival.weight >= weight) return;
+        bySpelling.delete(only!);
+      }
+    }
     // Keyed by the exact spelling: `UserService` and `userService` are two real symbols, and keeping one would let the
     // normaliser re-case a heard term into the other. Both stay, and the normaliser leaves such a term as heard.
     const existing = bySpelling.get(term);
