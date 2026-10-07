@@ -124,7 +124,7 @@ async function decide(card: Card, decision: "granted" | "denied"): Promise<Gatew
 }
 
 function blocks(): MessageBlock[] {
-  return buildTimeline(services, { conversationId, afterSequence: 0 }).messages.flatMap((message) => (message as { blocks: MessageBlock[] }).blocks);
+  return buildTimeline(services, { conversationId }).messages.flatMap((message) => (message as { blocks: MessageBlock[] }).blocks);
 }
 
 async function enterKey(origin: string): Promise<GatewayResponse> {

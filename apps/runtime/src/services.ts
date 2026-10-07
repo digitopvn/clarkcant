@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { type AppIntentLocale, type Instant, type TurnOrigin, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
+import { type AppIntentLocale, type Instant, TIMELINE_PAGE_DEFAULT_LIMIT, TIMELINE_WINDOW_VERSION, type TimelinePageQuery, type TimelineWindow, type TurnOrigin, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   type WidgetDeps,
@@ -19,7 +19,7 @@ import {
   findCompositionByInstance,
   listActiveTasks,
   listSnapshotsForMessage,
-  messagesSince,
+  messagePage,
   upsertDataset,
   type UnreadableSnapshot,
 } from "@clarkcant/storage";
@@ -852,6 +852,8 @@ export interface Timeline {
   metadata: { messageCount: number; taskCount: number; updatedAt: string };
   /** Tasks the client should show as in flight, so it never invents a status. */
   activeTaskIds: string[];
+  /** Which part of the conversation `messages` is, by message sequence (`TimelineWindow`). */
+  window: TimelineWindow;
 }
 
 /** Widget dependencies for read-only lookups. Only the node's own runtime is read, so that is all it asks for. */
@@ -873,16 +875,26 @@ function readDeps(services: Pick<NodeServices, "runtime">): WidgetDeps {
  *
  * Narrowed to the node's runtime because that is the whole of what it reads: a caller holding only part of the
  * services bundle can still build a page.
+ *
+ * The page is the newest one unless the caller asks for another (`TimelinePageQuery`). Every route that answers a
+ * change with the conversation answers with the newest page: that is where the change shows, and a client holding
+ * older history merges the page into what it holds by the window's sequences instead of being sent back to the start.
+ *
+ * Instances come with the page for every message on it, for every pin, and for `instanceIds`: a widget acted on far
+ * up the conversation is not on the newest page, and the client still has to draw it as it now is.
  */
 export function buildTimeline(
   services: Pick<NodeServices, "runtime"> & Partial<Pick<NodeServices, "serviceHost">>,
-  input: { conversationId: string; afterSequence: number; limit?: number },
+  input: { conversationId: string; page?: TimelinePageQuery; limit?: number; instanceIds?: readonly string[] },
 ): Timeline {
   const { db } = services.runtime;
   const deps = readDeps(services);
-  const messages = messagesSince(db, input.conversationId, input.afterSequence, input.limit ?? 200);
+  const read = messagePage(db, input.conversationId, input.page ?? { kind: "latest" }, input.limit ?? TIMELINE_PAGE_DEFAULT_LIMIT);
+  const messages = read.messages;
+  const pins = listPinsForConversation(deps, input.conversationId);
 
-  const instanceIds = new Set<string>();
+  const instanceIds = new Set<string>(input.instanceIds ?? []);
+  for (const pin of pins) instanceIds.add(pin.instanceId);
   for (const message of messages) {
     for (const block of message.blocks) {
       if (block.type === "widget-ref") instanceIds.add(block.instanceId);
@@ -981,7 +993,7 @@ export function buildTimeline(
     conversationId: input.conversationId,
     cursor: metadata.cursor,
     messages,
-    pins: listPinsForConversation(deps, input.conversationId),
+    pins,
     instances,
     snapshots,
     metadata: {
@@ -990,5 +1002,13 @@ export function buildTimeline(
       updatedAt: metadata.updatedAt,
     },
     activeTaskIds: listActiveTasks(db, input.conversationId).map((task) => task.taskId),
+    window: {
+      version: TIMELINE_WINDOW_VERSION,
+      fromSequence: read.fromSequence,
+      toSequence: read.toSequence,
+      hasOlder: read.hasOlder,
+      hasNewer: read.hasNewer,
+      sequences: read.sequences,
+    },
   };
 }

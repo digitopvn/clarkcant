@@ -118,7 +118,7 @@ async function setView(instanceId: string, input: Record<string, unknown>, princ
 }
 
 function carriedState(instanceId: string): unknown {
-  const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+  const timeline = buildTimeline(services, { conversationId: CONVERSATION });
   return (timeline.instances.find((instance) => instance.instanceId === instanceId) as { state?: unknown } | undefined)?.state;
 }
 
@@ -154,7 +154,7 @@ describe("placing a calendar", () => {
     const binding = getActionBinding(services.conductor, instance?.actionBindingIds[0] ?? "");
     expect(binding).toMatchObject({ proposal: { kind: "view", operation: "calendar.view" }, effectCategory: "read", requiresApproval: false });
 
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     const text = timeline.snapshots[0]?.textAlternative ?? "";
     expect(text).toContain("Team: Calendar for 2026-10 (Asia/Ho_Chi_Minh): 4 event(s).");
     expect(text).toContain("Offsite (all day, 2026-10-07 to 2026-10-09)");
@@ -356,7 +356,7 @@ describe("a calendar placed before it had views", () => {
     const instanceId = placeLegacy();
     expect(getInstance(services.conductor, instanceId)?.actionBindingIds).toEqual([]);
 
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     const carried = timeline.instances.find((instance) => instance.instanceId === instanceId);
     expect(carried?.actions).toEqual([expect.objectContaining({ label: "Calendar view", available: true })]);
     const bindingIds = getInstance(services.conductor, instanceId)?.actionBindingIds ?? [];
@@ -370,7 +370,7 @@ describe("a calendar placed before it had views", () => {
     });
 
     // Read again, by this page or another, it keeps the one binding.
-    buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    buildTimeline(services, { conversationId: CONVERSATION });
     expect(getInstance(services.conductor, instanceId)?.actionBindingIds).toEqual(bindingIds);
   });
 
@@ -379,7 +379,7 @@ describe("a calendar placed before it had views", () => {
     // Nothing picked yet: the month it was placed as, which is what it says.
     expect(buildWidgetSemantic(services.conductor, instanceId)?.values.view).toBe("month");
     // The page reads the timeline, and sends the view through the binding it finds there.
-    buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    buildTimeline(services, { conversationId: CONVERSATION });
     expect((await setView(instanceId, { view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY })).ok).toBe(true);
 
     // A reload reads the timeline again, and the calendar opens where the person left it.

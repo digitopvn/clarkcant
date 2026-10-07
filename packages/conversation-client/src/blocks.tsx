@@ -25,6 +25,7 @@ import { useAttachmentUrls } from "./use-attachment-urls.ts";
 import { type ObjectUrls, useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
+import { useSurfaceViewState } from "./surface-view-state.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
 import { FeedbackCardBlock } from "./feedback-card.tsx";
@@ -113,7 +114,7 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
   // its JSON, and still there to open for anyone who wants the record.
   const questionRecord = name === "ask_user_question" && typeof args.decision === "string" && args.decision !== "answered";
   const mark = questionRecord ? "noted" : status;
-  const [open, setOpen] = useState(!questionRecord && status === "failed");
+  const [open, setOpen] = useSurfaceViewState("tool.open", !questionRecord && status === "failed");
 
   // A call that fails opens itself — keyed on the status so it happens once, and so a widget the user closed by hand
   // is not opened again underneath them.
@@ -186,7 +187,7 @@ export function ReasoningBlock({
 }): ReactElement {
   const t = useT();
   const content = typeof block.content === "string" ? block.content : "";
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useSurfaceViewState("reasoning.open", false);
 
   return (
     <details
@@ -1161,6 +1162,8 @@ export function CredentialCardBlock({
           : [],
       )
     : [];
+  // Secrets stay in this component and nowhere else: unlike a form's draft they are never copied into the view-state
+  // store, so a credential card scrolled far enough away to be unmounted forgets what was typed into it.
   const [values, setValues] = useState<Record<string, string>>({});
   const complete = fields.length > 0 && fields.every((field) => (values[field.name] ?? "") !== "");
   const status = actions?.credentialStatus?.requestId === requestId ? actions.credentialStatus.message : undefined;
@@ -2100,9 +2103,10 @@ export function renderBlock(
  * a form asks for text. Both exist because an agent that needs several facts otherwise writes them as prose, gets
  * a paragraph back, and has to guess which sentence answered which request.
  *
- * The draft is component state and nothing else. That is deliberate: a half-typed form must survive a rerender —
- * a turn streaming behind it, a widget resolving, the window resizing — and it must **not** survive as a
- * preference, because a form is a message being composed, not a setting. Submitting sends the answers as the
+ * The draft is view state of this card and nothing else. That is deliberate: a half-typed form must survive a
+ * rerender — a turn streaming behind it, a widget resolving, the window resizing, the row being scrolled far enough
+ * away to be unmounted (`surface-view-state.tsx`) — and it must **not** survive as a preference or leave the
+ * browser session, because a form is a message being composed, not a setting. Submitting sends the answers as the
  * user's own next message, so the transcript stays a conversation and there is one way into the agent.
  *
  * Read-only once the conversation has moved past it, for the reason the question card is: the transcript is
@@ -2137,7 +2141,7 @@ export function FormCardBlock({
     formId !== "" && actions?.onFormSubmit !== undefined && actions.openFormIds?.includes(formId) === true;
 
   // Keyed by field id, so the draft is exactly the answers and nothing else survives a rerender.
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useSurfaceViewState<Record<string, string>>("form.values", {});
   const missing = fields.filter((field) => field.required && (values[field.id] ?? "").trim() === "");
   const complete = missing.length === 0 && fields.length > 0;
   /*

@@ -288,7 +288,7 @@ describe("a conversation with the largest cards in it", () => {
     const status = await place(STATUS.id, LARGEST_STATUS);
     for (const block of [details, progress, status]) keep(block, block.snapshot.messageId);
 
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     const texts = new Map(timeline.snapshots.map((snapshot) => [snapshot.snapshotId, snapshot.textAlternative]));
     const detailsText = texts.get(details.snapshot.snapshotId) ?? "";
     expect(detailsText.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
@@ -326,7 +326,7 @@ describe("a conversation with the largest cards in it", () => {
     if (!twelve.ok) throw new Error(`${twelve.message}: ${(twelve.problems ?? []).join("; ")}`);
     keep(twelve.block, "msg_largest_twelve");
 
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     const gridText = timeline.snapshots.find((snapshot) => snapshot.snapshotId === grid.snapshotId)?.textAlternative ?? "";
     const twelveText = timeline.snapshots.find((snapshot) => snapshot.snapshotId === twelve.snapshotId)?.textAlternative ?? "";
     expect(gridText.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
@@ -380,7 +380,7 @@ describe("a conversation with the largest cards in it", () => {
     }) as typeof process.stderr.write;
     let timeline: ReturnType<typeof buildTimeline>;
     try {
-      timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+      timeline = buildTimeline(services, { conversationId: CONVERSATION });
     } finally {
       process.stderr.write = write;
     }

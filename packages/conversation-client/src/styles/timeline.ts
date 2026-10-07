@@ -17,6 +17,9 @@ export const TIMELINE_CSS = `
   /* Room for the scrollbar on both edges, always: the transcript stays centred over the composer, and it does not
      shift sideways the moment a reply grows long enough to scroll. */
   scrollbar-gutter: stable both-edges;
+  /* The transcript keeps the row being read in place itself (VirtualTranscript.tsx); the browser's own anchoring would
+     correct the same change a second time. */
+  overflow-anchor: none;
 }
 /* On a narrow window that reserved room cost a gutter on both sides on top of the timeline's own, so the transcript
    sat 30px inside the composer's edge. There a scrollbar takes room only when there is one, which a phone's overlay
@@ -44,6 +47,29 @@ export const TIMELINE_CSS = `
 .cc-shell[data-view="conversation"] .cc-timeline {
   padding-bottom: calc(var(--cc-orb-dock, 0px) / 6 + var(--cc-space-xl));
 }
+/*
+ * The stored rows, mounted around the screen. Each row sits in a slot that is measured, with the same gap between
+ * slots as between rows, and the rows that are not mounted are one spacer of their measured height.
+ */
+.cc-transcript-rows,
+.cc-transcript-slot { display: flex; flex-direction: column; gap: var(--cc-space-lg); min-width: 0; }
+.cc-transcript-gap { flex: none; }
+/* A row mounted again by scrolling back, or put in front by an older page, is not arriving: it just appears. */
+.cc-transcript-slot[data-enter="none"] > .cc-row { animation: none; }
+/* The top of the loaded history while the page before it is read, or when that read failed. */
+.cc-history-edge {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--cc-space-sm);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label); text-align: center;
+}
+/*
+ * "Jump to latest" floats over the foot of the transcript: a dock of no height, so appearing and going takes no room
+ * and moves nothing.
+ */
+.cc-jump-latest-dock {
+  position: sticky; bottom: var(--cc-space-md); z-index: 2; height: 0;
+  display: flex; justify-content: center; align-items: flex-end; pointer-events: none;
+}
+.cc-jump-latest { flex: none; pointer-events: auto; box-shadow: var(--cc-shadow-popover, 0 8px 24px rgb(0 0 0 / 35%)); }
 
 .cc-empty {
   display: flex; flex-direction: column; align-items: center; gap: var(--cc-space-md);

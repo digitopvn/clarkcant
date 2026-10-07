@@ -44,7 +44,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |
 | POST | `/conversations/{id}/messages/stream` | như trên, trả về dạng SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `widget-perform`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — dừng câu trả lời đang viết; giữ phần đã viết, gắn nhãn đã dừng; trả về `{ stopped }` |
-| GET | `/conversations/{id}/timeline?after=N` | – |
+| GET | `/conversations/{id}/timeline?after=N` · `?before=N` · `?window=latest`, mỗi kiểu kèm `&limit=` | – một trang của hội thoại; xem [Đọc một hội thoại dài](#đọc-một-hội-thoại-dài) |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — báo một việc vừa xảy ra; `202` đã ghi, `200` đã ghi từ trước |
@@ -108,6 +108,41 @@ này thành `surface` của tin nhắn; một tin nhắn nói bằng giọng đ�
 gửi không kèm header (MCP, relay WebSocket, `clarkcant api`, một script) được lưu mà không có surface. Chỉ tin nhắn có
 surface mới được tính là lời của chính người dùng ở những chỗ điều đó quan trọng, chẳng hạn các trang mà một việc trên
 trình duyệt được phép thao tác; mọi giá trị khác của header đều bị bỏ qua.
+
+### Đọc một hội thoại dài
+
+Một hội thoại có thể dài hơn rất nhiều so với lượng một lần đọc nên mang, nên route timeline trả về một trang tin nhắn,
+cũ trước mới sau, chọn theo số thứ tự tin nhắn (sequence): thứ tự node lưu các tin nhắn của một hội thoại.
+
+| Query | Trang |
+|---|---|
+| không có, hoặc `after=N` | các tin nhắn ngay sau sequence `N`; không có tham số nghĩa là `after=0`, trang route này vẫn luôn trả về |
+| `before=N` | các tin nhắn ngay trước sequence `N`, để cuộn ngược lên |
+| `window=latest` | các tin nhắn mới nhất, là thứ hiện ra khi mở lại một hội thoại |
+
+Chỉ được dùng tối đa một trong ba kiểu trên, và `limit` quyết định cỡ trang: từ 1 đến 500, mặc định 200. Mọi giá trị
+khác bị trả về `400 INVALID_SCHEMA`.
+
+Mọi timeline, dù từ route này hay đi kèm một câu trả lời khác, đều có `window`:
+
+```json
+{ "version": 1, "fromSequence": 1901, "toSequence": 2100, "hasOlder": true, "hasNewer": false, "sequences": [1901, 1902, "..."] }
+```
+
+Trang chứa mọi tin nhắn đã lưu có `fromSequence <= sequence <= toSequence`, và không chứa tin nhắn nào khác.
+`sequences` cho biết sequence của từng tin nhắn theo đúng thứ tự của `messages`. `hasOlder` nghĩa là
+`before=<fromSequence>` đọc được trang nối liền với trang này, và `hasNewer` nghĩa là `after=<toSequence>` cũng vậy. Hai
+trang có khoảng chạm nhau hoặc chồng lên nhau gộp thành một khoảng, không tin nhắn nào lặp lại và không có khoảng trống.
+Bên trong khoảng của chính nó, trang đọc sau là đúng, nên một tin nhắn đã bị xoá sẽ biến mất. Các trang không chạm nhau
+thì không thể nối với nhau, và bên đọc biết được điều đó chỉ từ các con số.
+
+`cursor` sự kiện mà timeline cũng mang theo là một con số khác. Nó cho biết bên đọc đã thấy những sự kiện nào, chứ
+không phải đang giữ những tin nhắn nào, và không bao giờ là con trỏ trang.
+
+Mọi câu trả lời có mang hội thoại đều trả về trang mới nhất của nó. Điều này áp dụng cho gửi tin nhắn, sự kiện SSE
+`done`, hành động của widget, ghim, trả lời câu hỏi và thẻ, và phê duyệt. Câu trả lời của một hành động widget còn mang
+theo instance vừa được thao tác, và mọi timeline đều mang instance của các widget đang ghim, dù tin nhắn của chúng nằm ở
+đâu. Bên đọc đang giữ lịch sử cũ hơn gộp trang đó vào những gì nó đang giữ thay vì bắt đầu lại từ đầu.
 
 ### Ai đã yêu cầu: nguồn gốc của một lượt
 
@@ -807,6 +842,12 @@ có thể thay đổi.
 | `node_status` | – | `GET /node` |
 | `read_inbox` | – | `GET /inbox` |
 | `act_on_notice` | `noticeId`, `action`, `until?` | `POST /inbox/notices/{noticeId}/actions/{action}` |
+
+`read_conversation` không có `after` sẽ đọc trang mới nhất (`window=latest`), nên câu hỏi Clark đang chờ luôn nằm trong đó
+dù cuộc trò chuyện dài đến đâu. `structuredContent.cursor` của nó là `window.toSequence` của trang: một số thứ tự tin nhắn,
+truyền lại làm `after` để chỉ đọc những tin nhắn được viết từ đó. Đây không phải `cursor` sự kiện của timeline, và nó không
+bao giờ vượt quá tin nhắn mới nhất: một `after` lớn hơn sẽ được trả về bằng số thứ tự của tin nhắn mới nhất. `hasNewer` cho biết
+sau trang này vẫn còn tin nhắn; hãy đọc lại với cursor mới cho đến khi không còn tin nhắn nào được trả về.
 
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
