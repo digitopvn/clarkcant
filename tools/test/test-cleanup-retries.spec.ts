@@ -8,37 +8,88 @@ import { describe, expect, it } from "vitest";
 import { isTestPath, retryingRmSyncLines } from "../invariants/test-cleanup-retries-asynchronously.mjs";
 import { removeTestDirectory } from "../test-cleanup.ts";
 
-// Spelled apart so this file does not read as the call it describes.
-const RM_SYNC = ["rm", "Sync"].join("");
-
+// The sources below are strings, which the check blanks before it reads a file, so this file does not read as the calls
+// it describes.
 describe("the check on retrying synchronous removal in test code", () => {
   it("finds a call that asks for retries, wrapped across lines or not", () => {
     const source = [
-      `import { ${RM_SYNC} } from "node:fs";`,
-      `afterEach(() => ${RM_SYNC}(dir, { recursive: true, force: true, maxRetries: 5 }));`,
-      `afterAll(() => {`,
-      `  ${RM_SYNC}(`,
-      `    join(dir, "x"),`,
-      `    { recursive: true, maxRetries: 3, retryDelay: 50 },`,
-      `  );`,
-      `});`,
+      'import { rmSync } from "node:fs";',
+      "afterEach(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }));",
+      "afterAll(() => {",
+      "  rmSync(",
+      '    join(dir, "x"),',
+      "    { recursive: true, maxRetries: 3, retryDelay: 50 },",
+      "  );",
+      "});",
+      "fs.rmSync(dir, { maxRetries: 2 });",
     ].join("\n");
-    expect(retryingRmSyncLines(source)).toEqual([2, 4]);
+    expect(retryingRmSyncLines(source)).toEqual([2, 4, 9]);
   });
 
   it("leaves a call without retries, and the promise form with them, alone", () => {
     const source = [
-      `${RM_SYNC}(root, { recursive: true, force: true });`,
-      `await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });`,
-      `await removeTestDirectory(dir);`,
+      "rmSync(root, { recursive: true, force: true });",
+      "await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });",
+      "await removeTestDirectory(dir);",
     ].join("\n");
     expect(retryingRmSyncLines(source)).toEqual([]);
   });
 
-  it("covers specs and the helpers in test and e2e folders, not product code", () => {
+  it("does not read a call named in a comment as a call", () => {
+    const source = [
+      "// rmSync(dir, { maxRetries: 3 }) never retries on Windows",
+      "/* rmSync(dir, {",
+      "     maxRetries: 3 }) */",
+      "rmSync(dir, { recursive: true }); // no maxRetries here",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([]);
+  });
+
+  it("does not let a parenthesis in a string unbalance the call, nor read a call inside a string", () => {
+    const source = [
+      'rmSync(join(dir, "a("), { recursive: true });',
+      "const later = { maxRetries: 3 };",
+      "const text = 'rmSync(dir, { maxRetries: 3 })';",
+      "const fixture = `rmSync(dir, { maxRetries: 3 })`;",
+      "const options = { maxRetries: 3 };",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([]);
+  });
+
+  it("reads the code inside a template literal's expression", () => {
+    const source = ["const result = `${String(rmSync(dir, { maxRetries: 3 }))} and ${'('}`;", "rmSync(other, { maxRetries: 1 });"].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2]);
+  });
+
+  it("finds rmSync under a name the file gives it", () => {
+    const source = [
+      'import { rmSync as wipe } from "node:fs";',
+      'const { rmSync: erase } = await import("node:fs");',
+      "const remove = fs.rmSync;",
+      "wipe(dir, { maxRetries: 3 });",
+      "erase(dir, { maxRetries: 3 });",
+      "remove(dir, { maxRetries: 3 });",
+      "wipe(dir, { recursive: true });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([4, 5, 6]);
+  });
+
+  it("leaves a call marked as showing the failing form on purpose", () => {
+    const source = [
+      "// invariant-allow: sync-rm-retries",
+      "rmSync(dir, { maxRetries: 3 });",
+      "rmSync(dir, { maxRetries: 3 }); // invariant-allow: sync-rm-retries",
+      "",
+      "rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([5]);
+  });
+
+  it("covers specs, the helpers in test and e2e folders and CI's widget tooling smoke, not product code", () => {
     expect(isTestPath("apps/runtime/test/live-nodes.ts")).toBe(true);
     expect(isTestPath("apps/web/e2e/fixtures/server.mjs")).toBe(true);
     expect(isTestPath("packages/core/src/thing.spec.ts")).toBe(true);
+    expect(isTestPath("tools/smoke-widget-tooling.mjs")).toBe(true);
     expect(isTestPath("apps/runtime/src/worker-process.ts")).toBe(false);
     expect(isTestPath("tools/test-cleanup.ts")).toBe(false);
   });
@@ -79,9 +130,9 @@ describe.runIf(process.platform === "win32")("removing a directory Windows still
     const held = await holdAsWorkingDirectory(dir);
     try {
       const started = Date.now();
-      // Called through another name, so the check this file tests does not read it as test cleanup.
-      const removeSync = rmSync;
-      expect(() => removeSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })).toThrow(/EPERM|EBUSY/);
+      // The failing form, on purpose: the check this file tests would otherwise flag it as test cleanup.
+      // invariant-allow: sync-rm-retries
+      expect(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })).toThrow(/EPERM|EBUSY/);
       // Ten retries 100 ms apart and longer each time would take seconds; none ran.
       expect(Date.now() - started).toBeLessThan(500);
       expect(existsSync(dir)).toBe(true);
