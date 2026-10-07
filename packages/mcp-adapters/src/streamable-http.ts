@@ -21,6 +21,8 @@ import type { ServerHandshake } from "./stdio.ts";
 
 export interface StreamableHttpMcpTransportOptions {
   serverId: string;
+  /** The Clark version this client introduces itself with in initialize; the host passes its own, never a literal. */
+  clientVersion: string;
   /** The MCP endpoint, not a base URL: the path is the server's to choose. */
   url: string;
   /** Extra headers, for a server behind an authorization scheme. */
@@ -72,7 +74,7 @@ export class StreamableHttpMcpTransport implements McpTransport {
     const result = (await this.#request("initialize", {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: "clarkcant", version: "0.2.0" },
+      clientInfo: { name: "clarkcant", version: this.#options.clientVersion },
     })) as Partial<ServerHandshake>;
 
     if (typeof result?.protocolVersion !== "string") {
