@@ -14,7 +14,7 @@ export function classifyPaths(paths) {
       || path.split("/").some((part) => part === "" || part === "." || part === "..")) {
       return { full: true, reason: "unrecognized path" };
     }
-    if (!["README.md", "DESIGN.md", "AGENTS.md", "docs/manifest.json"].includes(path)
+    if (!["README.md", "README.vi.md", "DESIGN.md", "DESIGN.vi.md", "AGENTS.md", "docs/manifest.json"].includes(path)
       && !/^(docs|plans)\/.+\.md$/u.test(path)) {
       return { full: true, reason: "changes outside prose allowlist" };
     }

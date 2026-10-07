@@ -734,9 +734,13 @@ và `POST /packages/approvals/{id}/decision` với `granted` trả `409 DIRECTOR
 đã sở hữu listing. Một listing từ marketplace được cài qua đúng những bước kiểm tra như listing từ file.
 
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
-của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
-liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
-`403 PERSON_ONLY`.
+của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói từ thư mục (tool quản lý
+gói chỉ liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
+`403 PERSON_ONLY`. Tool duy nhất của agent đi tới đường cài là `develop_widget`
+([phiên phát triển widget](#phiên-phát-triển-widget)). Tool này chỉ chạy trong một lượt do chính người dùng gửi. Nó
+theo dõi không gian widget riêng của Clark (việc chọn một thư mục dự án khác hiện chưa có; xem
+[#538](https://github.com/digitopvn/clarkcant/issues/538)), và chính sách quyết định các lần cài của nó như đề xuất của
+chính Clark.
 
 Với một gói được liệt kê bằng đường dẫn trên máy này, node sao chép các tệp của nó vào bộ nhớ đệm gói
 (`<dataDir>/package-cache/local/<sha256>`) và tính digest của bản sao (`digestOfDirectory`, cùng digest mà một lần
@@ -801,6 +805,132 @@ generationId, state, pendingCapabilities, deniedCapabilities }`. Quyết định
 báo rằng chưa có gì được cài. Mọi kết quả (`asked`, `installed`, `denied`, `expired`, `refused` hoặc `failed`, kèm mã)
 đều được ghi thành một sự kiện `package.install-approval`.
 
+### Phiên phát triển widget
+
+Một phiên soạn trực tiếp cho một gói widget nằm trong một thư mục trên node này: thư mục được theo dõi, mỗi thay đổi đọc
+được thành một gói trở thành một generation bất biến, và generation đó được cài qua đúng đường cài ở trên rồi hiện trong
+cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng dữ liệu là `widgetDevSessionViewSchema` và
+`widgetDevSessionCreateSchema` (`packages/contracts/src/widget-dev-session.ts`).
+
+| Route | Tác dụng |
+|---|---|
+| `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Bắt đầu theo dõi `root` (đường dẫn tuyệt đối trên node). Trả `201` kèm phiên sau khi lần dựng đầu tiên đã chạy và đã được kích hoạt trong phạm vi chính sách cho phép. Có `conversationId` thì widget được đặt vào đó (ghim mở) ngay khi một generation chạy. Bắt đầu một thư mục đã có phiên bị dừng sẽ tiếp tục chính phiên đó. |
+| `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
+| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` hoặc `root-refused`). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
+| `DELETE /widget-dev/sessions/:id` | Dừng theo dõi (`stopReason: "requested"`). Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
+| `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
+| `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
+
+Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
+`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` và
+`503 WIDGET_DEV_UNAVAILABLE`:
+
+- `409 TOO_MANY_SESSIONS` dành cho phiên đang chạy thứ chín trên node, hoặc cho kho lưu đã giữ 256 phiên mà phiên nào
+  cũng vẫn đang chạy bản đã dựng. Các phiên đã dừng cũ hơn và không còn chạy gì sẽ bị quên trước để lấy chỗ.
+- `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` và `409 NOT_PLACED` dành cho lần đặt khi chưa có gì chạy, khi gói không khai báo
+  widget đó, hoặc khi widget không đặt được.
+- `503 WIDGET_DEV_UNAVAILABLE` dành cho node không chạy phiên phát triển.
+
+**Thư mục nào.** `root` được phân giải thành đường dẫn thật (đi theo liên kết tượng trưng và junction) trước khi kiểm:
+
+- `400 ROOT_NOT_LOCAL` từ chối đường dẫn chia sẻ mạng hoặc đường dẫn thiết bị của Windows (`\\host\share`, `\\?\…`,
+  `\\.\…`).
+- `400 ROOT_IN_DATA_FOLDER` từ chối thư mục dữ liệu của node, mọi thư mục nằm trong nó và mọi thư mục chứa nó. Ngoại lệ
+  duy nhất là không gian widget của Clark, `<dataDir>/widget-workspace`.
+- Một phiên người dùng bắt đầu trên route này được theo dõi mọi thư mục cục bộ khác.
+- Một phiên Clark bắt đầu bằng `develop_widget` theo dõi không gian widget, nơi Clark dựng khung một widget mới. Để phát
+  triển một dự án có sẵn, hãy chép thư mục của nó vào không gian widget. Mọi thư mục khác bị từ chối với
+  `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy, và thông báo nói đúng như vậy.
+- Việc chọn một thư mục dự án khác để Clark phát triển hiện chưa có; việc này được theo dõi tại
+  [#538](https://github.com/digitopvn/clarkcant/issues/538). Bước kiểm cũng sẽ chấp nhận một thư mục nằm trong tùy chọn
+  `workspace.roots` do chính người dùng ghi, nhưng hiện chưa có cài đặt, bước bắt đầu dùng hay route nào ghi tùy chọn
+  này, còn các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) và giá trị do Clark ghi đều không được
+  tính.
+
+**Gói nào.** Một phiên chỉ chạy các gói có facet nằm trong frame widget hoặc là dữ liệu (`isolated-ui` và
+`declarative`). Lần dựng một gói có facet dịch vụ, công cụ hoặc native sẽ lỗi với một chẩn đoán mang mã
+`FACET_LANE_UNSUPPORTED`; hãy cài gói như vậy theo cách thông thường. Lần dựng của một phiên cũng bị từ chối, không cài
+và không liệt kê gì, khi id gói của nó thuộc về một thứ khác trên node:
+
+- `PACKAGE_LISTED`: thư mục gói đã cấu hình liệt kê cùng id và phiên bản.
+- `PACKAGE_IN_OTHER_SESSION`: một phiên khác đang phát triển id đó, hoặc vẫn đang chạy một bản dựng của nó.
+- `PACKAGE_INSTALLED_OTHERWISE`: id đó đã được cài từ nơi khác.
+
+Các mã này xuất hiện dưới dạng `activation.state: "refused"` kèm mã.
+
+Mỗi generation được đặt tên theo digest nội dung các tệp của nó, được sao chép vào bộ nhớ đệm gói và chỉ được liệt kê
+cho riêng node này (`<dataDir>/widget-dev/sessions.json`). Không có index, npm hay Marketplace nào tham gia, và không có
+gì được phát hành.
+
+**Những gì được dựng.** Thư mục `node_modules` ở gốc bị loại khỏi digest, bản sao và việc theo dõi, với mọi kiểu chữ hoa
+thường, giống như `.git`. Đầu ra đã dựng như `dist` vẫn được giữ. Một lần dựng không lấy được các tệp sẽ lỗi với một
+mã chẩn đoán, và generation đang chạy vẫn giữ nguyên:
+
+- `FILES_TOO_LARGE`: thư mục chứa hơn 5.000 tệp hoặc 64 MiB. Lần dựng vẫn bị từ chối cho tới khi bớt tệp.
+- `FILES_LINK_REFUSED`: thư mục chứa một liên kết mà bước sao chép từ chối, tức một liên kết tượng trưng hoặc junction
+  trỏ ra ngoài thư mục, hoặc một tệp có liên kết cứng thứ hai. Lần dựng vẫn bị từ chối cho tới khi xoá liên kết hoặc
+  chép thứ nó trỏ tới vào thư mục.
+- `FILES_UNREADABLE`: không đọc hoặc sao chép được các tệp, chẳng hạn vì chúng thay đổi trong lúc sao chép. Lần lưu tiếp
+  theo sẽ dựng lại.
+
+**Dọn dẹp.** Sau mỗi lần cài, phiên xóa những gì các generation đã bị thay thế để lại: bản ghi generation và bản sao của
+chúng trong bộ nhớ đệm gói. Phiên giữ generation đang chạy, mọi bản dựng đang chờ một câu hỏi, và generation bị thay thế
+mới nhất, tức generation mà thao tác quay lại bản trước sẽ trở về.
+
+**Kho lưu.** Nếu không đọc được `sessions.json`, tệp được chuyển sang một bên thành
+`sessions.json.unreadable-<thời điểm>` và node bắt đầu mà không có phiên nào; tệp không bao giờ bị ghi đè.
+
+**Khi việc theo dõi dừng.** Một phiên mà thư mục không còn theo dõi được sẽ được đánh dấu là đã dừng, kèm lý do, thay vì
+vẫn hiện là đang chạy:
+
+- `watch-failed`: bộ theo dõi bị lỗi.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên. Node kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng,
+  vì Windows không báo gì khi một thư mục đang được theo dõi bị xoá. Lý do này cũng dùng khi thư mục không còn sau một
+  lần khởi động lại.
+- `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
+- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
+  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
+
+**Sự đồng ý.** Chính sách quyết định mỗi lần cài theo một **phạm vi đồng ý** thay vì theo artifact. Phạm vi là id gói
+cùng mọi thứ bản dựng ràng buộc về phạm vi tiếp cận của nó:
+
+- reach đã khai báo và tài nguyên;
+- lane của facet, và từng facet theo loại, id và lane;
+- quyền;
+- các capability mà gói yêu cầu.
+
+Câu hỏi cài trong `GET /inbox` mang phạm vi đó làm `operationDigest`, và được quyết định bằng
+`POST /packages/approvals/:id/decision` thông thường với giá trị đó. Một lần dựng sau có cùng phạm vi được cài theo
+approval đó mà không hỏi lần hai. Một lần dựng có phạm vi đã đổi, rộng hơn hay hẹp hơn, là một câu hỏi mới, và
+generation trước nó vẫn chạy trong lúc chờ.
+
+Ý định mà một lần cài thực hiện tùy vào người bắt đầu phiên:
+
+- Một phiên người dùng bắt đầu trên route này cài như yêu cầu của chính họ.
+- Một phiên Clark bắt đầu bằng `develop_widget` cài như đề xuất của chính Clark. Chế độ có kiểm soát hỏi trước, trừ khi
+  một quy tắc cho phép ghi cục bộ; chế độ luôn hỏi thì hỏi; chế độ tự chủ thì chạy.
+
+Một chế độ không hỏi thì chạy mọi lần dựng, như với mọi lần cài. Khi một lần dựng như vậy tiếp cận nhiều hơn lần trước
+và không ai được hỏi, node nói điều đó trong cuộc hội thoại của phiên kèm những gì nó thêm vào. Mỗi lần cài được ghi lại
+như mọi lần cài khác (`effect.executed`, kèm đúng các tệp).
+
+Một lần dựng không đọc được thành gói (manifest hỏng, định nghĩa widget không parse được, không có facet widget) không
+tạo generation nào: `lastBuild.ok` là `false` kèm tối đa 32 `diagnostics`, generation đang chạy vẫn chạy, và
+`showingLastKnownGood` là `true`. Điều này cũng đúng khi một lần dựng mới hơn đang chờ người dùng hoặc đã bị từ chối.
+
+Lần đọc trực tiếp của một widget đang chạy generation của một phiên, `GET /conversations/:id/widgets/:instanceId/live`,
+mang `development: { sessionId }`, và `frame.document` của nó nêu tên generation, nên client mount lại frame (và chỉ
+frame) khi một generation mới chạy; instance, state và migration của nó là những thứ thông thường. Mã widget không bao
+giờ được cho biết nó đang ở trong một phiên.
+
+`POST /widget-dev/sessions`, `/:id/rebuild` và `/:id/place` cài mã. Relay WebSocket, `clarkcant api` và MCP từ chối
+chúng với `403 PERSON_ONLY`, và chính route cũng từ chối như vậy với mọi yêu cầu được một bề mặt máy đánh dấu. Đọc và
+dừng một phiên vẫn gọi được ở mọi nơi.
+
+Trong cuộc hội thoại, tool `develop_widget` của Clark (`start`, `status`, `rebuild`, `place`, `stop`) điều khiển cùng các
+phiên đó. Tool chỉ bắt đầu, dựng lại hoặc đặt widget trong một lượt do người dùng gửi; một lượt do bề mặt máy, tác vụ tự
+động hoặc máy ngang hàng gửi không làm được những việc này.
+
 Lời gọi action của widget, `POST /conversations/{id}/widgets/{instanceId}/actions`, nhận một body được route kiểm bằng
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); body nằm ngoài schema nhận `400 INVALID_SCHEMA`, và một
 `invocationId` bắt đầu bằng `view-state:` cũng vậy, vì tiền tố này dành riêng cho bản ghi của chính node. Một `variant`
@@ -833,7 +963,9 @@ có thể thay đổi.
 
 `POST /mcp` hiện thực transport Streamable HTTP, trả lời bằng JSON (protocol `2025-06-18`, cùng `2025-03-26` và
 `2024-11-05`). `GET /mcp` trả `405`: server không bao giờ chủ động gửi trước. Method: `initialize`, `ping`,
-`tools/list`, `tools/call`; notification nhận `202` không có body.
+`tools/list`, `tools/call`; notification nhận `202` không có body. `initialize` xưng tên server là `clarkcant`, với phiên bản Clark
+làm `serverInfo.version` ([một phiên bản Clark](releases.vi.md#một-phiên-bản-clark)), và khi node kết nối tới service MCP
+của một gói, nó tự giới thiệu theo cùng cách trong `clientInfo`.
 
 | Tool | Tham số | Route được gọi |
 |---|---|---|
@@ -858,7 +990,8 @@ sau trang này vẫn còn tin nhắn; hãy đọc lại với cursor mới cho �
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
-chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`) hoặc quyết định một lần
+chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`, hoặc `POST /widget-dev/sessions`,
+`/rebuild` và `/place` của một phiên phát triển widget) hoặc quyết định một lần
 cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, báo cáo frame của widget đã làm gì với một hành động Clark nhờ nó thực hiện (`POST /app-intents/widget-perform/{performId}`), tin cậy một peer đã ghép cặp, cấp
 grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
 của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;

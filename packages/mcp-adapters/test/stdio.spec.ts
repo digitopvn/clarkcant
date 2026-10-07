@@ -20,6 +20,8 @@ import { normalizeMcpTool, toolSetDigest } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(here, "fixtures", "reference-server.mjs");
+/** The version a host passes; the transport must put it on the wire as given. */
+const CLIENT_VERSION = "3.4.5-test.1";
 
 const open: StdioMcpTransport[] = [];
 
@@ -30,6 +32,7 @@ function connect(
 ): Promise<StdioMcpTransport> {
   return connectStdio({
     serverId: "reference",
+    clientVersion: CLIENT_VERSION,
     command: process.execPath,
     args: [SERVER],
     ...(mode === undefined ? {} : { env: { MCP_FIXTURE_MODE: mode } }),
@@ -258,6 +261,7 @@ describe("requests the server sends to the host", () => {
   function connectAsking(handle?: Handle): Promise<StdioMcpTransport> {
     return connectStdio({
       serverId: "reference",
+      clientVersion: CLIENT_VERSION,
       command: process.execPath,
       args: [SERVER],
       env: { MCP_FIXTURE_MODE: "asks" },
@@ -271,6 +275,7 @@ describe("requests the server sends to the host", () => {
 
   interface Reply {
     advertised: unknown;
+    client: unknown;
     answers: unknown[];
   }
 
@@ -278,6 +283,12 @@ describe("requests the server sends to the host", () => {
     const result = await transport.callTool("ask", { requests });
     return JSON.parse(result.content) as Reply;
   }
+
+  it("introduces itself at initialize with the version the host passed, not one of its own", async () => {
+    const transport = await connectAsking();
+    const reply = await ask(transport, []);
+    expect(reply.client).toEqual({ name: "clarkcant", version: CLIENT_VERSION });
+  });
 
   it("answers method-not-found when the host takes no requests, and advertises nothing", async () => {
     const transport = await connectAsking();

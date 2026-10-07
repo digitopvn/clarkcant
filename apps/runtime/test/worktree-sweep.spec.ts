@@ -1,14 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect } from "vitest";
 
 import type { Instant } from "@clarkcant/contracts";
 import { applyTaskEvent, createTask } from "@clarkcant/core";
 import { ensureManagedWorktree } from "@clarkcant/project-work";
 import { allRows, createConversation, listNotifications } from "@clarkcant/storage";
 
+import { removeTestDirectory, trackedTests } from "../../../tools/test-cleanup.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { sweepTaskWorktrees } from "../src/worktree-sweep.ts";
 
@@ -20,6 +21,13 @@ import { sweepTaskWorktrees } from "../src/worktree-sweep.ts";
 
 const AT = "2026-09-29T09:00:00.000Z" as Instant;
 const CONVERSATION_ID = "conv_sweep";
+
+/**
+ * Each test spawns git dozens of times: repositories, worktrees, and a sweep that asks git about each of them. A spawn
+ * takes about 40 ms alone, but 150 to 350 ms (p99 near 2 s) while the full suite runs on a loaded Windows machine, and a
+ * test that takes 3 s alone took up to 21 s there. The budget is that worst case with room to spare.
+ */
+const { it, settled } = trackedTests(60_000);
 
 let dir: string;
 let services: NodeServices;
@@ -66,9 +74,10 @@ beforeEach(() => {
   repo = makeRepo(join(dir, "repo"));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await settled();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 describe("the worktrees a stopped node left behind", () => {

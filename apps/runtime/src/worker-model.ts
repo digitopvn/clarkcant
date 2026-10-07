@@ -1,6 +1,7 @@
 import { keyVariableFor, type ModelCatalogue, workerBudgetFromEnv } from "@clarkcant/pi-adapter";
 
 import { toolCallsIn } from "./model-router.ts";
+import { resolveProviderCredential } from "./provider-credential.ts";
 import type { ModelTurn } from "./model-turn.ts";
 import type { WorkerModelLaunch, WorkerModelSource } from "./task-dispatch.ts";
 import { MODEL_CONFIG_DIR_VARIABLE } from "./worker-process.ts";
@@ -12,9 +13,10 @@ import { MODEL_CONFIG_DIR_VARIABLE } from "./worker-process.ts";
  * node's pool when it gives one, else what the node runs. There is no second setting for it, because a second setting
  * is a second place that can disagree.
  *
- * The key is looked up the way the rest of the node looks one up: the provider's variable in this node's environment,
- * else a credential stored under the provider's name — the same two places model routing counts as "this provider has a
- * key". Neither is ever put into a child's environment; the dispatcher hands it to the worker over stdin. When the node
+ * The key is looked up the way the rest of the node looks one up (`provider-credential.ts`): a credential stored under
+ * the provider's name, else the provider's variable in this node's environment — the same two places model routing
+ * counts as "this provider has a key", and the stored one wins when both exist. Neither is ever put into a child's
+ * environment; the dispatcher hands it to the worker over stdin. When the node
  * holds neither, the worker's model runtime reads its own configuration directory, which is the directory this node's
  * runtime reads too.
  */
@@ -54,9 +56,12 @@ export function nodeWorkerModel(input: {
       const catalogue = await catalogueOf(turn);
       const toolCalls = catalogue === undefined ? undefined : toolCallsIn(catalogue, chosen.provider, chosen.id);
       const variable = keyVariableFor(chosen.provider);
-      const fromEnvironment = variable === undefined ? undefined : nonEmpty(input.env[variable]);
-      const stored = fromEnvironment === undefined ? nonEmpty(input.storedCredential(chosen.provider)) : undefined;
-      const credential = fromEnvironment ?? stored;
+      const key = resolveProviderCredential({
+        stored: input.storedCredential(chosen.provider),
+        env: input.env,
+        variables: variable === undefined ? [] : [variable],
+      });
+      const credential = key.value;
       const agentDir = nonEmpty(input.env[MODEL_CONFIG_DIR_VARIABLE]);
       const budget = workerBudgetFromEnv(input.env);
       return {
@@ -68,7 +73,7 @@ export function nodeWorkerModel(input: {
         via: chosen.via,
         ...(chosen.fallback === undefined ? {} : { fallback: chosen.fallback }),
         ...(credential === undefined ? {} : { credential }),
-        credentialSource: fromEnvironment !== undefined ? "environment" : stored !== undefined ? "stored" : "model-config",
+        credentialSource: key.source === "vault" ? "stored" : key.source === "environment" ? "environment" : "model-config",
         ...(agentDir === undefined ? {} : { agentDir }),
         maxTokens: budget.maxTokens,
         maxWallClockMs: budget.maxWallClockMs,
