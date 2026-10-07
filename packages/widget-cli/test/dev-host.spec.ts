@@ -293,7 +293,7 @@ describe("the dev host server", () => {
     const host = await startDevHost({ root: `${process.cwd()}/apps/web/e2e/fixtures/notes-service`, port: 0, watchFiles: false, serviceRestart: "held" });
     try {
       expect(host.finishServiceRestart()).toBe(false);
-      host.apply({ kind: "service-readiness", capabilityRef: "com.example.notes.add@1", status: "ready", reason: "" });
+      host.apply({ kind: "service-readiness", capabilityRef: "com.example.notes.add@1", status: "ready", reason: "", value: true });
       const response = await fetch(`${host.url}dev/api/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
