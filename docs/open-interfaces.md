@@ -259,6 +259,63 @@ and append-only audit/replication history remain. The client starts a fresh conv
 network reply means the result is unknown, so reload before retrying. MCP, the WebSocket relay and `clarkcant api`
 refuse the delete route and confirmation with `403 PERSON_ONLY`; agent app intents cannot delete either.
 
+### Product reports
+
+A bug report or a feature request about ClarkCant itself is filed from the conversation, to the canonical repository
+`digitopvn/clarkcant` only: the target comes from trusted configuration, and no request field can aim it elsewhere.
+`/report` alone (or with only a kind) summons the Feedback Composer, a host-owned `feedback-card`: Bug or Feature, the
+person's words, and "What will be shared" one disclosure away. `/report bug ...`, `/report feature ...` (also `lỗi`,
+`tính năng`) reach the same report service through the slash-command handler; a sentence to Clark and voice reach it
+through the model tool `report_feedback`. Each of these only prepares: it shows the issue exactly as it would be filed,
+with Create issue, and sends nothing. Only the person's press on that card files a report; Clark, its tool and voice
+cannot.
+
+| Method | Path | Body and answer |
+|---|---|---|
+| POST | `/feedback/reports` | `{ request, conversationId? }` — `201 { draft, diagnostics }`. Prepares and keeps a draft; nothing is filed |
+| GET | `/feedback/reports/{reportId}` | `{ draft, status, publication? }` |
+| POST | `/feedback/reports/{reportId}/publish` | `{ conversationId, intent?: "send" \| "check" \| "send-anyway", answers? }` — `{ publication, eligibility?, messageId, timeline }`, with the result card written into the conversation. **Person-only** |
+
+`request` is `{ kind: "bug" | "feature", description, source, includeDiagnostics?, title?, subsystem?, bug?, feature?,
+evidence?, error?, philosophy? }`. Sections nobody spoke to are left out of the issue, and a reproduction nobody gave
+reads "Not known yet." Safe diagnostics are shared by default and can be turned off: the ClarkCant version, OS and
+architecture, runtime, locale and input mode, subsystem, provider and model, and an error as a redacted 300-character
+excerpt with a 12-hex fingerprint. No transcript, system prompt, file, environment variable, raw log, home path or
+credential is collected, and every outbound text passes the shared secret redaction with the home directory replaced
+by `~`. A feature carries a philosophy fit (`aligned`, `aligned-with-constraints`, `material-conflict`); the host's
+rules and the model's reading are combined and the stricter stands, and a conflict is still filed as asked.
+
+Before filing, open issues and issues closed in the last 90 days are searched. A strong match on an open issue (the same
+error fingerprint, or nearly the same title and description) makes the publish a comment on that issue instead of a new
+one. `publication.status` is `published` only after GitHub is read back holding the report's hidden marker
+`<!-- clark-report:rpt_... -->`. `intent` defaults to `send`; `answers` names the card the press was on, so
+that card reads as used from then on, after a reload too. A write whose answer never arrived is `unknown`, and its card
+offers Check again (`intent: "check"`), which only looks for the marker and never sends; checking a report never sent
+is `409 NOTHING_SENT`. Once GitHub's own list shows the marker absent at least two minutes after the attempt (the
+attempt's time, not the last check's), the report becomes `failed` with `retryable`, and its card offers Send again,
+which files it for the first time. Nothing is sent while GitHub cannot be checked. The marker is looked for among the
+issues the token's owner opened (`creator`, from `GET /user`), at most three pages of 100. When that list still runs
+past the scan, or the ledger no longer holds the attempt, checking cannot settle it: the report is `unknown` with
+`inconclusive: { since, searchUrl, manualUrl }`, and its card says "Clark can't tell whether GitHub kept this report,
+and checking again won't change that." Instead of Check again it links the issues the person opened since the attempt
+and the prefilled new-issue page, warns that filing again may create a duplicate, and offers Send anyway
+(`intent: "send-anyway"`, accepted only for such a report, otherwise `409 NOT_INCONCLUSIVE`), which may file it twice.
+The node never sends one again on its own. When the node starts, every report
+left `publishing` or `unknown` is checked the same way, and a settled outcome is written into its conversation as a
+result card. The other statuses are `needs-access` (no `github_token`; with `manualUrl`, GitHub's prefilled new-issue
+page) and `refused`. The write is an `external-write` effect in the action ledger, and the execution policy applies to
+the person's press: a rule or prohibition that denies it makes the report `refused` with nothing sent, and a policy that
+would ask is answered by the press itself, recorded as such. The token is the GitHub credential the person set for
+signal sources, read through the secret broker as consumer `feedback:github`. `@handles` in the person's words are
+neutralised so filing a report notifies nobody.
+
+A published report carries `eligibility`: whether Clark may handle the issue. The checks are the repository, open
+state, epic (`suggestion: "plan-split"`), assignees, in-progress, `external-gate` and `blocked` labels, open pull
+requests, claim comments, open blockers named in the body, Clark's own unfinished work, and a philosophy conflict. In
+this build every report ends `eligible: false` with `code: "handling-unavailable"`, because the canonical background
+execution backend (#402) and the release contract (#508) it needs are not available; nothing offers a Handle button. A
+node started with `CC_GITHUB_FIXTURE=1` files to an in-process GitHub instead, for the browser suite.
+
 A signal is how anything outside the conversation tells the node that something happened: a CI run, a script, a
 service of your own. It is recorded before anything is matched, then answered against the standing requests the person
 set up by saying "when X happens, do Y" to Clark. A topic is dotted lower-case words (`build.finished`); the payload is
@@ -706,14 +763,22 @@ row. Without one, it answers `409 DIRECTORY_SOURCE_UNREAD` when an earlier sourc
 `409 DIRECTORY_SOURCE_CHANGED` when the package is installed from a different source. With one, it answers
 `409 DIRECTORY_SOURCE_CHANGED` when another source owns the listing by now. The node records the source on the
 installed generation (`directorySource`), and update notices come only from that source; a generation installed
-before sources were recorded counts as installed from the index file. An install approval holds the source that owned
+before sources were recorded counts as installed from the index file. The builds of the node's
+[widget dev sessions](#widget-dev-sessions) are listed in front of every other source under their own source,
+`widget-dev` (kind `widget-dev`), and only on this node, never in a search: an install whose `sourceId` names another
+source answers `409 DIRECTORY_SOURCE_CHANGED` rather than taking a session's build of the same id and version. An
+install approval holds the source that owned
 the listing when the person was asked, and `POST /packages/approvals/{id}/decision` with `granted` answers
 `409 DIRECTORY_SOURCE_CHANGED` when another source owns it by then. A listing from a marketplace installs through
 exactly the same checks as one from a file.
 
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
-Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
-restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
+Install button and a notice's `update` call; no agent tool installs a package from a directory (the package tool lists,
+uninstalls, restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with
+`403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`
+([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It watches Clark's own widget
+workspace (choosing another project folder is not available yet; see
+[#538](https://github.com/digitopvn/clarkcant/issues/538)), and the policy decides its installs as Clark's own proposal.
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
@@ -779,6 +844,133 @@ decided in time is settled as expired by the node's periodic sweep, which leaves
 installed. Every outcome (`asked`, `installed`, `denied`, `expired`, `refused` or `failed`, with its code) is recorded
 as a `package.install-approval` event.
 
+### Widget dev sessions
+
+A live authoring session for a widget package in a folder on this node: the folder is watched, each change that reads
+as a package becomes an immutable generation, and the generation is installed through the same install path as above
+and shown in the conversation in the production widget frame. Shapes are `widgetDevSessionViewSchema` and
+`widgetDevSessionCreateSchema` (`packages/contracts/src/widget-dev-session.ts`).
+
+| Route | What it does |
+|---|---|
+| `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Start watching `root` (an absolute path on the node). Answers `201` with the session once its first build ran and was activated as far as the policy allows. With `conversationId`, the widget is placed there (pinned open) once a generation runs. Starting a folder that has a stopped session picks that session up again. |
+| `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
+| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` or `root-refused`). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
+| `DELETE /widget-dev/sessions/:id` | Stop watching (`stopReason: "requested"`). The running generation stays installed and keeps rendering where it was placed. |
+| `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
+| `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
+
+Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
+`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` and
+`503 WIDGET_DEV_UNAVAILABLE`:
+
+- `409 TOO_MANY_SESSIONS` is for a ninth live session on the node, or for a store that already holds 256 sessions that
+  all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
+- `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
+  does not declare, or a widget that cannot be placed.
+- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions.
+
+**Which folders.** `root` is resolved to its real path (symbolic links and junctions followed) before it is checked:
+
+- `400 ROOT_NOT_LOCAL` refuses a Windows network share or device path (`\\host\share`, `\\?\…`, `\\.\…`).
+- `400 ROOT_IN_DATA_FOLDER` refuses the node's data folder, any folder inside it, and any folder that holds it. The one
+  exception is Clark's widget workspace, `<dataDir>/widget-workspace`.
+- A session the person starts on this route may watch any other local folder.
+- A session Clark starts with `develop_widget` watches the widget workspace, where Clark scaffolds a new widget. To
+  develop an existing project, copy its folder into the widget workspace. Any other folder is refused with
+  `403 ROOT_NOT_OWNED`, in the owner's language, and the message says exactly that.
+- Choosing another project folder for Clark to develop in is not available yet; it is tracked in
+  [#538](https://github.com/digitopvn/clarkcant/issues/538). The check would also accept a folder inside a
+  `workspace.roots` preference the person recorded themselves, but no setting, onboarding step or route records one
+  today, and the built-in default roots (the home folder and the drive the node runs from) and values Clark wrote do not
+  count.
+
+**Which packages.** A session runs only packages whose facets stay in the widget frame or are data (`isolated-ui` and
+`declarative`). A build of a package with a service, tools or native facet fails with a diagnostic coded
+`FACET_LANE_UNSUPPORTED`; install such a package the ordinary way. A session's build is also refused, with nothing
+installed or listed, when its package id belongs to something else on the node:
+
+- `PACKAGE_LISTED`: the configured directory lists the same id and version.
+- `PACKAGE_IN_OTHER_SESSION`: another session develops the id, or still runs a build of it.
+- `PACKAGE_INSTALLED_OTHERWISE`: the id is installed from elsewhere.
+
+These codes appear as `activation.state: "refused"` with the code.
+
+Each generation is named by the content digest of its files, copied into the package cache, and listed for this node
+alone (`<dataDir>/widget-dev/sessions.json`). No index, npm or Marketplace is involved, and nothing is published.
+
+**What is built.** A `node_modules` folder at the root is left out of the digest, the copy and the watch, in any letter
+case, as `.git` is. Built output such as `dist` is kept. A build whose files cannot be taken fails with a diagnostic
+code, and the running generation stays:
+
+- `FILES_TOO_LARGE`: the folder holds more than 5,000 files or 64 MiB. It stays refused until files are removed.
+- `FILES_LINK_REFUSED`: the folder holds a link the copy refuses, either a symbolic link or junction that points
+  outside it or a file with a second hard link. It stays refused until the link is removed or what it points to is
+  copied in.
+- `FILES_UNREADABLE`: the files could not be read or copied, for example because they changed during the copy. The next
+  save builds again.
+
+**Cleaning up.** After each install, the session removes what its superseded generations left behind: their generation
+records and their copies in the package cache. It keeps the generation that runs, any build waiting on a question, and
+the newest superseded generation, which is the one a rollback returns to.
+
+**The store.** If `sessions.json` cannot be read, it is moved aside as `sessions.json.unreadable-<time>` and the
+node starts with no sessions; the file is never overwritten.
+
+**When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
+reading as live:
+
+- `watch-failed`: the watcher failed.
+- `folder-gone`: the folder was deleted or renamed, or it was deleted and a new folder was made at the same path, which
+  the watcher no longer hears (the node compares the folder's device and file id with the ones it started watching).
+  The node checks for the folder at least once a second and before each build, because Windows reports nothing when a
+  watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an
+  antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again. The same reason
+  applies when the folder is missing after a restart.
+- `capacity`: the node is already watching eight folders as it resumes.
+- `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
+  whose folder is outside the widget workspace.
+
+**Consent.** The policy decides each install under a **consent scope** rather than the artifact. The scope is the
+package id together with everything the build binds about its reach:
+
+- declared reach and resources;
+- facet lanes, and each facet by kind, id and lane;
+- permissions;
+- the capabilities the package requests.
+
+The install question in `GET /inbox` carries that scope as its `operationDigest`, and is decided on the ordinary
+`POST /packages/approvals/:id/decision` with it. A later build with the same scope installs on that approval without a
+second question. A build whose scope changed, wider or narrower, is a new question, and the generation before it keeps
+running meanwhile.
+
+Whose intent an install carries out depends on who started the session:
+
+- A session the person starts on this route installs as their request.
+- A session Clark starts with `develop_widget` installs as Clark's own proposal. Guarded mode asks before it unless a
+  rule allows local writes, ask mode asks, and autonomous mode runs it.
+
+A mode that does not ask runs every build, as it runs any install. When such a build reaches more than the one before
+it and nobody was asked, the node says so in the session's conversation with what it added. Every install is recorded
+like any other (`effect.executed`, with the exact files).
+
+A build that does not read as a package (a broken manifest, a widget definition that does not parse, no widget facet)
+produces no generation: `lastBuild.ok` is `false` with up to 32 `diagnostics`, the running generation keeps running,
+and `showingLastKnownGood` is `true`. The same is true while a newer build waits for the person or was refused.
+
+The live read of a widget that runs a session's generation, `GET /conversations/:id/widgets/:instanceId/live`, carries
+`development: { sessionId }`, and its `frame.document` names the generation, so a client remounts the frame (and only
+the frame) when a new generation runs; the instance, its state and its migrations are the ordinary ones. The widget
+code is never told it is in a session.
+
+`POST /widget-dev/sessions`, `/:id/rebuild` and `/:id/place` install code. The WebSocket relay, `clarkcant api` and MCP
+refuse them with `403 PERSON_ONLY`, and so does the route itself for any request a machine surface marked. Reading and
+stopping a session stay reachable everywhere.
+
+In the conversation, Clark's `develop_widget` tool (`start`, `status`, `rebuild`, `place`, `stop`) drives the same
+sessions. It starts, rebuilds or places only in a turn the person sent; a turn a machine surface, an automation or a
+peer sent does none of these.
+
 The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes a body the route validates with
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); anything outside it is `400 INVALID_SCHEMA`, and so is
 an `invocationId` starting with `view-state:`, which is reserved for the node's own records. An optional `variant`
@@ -811,7 +1003,9 @@ part of the stable description and may change.
 
 `POST /mcp` implements the Streamable HTTP transport with JSON answers (protocol `2025-06-18`, also `2025-03-26` and
 `2024-11-05`). `GET /mcp` answers `405`: the server never speaks first. Methods: `initialize`, `ping`, `tools/list`,
-`tools/call`; notifications get a bare `202`.
+`tools/call`; notifications get a bare `202`. `initialize` names the server `clarkcant` with the Clark version as its
+`serverInfo.version` ([one Clark version](releases.md#one-clark-version)), and when the node connects to a package's MCP
+service it introduces itself the same way in `clientInfo`.
 
 | Tool | Arguments | Route it calls |
 |---|---|---|
@@ -836,11 +1030,13 @@ messages are left after this page; read again with the new cursor until no messa
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
-raised), deciding a package capability, installing a package (`POST /packages/install`) or deciding an install the
+raised), deciding a package capability, installing a package (`POST /packages/install`, or a widget dev session's
+`POST /widget-dev/sessions`, `/rebuild` and `/place`) or deciding an install the
 person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, reporting what a widget's frame did with an action Clark asked it to perform (`POST /app-intents/widget-perform/{performId}`), trusting a paired peer,
 issuing a grant, asking for a browser token for a frame
 (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a
-machine client would be asking for a credential to keep), and recording whether an action whose outcome nobody saw took effect
+machine client would be asking for a credential to keep), publishing a product report (`POST /feedback/reports/{reportId}/publish`; filing to GitHub on the person's behalf is
+their decision), and recording whether an action whose outcome nobody saw took effect
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for

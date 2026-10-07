@@ -13,7 +13,7 @@ import {
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import type { BlockActions, SurfaceBlockRef } from "./blocks.tsx";
-import { distanceFromBottom, followScrollBehavior, followsBottom } from "./follow-bottom.ts";
+import { distanceFromBottom, followScrollBehavior, followsBottom, stillFollowsBottom } from "./follow-bottom.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
 import { computeTranscriptWindow, rowVisibility, sameTranscriptWindow, viewportTopFor, type TranscriptWindow } from "./transcript-window.ts";
@@ -40,8 +40,8 @@ export interface VirtualTranscriptProps {
   undoIndex: number;
   undoRow: ReactNode;
   scroller: RefObject<HTMLDivElement | null>;
-  /** Whether the reader is following the bottom (`use-turn-send.ts`). */
-  followBottom: RefObject<boolean>;
+  /** Whether the reader is following the bottom, asked when something arrives (`use-turn-send.ts`). */
+  followsBottomNow: () => boolean;
   hasOlder: boolean;
   olderLoading: boolean;
   olderFailed: boolean;
@@ -98,7 +98,7 @@ function captureAnchor(scroller: HTMLElement, list: HTMLElement): Anchor | undef
  * Memoised: a streamed reply renders the conversation on every delta, and none of that reaches the history.
  */
 function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement {
-  const { messages, renderSurface, blockActions, client, undoIndex, undoRow, scroller, followBottom } = props;
+  const { messages, renderSurface, blockActions, client, undoIndex, undoRow, scroller, followsBottomNow } = props;
   const t = useT();
   const ids = useMemo(() => messages.map((message) => message.messageId), [messages]);
   const list = useRef<HTMLDivElement>(null);
@@ -305,7 +305,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     const held = `${ids[0] ?? ""}\u0000${ids.at(-1) ?? ""}\u0000${String(ids.length)}`;
     if (held !== heldMessages.current) {
       heldMessages.current = held;
-      if (node !== null && rows !== null && followBottom.current === true && distanceFromBottom(node) > 0) {
+      if (node !== null && rows !== null && distanceFromBottom(node) > 0 && followsBottomNow()) {
         node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
         anchor.current = captureAnchor(node, rows);
         anchoredTop.current = node.scrollTop;
@@ -473,11 +473,13 @@ export function JumpToLatest({ scroller, newest }: { scroller: RefObject<HTMLDiv
   const [far, setFar] = useState(false);
   const [unseen, setUnseen] = useState(false);
   const atBottom = useRef(true);
+  const reportedTop = useRef(0);
 
   useEffect(() => {
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
+      reportedTop.current = node.scrollTop;
       atBottom.current = followsBottom(node);
       setFar(distanceFromBottom(node) > node.clientHeight);
       if (atBottom.current) setUnseen(false);
@@ -492,8 +494,10 @@ export function JumpToLatest({ scroller, newest }: { scroller: RefObject<HTMLDiv
       first.current = false;
       return;
     }
-    if (!atBottom.current) setUnseen(true);
-  }, [newest]);
+    const node = scroller.current;
+    // A scroll up the browser has not reported yet still leaves the reader above what arrived.
+    if (node === null ? !atBottom.current : !stillFollowsBottom(atBottom.current, reportedTop.current, node.scrollTop)) setUnseen(true);
+  }, [newest, scroller]);
 
   if (!far || !unseen) return null;
   return (

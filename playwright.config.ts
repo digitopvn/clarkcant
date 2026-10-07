@@ -1,7 +1,8 @@
-import { defineConfig, devices } from "@playwright/test";
+import { chromium, defineConfig, devices } from "@playwright/test";
 import { join } from "node:path";
 
 import { ensureLocalTls } from "./apps/runtime/src/test-support/media-fixtures.ts";
+import { chromiumTestArgs } from "./tools/chromium-test-args.ts";
 
 /**
  * End-to-end configuration.
@@ -89,7 +90,9 @@ export default defineConfig({
           // A synthetic microphone and an auto-accepted permission prompt. Without these the voice
           // spec cannot run at all in CI, and a voice feature verified only by hand is a voice
           // feature verified only when someone remembers to.
-          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+          // On Windows, also Playwright's own disabled features plus Chromium's local-port randomization, whose
+          // collisions fail loopback connects with ERR_NO_BUFFER_SPACE (tools/chromium-test-args.ts).
+          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", ...(await chromiumTestArgs(chromium))],
         },
       },
     },
@@ -148,6 +151,11 @@ export default defineConfig({
                * check, and the node answers 404 on that route when started without it.
                */
               CC_UPDATE_CHECK_FIXTURE: "1",
+              /*
+               * `CC_GITHUB_FIXTURE` files product reports (`/report`, the Feedback Composer) to an in-process GitHub, so
+               * the report journey never reaches the real repository and needs no token.
+               */
+              CC_GITHUB_FIXTURE: "1",
               /*
                * Every variable `apps/runtime/src/readiness.ts` counts as a configured credential, blanked. Playwright
                * starts this node with the developer's shell environment underneath `env`, so a provider key exported

@@ -59,7 +59,9 @@ import {
   createPlaceWidgetTool,
 } from "./widget-perform-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
+import { createDevelopWidgetTool, type DevelopWidgetToolDeps } from "./develop-widget-tool.ts";
 import { createMapTilesTool, type MapTilesToolDeps } from "./map-tiles-tool.ts";
+import { createFeedbackTool, type FeedbackToolDeps } from "./feedback-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
 import { type ShowChangelogToolDeps, createShowChangelogTool } from "./show-changelog-tool.ts";
 import { type ActOnNoticeToolDeps, createActOnNoticeTool } from "./act-on-notice-tool.ts";
@@ -204,7 +206,7 @@ export function createNodeTools(input: {
    *
    * Absent means neither is registered: a turn with no conversation has nowhere to place a widget or one to act on.
    */
-  widgets?: { perform: PerformWidgetActionToolDeps; place: PlaceWidgetToolDeps };
+  widgets?: { perform: PerformWidgetActionToolDeps; place: PlaceWidgetToolDeps; develop?: DevelopWidgetToolDeps };
   /**
    * The node's terminals, when a turn may open or type into one.
    *
@@ -266,6 +268,11 @@ export function createNodeTools(input: {
    * record one would leave the model describing a card nobody sees.
    */
   changelog?: ShowChangelogToolDeps;
+  /**
+   * Product reports (`feedback-tool.ts`): a bug report or a feature request about ClarkCant, filed through the one
+   * service `/report` and the Feedback Composer use. Absent means `report_feedback` is not registered.
+   */
+  feedback?: FeedbackToolDeps;
   /**
    * Who asked for the turn these tools run in (`TurnOrigin`), read at call time. Given to the command and terminal
    * tools, which share the node-wide command deps and so cannot carry a turn's value of their own.
@@ -335,6 +342,7 @@ export function createNodeTools(input: {
     ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
     ...(input.capabilities === undefined ? [] : [createInvokeCapabilityTool(input.capabilities)]),
     ...(input.widgets === undefined ? [] : [createPlaceWidgetTool(input.widgets.place), createPerformWidgetActionTool(input.widgets.perform)]),
+    ...(input.widgets?.develop === undefined ? [] : [createDevelopWidgetTool(input.widgets.develop)]),
     ...(input.work === undefined ? [] : createWorkTools(input.work)),
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
     ...(input.notices === undefined ? [] : [createActOnNoticeTool(input.notices)]),
@@ -343,6 +351,7 @@ export function createNodeTools(input: {
     ...(input.browserTasks === undefined ? [] : [createBrowserTaskTool(input.browserTasks)]),
     ...(input.mapTiles === undefined ? [] : [createMapTilesTool(input.mapTiles)]),
     ...(input.changelog === undefined ? [] : [createShowChangelogTool(input.changelog)]),
+    ...(input.feedback === undefined ? [] : [createFeedbackTool(input.feedback)]),
   ];
 }
 

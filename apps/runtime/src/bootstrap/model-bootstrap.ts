@@ -590,6 +590,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // bound, and each perform through the same widget-action path a press takes, asked of the page showing it.
         widgets: {
           place: { services: deps.services, conversationId: turn.conversationId, messageId: () => turn.messageId?.() },
+          // "Work on the widget in this folder with me": a live authoring session, shown and reloaded here.
+          develop: {
+            sessions: () => deps.services().widgetDev,
+            conversationId: turn.conversationId,
+            messageId: () => turn.messageId?.(),
+            origin: turn.origin,
+          },
           perform: {
             services: deps.services,
             conversationId: turn.conversationId,
@@ -615,6 +622,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         changelog: {
           newId: deps.services().conductor.newId,
           now: () => instantSchema.parse(new Date().toISOString()),
+        },
+        // "Report this bug" or "I wish Clark could…": the same report service `/report` and the composer use. It
+        // prepares and shows; only the person's press on the host's card files it, so no turn origin is needed.
+        feedback: {
+          services: deps.services,
+          conversationId: turn.conversationId,
+          channel: turn.channel,
         },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back

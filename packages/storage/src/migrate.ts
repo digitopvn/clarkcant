@@ -1803,6 +1803,37 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    /*
+     * A bug report or feature request filed from the conversation, kept until GitHub is known to hold it. `draft` is the
+     * redacted issue exactly as it will be sent; `publication` is what a publish came to. `effect_id` names the ledger
+     * row of the one GitHub write in flight, so a restart finds it and reconciles by the report's marker rather than
+     * sending it again.
+     */
+    version: 45,
+    name: "feedback_reports",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        CREATE TABLE feedback_reports (
+          report_id       TEXT PRIMARY KEY,
+          principal_id    TEXT NOT NULL,
+          conversation_id TEXT,
+          kind            TEXT NOT NULL CHECK (kind IN ('bug', 'feature')),
+          source          TEXT NOT NULL,
+          status          TEXT NOT NULL CHECK (status IN ('draft', 'publishing', 'unknown', 'published', 'failed')),
+          repository      TEXT NOT NULL,
+          draft           TEXT NOT NULL,
+          publication     TEXT,
+          effect_id       TEXT,
+          created_at      TEXT NOT NULL,
+          updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX idx_feedback_reports_status ON feedback_reports(status, updated_at);
+        CREATE INDEX idx_feedback_reports_conversation ON feedback_reports(conversation_id);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

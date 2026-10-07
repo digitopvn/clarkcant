@@ -58,11 +58,33 @@ describe("the session vocabulary", () => {
     expect(JSON.stringify(context)).not.toContain("coming back");
   });
 
-  it("dedupes case-insensitively and keeps the glossary's aliases", () => {
-    const context = buildRecognitionContext({ tools: ["PNPM"] });
-    expect(context.terms.filter((term) => term.text.toLowerCase() === "pnpm")).toHaveLength(1);
+  it("keeps one spelling of a word the session and the glossary spell differently: the heavier one, aliases and all", () => {
     const glossary = CODING_GLOSSARY.find((entry) => entry.text === "pnpm");
     expect(glossary?.aliases).toContain("pnp m");
+    // A tool outweighs the glossary, so its spelling stays and the glossary's entry, with its aliases, does not.
+    const heavierSession = buildRecognitionContext({ tools: ["PNPM"] });
+    expect(heavierSession.terms.filter((term) => term.text.toLowerCase() === "pnpm")).toEqual([
+      expect.objectContaining({ text: "PNPM", kind: "tool" }),
+    ]);
+    expect(heavierSession.terms.find((term) => term.text === "PNPM")?.aliases).toBeUndefined();
+    // A repository listed after another outweighs nothing: the glossary's ClarkCant stays, with its aliases.
+    const heavierGlossary = buildRecognitionContext({ repositories: ["other-app", "clarkcant", "web"] });
+    expect(heavierGlossary.terms.filter((term) => term.text.toLowerCase() === "clarkcant")).toEqual([
+      expect.objectContaining({ text: "ClarkCant", kind: "repository", aliases: expect.arrayContaining(["clark cant"]) }),
+    ]);
+  });
+
+  it("adds no glossary spelling beside a word the session already spells two ways by case", () => {
+    const context = buildRecognitionContext({ tools: ["PNPM"], packages: ["Pnpm"] });
+    expect(context.terms.filter((term) => term.text.toLowerCase() === "pnpm").map((term) => term.text).sort()).toEqual(["PNPM", "Pnpm"]);
+  });
+
+  it("keeps every spelling the session uses when two differ only by case, and each exact spelling once", () => {
+    const context = buildRecognitionContext({ symbols: ["UserService", "userService", "userService"] });
+    expect(context.terms.filter((term) => term.text.toLowerCase() === "userservice").map((term) => term.text).sort()).toEqual([
+      "UserService",
+      "userService",
+    ]);
   });
 
   it("finds code-shaped mentions in conversation text", () => {
@@ -216,6 +238,56 @@ describe("restoring the case of a code-like term heard exactly", () => {
       expect(restored(once)).toBe(once);
       expect(normalizeTranscript(once, SESSION).changes).toEqual([]);
     }
+  });
+});
+
+describe("a term the vocabulary spells two ways by case alone", () => {
+  // A class and its instance: two real symbols, so the heard case is the only evidence of which one was meant.
+  const SESSION = buildRecognitionContext({ symbols: ["UserService", "userService", "redactSecrets"] });
+  const heard = (text: string) => normalizeTranscript(text, SESSION);
+
+  it("leaves userservice, UserService and userService exactly as heard, as a known term", () => {
+    for (const spelling of ["userservice", "UserService", "userService", "USERSERVICE"]) {
+      const sentence = `sửa lỗi trong ${spelling} trước khi build`;
+      const result = heard(sentence);
+      expect(result.text).toBe(sentence);
+      expect(result.changes).toEqual([]);
+      expect(result.abstained).toEqual([]);
+      expect(result.technical).toEqual([{ start: 14, end: 14 + spelling.length }]);
+    }
+    expect(heard("Rename UserService before the build").text).toBe("Rename UserService before the build");
+  });
+
+  it("does not pick a case for the term's spoken words, and says which spellings it could be", () => {
+    const result = heard("sửa lỗi trong user service");
+    expect(result.text).toBe("sửa lỗi trong user service");
+    expect(result.abstained).toEqual([{ start: 14, end: 26, text: "user service", candidates: ["UserService", "userService"] }]);
+  });
+
+  it("still restores the case of an unambiguous term in the same vocabulary", () => {
+    expect(heard("RedactSecrets có bắt được token không").text).toBe("redactSecrets có bắt được token không");
+    expect(heard("userService gọi RedactSecrets").text).toBe("userService gọi redactSecrets");
+  });
+});
+
+describe("a session term spelled one way beside the glossary's spelling", () => {
+  it("keeps ClarkCant when the repository clarkcant is not the active one", () => {
+    const session = buildRecognitionContext({ repositories: ["other-app", "clarkcant", "web"] });
+    expect(normalizeTranscript("sửa clark cant trước", session).text).toBe("sửa ClarkCant trước");
+    expect(normalizeTranscript("Clarkcant build lỗi", session).text).toBe("ClarkCant build lỗi");
+  });
+
+  it("keeps Gemini when the provider gemini is not listed first", () => {
+    const session = buildRecognitionContext({ providers: ["google", "gemini"] });
+    expect(session.terms.filter((term) => term.text.toLowerCase() === "gemini").map((term) => term.text)).toEqual(["Gemini"]);
+    expect(normalizeTranscript("gemini model", session).text).toBe("Gemini model");
+  });
+
+  it("keeps ESLint when the tool eslint comes after many others", () => {
+    const tools = [...Array.from({ length: 30 }, (_, index) => `tool-number-${index}`), "eslint"];
+    const session = buildRecognitionContext({ tools });
+    expect(normalizeTranscript("eslint lỗi", session).text).toBe("ESLint lỗi");
+    expect(normalizeTranscript("Eslint lỗi", session).text).toBe("ESLint lỗi");
   });
 });
 
