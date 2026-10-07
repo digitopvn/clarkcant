@@ -125,12 +125,13 @@ async function main(): Promise<number> {
   const results = recognizersIn(corpus).map((recognizer) => benchmarkRecognizer(corpus, recognizer, context));
   process.stdout.write(`${formatBenchmarkReport(corpus, results)}\n`);
   if (values.audio === undefined) return 0;
-  // The audio run is the regression check for vocabulary bias: a session term written over what was said fails it.
+  // The audio run is the regression check for vocabulary bias: a session term heard but not said fails it, whether the
+  // bias or an ordinary mishearing put it there.
   const audioResult = results.find((result) => result.recognizer === `${id}-audio`);
   const uncovered = corpus.utterances.filter((utterance) => utterance.categories.includes("vocabulary-bias") && utterance.recognizers[`${id}-audio`] === undefined);
   if (uncovered.length > 0) process.stderr.write(`not checked for vocabulary bias, no recording: ${uncovered.map((utterance) => utterance.id).join(", ")}\n`);
   if (audioResult !== undefined && audioResult.substitutions.length > 0) {
-    process.stderr.write(`vocabulary substitution: ${audioResult.substitutions.join(", ")} heard a session term the person did not say\n`);
+    process.stderr.write(`vocabulary term heard but not said: ${audioResult.substitutions.join(", ")} (a session term the person did not say; the bias or an ordinary mishearing may have put it there)\n`);
     return 3;
   }
   return 0;

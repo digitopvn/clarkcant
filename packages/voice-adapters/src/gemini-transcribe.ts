@@ -93,8 +93,10 @@ export function buildAudioStreamEndMessage(): Record<string, unknown> {
 /**
  * The provider's custom vocabulary, from the canonical context.
  *
- * Canonical spellings only, most relevant first. Aliases stay local: an alias is a known mis-hearing, and biasing a
- * recognizer towards a mis-hearing is the opposite of the point.
+ * Canonical spellings, or a model id's spoken family derived from one, most relevant first. Aliases stay local: an
+ * alias is a known mis-hearing, and biasing a recognizer towards a mis-hearing is the opposite of the point. Terms that
+ * agree up to case are sent once, as the higher-weighted one, so a model family (`gemini`) can stand in for a provider
+ * (`Gemini`); the normaliser's casing rule restores the canonical case on the node.
  *
  * The vocabulary is a bias, not a hint the provider weighs against what it heard: measured on audio, it wrote a listed
  * term over a different word the person said ("Jeff" as `Jev`, "claude opus 3" as `claude-opus-4`, `setUser` as
@@ -132,6 +134,8 @@ export function transcribeVocabulary(context: RecognitionContext | undefined, ma
  *   effect") and never a near one.
  * - A number is what a bias changes into another real reference, so a model id is sent as its spoken family before
  *   the first numbered part (`claude-opus-4` as `claude-opus`), which helps the spelling without choosing a version.
+ *   The rule reads the term, not its kind: a glossary or provider term with a digit (none today) is cut the same way,
+ *   so a hypothetical `utf-8` would go as `utf` and `S3` not at all.
  * - A short word that is not an acronym (`Jev`, `Pi`) is name-like: real words and names sound like it ("Jeff"), so it
  *   is not sent. Acronyms are spelled letter by letter and have no such twin.
  */

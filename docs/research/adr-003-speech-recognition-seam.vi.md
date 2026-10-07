@@ -58,8 +58,11 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      hai nào.
    - Khi recognizer chuyên dụng được bật, một phần vocabulary được gửi tới nó (xem bên dưới). Các câu trong hội thoại
      chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
-   - Adapter của từng provider dịch vocabulary sang field riêng của mình. Gemini chỉ nhận cách viết chuẩn, vì kéo
-     recognizer về phía một lỗi nghe sai đã biết thì đi ngược mục đích.
+   - Adapter của từng provider dịch vocabulary sang field riêng của mình. Gemini không bao giờ nhận alias, vì kéo
+     recognizer về phía một lỗi nghe sai đã biết thì đi ngược mục đích. Nó nhận cách viết chuẩn, hoặc một họ model
+     suy ra từ cách viết chuẩn (xem bên dưới). Các term giống nhau khi bỏ qua hoa thường chỉ được gửi một lần, theo
+     term có trọng số cao hơn, nên một họ model (`gemini`) có thể thay cho một provider (`Gemini`); quy tắc casing của
+     normaliser khôi phục lại cách viết hoa chuẩn.
    - Vocabulary của recognizer là một thiên lệch (bias), và bias là một near-match không cần bằng chứng: đo trên audio
      (issue #573), nó viết một term trong danh sách đè lên một từ khác mà người dùng đã nói. "Jeff" thành `Jev`,
      "claude opus 3" thành `claude-opus-4`, và `setUser` thành `getUser` (khi không gửi `getUser` thì thành
@@ -67,7 +70,8 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      thế hay confidence, nên sau khi nhận dạng không có cách nào phân biệt một sự thay thế với điều đã được nói. Vì vậy
      recognizer chỉ nhận những loại mà chính normaliser được phép near-match - từ glossary, provider và model:
      - id model được gửi dưới dạng họ model khi nói, tức phần trước phần có số đầu tiên (`claude-opus-4` thành
-       `claude-opus`), để giúp cách viết mà không chọn phiên bản;
+       `claude-opus`), để giúp cách viết mà không chọn phiên bản. Việc cắt này áp dụng cho mọi term được gửi có chữ
+       số, nên một term glossary hoặc provider có chữ số (hiện chưa có) cũng sẽ bị cắt như vậy;
      - một từ ngắn không phải từ viết tắt (`Jev`, `Pi`) không được gửi, vì có từ thật và tên người nghe giống nó;
      - symbol, path, branch, package, tool, lệnh và issue ở lại trên node. Hàng xóm của chúng là những tên thật khác,
        và normaliser chỉ khôi phục cách viết của chúng từ một dạng nói khớp chính xác.
@@ -92,7 +96,9 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
    - Một utterance final được chốt trên một hàng đợi có thứ tự và dispatch một lần cho mỗi utterance id, qua cùng
      đường `ask` mà transcript live đi. Vì vậy phê duyệt, câu hỏi, app intent và widget action đều thấy văn bản chuẩn.
    - Một đoạn kỹ thuật mơ hồ hoặc có confidence thấp có thể được nhận dạng lại riêng utterance đó từ bộ đệm audio có
-     giới hạn của chính nó, với context tập trung vào các ứng viên.
+     giới hạn của chính nó, với context tập trung vào các ứng viên. Vocabulary gửi tới recognizer trong lần thử lại
+     theo cùng quy tắc ở trên, nên symbol và path trong số các ứng viên không được gửi: với một định danh, lần thử lại
+     chỉ là một lần nhận dạng lại thông thường.
    - Hai cách đọc được so sánh theo một quy tắc cố định. Bản gốc thắng khi hòa, và cũng thắng khi lần thử lại nghe
      thành một câu khác.
    - Lần thử lại bị giới hạn thời gian, và lần thử lại vượt quá giới hạn sẽ bị hủy, đóng luôn phiên nó đã mở. Không transcript nào được gửi tới Jev; Jev chọn giữa các phương án có giới hạn,
@@ -140,7 +146,9 @@ từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có
 Cùng lệnh đó với `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` nhận dạng bản ghi âm thật, chấm
 điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lượt chạy đó cần `GEMINI_API_KEY`, và dừng với thông báo
 "external gate" nếu không có key. Nó cũng báo mọi utterance mà văn bản nhận dạng chứa một term của phiên mà người dùng
-không nói, và thoát với mã 3 khi có ít nhất một utterance như vậy. Corpus đánh dấu ba mục `vocabulary-bias` (tên một
+không nói ("vocabulary term heard but not said", bất kể hoa thường), và thoát với mã 3 khi có ít nhất một utterance
+như vậy. Phép kiểm tra không cho biết điều gì đã đưa term đó vào: bias, hay một lỗi nghe sai thông thường với một term
+chưa từng được gửi (`git stash` bị nghe thành `git status`). Corpus đánh dấu ba mục `vocabulary-bias` (tên một
 người, một phiên bản model khác, một symbol hàng xóm gần), và lượt chạy nêu tên mục nào trong số đó mà manifest chưa có
 bản ghi âm.
 

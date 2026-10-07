@@ -171,6 +171,12 @@ describe("the transcription setup", () => {
     expect(vocabularyBias({ text: "getUser", kind: "symbol", weight: 1 })).toBeUndefined();
     expect(vocabularyBias({ text: "#468", kind: "issue", weight: 1 })).toBeUndefined();
   });
+
+  it("cuts a digit from any term it sends, not only from a model id", () => {
+    // No glossary or provider term has a digit today; this pins what would happen to one.
+    expect(vocabularyBias({ text: "utf-8", kind: "glossary", weight: 1 })).toBe("utf");
+    expect(vocabularyBias({ text: "S3", kind: "provider", weight: 1 })).toBeUndefined();
+  });
 });
 
 describe("reading the provider's messages", () => {

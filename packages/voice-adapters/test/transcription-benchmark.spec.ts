@@ -162,6 +162,13 @@ describe("vocabulary bias in an audio run", () => {
     expect(benchmarkRecognizer(run, "gemini-transcribe-live-audio").substitutions).toEqual([]);
   });
 
+  it("reports a session term heard in another casing than its canonical spelling", () => {
+    const run = structuredClone(corpus);
+    const target = run.utterances.find((utterance) => utterance.id === "u072")!;
+    target.recognizers["gemini-transcribe-live-audio"] = "Hi anh jev, bên design xem màu này ổn không?";
+    expect(benchmarkRecognizer(run, "gemini-transcribe-live-audio").substitutions).toEqual(["u072"]);
+  });
+
   it("counts a destructive command heard as a harmless one, and not a casing slip", () => {
     // `git stash` heard as `git status`; `zod`, `electron` and `react` heard in lower case are not substitutions.
     expect(benchmarkRecognizer(corpus, "simulated-live-baseline").substitutions).toEqual(["u003", "u050"]);

@@ -60,8 +60,10 @@ them before they mean anything.
      patterns exists.
    - With the dedicated recognizer enabled, part of the vocabulary is sent to it (see below). The conversation's
      sentences only rank terms and never leave the node.
-   - A provider adapter translates the vocabulary into its own field. Gemini gets canonical spellings only, because
-     biasing a recognizer towards a known mis-hearing would defeat the purpose.
+   - A provider adapter translates the vocabulary into its own field. Gemini never gets an alias, because biasing a
+     recognizer towards a known mis-hearing would defeat the purpose. It gets canonical spellings, or a model family
+     derived from one (below). Terms that agree up to case are sent once, as the higher-weighted one, so a family
+     (`gemini`) can stand in for a provider (`Gemini`); the normaliser's casing rule restores the canonical case.
    - A recognizer's vocabulary is a bias, and a bias is a near-match made without evidence: measured on audio (issue
      #573), it wrote a listed term over a different word the person said. "Jeff" became `Jev`, "claude opus 3" became
      `claude-opus-4`, and `setUser` became `getUser` (and, with `getUser` withheld, `useState`). The transcription
@@ -69,7 +71,8 @@ them before they mean anything.
      recognition can tell a substitution from what was said. The recognizer is therefore given only the kinds the
      normaliser itself near-matches - glossary words, providers and models:
      - a model id goes as its spoken family before the first numbered part (`claude-opus-4` as `claude-opus`), so the
-       spelling is helped and the version is not chosen;
+       spelling is helped and the version is not chosen. The cut applies to any sent term with a digit, so a glossary
+       or provider term with one (none today) would lose it too;
      - a short word that is not an acronym (`Jev`, `Pi`) is not sent, because real words and names sound like it;
      - symbols, paths, branches, packages, tools, commands and issues stay on the node. Their neighbours are other real
        names, and the normaliser restores their spelling only from an exact spoken form.
@@ -95,7 +98,9 @@ them before they mean anything.
      path a live transcript takes. Approvals, questions, app intents and widget actions therefore see the canonical
      text.
    - An ambiguous or low-confidence technical span may have that one utterance recognized again from its own bounded
-     audio buffer, with a context focused on the candidates.
+     audio buffer, with a context focused on the candidates. The retry's recognizer vocabulary follows the same rule
+     as above, so symbols and paths among the candidates are not sent: for an identifier, the retry is a plain
+     re-recognition.
    - The readings are compared by a fixed rule. The original wins ties, and so does any retry that heard a different
      sentence.
    - The retry is bounded in time, and a retry past its bound is aborted, closing the session it opened. No
@@ -142,7 +147,9 @@ Commands and versions are never worse after normalisation (9/12 and 2/2 both bef
 The same command with `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` recognizes real recordings
 and scores them beside the corpus, reporting finalization latency. That run needs `GEMINI_API_KEY`, and stops with an
 "external gate" message without one. It also reports every utterance whose recognized text holds a session term the
-person did not say, and exits with status 3 when there is one. The corpus marks three entries `vocabulary-bias` (a
+person did not say ("vocabulary term heard but not said", in any casing), and exits with status 3 when there is one.
+The check does not say what put the term there: the bias, or an ordinary mishearing of a term never sent (`git stash`
+heard as `git status`). The corpus marks three entries `vocabulary-bias` (a
 person's name, another model version, a near-neighbour symbol), and the run names any of them the manifest left
 unrecorded.
 

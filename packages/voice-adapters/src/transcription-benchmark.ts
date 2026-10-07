@@ -46,10 +46,12 @@ export interface RecognizerBenchmark {
   /** Utterances where normalisation lost a term the raw text had, or changed one that needed no change. */
   regressions: string[];
   /**
-   * Utterances whose raw text holds a session term the person did not say: a different word heard as a listed one.
+   * Utterances whose raw text holds a session term the person did not say: a vocabulary term heard but not said.
    *
-   * On a recognizer biased with the vocabulary this is the bias writing over speech; the `vocabulary-bias` entries
-   * (a person's name, another model version, a near-neighbour symbol) exist to catch it in an audio run.
+   * This does not say what put the term there. On a recognizer biased with the vocabulary it may be the bias writing
+   * over speech, which the `vocabulary-bias` entries (a person's name, another model version, a near-neighbour symbol)
+   * exist to catch in an audio run; it may equally be an ordinary mishearing of a term never sent (`git stash` heard
+   * as `git status`).
    */
   substitutions: string[];
 }
@@ -105,9 +107,11 @@ export function benchmarkRecognizer(corpus: BenchmarkCorpus, recognizer: string,
   for (const utterance of corpus.utterances) {
     const heard = utterance.recognizers[recognizer];
     if (heard === undefined) continue;
-    // A term the reference holds in another casing (`zod` for `Zod`) was said; a casing slip is not a substitution.
+    // Both sides ignore case: a term the reference holds in another casing (`zod` for `Zod`) was said, and a term heard
+    // in another casing (`jev` for `Jev`) was still heard.
     const said = utterance.reference.toLowerCase();
-    if (context.terms.some((term) => termPreserved(term.text, heard) && !termPreserved(term.text.toLowerCase(), said))) substitutions.push(utterance.id);
+    const heardLower = heard.toLowerCase();
+    if (context.terms.some((term) => termPreserved(term.text.toLowerCase(), heardLower) && !termPreserved(term.text.toLowerCase(), said))) substitutions.push(utterance.id);
     const result = normalizeTranscript(heard, context);
     changes += result.changes.length;
     abstained += result.abstained.length;
