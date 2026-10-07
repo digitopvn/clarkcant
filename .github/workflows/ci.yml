@@ -163,6 +163,22 @@ jobs:
           'false'
         run: pnpm run test
 
+      # The release rules live in an isolated pnpm project (tools/release) with
+      # its own lockfile, so the root install does not reach them. Testing them
+      # here, inside this job, keeps a rule change from merging untested
+      # without adding a required check.
+      - name: Install the release tooling
+        if: >-
+          steps.scope.outcome != 'success' || steps.scope.outputs.full !=
+          'false'
+        run: pnpm --dir tools/release install --frozen-lockfile
+
+      - name: Release tooling tests
+        if: >-
+          steps.scope.outcome != 'success' || steps.scope.outputs.full !=
+          'false'
+        run: pnpm --dir tools/release test
+
       # A blocked step is an honest outcome and exits zero; only a genuine
       # failure
       # fails this step. See the probe's own comment for the reasoning.

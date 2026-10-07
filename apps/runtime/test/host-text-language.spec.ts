@@ -334,7 +334,7 @@ describe("an inbox notice the node records follows its owner's interface languag
     const notice = (inbox.body as { notices: { title: string; body?: string; conversationId?: string }[] }).notices.find(
       (entry) => entry.conversationId === conversationId,
     );
-    const timeline = JSON.stringify(buildTimeline(services, { conversationId, afterSequence: 0 }));
+    const timeline = JSON.stringify(buildTimeline(services, { conversationId }));
     if (notice === undefined) throw new Error("no notice for the interrupted job");
     return { title: notice.title, ...(notice.body === undefined ? {} : { body: notice.body }), note: timeline };
   }

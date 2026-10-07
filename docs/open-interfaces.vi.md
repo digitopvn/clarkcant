@@ -39,12 +39,13 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | Method | Path | Body |
 |---|---|---|
 | GET | `/node` | – |
+| GET | `/changelog?since=` | – — phiên bản Clark này thay đổi gì, đọc từ ghi chú phát hành đi kèm bản build (không cần mạng, chỉ đọc); `since` chỉ giữ các phiên bản sau một phiên bản như `1.4`; bản chạy từ mã nguồn có thêm `notesCover`, commit và ngày mà ghi chú dừng lại; `400` khi giá trị không phải phiên bản, `503 CHANGELOG_UNAVAILABLE` khi bản build không có ghi chú đọc được ([phát hành](releases.vi.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |
 | POST | `/conversations/{id}/messages/stream` | như trên, trả về dạng SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `widget-perform`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — dừng câu trả lời đang viết; giữ phần đã viết, gắn nhãn đã dừng; trả về `{ stopped }` |
-| GET | `/conversations/{id}/timeline?after=N` | – |
+| GET | `/conversations/{id}/timeline?after=N` · `?before=N` · `?window=latest`, mỗi kiểu kèm `&limit=` | – một trang của hội thoại; xem [Đọc một hội thoại dài](#đọc-một-hội-thoại-dài) |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — báo một việc vừa xảy ra; `202` đã ghi, `200` đã ghi từ trước |
@@ -109,6 +110,41 @@ gửi không kèm header (MCP, relay WebSocket, `clarkcant api`, một script) �
 surface mới được tính là lời của chính người dùng ở những chỗ điều đó quan trọng, chẳng hạn các trang mà một việc trên
 trình duyệt được phép thao tác; mọi giá trị khác của header đều bị bỏ qua.
 
+### Đọc một hội thoại dài
+
+Một hội thoại có thể dài hơn rất nhiều so với lượng một lần đọc nên mang, nên route timeline trả về một trang tin nhắn,
+cũ trước mới sau, chọn theo số thứ tự tin nhắn (sequence): thứ tự node lưu các tin nhắn của một hội thoại.
+
+| Query | Trang |
+|---|---|
+| không có, hoặc `after=N` | các tin nhắn ngay sau sequence `N`; không có tham số nghĩa là `after=0`, trang route này vẫn luôn trả về |
+| `before=N` | các tin nhắn ngay trước sequence `N`, để cuộn ngược lên |
+| `window=latest` | các tin nhắn mới nhất, là thứ hiện ra khi mở lại một hội thoại |
+
+Chỉ được dùng tối đa một trong ba kiểu trên, và `limit` quyết định cỡ trang: từ 1 đến 500, mặc định 200. Mọi giá trị
+khác bị trả về `400 INVALID_SCHEMA`.
+
+Mọi timeline, dù từ route này hay đi kèm một câu trả lời khác, đều có `window`:
+
+```json
+{ "version": 1, "fromSequence": 1901, "toSequence": 2100, "hasOlder": true, "hasNewer": false, "sequences": [1901, 1902, "..."] }
+```
+
+Trang chứa mọi tin nhắn đã lưu có `fromSequence <= sequence <= toSequence`, và không chứa tin nhắn nào khác.
+`sequences` cho biết sequence của từng tin nhắn theo đúng thứ tự của `messages`. `hasOlder` nghĩa là
+`before=<fromSequence>` đọc được trang nối liền với trang này, và `hasNewer` nghĩa là `after=<toSequence>` cũng vậy. Hai
+trang có khoảng chạm nhau hoặc chồng lên nhau gộp thành một khoảng, không tin nhắn nào lặp lại và không có khoảng trống.
+Bên trong khoảng của chính nó, trang đọc sau là đúng, nên một tin nhắn đã bị xoá sẽ biến mất. Các trang không chạm nhau
+thì không thể nối với nhau, và bên đọc biết được điều đó chỉ từ các con số.
+
+`cursor` sự kiện mà timeline cũng mang theo là một con số khác. Nó cho biết bên đọc đã thấy những sự kiện nào, chứ
+không phải đang giữ những tin nhắn nào, và không bao giờ là con trỏ trang.
+
+Mọi câu trả lời có mang hội thoại đều trả về trang mới nhất của nó. Điều này áp dụng cho gửi tin nhắn, sự kiện SSE
+`done`, hành động của widget, ghim, trả lời câu hỏi và thẻ, và phê duyệt. Câu trả lời của một hành động widget còn mang
+theo instance vừa được thao tác, và mọi timeline đều mang instance của các widget đang ghim, dù tin nhắn của chúng nằm ở
+đâu. Bên đọc đang giữ lịch sử cũ hơn gộp trang đó vào những gì nó đang giữ thay vì bắt đầu lại từ đầu.
+
 ### Ai đã yêu cầu: nguồn gốc của một lượt
 
 Node cũng ghi lại ai đã bắt đầu mỗi lượt, thành `origin` của tin nhắn người dùng, ngay khi nhận tin nhắn. Giá trị này
@@ -122,6 +158,7 @@ Node cũng ghi lại ai đã bắt đầu mỗi lượt, thành `origin` của t
 | `cli-api` | mọi người giữ token khác: `clarkcant api`, một script, hoặc mọi giá trị khác của header |
 | `automation` | tác vụ của một tự động hoá đã lên lịch hoặc thường trực |
 | `peer` | tác vụ một node khác uỷ cho node này |
+| `channel` | một tin nhắn trên kênh nhắn tin bên ngoài được gắn với cuộc trò chuyện (chỉ dịch vụ kênh của node đặt giá trị này) |
 
 Một trường trong thân như `"origin": "person"` bị bỏ qua, nên một bề mặt máy không thể tự nhận là người dùng. Token là
 ranh giới tin cậy, giống như với `surface`: người giữ token tự gửi header của ô soạn thảo được xem như chính trang.
@@ -170,6 +207,29 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 `execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
 `clarkcant api`. Vì vậy một chương trình giữ token của node có thể đổi cài đặt này. Hoàn tác `execution.machineTurns`
 chỉ đặt lại đúng lựa chọn đó; nó trả về `undone: false` khi lần ghi chính sách gần nhất không đổi lựa chọn này.
+
+Lượt `channel` khác với các bề mặt máy: người gửi là một người trên kênh bên ngoài, không phải người giữ token của node
+này, và việc lượt đó được làm gì tùy vào người đó là ai. Node quyết định điều này từ principal mà tài khoản của người gửi
+được ánh xạ tới, không bao giờ từ tên hiển thị hay nội dung tin nhắn:
+
+- **Chủ sở hữu.** Tài khoản của chính chủ sở hữu, hoặc bất kỳ tài khoản bên ngoài nào được liên kết với principal của chủ
+  sở hữu, hành động như chủ sở hữu: lượt đó có ngữ cảnh của chủ sở hữu và được quyết định bởi chính sách thực thi duy
+  nhất như mọi lượt khác, không hỏi thêm.
+- **Người tham gia.** Bất kỳ ai khác. Lượt đó không nhận bộ nhớ, chỉ dẫn cá nhân hay chỉ dẫn dự án, ngữ cảnh màn hình
+  hay các tệp ngữ cảnh trên máy của chủ sở hữu, và chạy trên một phiên model riêng (phiên đã phục vụ chủ sở hữu không bao
+  giờ được dùng lại cho nó). Host nói với model rằng người gửi không phải chủ sở hữu. Trò chuyện (trả lời trong cùng
+  luồng, một khung xem hay một câu hỏi đặt vào đó) vẫn tự chủ; mọi lời gọi công cụ khác chỉ chạy khi một quyền thường trực trên binding bao gồm công cụ đó
+  (`grantRefs`, mỗi mục dạng `tool:<tên>`) hoặc chủ sở hữu đã duyệt đúng lời gọi đó. Nếu không, lời gọi bị giữ lại,
+  không có gì chạy, và chủ sở hữu được hỏi bằng một thẻ duyệt trong cuộc trò chuyện; duyệt thì lượt tiếp tục dưới tư
+  cách người tham gia và cho đúng lời gọi đó chạy một lần. Việc quyết định một yêu cầu duyệt không bao giờ được mở cho
+  người tham gia.
+
+Đối tượng mặc định của binding nhận mọi người trong không gian đã gắn; các quy tắc trên là thứ giữ cho điều đó an toàn.
+Tin nhắn người dùng như vậy còn mang `authorPrincipalId` (principal mà người gửi trên kênh
+được ánh xạ tới, để bản ghi phân biệt được nhiều người nói) và, khi nó trả lời một tin nhắn của cuộc trò chuyện này,
+`inReplyToMessageId`. Cả hai đều không bắt buộc, chỉ node đặt, và không có trên mọi tin nhắn khác. Bản build này chưa
+kèm nhà cung cấp kênh nào và chưa có route HTTP nào nhận dữ liệu từ kênh; phần nền được mô tả trong
+[system-architecture.vi.md](system-architecture.vi.md) (§7.3, "Kênh nhắn tin bên ngoài").
 
 ### Model nào đã trả lời: ghi chú model
 
@@ -638,6 +698,25 @@ Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `file
 phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi cả hai, dấu phần trăm thành `_` trong tên ASCII, và
 một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
 
+**Listing đến từ đâu.** Directory mà một node tìm và cài từ đó được ghép từ các nguồn: file index mà
+`CC_DIRECTORY_INDEX` trỏ tới, từng feed trong `CC_DIRECTORY_MARKETPLACES`, và ClarkCant Marketplace chính thức (bật
+trừ khi `CC_OFFICIAL_MARKETPLACE=off`); thứ tự ưu tiên, cách làm mới và định dạng feed nằm ở
+[metadata directory](widget-development.vi.md#18-directory-metadata). Card `marketplace-results` mang
+`origin: { kind, label }` trên mỗi dòng khi card chứa nhiều nguồn (`kind` là `local-file`, `custom-marketplace` hoặc
+`official-marketplace`), và `sources: [{ kind, label, state, fetchedAt?, reason? }]` cho mỗi nguồn chưa trả lời đầy
+đủ (`state` là `stale`, `not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`). Mỗi dòng còn mang `sourceId`
+(`local`, `official` hoặc `custom-<hash>`), được nút Cài gửi lại. `search_directory` nhận thêm `packageId` tuỳ chọn và
+khi đó liệt kê mọi version của gói đó kèm thông tin chi tiết. `POST /packages/install` làm mới một nguồn từ xa một lần
+khi listing không có trong bản sao của node, trả `404 NOT_IN_DIRECTORY` có nêu tên nguồn nào chưa trả lời, và
+`409 DIRECTORY_UNREADABLE` khi không đọc được nguồn nào hoặc file index bị hỏng. Route nhận thêm `sourceId` tuỳ chọn:
+nguồn mà người dùng đã chọn khi bấm Cài trên một dòng. Không có nó, route trả `409 DIRECTORY_SOURCE_UNREAD` khi một
+nguồn đứng trước không đọc được, và `409 DIRECTORY_SOURCE_CHANGED` khi gói đang được cài từ một nguồn khác. Có nó,
+route trả `409 DIRECTORY_SOURCE_CHANGED` khi giờ đây một nguồn khác sở hữu listing đó. Node ghi nguồn lên generation
+đã cài (`directorySource`), và thông báo cập nhật chỉ đến từ chính nguồn đó; generation được cài trước khi nguồn được
+ghi lại được coi là cài từ file index. Một yêu cầu chấp thuận cài đặt giữ nguồn sở hữu listing lúc người dùng được hỏi,
+và `POST /packages/approvals/{id}/decision` với `granted` trả `409 DIRECTORY_SOURCE_CHANGED` khi lúc đó một nguồn khác
+đã sở hữu listing. Một listing từ marketplace được cài qua đúng những bước kiểm tra như listing từ file.
+
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
 liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
@@ -752,6 +831,12 @@ có thể thay đổi.
 | `node_status` | – | `GET /node` |
 | `read_inbox` | – | `GET /inbox` |
 | `act_on_notice` | `noticeId`, `action`, `until?` | `POST /inbox/notices/{noticeId}/actions/{action}` |
+
+`read_conversation` không có `after` sẽ đọc trang mới nhất (`window=latest`), nên câu hỏi Clark đang chờ luôn nằm trong đó
+dù cuộc trò chuyện dài đến đâu. `structuredContent.cursor` của nó là `window.toSequence` của trang: một số thứ tự tin nhắn,
+truyền lại làm `after` để chỉ đọc những tin nhắn được viết từ đó. Đây không phải `cursor` sự kiện của timeline, và nó không
+bao giờ vượt quá tin nhắn mới nhất: một `after` lớn hơn sẽ được trả về bằng số thứ tự của tin nhắn mới nhất. `hasNewer` cho biết
+sau trang này vẫn còn tin nhắn; hãy đọc lại với cursor mới cho đến khi không còn tin nhắn nào được trả về.
 
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và

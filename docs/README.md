@@ -19,7 +19,7 @@ Before changing UI/UX, read [DESIGN.md](../DESIGN.md) to stay true to the intera
 3. [Distributed runtime](distributed-runtime.md): VPS install, pairing, remote delegation, disconnect/recovery.
 4. [Widgets & extensions](widgets-and-extensions.md): rich catalog, agent-defined actions, custom mini-apps, pin and lifecycle.
 5. [Widget developer standard](widget-development.md): authoring contract, SDK UX, conformance, package/publish flow and directory metadata.
-6. [Installation](installation.md): cross-platform installer, interactive onboarding, Docker and VPS with HTTPS. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play and needs-based setup.
+6. [Installation](installation.md): cross-platform installer, interactive onboarding, Docker and VPS with HTTPS. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play and needs-based setup. [Releases](releases.md): one Clark version, SemVer from Conventional Commits, stable/beta channels, release-note data and the changelog; [release signing](release-signing.md) for maintainers; [ADR-004](research/adr-004-desktop-packaging.md) for the packaging proposal.
 7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting and takeover.
 8. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
 9. [Research & decisions](research-and-decisions.md): upstream verification results, choices/rejected alternatives, sources.

@@ -799,6 +799,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
     transition: background-color var(--cc-motion-micro) var(--cc-motion-easing), color var(--cc-motion-micro) var(--cc-motion-easing);
   }
   .cc-desktop-button:hover { background: var(--cc-card); color: var(--cc-text); }
+  /* The pin's place while the shell has not said whether this desktop can pin: kept, but not shown or reachable. */
+  .cc-desktop-button[data-desktop-pin-pending="true"] { visibility: hidden; pointer-events: none; }
   /* Close is the one control that ends something, so it is the one that turns red, as it does in every title bar. */
   .cc-desktop-button[data-desktop-close="true"]:hover { background: var(--cc-danger); color: var(--cc-on-accent); }
   .cc-desktop-button[data-pinned="true"], .cc-desktop-button[data-fullscreen="true"] { color: var(--cc-accent); background: var(--cc-card); }

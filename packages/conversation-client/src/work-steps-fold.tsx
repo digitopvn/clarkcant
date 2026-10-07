@@ -1,6 +1,7 @@
-import { useState, type ReactElement, type ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { useT } from "./i18n/locale-context.tsx";
+import { useSurfaceViewState } from "./surface-view-state.tsx";
 
 /**
  * A run of working steps, drawn as one line that opens onto all of them.
@@ -20,7 +21,7 @@ export function WorkStepsFold({
   children: ReactNode;
 }): ReactElement {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useSurfaceViewState("steps.open", false);
   const summary = t("blocks.workSteps.done").replace("{count}", String(count));
   return (
     <details

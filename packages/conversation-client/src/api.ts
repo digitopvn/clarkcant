@@ -9,6 +9,7 @@
 import type {
   AppearanceResponse,
   AutonomySettings,
+  ChangelogView,
   CompositionGraph,
   ConnectionStatus,
   GraphSemanticState,
@@ -22,6 +23,8 @@ import type {
   TableSort,
   ThemesResponse,
   WidgetDefinition,
+  TimelinePageQuery,
+  TimelineWindow,
   WidgetFixture,
 } from "@clarkcant/contracts";
 
@@ -29,6 +32,7 @@ import {
   COMPOSER_SURFACE_HEADER,
   MAP_TILES_OFFLINE_REASONS,
   appIntentDecisionSchema,
+  changelogViewSchema,
   WIDGET_PERFORM_HEADER,
   WIDGET_PERFORM_VERSION,
   type WidgetPerformReport,
@@ -407,6 +411,11 @@ export interface Timeline {
   snapshots: TimelineSnapshotView[];
   metadata: { messageCount: number; taskCount: number; updatedAt: string };
   activeTaskIds: string[];
+  /**
+   * Which part of the conversation `messages` is, by message sequence. Absent from a node older than windows, whose
+   * every timeline is a whole page to be taken as it is (see `mergeTimeline`).
+   */
+  window?: TimelineWindow;
 }
 
 export interface ResolvedDataset {
@@ -1240,6 +1249,23 @@ export class GatewayClient {
     return this.#call("GET", `/conversations/${conversationId}/timeline?after=${after}`);
   }
 
+  /**
+   * One page of a conversation by message sequence: the newest, the one before a sequence, or the one after it.
+   *
+   * What the page stands for comes back as its `window`, so the caller merges it into what it holds
+   * (`mergeTimeline`) rather than replacing that with it.
+   */
+  timelinePage(conversationId: string, page: TimelinePageQuery, limit?: number): Promise<Timeline> {
+    const query =
+      page.kind === "latest"
+        ? "window=latest"
+        : page.kind === "before"
+          ? `before=${String(page.beforeSequence)}`
+          : `after=${String(page.afterSequence)}`;
+    const sized = limit === undefined ? query : `${query}&limit=${String(limit)}`;
+    return this.#call("GET", `/conversations/${conversationId}/timeline?${sized}`);
+  }
+
   dataset(datasetId: string): Promise<ResolvedDataset> {
     return this.#call("GET", `/datasets/${datasetId}`);
   }
@@ -1501,6 +1527,16 @@ export class GatewayClient {
   }
 
   /**
+   * What this version of Clark changed: the release notes embedded with the node's build, read through the same
+   * capability `/changelog` answers from. Checked against the contract, so a malformed answer is an error rather than
+   * a half-drawn list.
+   */
+  async changelog(since?: string): Promise<ChangelogView> {
+    const query = since === undefined || since.trim() === "" ? "" : `?since=${encodeURIComponent(since.trim())}`;
+    return changelogViewSchema.parse(await this.#call("GET", `/changelog${query}`));
+  }
+
+  /**
    * The providers and models this node can run, and the one it is configured for.
    *
    * Read from the node's own catalogue rather than from a list kept here, so upgrading pi on the node makes a new
@@ -1602,7 +1638,7 @@ export class GatewayClient {
         : { type: "widget-perform-unreadable", performId: read.performId, report: read.report },
       (performId, report) => this.reportWidgetPerform(performId, report),
     );
-    return { ...rest, timeline: await this.timeline(conversationId) };
+    return { ...rest, timeline: await this.timelinePage(conversationId, { kind: "latest" }) };
   }
 
   /**
@@ -1950,11 +1986,13 @@ export class GatewayClient {
    *
    * `contentDigest` is what a listing by a path on this machine showed of its files, sent back so the node installs
    * those files or refuses (`DIGEST_MISMATCH`) when they changed since. The node digests the files itself either way.
+   * `sourceId` is the directory source the listing's row named; the node installs only from that source.
    */
   installPackage(
     packageId: string,
     version: string,
     contentDigest?: string,
+    sourceId?: string,
   ): Promise<{
     installed?: { packageId: string; version: string };
     code?: string;
@@ -1965,7 +2003,12 @@ export class GatewayClient {
     verified?: string;
   }> {
     return this.#changedPackages(
-      this.#call("POST", "/packages/install", { packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) }),
+      this.#call("POST", "/packages/install", {
+        packageId,
+        version,
+        ...(contentDigest === undefined ? {} : { contentDigest }),
+        ...(sourceId === undefined ? {} : { sourceId }),
+      }),
     );
   }
 

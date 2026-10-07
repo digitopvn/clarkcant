@@ -88,6 +88,11 @@ export interface ShellWindowState {
   mode: WindowMode;
   alwaysOnTop: boolean;
   fullScreen: boolean;
+  /**
+   * Whether this desktop can keep the window above others at all. False under native Wayland, where no protocol lets an
+   * app do it, so the chrome offers no pin it cannot honour. A shell from before this field always could.
+   */
+  pinnable: boolean;
 }
 
 /**
@@ -253,11 +258,16 @@ export async function readShellWindow(scope: unknown = globalThis): Promise<Shel
   if (typeof answer !== "object" || answer === null) return undefined;
   const window = (answer as { window?: unknown }).window;
   if (typeof window !== "object" || window === null) return undefined;
-  const { mode, alwaysOnTop, fullScreen } = window as { mode?: unknown; alwaysOnTop?: unknown; fullScreen?: unknown };
+  const { mode, alwaysOnTop, fullScreen, pinnable } = window as {
+    mode?: unknown;
+    alwaysOnTop?: unknown;
+    fullScreen?: unknown;
+    pinnable?: unknown;
+  };
   if (typeof mode !== "string") return undefined;
   // `orb` has no control of its own in the chrome, so it reads as a window to be restored like any other.
   const known = mode === "compact" || mode === "expanded" ? mode : "normal";
-  return { mode: known, alwaysOnTop: alwaysOnTop === true, fullScreen: fullScreen === true };
+  return { mode: known, alwaysOnTop: alwaysOnTop === true, fullScreen: fullScreen === true, pinnable: pinnable !== false };
 }
 
 /** Whether this shell can close its window from the chrome. An older shell cannot, and gets no close button. */

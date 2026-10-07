@@ -38,12 +38,13 @@ The stable surface is the one `/openapi.json` describes:
 | Method | Path | Body |
 |---|---|---|
 | GET | `/node` | – |
+| GET | `/changelog?since=` | – — what this version of Clark changed, from the release notes embedded with the build (offline, read-only); `since` keeps the releases after a version such as `1.4`; a build run from source adds `notesCover`, the commit and date its notes reach; `400` for a value that is not a version, `503 CHANGELOG_UNAVAILABLE` when the build carries no readable notes ([releases](releases.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — person-owned deletion; policy may ask or refuse |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — waits for the answer |
 | POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `widget-perform`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — stops the reply being written; keeps what was written, labelled as stopped; answers `{ stopped }` |
-| GET | `/conversations/{id}/timeline?after=N` | – |
+| GET | `/conversations/{id}/timeline?after=N` · `?before=N` · `?window=latest`, each with `&limit=` | – one page of the conversation; see [Reading a long conversation](#reading-a-long-conversation) |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — something happened; `202` recorded, `200` already recorded |
@@ -107,6 +108,40 @@ message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a 
 Only a message with a surface counts as the person's own words where that matters, such as which sites a browser task
 may act on; any other value of the header is ignored.
 
+### Reading a long conversation
+
+A conversation can grow far past what one read should carry, so the timeline route answers one page of its messages,
+oldest first, chosen by message sequence: the order the node stores one conversation's messages in.
+
+| Query | Page |
+|---|---|
+| none, or `after=N` | the messages just after sequence `N`; none is `after=0`, the page this route always answered |
+| `before=N` | the messages just before sequence `N`, for scrolling back |
+| `window=latest` | the newest messages, which is what reopening a conversation shows |
+
+At most one of the three may be given, and `limit` sizes the page: 1 to 500, 200 when absent. Anything else is
+`400 INVALID_SCHEMA`.
+
+Every timeline, from this route or carried in another answer, includes `window`:
+
+```json
+{ "version": 1, "fromSequence": 1901, "toSequence": 2100, "hasOlder": true, "hasNewer": false, "sequences": [1901, 1902, "..."] }
+```
+
+The page holds every stored message with `fromSequence <= sequence <= toSequence`, and no other. `sequences` gives
+each message's sequence in the order of `messages`. `hasOlder` means `before=<fromSequence>` reads the page that meets
+this one, and `hasNewer` means `after=<toSequence>` does. Two pages whose ranges meet or overlap merge into one range
+with no message twice and no gap. Inside its own range, the more recent page is right, so a removed message goes.
+Pages that do not meet cannot be stitched together, and a reader can tell that from the numbers.
+
+The event `cursor` a timeline also carries is a different number. It says which events a reader has seen, not which
+messages it holds, and is never a page cursor.
+
+Every answer that carries the conversation answers with its newest page. This covers sending a message, the SSE
+`done` event, widget actions, pins, answered questions and cards, and approvals. A widget action's answer also
+carries the instance it acted on, and every timeline carries the instances of the conversation's pins, wherever their
+messages are. A reader holding older history merges that page into what it holds instead of starting over.
+
 ### Who asked: a turn's origin
 
 The node also records who started each turn, as the user message's `origin`, when it accepts the message. It is read
@@ -120,6 +155,7 @@ from what the gateway already knows and never from the request body:
 | `cli-api` | any other token holder: `clarkcant api`, a script, or any other value of the header |
 | `automation` | a scheduled or standing automation's task |
 | `peer` | a task another node delegated to this one |
+| `channel` | a message on an external messaging channel bound to the conversation (set only by the node's channel service) |
 
 A body field such as `"origin": "person"` is ignored, so a machine surface cannot claim to be the person. The token
 is the trust boundary, as it is for `surface`: a holder that sends the composer's header itself is treated as the page.
@@ -167,6 +203,27 @@ The origin stays with the work it started:
 `execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and
 `clarkcant api`. So a program holding the node token can change this setting. Undoing `execution.machineTurns` puts
 back only that choice; it answers `undone: false` when the last policy write did not change it.
+
+A `channel` turn is different from the machine surfaces: its sender is someone on an external channel, not a holder of
+this node's token, and what the turn may do depends on who that is. The node decides it from the principal the
+sender's account maps to, never from a display name or anything the message says:
+
+- **Owner.** The owner's own account, or any external account linked to the owner's principal, acts as the owner: the
+  turn gets the owner's context and is decided by the one execution policy like any other turn, with no extra prompt.
+- **Participant.** Anyone else. The turn gets none of the owner's memory, personal or project instructions, screen
+  context or the machine's context files, and runs on a model session of its own (a session that served the owner is
+  never reused for it). The host tells the model the sender is not the owner. Conversation (the reply to the same
+  thread, a view or a question put in it) stays autonomous; any other tool call runs only when a standing grant on the binding covers that tool
+  (`grantRefs`, each `tool:<name>`) or the owner approved that exact call. Otherwise the call is held, nothing runs,
+  and the owner is asked on an approval card in the conversation; approving it carries on as the participant's turn and
+  lets that one call through once. Deciding an approval is never opened to a participant.
+
+The default binding audience admits everyone in the bound space; the rules above are what keep that safe. Such a user
+message also carries `authorPrincipalId` (the principal the channel's sender maps to, so the
+transcript can tell several speakers apart) and, when it answers a message of this conversation, `inReplyToMessageId`.
+Both are optional, set only by the node, and absent on every other message. No provider ships in this build and no
+HTTP route accepts channel deliveries yet; the substrate is described in
+[system-architecture.md](system-architecture.md) (§7.3, "External messaging channels").
 
 ### Which model answered: the model note
 
@@ -633,6 +690,27 @@ A file name in `Content-Disposition` is sent as RFC 6266 describes: an ASCII `fi
 percent-encoded UTF-8 in `filename*`. Bidi controls are dropped from both, a percent sign becomes `_` in the ASCII
 name, and a name longer than 120 characters is shortened before its extension, which is always kept.
 
+**Where listings come from.** The directory a node searches and installs from is composed of sources: the index
+file `CC_DIRECTORY_INDEX` names, each feed in `CC_DIRECTORY_MARKETPLACES`, and the official ClarkCant Marketplace
+(on unless `CC_OFFICIAL_MARKETPLACE=off`); precedence, refresh and the feed format are in
+[directory metadata](widget-development.md#18-directory-metadata). The `marketplace-results` card carries
+`origin: { kind, label }` on each row when the card holds several sources (`kind` is `local-file`,
+`custom-marketplace` or `official-marketplace`), and `sources: [{ kind, label, state, fetchedAt?, reason? }]` for each
+source that did not fully answer (`state` is `stale`, `not-fetched`, `unreachable`, `unsupported` or `unreadable`).
+Each row also carries `sourceId` (`local`, `official` or `custom-<hash>`), which the Install button sends back.
+`search_directory` takes an optional `packageId` and then lists every version of that package with its details.
+`POST /packages/install` refreshes a remote source once when the listing is missing from the node's copy, answers
+`404 NOT_IN_DIRECTORY` naming any source that did not answer, and `409 DIRECTORY_UNREADABLE` when no source could be
+read or the index file is broken. It takes an optional `sourceId`: the source the person chose by pressing Install on a
+row. Without one, it answers `409 DIRECTORY_SOURCE_UNREAD` when an earlier source could not be read, and
+`409 DIRECTORY_SOURCE_CHANGED` when the package is installed from a different source. With one, it answers
+`409 DIRECTORY_SOURCE_CHANGED` when another source owns the listing by now. The node records the source on the
+installed generation (`directorySource`), and update notices come only from that source; a generation installed
+before sources were recorded counts as installed from the index file. An install approval holds the source that owned
+the listing when the person was asked, and `POST /packages/approvals/{id}/decision` with `granted` answers
+`409 DIRECTORY_SOURCE_CHANGED` when another source owns it by then. A listing from a marketplace installs through
+exactly the same checks as one from a file.
+
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
 Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
 restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
@@ -747,6 +825,12 @@ part of the stable description and may change.
 | `node_status` | – | `GET /node` |
 | `read_inbox` | – | `GET /inbox` |
 | `act_on_notice` | `noticeId`, `action`, `until?` | `POST /inbox/notices/{noticeId}/actions/{action}` |
+
+`read_conversation` without `after` reads the newest page (`window=latest`), so a question Clark is waiting on is in it
+however long the conversation is. Its `structuredContent.cursor` is the page's `window.toSequence`: a message sequence,
+passed back as `after` to read only the messages written since. It is not the timeline's event `cursor`, and it never
+passes the newest message: an `after` beyond it comes back as the newest message's sequence. `hasNewer` says more
+messages are left after this page; read again with the new cursor until no messages come back.
 
 **No approval tool, on purpose.** An approval is the person's decision about something an agent wants to do; an MCP
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and

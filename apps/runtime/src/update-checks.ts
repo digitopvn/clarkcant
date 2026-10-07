@@ -1,9 +1,13 @@
 import { entryFitsHost, platformForHost, type Instant, type Platform } from "@clarkcant/contracts";
 import {
   HOST_API_VERSION,
-  directoryIndexPath,
-  readDirectoryIndex,
+  LOCAL_DIRECTORY_SOURCE_ID,
+  PRE_SOURCES_DIRECTORY_SOURCE,
+  originOf,
+  readDirectory,
+  refreshDirectory,
   listInstalledPackages,
+  type DirectoryOrigin,
   type InstallDeps,
   type InstalledPackageView,
 } from "@clarkcant/core";
@@ -21,8 +25,10 @@ import {
 /**
  * Checking whether an installed package or widget has a newer version published.
  *
- * The upstream is the directory index this node already reads for search and install (`packages/core`'s
- * `readDirectoryIndex`/`directoryIndexPath`) — no second resolver, no network call of its own. A directory that is not
+ * The upstream is the directory this node already reads for search and install (`packages/core`'s `readDirectory`, every
+ * configured source composed) — no second resolver. The pass itself reads only local state; the timer first refreshes the
+ * remote sources this node has fetched before (never making first contact with one), so a package installed from a
+ * marketplace hears about its next version. A directory that is not
  * configured, or entries that name no newer version, produce nothing. A directory commonly lists several versions of
  * the same package; every entry for that `packageId` is considered, filtered to the ones the installer would actually
  * accept (`entryFitsHost`, the same host/platform preflight `installPackage` runs, plus a non-empty digest), and the
@@ -41,6 +47,12 @@ import {
  * `git`-sourced entry is compared on its own declared `version` field exactly like an `npm` one (both are ordinary
  * semver on the directory entry), so a publisher that bumps `version` on a new commit is still caught; a publisher
  * that pushes a new commit without bumping `version` is not, and this module does not pretend otherwise.
+ *
+ * An update is only ever offered from the source the package was installed from (`InstalledPackageView.directorySource`):
+ * the same package id listed by another source is another publisher's claim, not a newer version of what is installed.
+ * A package installed before the source was recorded came from the person's index file, the only source there was, so
+ * it takes its updates from the index file alone; when the index file does not list it, no update is offered. The
+ * notice names the source.
  */
 
 export const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
@@ -60,6 +72,26 @@ export interface UpdateCandidate {
   hostApi: { min: number; max: number };
   /** The platforms the entry declares it runs on. */
   platforms: readonly Platform[];
+  /** The directory source that lists the entry. Unknown counts as the index file, the only source there once was. */
+  origin?: DirectoryOrigin;
+}
+
+/** The longest source name an update notice carries, so the notice stays within its bound. */
+const NOTICE_SOURCE_LABEL_MAX = 120;
+
+/**
+ * Whether `candidate` comes from the source an update for `installed` may be offered from: the one recorded at install,
+ * or, for a package installed before sources were recorded, the index file (`PRE_SOURCES_DIRECTORY_SOURCE`).
+ */
+function fromInstalledSource(candidate: UpdateCandidate, installed: InstalledPackageView): boolean {
+  const pinned = (installed.directorySource ?? PRE_SOURCES_DIRECTORY_SOURCE).id;
+  return (candidate.origin?.id ?? LOCAL_DIRECTORY_SOURCE_ID) === pinned;
+}
+
+function noticeSourceLabel(origin: DirectoryOrigin | undefined): { sourceLabel?: string } {
+  if (origin === undefined) return {};
+  const label = origin.label;
+  return { sourceLabel: label.length > NOTICE_SOURCE_LABEL_MAX ? `…${label.slice(-(NOTICE_SOURCE_LABEL_MAX - 1))}` : label };
 }
 
 /**
@@ -186,6 +218,7 @@ export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport 
         .filter(
           (entry) =>
             entry.packageId === installed.packageId &&
+            fromInstalledSource(entry, installed) &&
             isInstallableCandidate(entry, platform) &&
             isNewerVersion(entry.version, installed.version) &&
             !skipped(entry.version),
@@ -202,6 +235,7 @@ export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport 
           currentVersion: installed.version,
           newVersion: newest.version,
           sourceKind: newest.sourceKind,
+          ...noticeSourceLabel(newest.origin),
           lane: newest.lane,
           at: input.now(),
           language: ownerLocale(input.services.runtime),
@@ -233,8 +267,10 @@ function sourceKindOf(source: { kind: "local" | "git" | "npm" }): "npm" | "git" 
 export interface UpdateCheckJobDeps {
   services: NoticeServices;
   installDeps: InstallDeps;
-  /** Where the directory index lives, when one is configured. Defaults to reading `CC_DIRECTORY_INDEX`. */
+  /** Where the directory sources are configured. Defaults to this process's environment. */
   env?: NodeJS.ProcessEnv;
+  /** The node's data folder, where remote directory copies are kept. Without it only the index file is read. */
+  dataDir?: string;
   now?: () => Instant;
   intervalMs?: number;
   /** The platform directory entries are checked against. Defaults to this process's host; a test pins it. */
@@ -245,18 +281,22 @@ export interface UpdateCheckJobDeps {
 export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport {
   const now = deps.now ?? (() => new Date().toISOString() as Instant);
   const installed = listInstalledPackages(deps.installDeps);
-  const index = readDirectoryIndex(directoryIndexPath(deps.env ?? process.env));
+  const index = readDirectory({ env: deps.env ?? process.env, dataDir: deps.dataDir });
   const directory: UpdateCandidate[] =
     index.kind === "configured"
-      ? index.entries.map((entry) => ({
-          packageId: entry.packageId,
-          version: entry.version,
-          sourceKind: sourceKindOf(entry.source),
-          lane: entry.riskTier,
-          digest: entry.digest,
-          hostApi: entry.hostApi,
-          platforms: entry.platforms,
-        }))
+      ? index.entries.map((entry) => {
+          const origin = originOf(index, entry);
+          return {
+            packageId: entry.packageId,
+            version: entry.version,
+            sourceKind: sourceKindOf(entry.source),
+            lane: entry.riskTier,
+            digest: entry.digest,
+            hostApi: entry.hostApi,
+            platforms: entry.platforms,
+            ...(origin === undefined ? {} : { origin }),
+          };
+        })
       : [];
 
   return checkForUpdates({
@@ -272,7 +312,7 @@ export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport 
  * Start the periodic job: an unref'd interval, so it never holds the process open on its own.
  *
  * Runs once shortly after start (so a node does not wait a full interval to say anything), then every `intervalMs`. A
- * pass reads only local state and finishes before the next tick can start, so passes never overlap. A pass that throws
+ * tick that arrives while a pass (with its bounded directory refresh) is still running is skipped, so passes never overlap. A pass that throws
  * is reported on stderr and the next tick runs as usual. The caller runs `stop()` when the node closes, the same as
  * every other unref'd timer this runtime owns (`pi-session-watch.ts`, `server.ts`'s keep-alive).
  */
@@ -280,13 +320,21 @@ export function startUpdateCheckTimer(deps: UpdateCheckJobDeps): { stop: () => v
   const intervalMs = deps.intervalMs ?? DEFAULT_UPDATE_CHECK_INTERVAL_MS;
   let stopped = false;
 
+  let running = false;
   const runOnce = (): void => {
-    if (stopped) return;
-    try {
-      runUpdateCheckOnce(deps);
-    } catch (cause: unknown) {
-      process.stderr.write(`update check: not completed — ${cause instanceof Error ? cause.message : String(cause)}\n`);
-    }
+    if (stopped || running) return;
+    running = true;
+    // Refresh never throws and is bounded by its own timeout; a source it could not reach is listed from its last copy.
+    void refreshDirectory({ env: deps.env ?? process.env, dataDir: deps.dataDir }, { onlyIfCached: true })
+      .then(() => {
+        if (!stopped) runUpdateCheckOnce(deps);
+      })
+      .catch((cause: unknown) => {
+        process.stderr.write(`update check: not completed — ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      })
+      .finally(() => {
+        running = false;
+      });
   };
 
   const startTimer = setTimeout(runOnce, 0);
