@@ -494,11 +494,13 @@ tham chiếu đó, trước khi bất cứ thứ gì được lưu. Những gì 
 Tham chiếu là con trỏ, không phải quyền: đọc, chạy hay thay đổi thứ nó trỏ tới vẫn đi qua các bước kiểm tra thường lệ
 của node.
 
-`GET /composer/suggestions` là thứ lấp đầy bộ chọn: kỹ năng sau `/`; dự án, dịch vụ, hội thoại (theo tiêu đề, hoặc theo
-phần đầu tin nhắn đầu tiên khi tiêu đề chỉ là tên mặc định của client) và việc nền sau `@`; một thư mục của dự án sau
-`@<dự án>/`. Tối đa 8 dòng, xếp theo khớp chính xác, rồi khớp đầu, rồi khớp một phần, rồi theo loại (dự án, dịch vụ, hội
-thoại, việc nền), thứ dùng gần đây lên trước, gõ dấu hay không đều được. Khi chưa gõ gì sau `@`, mỗi loại đều có phần
-dòng của mình. Dòng không chọn được sẽ nói lý do trong `disabledReason`. Dịch vụ được gọi bằng id mà gói của nó đặt và
+`GET /composer/suggestions` là thứ lấp đầy bộ chọn: các lệnh gạch chéo của node, rồi đến kỹ năng, sau `/`; dự án, dịch
+vụ, hội thoại (theo tiêu đề, hoặc theo phần đầu tin nhắn đầu tiên khi tiêu đề chỉ là tên mặc định của client) và việc nền
+sau `@`; một thư mục của dự án sau `@<dự án>/`. Tối đa 8 dòng, xếp theo khớp chính xác, rồi khớp đầu, rồi khớp một phần,
+rồi theo loại (lệnh, kỹ năng; hoặc dự án, dịch vụ, hội thoại, việc nền), thứ dùng gần đây lên trước, gõ dấu hay không đều
+được. Khi chưa gõ gì sau `/` hoặc `@`, mỗi loại đều có phần dòng của mình, và phần một loại không dùng hết thì nhường cho
+các loại khác, nên `/` trống luôn liệt kê kỹ năng dù node có bao nhiêu lệnh. Dòng không chọn được sẽ nói lý do trong
+`disabledReason`. Dịch vụ được gọi bằng id mà gói của nó đặt và
 chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao giờ kèm thứ nó được khởi động cùng hay lý do nó lỗi;
 `serviceKey` của nó còn gắn với thế hệ gói đang chạy nó, nên một bản cập nhật làm tham chiếu cũ hết hiệu lực.
 
