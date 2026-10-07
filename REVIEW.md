@@ -178,8 +178,9 @@ The merge gate is `.github/required-checks.json`, enforced by the
 - every job in `.github/workflows/ci.yml` must pass, including both
   `service container (rootless …)` jobs and `widget tooling smoke`, unless the
   file lists it as non-gating with a reason (until the first release: the
-  macOS and Windows `verify` and `reference theme browser` legs still run but
-  do not block; look at them before merging a platform-sensitive change);
+  macOS and Windows `verify` and `reference theme browser` legs and the macOS
+  `widget tooling smoke` still run but do not block; look at them before
+  merging a platform-sensitive change);
 - `review attestation` must pass: a status set by
   `.github/workflows/review-attestation.yml` when the newest attestation by a
   writer is `ready` for the exact head; PRs that change only Markdown under
