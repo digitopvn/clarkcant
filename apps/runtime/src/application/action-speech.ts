@@ -147,6 +147,11 @@ export function spokenApprovalDecided(decision: "granted" | "denied", locale: Sp
   return locale === "vi" ? "Đã duyệt." : "Approved.";
 }
 
+/** The question voice asks about an approval card an agent turn placed, read from the card's own description. */
+export function spokenApprovalQuestion(description: string, locale: SpeechLocale): string {
+  return locale === "vi" ? `${description}. Bạn cho phép chạy hay là không?` : `${description}. Do you allow it to run, or not?`;
+}
+
 /** What voice says when a spoken widget action failed before it could answer: nothing is claimed about the widget. */
 export function spokenActionFailed(label: string, locale: SpeechLocale): string {
   return locale === "vi"

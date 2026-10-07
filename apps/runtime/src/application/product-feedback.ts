@@ -351,18 +351,27 @@ type MarkerLookup =
 /**
  * Find the report on GitHub by its marker: the new issue it opened, or its comment on the duplicate. `attemptedAt` is
  * when the write was first handed to the ledger, which no later check moves, so the window always reaches back past
- * the moment GitHub could have created it. A new issue is looked for among the token owner's own issues only (asked of
- * GitHub once per lookup), so other traffic in the repository does not run the scan out; a list that still runs past
- * it is `inconclusive`, which checking again would not change.
+ * the moment GitHub could have created it. A new issue is looked for among the issues of the account that sent it, so
+ * other traffic in the repository does not run the scan out; a list that still runs past it is `inconclusive`, which
+ * checking again would not change.
+ *
+ * That account is the login recorded when the write was sent (`attemptLogin`), so a token that has since changed hands
+ * does not hide the report. Without one, the token owner is asked of GitHub once per lookup; a token GitHub will not
+ * name an owner for is scanned for without the filter, which still ends `inconclusive` rather than wrong.
  */
-async function findByMarker(client: FeedbackGithubClient, draft: FeedbackDraft, attemptedAt: Instant): Promise<MarkerLookup> {
+async function findByMarker(
+  client: FeedbackGithubClient,
+  draft: FeedbackDraft,
+  attemptedAt: Instant,
+  attemptLogin: string | undefined,
+): Promise<MarkerLookup> {
   const marker = feedbackMarker(draft.reportId);
   try {
     if (draft.duplicateOf !== undefined) {
       const comment = await client.findCommentWithMarker(draft.duplicateOf.number, marker, attemptedAt);
       return comment === undefined ? { kind: "absent" } : { kind: "found", issue: draft.duplicateOf, commentUrl: comment.url };
     }
-    const creator = await client.viewerLogin();
+    const creator = attemptLogin ?? (await ownerOrUnfiltered(client));
     const issue = await client.findIssueWithMarker(marker, attemptedAt, creator);
     return issue === undefined ? { kind: "absent" } : { kind: "found", issue: issueRef(issue) };
   } catch (cause) {
@@ -371,18 +380,43 @@ async function findByMarker(client: FeedbackGithubClient, draft: FeedbackDraft, 
   }
 }
 
+/**
+ * The token owner's login, or `undefined` — no filter — when GitHub refuses to name one: a token that cannot call
+ * `GET /user` would otherwise leave every check failing. Anything else (unreachable, rate-limited) still throws.
+ */
+async function ownerOrUnfiltered(client: FeedbackGithubClient): Promise<string | undefined> {
+  try {
+    return await client.viewerLogin();
+  } catch (cause) {
+    if (cause instanceof FeedbackGithubError && cause.kind === "refused" && !cause.retryable) return undefined;
+    throw cause;
+  }
+}
+
+/** The login a write is about to be sent as, or `undefined` when GitHub does not say; never a reason not to send. */
+async function attemptLoginOf(client: FeedbackGithubClient, draft: FeedbackDraft): Promise<string | undefined> {
+  if (draft.duplicateOf !== undefined) return undefined;
+  try {
+    return await client.viewerLogin();
+  } catch {
+    return undefined;
+  }
+}
+
 function save(
   services: FeedbackServices,
   record: FeedbackReportRecord,
   status: FeedbackReportRecord["status"],
   publication: FeedbackPublication,
-  effectId?: string,
+  attempt?: { effectId: string; login?: string },
 ): FeedbackReportRecord {
   const at = ledgerNow();
-  const moved = updateFeedbackReport(services.runtime.db, { reportId: record.reportId, status, publication, ...(effectId === undefined ? {} : { effectId }), at });
+  const moved = updateFeedbackReport(services.runtime.db, { reportId: record.reportId, status, publication, ...(attempt === undefined ? {} : { attempt }), at });
   // Already published by a concurrent attempt: what GitHub was read back holding wins.
   if (!moved) return getFeedbackReport(services.runtime.db, record.reportId) ?? record;
-  return { ...record, status, publication, ...(effectId === undefined ? {} : { effectId }), updatedAt: at };
+  if (attempt === undefined) return { ...record, status, publication, updatedAt: at };
+  const { attemptLogin: _replaced, ...earlier } = record;
+  return { ...earlier, status, publication, effectId: attempt.effectId, ...(attempt.login === undefined ? {} : { attemptLogin: attempt.login }), updatedAt: at };
 }
 
 function published(record: FeedbackReportRecord, found: { issue: FeedbackIssueRef; commentUrl?: string }): FeedbackPublication {
@@ -421,7 +455,7 @@ async function reconcileAttempt(
   // Without the ledger entry the search still runs from the report's last change: a marker found is proof whatever the
   // window, while a marker not found proves nothing and is answered as unknown below.
   const attemptedAt = effect?.preparedAt ?? record.updatedAt;
-  const lookup = await findByMarker(client, record.draft, attemptedAt);
+  const lookup = await findByMarker(client, record.draft, attemptedAt, record.attemptLogin);
   if (lookup.kind === "found") {
     if (effect !== undefined) settleObserved(services, effect, "confirmed", `GitHub holds the report's marker in #${String(lookup.issue.number)}`);
     return save(services, record, "published", published(record, lookup));
@@ -479,7 +513,9 @@ function manualUrlOf(draft: FeedbackDraft): string {
 function inconclusiveAttempt(record: FeedbackReportRecord, since: Instant, say: (vi: string, en: string) => string): FeedbackPublication {
   const draft = record.draft;
   const day = since.slice(0, 10);
-  const query = draft.duplicateOf === undefined ? `is:issue author:@me created:>=${day}` : `is:issue commenter:@me updated:>=${day}`;
+  // The account the report was sent as, when known: the person's browser may be signed in as another one.
+  const author = record.attemptLogin ?? "@me";
+  const query = draft.duplicateOf === undefined ? `is:issue author:${author} created:>=${day}` : `is:issue commenter:@me updated:>=${day}`;
   return {
     status: "unknown",
     reportId: record.reportId,
@@ -610,6 +646,9 @@ async function sendAndReadBack(
 ): Promise<FeedbackReportRecord> {
   const draft = record.draft;
   const say = sayIn(localeOf(services, ledgerNow));
+  // Whose issue it will be, asked before the write so a later check looks among that account's issues even if the
+  // token changes hands. The answer never decides whether it is sent: the write itself says what the token may do.
+  const login = await attemptLoginOf(client, draft);
   let opened: OpenedActionEffect;
   try {
     opened = openActionEffect(services, {
@@ -630,7 +669,13 @@ async function sendAndReadBack(
     });
   }
   const attemptedAt = opened.effect.preparedAt;
-  let sending = save(services, record, "publishing", { status: "unknown", reportId: record.reportId, reason: "sending" }, opened.effect.effectId);
+  let sending = save(
+    services,
+    record,
+    "publishing",
+    { status: "unknown", reportId: record.reportId, reason: "sending" },
+    { effectId: opened.effect.effectId, ...(login === undefined ? {} : { login }) },
+  );
 
   let written: { issueNumber: number; commentId?: number };
   try {
@@ -656,7 +701,7 @@ async function sendAndReadBack(
       });
     }
     // Sent, and no answer to trust. Look once now; otherwise it is unknown and found again by its marker.
-    const lookup = await findByMarker(client, draft, attemptedAt);
+    const lookup = await findByMarker(client, draft, attemptedAt, login);
     if (lookup.kind === "found") {
       settleActionEffect(services, opened, { kind: "answered", evidence: `GitHub holds the report's marker in #${String(lookup.issue.number)}` });
       return save(services, sending, "published", published(sending, lookup));
