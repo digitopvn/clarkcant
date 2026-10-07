@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
+import { closeSync, lstatSync, openSync, readdirSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import {
@@ -223,6 +223,16 @@ function sizeOf(root: string): number {
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
+/** Holds `root` open where that keeps its file id from being given to a folder made again there; undefined elsewhere. */
+function pinRoot(root: string): number | undefined {
+  if (process.platform === "win32") return undefined;
+  try {
+    return openSync(root, "r");
+  } catch {
+    return undefined;
+  }
+}
+
 /** Which folder a path named when it was first watched: its device and file id, which a folder made again does not keep. */
 export interface DevRootIdentity {
   dev: bigint;
@@ -424,6 +434,13 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    * the watcher does not hear (Windows keeps watching the deleted one), so it counts as gone. Only taken when watching.
    */
   let identity: DevRootIdentity | undefined;
+  /**
+   * The watched folder held open, on Linux and macOS, while it is watched. A folder deleted there frees its file id, and
+   * one made again at the same path straight after is commonly given the same id back, so it would read as the same
+   * folder; held open, the deleted folder keeps its id and the new one is given another. Windows gives a new folder a new
+   * id already, and a folder held open there could not be deleted, so nothing is held there.
+   */
+  let pin: number | undefined;
   let watcher: FSWatcher | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let rootCheck: ReturnType<typeof setInterval> | undefined;
@@ -438,6 +455,14 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     rootCheck = undefined;
     watcher?.close();
     watcher = undefined;
+    if (pin !== undefined) {
+      try {
+        closeSync(pin);
+      } catch {
+        // Already closed; nothing else holds it.
+      }
+      pin = undefined;
+    }
   };
   /**
    * Whether the folder is still there, and if not, stop watching and say so. A folder deleted, renamed or replaced while
@@ -454,6 +479,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   };
   if (options.watch !== false) {
     try {
+      pin = pinRoot(root);
       identity = devRootIdentityOf(root);
       watcher = watch(root, { recursive: true }, (_event, filename) => {
         const name = typeof filename === "string" ? filename : "";
