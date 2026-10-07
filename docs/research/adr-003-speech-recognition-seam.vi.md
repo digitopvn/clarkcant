@@ -56,10 +56,21 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      - một glossary lập trình có sẵn, với các lỗi nghe sai đã biết làm alias.
    - Mọi term đi qua `redactSecrets` dùng chung, và bị loại nếu redaction chạm vào nó. Không có bộ pattern secret thứ
      hai nào.
-   - Khi recognizer chuyên dụng được bật, các term - kể cả định danh, path, tên branch và số issue trích từ hội thoại -
-     được gửi tới nó làm vocabulary. Các câu trong hội thoại chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
+   - Khi recognizer chuyên dụng được bật, một phần vocabulary được gửi tới nó (xem bên dưới). Các câu trong hội thoại
+     chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
    - Adapter của từng provider dịch vocabulary sang field riêng của mình. Gemini chỉ nhận cách viết chuẩn, vì kéo
      recognizer về phía một lỗi nghe sai đã biết thì đi ngược mục đích.
+   - Vocabulary của recognizer là một thiên lệch (bias), và bias là một near-match không cần bằng chứng: đo trên audio
+     (issue #573), nó viết một term trong danh sách đè lên một từ khác mà người dùng đã nói. "Jeff" thành `Jev`,
+     "claude opus 3" thành `claude-opus-4`, và `setUser` thành `getUser` (khi không gửi `getUser` thì thành
+     `useState`). Model transcription không nhận chỉ dẫn nào có thể giới hạn điều này, và không trả về phương án thay
+     thế hay confidence, nên sau khi nhận dạng không có cách nào phân biệt một sự thay thế với điều đã được nói. Vì vậy
+     recognizer chỉ nhận những loại mà chính normaliser được phép near-match - từ glossary, provider và model:
+     - id model được gửi dưới dạng họ model khi nói, tức phần trước phần có số đầu tiên (`claude-opus-4` thành
+       `claude-opus`), để giúp cách viết mà không chọn phiên bản;
+     - một từ ngắn không phải từ viết tắt (`Jev`, `Pi`) không được gửi, vì có từ thật và tên người nghe giống nó;
+     - symbol, path, branch, package, tool, lệnh và issue ở lại trên node. Hàng xóm của chúng là những tên thật khác,
+       và normaliser chỉ khôi phục cách viết của chúng từ một dạng nói khớp chính xác.
 4. **Một normaliser tất định, không phải model.**
    - Các quy tắc là casing, khoảng cách, alias và near-match cách một lỗi. Mỗi quy tắc cần bằng chứng: câu có tiếng
      Việt, hoặc có một mốc kỹ thuật nằm ngoài đoạn được sửa.
@@ -95,6 +106,13 @@ mặc định vẫn là đường đã hoạt động. Normaliser cũng cải th
 nhận phần lớn những gì chuẩn hóa có thể mang lại. Một bộ chọn provider trong giao diện sẽ bắt người dùng đưa ra một
 quyết định họ không thể đánh giá, nên không có bộ chọn nào.
 
+Bias của vocabulary là lý do thứ hai. Một recognizer viết một term trong danh sách đè lên điều đã được nói sẽ gửi một
+phiên bản model sai hoặc một symbol sai tới Clark như thể người dùng đã nói vậy, ngay trước lớp mà các bảo đảm của
+normaliser có hiệu lực. Vocabulary đã thu hẹp ở trên loại bỏ các trường hợp đã đo được cho tới nay, nhưng có cái giá:
+những định danh trước đây vocabulary mang theo giờ được nghe mà không có trợ giúp (xem lượt kiểm tra audio bên dưới).
+Recognizer vẫn phải bật chủ động cho tới khi một lượt chạy audio trên giọng nói thật cho thấy cả việc không có sự thay
+thế nào lẫn độ chính xác đáng với sự đánh đổi đó.
+
 ## Bằng chứng
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` chạy bộ chấm điểm trên
@@ -121,7 +139,23 @@ từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có
 
 Cùng lệnh đó với `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` nhận dạng bản ghi âm thật, chấm
 điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lượt chạy đó cần `GEMINI_API_KEY`, và dừng với thông báo
-"external gate" nếu không có key.
+"external gate" nếu không có key. Nó cũng báo mọi utterance mà văn bản nhận dạng chứa một term của phiên mà người dùng
+không nói, và thoát với mã 3 khi có ít nhất một utterance như vậy. Corpus đánh dấu ba mục `vocabulary-bias` (tên một
+người, một phiên bản model khác, một symbol hàng xóm gần), và lượt chạy nêu tên mục nào trong số đó mà manifest chưa có
+bản ghi âm.
+
+**Kiểm tra audio về bias của vocabulary, 2026-10-07.** Giọng nói tổng hợp (Gemini TTS với giọng một lập trình viên
+Việt, không phải bản ghi âm người thật) của ba mục `vocabulary-bias` và sáu mục thông thường, mỗi mục được
+`gemini-3.5-transcribe-live` nhận dạng hai lần với vocabulary của corpus:
+
+| Vocabulary được gửi | Thay thế trên 3 mục bias | Mục thông thường đúng mọi thuật ngữ |
+| --- | --- | --- |
+| mọi term đã xếp hạng (trước #573) | 6 trên 6 lượt | 12 trên 12 lượt |
+| glossary, provider, họ model (hiện tại) | 0 trên 6 lượt | 8 trên 12 lượt |
+
+Với vocabulary đã thu hẹp, `redactSecrets` bị nghe thành "Redux Secrets" và `@clarkcant/voice-adapters` thành
+"@clack/voice adapters" ở cả hai lượt. Cả hai đều là lỗi nghe sai nhìn thấy được, không phải một tên thật khác. Mẫu
+nhỏ (n=2), tổng hợp, và không phải thước đo giọng nói thật.
 
 ## Hệ quả
 

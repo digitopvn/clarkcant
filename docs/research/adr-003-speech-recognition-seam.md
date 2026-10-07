@@ -58,11 +58,21 @@ them before they mean anything.
      - a built-in coding glossary with known mis-hearings as aliases.
    - Every term passes the shared `redactSecrets` and is dropped if redaction would touch it. No second set of secret
      patterns exists.
-   - With the dedicated recognizer enabled, the terms - including identifiers, paths, branch names and issue numbers
-     extracted from the conversation - are sent to it as its vocabulary. The conversation's sentences only rank terms
-     and never leave the node.
+   - With the dedicated recognizer enabled, part of the vocabulary is sent to it (see below). The conversation's
+     sentences only rank terms and never leave the node.
    - A provider adapter translates the vocabulary into its own field. Gemini gets canonical spellings only, because
      biasing a recognizer towards a known mis-hearing would defeat the purpose.
+   - A recognizer's vocabulary is a bias, and a bias is a near-match made without evidence: measured on audio (issue
+     #573), it wrote a listed term over a different word the person said. "Jeff" became `Jev`, "claude opus 3" became
+     `claude-opus-4`, and `setUser` became `getUser` (and, with `getUser` withheld, `useState`). The transcription
+     model takes no instruction that could limit this, and it reports no alternatives or confidence, so nothing after
+     recognition can tell a substitution from what was said. The recognizer is therefore given only the kinds the
+     normaliser itself near-matches - glossary words, providers and models:
+     - a model id goes as its spoken family before the first numbered part (`claude-opus-4` as `claude-opus`), so the
+       spelling is helped and the version is not chosen;
+     - a short word that is not an acronym (`Jev`, `Pi`) is not sent, because real words and names sound like it;
+     - symbols, paths, branches, packages, tools, commands and issues stay on the node. Their neighbours are other real
+       names, and the normaliser restores their spelling only from an exact spoken form.
 4. **A deterministic normaliser, not a model.**
    - The rules are casing, spacing, alias and one-edit near-match. Each needs evidence: Vietnamese in the sentence, or
      a technical anchor outside the span.
@@ -99,6 +109,12 @@ default stays the path that already works. The normaliser improves that path as 
 live baseline gains most of what normalisation can give. A provider picker in the interface would ask the person to
 make a decision they cannot evaluate, so there is none.
 
+Vocabulary bias is a second reason. A recognizer that writes a listed term over what was said sends a wrong model
+version or a wrong symbol to Clark as if the person had said it, one layer before the normaliser's guarantees apply.
+The narrowed vocabulary above removes the cases measured so far, at a cost: identifiers the vocabulary used to carry
+are now heard unaided (see the audio check below). The recognizer stays opt-in until an audio run on real speech shows
+both no substitutions and an accuracy worth that trade.
+
 ## Evidence
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` runs the scorer over
@@ -125,7 +141,23 @@ Commands and versions are never worse after normalisation (9/12 and 2/2 both bef
 
 The same command with `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` recognizes real recordings
 and scores them beside the corpus, reporting finalization latency. That run needs `GEMINI_API_KEY`, and stops with an
-"external gate" message without one.
+"external gate" message without one. It also reports every utterance whose recognized text holds a session term the
+person did not say, and exits with status 3 when there is one. The corpus marks three entries `vocabulary-bias` (a
+person's name, another model version, a near-neighbour symbol), and the run names any of them the manifest left
+unrecorded.
+
+**Audio check of the vocabulary bias, 2026-10-07.** Synthetic speech (Gemini TTS in a Vietnamese developer's voice,
+not human recordings) of the three `vocabulary-bias` entries and six ordinary ones, each recognized twice by
+`gemini-3.5-transcribe-live` with the corpus vocabulary:
+
+| Vocabulary sent | Substitutions on the 3 bias entries | Ordinary entries with every term right |
+| --- | --- | --- |
+| every ranked term (before #573) | 6 of 6 runs | 12 of 12 runs |
+| glossary, providers, model families (now) | 0 of 6 runs | 8 of 12 runs |
+
+With the narrowed vocabulary, `redactSecrets` was heard as "Redux Secrets" and `@clarkcant/voice-adapters` as
+"@clack/voice adapters" in both runs. Both are visible mis-hearings rather than another real name. The sample is
+small (n=2), synthetic and not a measure of real speech.
 
 ## Consequences
 
