@@ -70,9 +70,20 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
    - Một phần của một từ viết dài hơn (`live` trong `gemini-live.tsx`) không bao giờ bị động tới, và dấu câu mà một
      cách viết đã mang sẵn không bị viết hai lần.
    - Một từ thật hoặc tên người không bao giờ là alias: "Jeff" vẫn là "Jeff".
-   - Casing không bao giờ hạ chữ hoa.
+   - Casing chỉ hạ chữ hoa để khôi phục một term dạng code được nghe đúng nguyên văn, chỉ khác chữ hoa: `RedactSecrets`
+     thành `redactSecrets`, "PNPM verify" thành `pnpm verify` và "Git stash" thành `git stash`. Dạng code nghĩa là có
+     chữ hoa xen chữ thường, có chữ số, có dấu câu của code, hoặc là một lệnh. Vì vậy tên model có chữ số được viết đúng
+     như vocabulary: "GPT-4o" thành `gpt-4o` khi vocabulary có `gpt-4o`. Tool được xét theo cách viết chứ không theo
+     loại, vì tên skill và extension đã cài thường là từ thường (`test`, `review`, `weather`). Một từ thường đứng đầu
+     câu ("Rebase", "Worktree", "Test", một skill tên `deploy`, một tên riêng như ClarkCant bên cạnh repository tên
+     `clarkcant`) giữ nguyên chữ hoa, và `pnpm` đứng một mình cũng vậy ("dùng PNPM" được giữ nguyên như đã nghe). Tên
+     tool viết thường mà chỉ mang dạng code nhờ một dấu gạch nối hoặc một chữ số (`follow-up`, `check-in`, `s3`) cũng
+     có thể là một từ thường, nên chỉ bị hạ chữ hoa khi có cùng bằng chứng mà một từ thường cần: "Follow-up with the
+     team tomorrow" và "S3 is down" giữ nguyên chữ hoa, còn "Daily-notes skill chạy lỗi khi build" thành
+     `daily-notes skill ...`. Một từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
    - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
-     lệnh ("git re base" được giữ nguyên như đã nghe).
+     lệnh ("git re base" được giữ nguyên như đã nghe). Chỉ chữ hoa được khôi phục: `npm` không bao giờ thành `pnpm`, kể
+     cả khi vocabulary có pnpm (#574).
    - Một đoạn có thể là hai term thì được giữ nguyên như đã nghe, và việc abstain được ghi lại.
    - Một câu đã chuẩn được trả lại đúng như cũ. Benchmark kiểm tra điều này trên mọi câu tham chiếu, kể cả các mục âm
      dựng từ tên hàng xóm gần, tên nằm trong từ dài hơn, tên người và các phiên bản model khác.
@@ -98,15 +109,15 @@ quyết định họ không thể đánh giá, nên không có bộ chọn nào.
 ## Bằng chứng
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` chạy bộ chấm điểm trên
-`packages/voice-adapters/bench/vi-en-coding-corpus.json`. Corpus có 76 utterance (tiếng Việt chuyển sang tiếng Anh, và
-tiếng Anh có ngữ cảnh tiếng Việt, gồm tám mục âm phải được trả lại nguyên vẹn) và 100 thuật ngữ kỹ thuật. Đầu ra
+`packages/voice-adapters/bench/vi-en-coding-corpus.json`. Corpus có 84 utterance (tiếng Việt chuyển sang tiếng Anh, và
+tiếng Anh có ngữ cảnh tiếng Việt, gồm mười hai mục âm phải được trả lại nguyên vẹn) và 105 thuật ngữ kỹ thuật. Đầu ra
 recognizer trong đó là giả lập: các lỗi transcription live điển hình được viết tay, không phải bản ghi âm. Normaliser
 không đổi câu tham chiếu chuẩn nào.
 
 | Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Khớp hoàn toàn (nghiêm ngặt) | Khớp hoàn toàn (dung sai âm thanh) | Thay đổi | Abstain | Hồi quy |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| thô | 24.9% | 4.2% | 77.0% | 23.7% | 36.8% | - | - | - |
-| đã chuẩn hóa | 4.0% | 0.9% | 16.0% | 76.3% | 82.9% | 61 | 1 | 0 |
+| thô | 22.8% | 3.8% | 77.1% | 26.2% | 42.9% | - | - | - |
+| đã chuẩn hóa | 3.7% | 0.8% | 16.2% | 77.4% | 84.5% | 64 | 1 | 0 |
 
 Khớp nghiêm ngặt so sánh nguyên câu sau khi gộp khoảng trắng. Khớp dung sai âm thanh còn bỏ qua chữ hoa/thường ở bất kỳ
 đâu trong câu và các dấu `. , ! ? ; : …` ở cuối câu; dấu câu nằm bên trong câu vẫn được tính. Vì gộp chữ hoa/thường trên
@@ -114,12 +125,14 @@ toàn câu, phép đo này cũng bỏ qua cách viết hoa của định danh (`
 Error Rate (phân biệt hoa/thường) vẫn tính là lỗi. Các recognizer thật được đo trong #468 viết hoa chữ đầu và thêm dấu
 kết câu, nên khớp nghiêm ngặt của từng recognizer đó là 0% dù mọi từ đều đúng.
 
-Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (9/12 và 2/2 ở cả trước lẫn sau); symbol từ 1/20 lên 17/20, path
-từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
+Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (lệnh từ 9/14 lên 11/14, phiên bản giữ 2/2); symbol từ 1/21 lên
+18/21, path từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
 
 - `git stash` bị nghe thành `git status` không được sửa, vì lệnh không bao giờ bị đoán;
 - "git re base" không được ghép thành `git rebase`, cùng lý do đó;
 - "Jeff" không bị viết lại thành Jev, vì đó cũng là tên người;
+- `npm` không bị viết lại thành `pnpm`, và một từ thường đứng đầu câu giữ nguyên chữ hoa;
+- "PNPM" đứng một mình không bị hạ thành `pnpm`, vì một từ thường không bao giờ bị hạ chữ hoa; "PNPM verify" thì có;
 - số issue không bị viết lại;
 - tên ngoài vocabulary được giữ nguyên;
 - văn xuôi tiếng Anh không có mốc kỹ thuật được giữ nguyên;
