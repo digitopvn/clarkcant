@@ -31,10 +31,11 @@ import {
   graphSemanticState,
   nowInstant,
   parseSlashCommand,
+  parseTimelinePageQuery,
   semanticProposalSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
-import {
+import { readDirectory,
   activeGenerations,
   activePackageVersions,
   installedDirectoryEntries,
@@ -42,7 +43,6 @@ import {
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
-  directoryIndexPath,
   findIsolatedFrame,
   getActionBinding,
   getInstance,
@@ -56,7 +56,6 @@ import {
   mintFrameGrant,
   pinInstance,
   prepareFrameState,
-  readDirectoryIndex,
   readSnapshotForDisplay,
   readyCapabilities,
   releaseLiveOwner,
@@ -73,6 +72,7 @@ import {
   dismissNotificationByKey,
   findBundleForSnapshot,
   findCompositionByInstance,
+  getChannelBinding,
   getConversation,
   getWorkRun,
   instanceIsInConversation,
@@ -103,6 +103,13 @@ import {
   writeWidgetViewState,
 } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
+import {
+  type ChannelToolPayload,
+  canonicalJson,
+  channelToolDigest,
+  channelToolWords,
+  parseChannelToolPayload,
+} from "../channels/channel-tool-gate.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
 import { resolveLiveSections } from "../mini-app-data.ts";
@@ -217,7 +224,7 @@ function frameOffscreen(
 }
 
 export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
   /*
    * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
    * newest listing is not what is installed: the frame must load the code of the active generation, or rolling back
@@ -1334,7 +1341,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       messageIds: outcome.messages.map((message) => message.messageId),
       // The whole timeline page is returned so the client does not have to guess whether
       // its cursor is still valid after its own write.
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
       // Present only while non-zero: a caller that never sees `control_app` used should not learn the
       // field exists.
       ...(hostControlDecisions.length === 0 ? {} : { hostControl: hostControlDecisions }),
@@ -1382,7 +1389,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
                 resolution: "app-intent",
                 taskId: null,
                 messageIds: [appended.messageId],
-                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                timeline: buildTimeline(services, { conversationId }),
                 ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }),
               }),
             );
@@ -1409,7 +1416,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
                 resolution: "app-intent",
                 taskId: null,
                 messageIds: [appended.messageId],
-                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                timeline: buildTimeline(services, { conversationId }),
                 appIntent: askedIntent,
               }),
             );
@@ -1505,7 +1512,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       deciding.catch((cause: unknown) => {
         process.stderr.write(`approval ${approvalId}: an approved widget action did not finish (${cause instanceof Error ? cause.message : String(cause)})\n`);
       });
-      return json(200, { decision, perform: first.value, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+      return json(200, { decision, perform: first.value, timeline: buildTimeline(services, { conversationId }) });
     }
     const decided = first.value;
     if (!decided.ok) return fail(409, decided.code, decided.message);
@@ -1513,7 +1520,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return json(200, {
       decision,
       ...(decided.outcome === undefined ? {} : { outcome: decided.outcome }),
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
@@ -1554,7 +1561,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return json(200, {
       ok: true,
       note: answered.note,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
@@ -1564,7 +1571,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "a cancellation needs the question it drops");
     const cancelled = cancelQuestion(interactionDepsFor(services, conversationId), questionId);
     if (!cancelled) return fail(404, "RESOURCE_NOT_FOUND", "that question is not waiting in this conversation");
-    return json(200, { ok: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    return json(200, { ok: true, timeline: buildTimeline(services, { conversationId }) });
   }
 
   /*
@@ -1583,7 +1590,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return json(200, {
       ok: true,
       questionId: asked.questionId,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
@@ -1619,7 +1626,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         question: resolution.question,
         options: resolution.status === "clarify" ? resolution.options : [],
         messageId: message.messageId,
-        timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+        timeline: buildTimeline(services, { conversationId }),
       });
     }
 
@@ -1666,17 +1673,17 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       sessionId: session.sessionId,
       sessionFile: session.sessionFile ?? null,
       messageId: message.messageId,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
   // /conversations/:id/timeline
   if (segments.length === 3 && segments[2] === "timeline" && request.method === "GET") {
-    const after = Number.parseInt(request.query.after ?? "0", 10);
-    if (!Number.isFinite(after) || after < 0) {
-      return fail(400, "INVALID_SCHEMA", "the `after` cursor must be a non-negative integer");
-    }
-    return json(200, buildTimeline(services, { conversationId, afterSequence: after }));
+    // A bare read is still `after=0`, the page existing readers ask for; the page reopening a conversation shows is
+    // `window=latest`, and scrolling back asks with `before`.
+    const asked = parseTimelinePageQuery(request.query);
+    if (!asked.ok) return fail(400, "INVALID_SCHEMA", asked.message);
+    return json(200, buildTimeline(services, { conversationId, page: asked.page, limit: asked.limit }));
   }
 
   // /conversations/:id/widgets/:instanceId/actions
@@ -1976,7 +1983,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       const status = result.code === "WIDGET_INSTANCE_UNKNOWN" ? 404 : 409;
       return fail(status, result.code, result.message);
     }
-    return json(201, { pinId: result.pinId, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    return json(201, { pinId: result.pinId, timeline: buildTimeline(services, { conversationId }) });
   }
 
   // /conversations/:id/pins/:pinId
@@ -1989,7 +1996,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that pin is not on this conversation");
     // Unpinning is a presentation change. Note data and running jobs are untouched, which
     // is why nothing here cancels a task.
-    return json(200, { removed: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    return json(200, { removed: true, timeline: buildTimeline(services, { conversationId }) });
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
@@ -2102,13 +2109,16 @@ export async function decideApprovalForNode(
   const tilePolicyChange = isMapTilePolicyPayload(payload);
   const artifactWrite = isWidgetArtifactWritePayload(payload);
   const widgetPerform = isWidgetPerformPayload(payload);
+  const channelTool = parseChannelToolPayload(payload);
   const locale = preferredAppIntentLocale({ db: services.runtime.db, now: () => input.at }, services.runtime.identity.ownerPrincipalId);
   if (input.decision === "denied") {
     if (artifactWrite) recordDeniedWidgetArtifactWrite(services, { payload, approvalId: input.approvalId, at: input.at });
     // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
     // only as text left the card offering Approve and Deny again after it had been denied.
     const say = hostText(locale).tasks;
-    const refused = tilePolicyChange
+    const refused = channelTool !== undefined
+      ? hostText(locale).channels.toolRefused
+      : tilePolicyChange
       ? say.refusedTilePolicy
       : artifactWrite
         ? deniedWidgetArtifactWriteLabel(services, input.at)
@@ -2136,6 +2146,19 @@ export async function decideApprovalForNode(
       at: input.at,
     });
     return { ok: true };
+  }
+
+  if (channelTool !== undefined) {
+    return await runApprovedChannelTool(services, {
+      payload,
+      call: channelTool,
+      approvalId: input.approvalId,
+      operationDigest: decided.approval.operationDigest,
+      conversationId: input.conversationId,
+      principal: input.principal,
+      at: input.at,
+      locale,
+    });
   }
 
   if (tilePolicyChange) {
@@ -2394,6 +2417,91 @@ export async function decideApprovalForNode(
   return { ok: true, outcome: ran.description, ...(said === "" ? {} : { continuation: said }) };
 }
 /**
+ * A channel participant's call the owner approved: carried on as the participant's turn, holding that one call.
+ *
+ * Nothing runs here. The payload is hashed again against the digest the decision covered and the binding read again —
+ * its grants are what the turn holds, and a binding that is gone or paused carries nothing on. The turn that follows is
+ * a participant's turn like the one that asked (`ChannelTurnAuthority`): none of the owner's context, every other call
+ * held as before, and the approved call let through once by the gate, which checks the approval again when it is made.
+ * What it answers stays in this conversation; it is not sent back to the channel.
+ */
+async function runApprovedChannelTool(
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
+  input: {
+    payload: string;
+    call: ChannelToolPayload;
+    approvalId: string;
+    operationDigest: string;
+    conversationId: string;
+    principal: { principalId: string; kind: "user"; nodeId: string };
+    at: Instant;
+    locale: "vi" | "en";
+  },
+): Promise<{ ok: true; outcome?: string; continuation?: string } | { ok: false; code: string; message: string }> {
+  const say = hostText(input.locale).channels;
+  const notRun = (code: string, reason: string): { ok: false; code: string; message: string } => {
+    // The approval is spent, so the card is answered here too, or it would keep offering Approve.
+    appendHostReply(services, {
+      conversationId: input.conversationId,
+      blocks: [
+        {
+          type: "tool-activity",
+          toolCallId: `channel-tool-${input.approvalId}`,
+          name: input.call.tool,
+          label: say.toolApprovedNotRun(reason),
+          status: "failed",
+          args: { approvalId: input.approvalId, decision: "granted" },
+          startedAt: input.at,
+          endedAt: input.at,
+        },
+      ],
+      at: input.at,
+    });
+    return { ok: false, code, message: reason };
+  };
+  if (channelToolDigest(input.payload) !== input.operationDigest) {
+    return notRun("APPROVAL_DIGEST_MISMATCH", "the call changed after it was shown");
+  }
+  const binding = getChannelBinding(services.runtime.db, input.call.bindingId);
+  if (binding === undefined || binding.state !== "active" || binding.conversationId !== input.conversationId) {
+    return notRun("CHANNEL_BINDING_UNAVAILABLE", "the chat it was asked from is no longer connected here");
+  }
+  appendAuditEvent(services.runtime.db, {
+    auditId: services.conductor.newId("audit"),
+    principalId: services.runtime.identity.ownerPrincipalId,
+    nodeId: services.runtime.identity.nodeId,
+    kind: "approval",
+    summary: `approved ${input.call.tool} for a channel participant`,
+    outcome: "done",
+    ref: input.approvalId,
+    origin: "channel",
+    at: input.at,
+  });
+  const continued = await handleUserMessage(services.conductor, {
+    conversationId: input.conversationId as never,
+    principal: input.principal as never,
+    text: say.toolApprovedLine,
+    note: channelToolWords.approvedNote(input.call.tool, canonicalJson(input.call.args)),
+    at: input.at,
+    origin: "channel",
+    channelAuthority: {
+      standing: "participant",
+      bindingId: binding.bindingId,
+      grants: binding.grantRefs,
+      approvedCall: { approvalId: input.approvalId, operationDigest: input.operationDigest },
+    },
+    hostWritten: { kind: "host-continuation", version: HOST_WRITTEN_MESSAGE_VERSION },
+  });
+  indexMessages(services.search, { conversationId: input.conversationId, messages: continued.messages, at: input.at });
+  const said = continued.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => textOfMessage(message))
+    .join("\n\n")
+    .trim();
+  return { ok: true, outcome: say.toolApprovedLine, ...(said === "" ? {} : { continuation: said }) };
+}
+
+/**
  * Write one server-sent event.
  *
  * The payload is JSON on a single `data:` line rather than a raw string, because a delta can contain
@@ -2481,7 +2589,7 @@ async function streamUserMessage(
         resolution: outcome.resolution,
         taskId: outcome.taskId ?? null,
         messageIds: outcome.messages.map((message) => message.messageId),
-        timeline: buildTimeline(services, { conversationId: input.conversationId, afterSequence: 0 }),
+        timeline: buildTimeline(services, { conversationId: input.conversationId }),
       }),
     );
   } catch (cause) {

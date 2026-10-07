@@ -1,13 +1,11 @@
 import { join } from "node:path";
 
 import { nowInstant, type DirectoryEntry, type PackageGeneration, type TurnOrigin } from "@clarkcant/contracts";
-import {
+import { readDirectory,
   decideExecution,
   declaredWidgetIds,
-  directoryIndexPath,
   listInstalledPackages,
   packageGenerations,
-  readDirectoryIndex,
   readExecutionPolicy,
   recordEffectExecution,
   resolveLocalSource,
@@ -156,7 +154,7 @@ export function changePackage(
     };
   }
 
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readDirectory({ env: process.env, dataDir: deps.runtime.dataDir });
   const entries = index.kind === "configured" ? entriesOf(index.entries, input.packageId) : [];
   const core = installDeps(deps);
   const widgetIds = widgetIdsOf(entries, join(deps.runtime.dataDir, "package-cache"), packageGenerations(core, input.packageId));

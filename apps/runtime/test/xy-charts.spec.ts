@@ -133,7 +133,7 @@ describe("placing a chart", () => {
     expect(instance?.actionBindingIds).toHaveLength(1);
     const binding = getActionBinding(services.conductor, instance?.actionBindingIds[0] ?? "");
     expect(binding).toMatchObject({ proposal: { kind: "view", operation: "chart.view" }, effectCategory: "read", requiresApproval: false });
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     expect(timeline.snapshots[0]?.textAlternative).toBe(
       "Runs by week: Area chart of Runs, Failures by week, 5 point(s); W36 to W40. Runs: 128 to 164; Failures: 3 to 9.",
     );
@@ -174,7 +174,7 @@ describe("placing a chart", () => {
     const instanceId = await place(SCATTER_CHART.id, { datasetRef: "ds_big", x: "minutes", y: ["runs"] });
     const doc = buildWidgetSemantic(services.conductor, instanceId);
     expect(doc?.values.truncated).toBe(`the first ${String(MAX_CHART_POINTS)} of ${String(MAX_CHART_POINTS + 40)} rows`);
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     expect(timeline.snapshots[0]?.textAlternative).toContain(`the first ${String(MAX_CHART_POINTS)} of ${String(MAX_CHART_POINTS + 40)} rows`);
   });
 });
@@ -200,7 +200,7 @@ describe("a person's view of a chart", () => {
     expect(canonicalSemanticDoc(doc).length).toBeLessThanOrEqual(SEMANTIC_LIMITS.bytes);
 
     // The timeline carries the state, so a reload draws the chart the way the person left it.
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     const carried = timeline.instances.find((instance) => instance.instanceId === instanceId) as { state?: unknown } | undefined;
     expect(carried?.state).toEqual({ hiddenSeries: ["failures"], selected: { series: "runs", index: 3 } });
   });

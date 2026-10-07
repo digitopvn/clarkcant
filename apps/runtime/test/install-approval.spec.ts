@@ -535,7 +535,7 @@ describe("a package listed by a path on this machine", () => {
 
     /** The listing as the app shows it: the node's own search card, with what it showed of the files. */
     async function listed(): Promise<Record<string, unknown> | undefined> {
-      const tool = createSearchDirectoryTool({ indexPath, newId: () => "market_local" });
+      const tool = createSearchDirectoryTool({ directory: { env: { CC_DIRECTORY_INDEX: indexPath }, dataDir: undefined }, newId: () => "market_local" });
       const answer = await tool.execute({ query: "" });
       return (answer.hostCard?.["results"] as Record<string, unknown>[] | undefined)?.[0];
     }
@@ -767,7 +767,7 @@ describe("a package listed by a path on this machine", () => {
     });
 
     it("is a card the conversation accepts as a host card", async () => {
-      const tool = createSearchDirectoryTool({ indexPath, newId: () => "market_local" });
+      const tool = createSearchDirectoryTool({ directory: { env: { CC_DIRECTORY_INDEX: indexPath }, dataDir: undefined }, newId: () => "market_local" });
       const answer = await tool.execute({ query: "" });
       // The same check a tool's host card passes before it is drawn; a shape it refuses is dropped from the turn.
       expect(messageBlockSchema.safeParse(answer.hostCard).success).toBe(true);

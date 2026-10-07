@@ -1,4 +1,4 @@
-import { type CSSProperties, Fragment, type ReactElement, useRef, useState } from "react";
+import { type CSSProperties, type ReactElement, useMemo, useRef, useState } from "react";
 
 import type { NoticeOperationId, NoticeOperationSource, OrbProfileName } from "@clarkcant/contracts";
 
@@ -26,7 +26,8 @@ import { ConversationHeroEmptyState } from "./ConversationHeroEmptyState.tsx";
 import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
 import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
 import { ConversationLiveReplyRow } from "./ConversationLiveReplyRow.tsx";
-import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
+import { JumpToLatest, VirtualTranscript } from "./VirtualTranscript.tsx";
+import { SurfaceViewStoreProvider, createSurfaceViewStore } from "./surface-view-state.tsx";
 import { NoticeUndoRow } from "./NoticeUndoRow.tsx";
 import { useAppearance } from "./use-appearance.ts";
 import { chooseThemeShown, resetAppearanceShown } from "./appearance-actions.ts";
@@ -165,10 +166,17 @@ export function Conversation({
     setSnapshots,
     applyTimeline,
     refreshTimeline,
+    hasOlder,
+    olderLoading,
+    olderFailed,
+    loadOlder,
+    reportPresent,
     instanceById,
     imageUrl,
     mediaUrls,
   } = useConversationTimeline(client, initialConversationId, onTimelineChange);
+  /** The view state of this conversation's transcript surfaces, for the session (`surface-view-state.tsx`). */
+  const surfaceViews = useMemo(() => createSurfaceViewStore(), [conversationId]);
 
   const blocks = timeline?.messages ?? [];
   const pins = timeline?.pins ?? [];
@@ -244,6 +252,7 @@ export function Conversation({
     stop,
     restartSession,
     scroller,
+    followBottom,
   } = useTurnSend({
     client,
     conversationId,
@@ -474,10 +483,15 @@ export function Conversation({
   // The Undo a dismissal by a sentence left, under the reply that said so: the last row with that message's id.
   const noticeUndo = appIntents.noticeUndo;
   const undoIndex = noticeUndo === undefined ? -1 : blocks.findLastIndex((message) => message.messageId === noticeUndo.afterMessageId);
-  const noticeUndoRow =
-    noticeUndo === undefined ? null : (
-      <NoticeUndoRow key={`${noticeUndo.noticeId}-${String(noticeUndo.offeredAt)}`} undo={noticeUndo} onUndo={appIntents.undoNoticeDismissal} />
-    );
+  const undoNoticeDismissal = appIntents.undoNoticeDismissal;
+  // Memoised: the transcript is, and a fresh element here on every streamed delta would draw it again each time.
+  const noticeUndoRow = useMemo(
+    () =>
+      noticeUndo === undefined ? null : (
+        <NoticeUndoRow key={`${noticeUndo.noticeId}-${String(noticeUndo.offeredAt)}`} undo={noticeUndo} onUndo={undoNoticeDismissal} />
+      ),
+    [noticeUndo, undoNoticeDismissal],
+  );
 
   return (
     <LocaleProvider value={localeState}>
@@ -536,19 +550,24 @@ export function Conversation({
 
           {showTimeline && (
             <div className="cc-timeline" aria-live="polite" aria-relevant="additions">
-              {blocks.map((message, index) => (
-                <Fragment key={`${message.messageId}-${index}`}>
-                  <TimelineMessageRow
-                    message={message}
-                    index={index}
-                    renderSurface={renderSurface}
-                    blockActions={blockActions}
-                    client={client}
-                    settled
-                  />
-                  {index === undoIndex && noticeUndoRow}
-                </Fragment>
-              ))}
+              <SurfaceViewStoreProvider store={surfaceViews}>
+                <VirtualTranscript
+                  key={conversationId ?? ""}
+                  messages={blocks}
+                  renderSurface={renderSurface}
+                  blockActions={blockActions}
+                  client={client}
+                  undoIndex={undoIndex}
+                  undoRow={noticeUndoRow}
+                  scroller={scroller}
+                  followBottom={followBottom}
+                  hasOlder={hasOlder}
+                  olderLoading={olderLoading}
+                  olderFailed={olderFailed}
+                  loadOlder={loadOlder}
+                  onPresentChange={reportPresent}
+                />
+              </SurfaceViewStoreProvider>
               {/* Its reply is not on screen (a dismissal said while a reply was being written): it goes after the rest. */}
               {undoIndex === -1 && noticeUndoRow}
 
@@ -562,6 +581,9 @@ export function Conversation({
 
               {busy && <ConversationLiveReplyRow live={live} />}
             </div>
+          )}
+          {showTimeline && (
+            <JumpToLatest scroller={scroller} newest={`${blocks.at(-1)?.messageId ?? ""}|${String(live.length)}|${pendingUser === undefined ? "" : "pending"}`} />
           )}
         </div>
 
