@@ -116,10 +116,11 @@ describe("restoring the case of a code-like term heard exactly", () => {
   });
   const restored = (text: string): string => normalizeTranscript(text, SESSION).text;
 
-  it("lowers a symbol, a tool and a command written with a recognizer's capitals", () => {
+  it("lowers a symbol, a path and a command written with a recognizer's capitals", () => {
     expect(restored("RedactSecrets có bắt được GitHub token không")).toBe("redactSecrets có bắt được GitHub token không");
-    expect(restored("dùng PNPM để cài")).toBe("dùng pnpm để cài");
     expect(restored("chạy PNPM verify trước khi mở pull request")).toBe("chạy pnpm verify trước khi mở pull request");
+    expect(restored("PNPM install rồi chạy test")).toBe("pnpm install rồi chạy test");
+    expect(restored("run PNPM install before the build")).toBe("run pnpm install before the build");
     expect(restored("Git stash my changes before switching branches")).toBe("git stash my changes before switching branches");
     expect(restored("mở Voice-Session.ts giúp tôi")).toBe("mở voice-session.ts giúp tôi");
     expect(restored("dùng TYPESCRIPT cho file này")).toBe("dùng TypeScript cho file này");
@@ -166,8 +167,36 @@ describe("restoring the case of a code-like term heard exactly", () => {
     }
   });
 
+  it("leaves a plain word in capitals alone outside a command: pnpm on its own is also a word", () => {
+    expect(restored("dùng PNPM để cài")).toBe("dùng PNPM để cài");
+  });
+
+  it("keeps the capital of a skill or extension name that is an ordinary word starting a sentence", () => {
+    // The session's tools include installed skill and extension names, chosen by people and the marketplace.
+    const tools = buildRecognitionContext({ tools: ["test", "review", "weather", "deploy", "tasks", "git"] });
+    for (const sentence of [
+      // English, with cue words ("build", "merge", "server") that make the sentence read as about code.
+      "Test the build on Windows first",
+      "Review this code before the merge",
+      "Weather widget broke the build again",
+      "Deploy the server tonight",
+      "Tasks for today: fix the build",
+      "Git broke the build again",
+      // Vietnamese, where the code-switched sentence itself counts as support.
+      "Test này chạy bằng Vitest hay Playwright",
+      "Review đoạn code này trước khi merge nhé",
+      "Weather hôm nay thế nào",
+      "Deploy server tối nay được không",
+      "Tasks hôm nay gồm những gì",
+    ]) {
+      expect(normalizeTranscript(sentence, tools).text).toBe(sentence);
+    }
+    // A command is still restored in the same session.
+    expect(normalizeTranscript("PNPM verify trước khi merge", tools).text).toBe("pnpm verify trước khi merge");
+  });
+
   it("is idempotent once case is restored", () => {
-    for (const sentence of ["RedactSecrets có bắt được GitHub token không", "dùng PNPM để cài", "Git stash my changes before switching branches"]) {
+    for (const sentence of ["RedactSecrets có bắt được GitHub token không", "chạy PNPM verify trước khi push", "Git stash my changes before switching branches"]) {
       const once = restored(sentence);
       expect(restored(once)).toBe(once);
       expect(normalizeTranscript(once, SESSION).changes).toEqual([]);

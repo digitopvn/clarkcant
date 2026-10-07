@@ -58,8 +58,7 @@ export const CODING_GLOSSARY: readonly GlossaryEntry[] = [
   { text: "useState", kind: "symbol" },
   { text: "useCallback", kind: "symbol" },
   { text: "useRef", kind: "symbol" },
-  // A tool, not a word: "PNPM" is restored to how it is typed. `npm` is never turned into it.
-  { text: "pnpm", kind: "tool", aliases: ["pnp m", "pnpn", "p and pm"] },
+  { text: "pnpm", kind: "glossary", aliases: ["pnp m", "pnpn", "p and pm"] },
   { text: "GitHub", kind: "glossary" },
   { text: "worktree", kind: "glossary" },
   { text: "WebSocket", kind: "glossary" },

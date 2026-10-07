@@ -14,8 +14,8 @@ import {
  * vocabulary, never a model, and it never rewrites a sentence. Four rules, each a fact about one term:
  *
  * - `casing`: the same word in the wrong case ("Github" -> GitHub). A letter is lowered only to restore a code-like
- *   term heard exactly, case aside ("RedactSecrets" -> redactSecrets, "PNPM" -> pnpm, "Git stash" -> git stash);
- *   any other word, such as an ordinary word starting a sentence, keeps the capital it was written with.
+ *   term heard exactly, case aside ("RedactSecrets" -> redactSecrets, "PNPM verify" -> pnpm verify, "Git stash" ->
+ *   git stash); any other word, such as an ordinary word starting a sentence, keeps the capital it was written with.
  * - `spacing`: the term's own words, split the way speech splits them ("use effect" -> useEffect, "voice session dot
  *   ts" -> voice-session.ts).
  * - `alias`: a mis-hearing recorded for that term and no other ("stale closer" -> stale closure).
@@ -298,12 +298,14 @@ function isDistinctive(term: RecognitionTerm): boolean {
 
 /**
  * A term only ever written as code, so a capital it does not have is a recognizer's, not the person's: mixed case
- * (`redactSecrets`, `OAuth`), a digit, code punctuation (`git-stash`, `voice-session.ts`), or a command or tool
- * (`git stash`, `pnpm`). A plain word - `rebase`, `worktree`, a repository called `clarkcant`, a symbol called `update`
- * - is also an ordinary word, and a sentence may start with it.
+ * (`redactSecrets`, `OAuth`), a digit (`gpt-4o`), code punctuation (`git-stash`, `voice-session.ts`), or a command
+ * (`git stash`, `pnpm verify`). A plain word - `rebase`, `worktree`, `pnpm`, a repository called `clarkcant`, a symbol
+ * called `update` - is also an ordinary word, and a sentence may start with it. A tool is judged by its spelling like
+ * every other kind: the session's tools include installed skill and extension names, which are often plain words
+ * (`test`, `review`, `weather`, `deploy`, `tasks`).
  */
 function isCodeLike(term: RecognitionTerm): boolean {
-  return term.kind === "command" || term.kind === "tool" || /\p{Ll}\p{Lu}|\p{Lu}{2}\p{Ll}|\p{N}|[._/\\@#:-]/u.test(term.text);
+  return term.kind === "command" || /\p{Ll}\p{Lu}|\p{Lu}{2}\p{Ll}|\p{N}|[._/\\@#:-]/u.test(term.text);
 }
 
 /** Whether `to` differs from `from` only by raising letters to capitals. Lowering is decided separately. */

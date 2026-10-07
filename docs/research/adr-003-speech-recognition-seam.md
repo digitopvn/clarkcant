@@ -74,9 +74,13 @@ them before they mean anything.
      is not written twice.
    - A real word or a person's name is never an alias: "Jeff" stays "Jeff".
    - Casing lowers a letter only to restore a code-like term heard exactly, case aside: `RedactSecrets` becomes
-     `redactSecrets`, `PNPM` becomes `pnpm` and "Git stash" becomes `git stash`. Code-like means mixed case, a digit, code
-     punctuation, or a command or tool. An ordinary word starting a sentence ("Rebase", "Worktree", a proper noun such as
-     ClarkCant beside a repository called `clarkcant`) keeps its capital, and a near match is never re-cased.
+     `redactSecrets`, "PNPM verify" becomes `pnpm verify` and "Git stash" becomes `git stash`. Code-like means mixed
+     case, a digit, code punctuation, or a command. A model name with a digit is therefore written as the vocabulary
+     spells it: "GPT-4o" becomes `gpt-4o` when the vocabulary has `gpt-4o`. A tool is judged by its spelling, not its
+     kind, because installed skill and extension names are often plain words (`test`, `review`, `weather`). An
+     ordinary word starting a sentence ("Rebase", "Worktree", "Test", a skill called `deploy`, a proper noun such as
+     ClarkCant beside a repository called `clarkcant`) keeps its capital, and so does `pnpm` on its own ("dùng PNPM"
+     stays as heard). A near match is never re-cased.
    - Commands are never changed except by casing, and no respelled word may complete one with its neighbours ("git re
      base" stays as heard). Only case is restored: `npm` never becomes `pnpm`, even when the vocabulary has pnpm
      (#574).
@@ -114,7 +118,7 @@ recordings. No canonical reference is changed by the normaliser.
 | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | raw | 22.8% | 3.8% | 77.1% | 26.2% | - | - | - |
-| normalized | 3.7% | 0.8% | 15.2% | 78.6% | 65 | 1 | 0 |
+| normalized | 3.7% | 0.8% | 16.2% | 77.4% | 64 | 1 | 0 |
 
 Commands and versions are never worse after normalisation (commands go from 9/14 to 11/14, versions stay 2/2); symbols
 go from 1/21 to 18/21, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
@@ -123,6 +127,7 @@ go from 1/21 to 18/21, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The resi
 - "git re base" is not completed into `git rebase`, for the same reason;
 - "Jeff" is not rewritten to Jev, because it is also a person's name;
 - `npm` is not rewritten to `pnpm`, and an ordinary word starting a sentence keeps its capital;
+- "PNPM" on its own is not lowered to `pnpm`, because a plain word is never lowered; "PNPM verify" is;
 - issue numbers are not rewritten;
 - out-of-vocabulary names are left alone;
 - English prose with no technical anchor is left alone;

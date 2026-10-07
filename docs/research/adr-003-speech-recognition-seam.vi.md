@@ -71,10 +71,13 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      cách viết đã mang sẵn không bị viết hai lần.
    - Một từ thật hoặc tên người không bao giờ là alias: "Jeff" vẫn là "Jeff".
    - Casing chỉ hạ chữ hoa để khôi phục một term dạng code được nghe đúng nguyên văn, chỉ khác chữ hoa: `RedactSecrets`
-     thành `redactSecrets`, `PNPM` thành `pnpm` và "Git stash" thành `git stash`. Dạng code nghĩa là có chữ hoa xen chữ
-     thường, có chữ số, có dấu câu của code, hoặc là một lệnh hay tool. Một từ thường đứng đầu câu ("Rebase", "Worktree",
-     một tên riêng như ClarkCant bên cạnh repository tên `clarkcant`) giữ nguyên chữ hoa, và một từ chỉ gần giống thì
-     không bao giờ bị đổi chữ hoa.
+     thành `redactSecrets`, "PNPM verify" thành `pnpm verify` và "Git stash" thành `git stash`. Dạng code nghĩa là có
+     chữ hoa xen chữ thường, có chữ số, có dấu câu của code, hoặc là một lệnh. Vì vậy tên model có chữ số được viết đúng
+     như vocabulary: "GPT-4o" thành `gpt-4o` khi vocabulary có `gpt-4o`. Tool được xét theo cách viết chứ không theo
+     loại, vì tên skill và extension đã cài thường là từ thường (`test`, `review`, `weather`). Một từ thường đứng đầu
+     câu ("Rebase", "Worktree", "Test", một skill tên `deploy`, một tên riêng như ClarkCant bên cạnh repository tên
+     `clarkcant`) giữ nguyên chữ hoa, và `pnpm` đứng một mình cũng vậy ("dùng PNPM" được giữ nguyên như đã nghe). Một
+     từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
    - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
      lệnh ("git re base" được giữ nguyên như đã nghe). Chỉ chữ hoa được khôi phục: `npm` không bao giờ thành `pnpm`, kể
      cả khi vocabulary có pnpm (#574).
@@ -111,7 +114,7 @@ không đổi câu tham chiếu chuẩn nào.
 | Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Utterance khớp hoàn toàn | Thay đổi | Abstain | Hồi quy |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | thô | 22.8% | 3.8% | 77.1% | 26.2% | - | - | - |
-| đã chuẩn hóa | 3.7% | 0.8% | 15.2% | 78.6% | 65 | 1 | 0 |
+| đã chuẩn hóa | 3.7% | 0.8% | 16.2% | 77.4% | 64 | 1 | 0 |
 
 Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (lệnh từ 9/14 lên 11/14, phiên bản giữ 2/2); symbol từ 1/21 lên
 18/21, path từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
@@ -120,6 +123,7 @@ Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (lệnh từ
 - "git re base" không được ghép thành `git rebase`, cùng lý do đó;
 - "Jeff" không bị viết lại thành Jev, vì đó cũng là tên người;
 - `npm` không bị viết lại thành `pnpm`, và một từ thường đứng đầu câu giữ nguyên chữ hoa;
+- "PNPM" đứng một mình không bị hạ thành `pnpm`, vì một từ thường không bao giờ bị hạ chữ hoa; "PNPM verify" thì có;
 - số issue không bị viết lại;
 - tên ngoài vocabulary được giữ nguyên;
 - văn xuôi tiếng Anh không có mốc kỹ thuật được giữ nguyên;
