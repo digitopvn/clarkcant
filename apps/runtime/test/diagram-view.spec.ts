@@ -104,7 +104,7 @@ describe("placing a diagram", () => {
     expect(instance?.actionBindingIds.map((id) => getActionBinding(services.conductor, id)?.proposal)).toEqual([
       { kind: "view", operation: DIAGRAM_SELECT_OPERATION, args: {} },
     ]);
-    const text = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 }).snapshots[0]?.textAlternative ?? "";
+    const text = buildTimeline(services, { conversationId: CONVERSATION }).snapshots[0]?.textAlternative ?? "";
     expect(text).toContain("Phát hành: 4 nodes, 4 edges");
     expect(text).toContain("- Kiểm thử đạt? [CI]: → Phát hành (đạt), → Xây dựng (chưa)");
   });
@@ -149,7 +149,7 @@ describe("the selected node", () => {
     const instanceId = await place(PROPS);
     expect(await select(instanceId, { selectedId: "test" })).toMatchObject({ ok: true, body: { state: { selectedId: "test" } } });
     expect(liveStateOf(services.conductor, instanceId)?.body).toEqual({ selectedId: "test" });
-    const carried = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 }).instances.find((entry) => entry.instanceId === instanceId);
+    const carried = buildTimeline(services, { conversationId: CONVERSATION }).instances.find((entry) => entry.instanceId === instanceId);
     expect(carried?.state).toEqual({ selectedId: "test" });
     const document = buildWidgetSemantic(services.conductor, instanceId);
     expect(document).toMatchObject({

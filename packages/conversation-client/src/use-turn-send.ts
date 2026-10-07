@@ -51,6 +51,8 @@ export interface TurnSendState {
   restartSession: () => void;
   /** The scroll container, and the reader's own decision to follow the bottom or not. */
   scroller: React.RefObject<HTMLDivElement | null>;
+  /** Whether the reader is at the bottom and following it; the transcript keeps it there when rows change height. */
+  followBottom: React.RefObject<boolean>;
 }
 
 export interface SendOptions {
@@ -342,5 +344,5 @@ export function useTurnSend({
     }
   }, [busy, client, conversationId, t]);
 
-  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller };
+  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller, followBottom };
 }

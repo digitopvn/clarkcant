@@ -70,6 +70,7 @@ export * from "./release-notes.ts";
 export * from "./app-intents.ts";
 export * from "./conversation-deletion.ts";
 export * from "./surfaces.ts";
+export * from "./timeline-window.ts";
 export * from "./machine-surfaces.ts";
 export * from "./sse.ts";
 export * from "./execution.ts";

@@ -23,6 +23,8 @@ import type {
   TableSort,
   ThemesResponse,
   WidgetDefinition,
+  TimelinePageQuery,
+  TimelineWindow,
   WidgetFixture,
 } from "@clarkcant/contracts";
 
@@ -409,6 +411,11 @@ export interface Timeline {
   snapshots: TimelineSnapshotView[];
   metadata: { messageCount: number; taskCount: number; updatedAt: string };
   activeTaskIds: string[];
+  /**
+   * Which part of the conversation `messages` is, by message sequence. Absent from a node older than windows, whose
+   * every timeline is a whole page to be taken as it is (see `mergeTimeline`).
+   */
+  window?: TimelineWindow;
 }
 
 export interface ResolvedDataset {
@@ -1242,6 +1249,23 @@ export class GatewayClient {
     return this.#call("GET", `/conversations/${conversationId}/timeline?after=${after}`);
   }
 
+  /**
+   * One page of a conversation by message sequence: the newest, the one before a sequence, or the one after it.
+   *
+   * What the page stands for comes back as its `window`, so the caller merges it into what it holds
+   * (`mergeTimeline`) rather than replacing that with it.
+   */
+  timelinePage(conversationId: string, page: TimelinePageQuery, limit?: number): Promise<Timeline> {
+    const query =
+      page.kind === "latest"
+        ? "window=latest"
+        : page.kind === "before"
+          ? `before=${String(page.beforeSequence)}`
+          : `after=${String(page.afterSequence)}`;
+    const sized = limit === undefined ? query : `${query}&limit=${String(limit)}`;
+    return this.#call("GET", `/conversations/${conversationId}/timeline?${sized}`);
+  }
+
   dataset(datasetId: string): Promise<ResolvedDataset> {
     return this.#call("GET", `/datasets/${datasetId}`);
   }
@@ -1614,7 +1638,7 @@ export class GatewayClient {
         : { type: "widget-perform-unreadable", performId: read.performId, report: read.report },
       (performId, report) => this.reportWidgetPerform(performId, report),
     );
-    return { ...rest, timeline: await this.timeline(conversationId) };
+    return { ...rest, timeline: await this.timelinePage(conversationId, { kind: "latest" }) };
   }
 
   /**
