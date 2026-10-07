@@ -26,6 +26,11 @@ export interface FeedbackReportRecord {
   publication?: FeedbackPublication;
   /** The ledger row of the GitHub write in flight, or of the last one made. */
   effectId?: string;
+  /**
+   * The GitHub login the token belonged to when that write was sent, so it is looked for among that account's issues
+   * whoever the token belongs to now. Absent when GitHub would not say. Kept on this node only; never sent or shown.
+   */
+  attemptLogin?: string;
   createdAt: Instant;
   updatedAt: Instant;
 }
@@ -55,19 +60,31 @@ export function insertFeedbackReport(db: Database, record: FeedbackReportRecord)
  * Move a report on. Only the fields that change after it was prepared; the draft itself is never rewritten. A report
  * GitHub was read back holding stays published: a slower, concurrent check that found nothing yet cannot undo it.
  * Answers whether the row moved.
+ *
+ * `attempt` names a new write: its ledger row and the login it was sent as, which replace the previous attempt's both,
+ * so a later attempt that could not learn its login is never looked for among an earlier attempt's account.
  */
 export function updateFeedbackReport(
   db: Database,
-  input: { reportId: string; status: FeedbackStatus; publication?: FeedbackPublication; effectId?: string; at: Instant },
+  input: {
+    reportId: string;
+    status: FeedbackStatus;
+    publication?: FeedbackPublication;
+    attempt?: { effectId: string; login?: string };
+    at: Instant;
+  },
 ): boolean {
   const result = db.prepare(
     `UPDATE feedback_reports
-        SET status = ?, publication = ?, effect_id = COALESCE(?, effect_id), updated_at = ?
+        SET status = ?, publication = ?, effect_id = COALESCE(?, effect_id),
+            attempt_login = CASE WHEN ? THEN ? ELSE attempt_login END, updated_at = ?
       WHERE report_id = ? AND status <> 'published'`,
   ).run(
     input.status,
     input.publication === undefined ? null : JSON.stringify(input.publication),
-    input.effectId ?? null,
+    input.attempt?.effectId ?? null,
+    input.attempt === undefined ? 0 : 1,
+    input.attempt?.login ?? null,
     input.at,
     input.reportId,
   );
@@ -112,6 +129,7 @@ function feedbackReportFromRow(row: Record<string, unknown>): FeedbackReportReco
     draft: draft.data,
     ...(publication?.success === true ? { publication: publication.data } : {}),
     ...(row.effect_id === null ? {} : { effectId: String(row.effect_id) }),
+    ...(typeof row.attempt_login === "string" ? { attemptLogin: row.attempt_login } : {}),
     createdAt: String(row.created_at) as Instant,
     updatedAt: String(row.updated_at) as Instant,
   };

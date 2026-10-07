@@ -294,7 +294,10 @@ offers Check again (`intent: "check"`), which only looks for the marker and neve
 is `409 NOTHING_SENT`. Once GitHub's own list shows the marker absent at least two minutes after the attempt (the
 attempt's time, not the last check's), the report becomes `failed` with `retryable`, and its card offers Send again,
 which files it for the first time. Nothing is sent while GitHub cannot be checked. The marker is looked for among the
-issues the token's owner opened (`creator`, from `GET /user`), at most three pages of 100. When that list still runs
+issues opened by the account the write was sent as (`creator`: the `GET /user` login recorded on the node when it was
+sent, so a `github_token` replaced since does not hide it), at most three pages of 100. Without a recorded login the
+token's current owner is asked; a token GitHub will not name an owner for (an App installation token) is scanned
+without the filter. The login stays on the node and is never returned by the API. When that list still runs
 past the scan, or the ledger no longer holds the attempt, checking cannot settle it: the report is `unknown` with
 `inconclusive: { since, searchUrl, manualUrl }`, and its card says "Clark can't tell whether GitHub kept this report,
 and checking again won't change that." Instead of Check again it links the issues the person opened since the attempt

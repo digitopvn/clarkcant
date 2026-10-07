@@ -1834,6 +1834,21 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    /*
+     * The GitHub login the token belonged to when a report's write was sent, so finding that write again by its marker
+     * looks among that account's issues even after the stored token changes hands. NULL when GitHub would not say, and
+     * for every attempt made before it was recorded.
+     */
+    version: 46,
+    name: "feedback_attempt_login",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        ALTER TABLE feedback_reports ADD COLUMN attempt_login TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

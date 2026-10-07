@@ -299,7 +299,10 @@ khi tải lại. Lần ghi không nhận được phản hồi là `unknown`, v�
 tìm dấu và không bao giờ gửi; kiểm tra một báo cáo chưa từng gửi trả `409 NOTHING_SENT`. Khi danh sách của chính GitHub
 cho thấy không có dấu ít nhất hai phút sau lần thử (tính từ lúc thử gửi, không phải lần kiểm tra gần nhất), báo cáo
 chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi nó lần đầu tiên. Không gửi gì khi chưa kiểm tra được
-GitHub. Dấu được tìm trong các issue do chủ token mở (`creator`, lấy từ `GET /user`), tối đa ba trang 100 mục. Khi danh
+GitHub. Dấu được tìm trong các issue do tài khoản đã gửi lần ghi đó mở (`creator`: login từ `GET /user` được node
+ghi lại lúc gửi, nên thay `github_token` sau đó cũng không làm mất báo cáo), tối đa ba trang 100 mục. Khi không có login
+được ghi lại, node hỏi chủ hiện tại của token; token mà GitHub không cho biết chủ (như token cài đặt của GitHub App) thì
+được quét không lọc. Login chỉ nằm trên node và API không bao giờ trả về nó. Khi danh
 sách đó vẫn dài hơn phạm vi đọc, hoặc sổ hiệu ứng không còn ghi lần thử, việc kiểm tra không thể ngã ngũ: báo cáo là
 `unknown` kèm `inconclusive: { since, searchUrl, manualUrl }`, và thẻ ghi "Clark không thể biết GitHub đã giữ báo cáo
 này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó." Thay cho Kiểm tra lại, thẻ dẫn tới các issue người dùng
