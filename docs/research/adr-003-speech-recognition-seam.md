@@ -57,13 +57,25 @@ them before they mean anything.
      sentence: the sentence it matched, its late reading, or the first sentence in its turn that reads as nothing. A
      sentence no final accounts for is answered, and when a match passed over such a sentence the matched one is
      answered too, since one of the two was never delivered. Live readings arrive in the order the finals were
-     delivered, so a sentence that reads as a later final ends an earlier final's turn. The rule works on whole
-     sentences, so a live sentence that holds a delivered part and an undelivered part is answered whole. One loss is
-     accepted: a sentence that reads as the whole of a final whose live reading never arrived, heard within thirty
-     seconds of it, is taken for that late reading and not answered. It cannot be told from a lagging live
-     transcription, and answering it would re-send every sentence of a lagging stretch. A seeded simulation of failing
-     sessions (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) checks the rule: every undelivered sentence
-     comes back, in order, but for that loss, and the duplicates stay bounded by how ambiguous the readings were.
+     delivered, so a sentence that reads as a later final, or that a later final matched, ends an earlier final's
+     turn. The rule works on whole sentences, so a live sentence that holds a delivered part and an undelivered part is
+     answered whole. Three losses are accepted, each of a sentence that says again the words of a final delivered
+     within thirty seconds of it, because the stream cannot tell it from that final's own reading:
+     - the final's live reading never arrived, and the sentence reads as the whole of it: it is taken for that late
+       reading. Answering it would re-send every sentence of a lagging stretch;
+     - the final's live reading arrived misread, in its turn and in order, while an earlier final's never arrived: the
+       misread reading is taken for the earlier final's, and the sentence for this final's late reading. The stream is
+       the same as one where the earlier final's reading arrived misread and this final's arrived late;
+     - the live session was still reading the sentence when the recognizer failed, and the final's own live reading
+       arrived misread or split: what it has so far is taken for that final's reading still arriving.
+
+     A seeded simulation of failing sessions (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) checks the
+     rule. Every undelivered sentence comes back, in order. A lost sentence is accepted only when it says again the
+     words of another final delivered within thirty seconds of when it was first heard, and either that final's or an
+     earlier final's live reading never arrived, or the sentence was still being read when the recognizer failed and
+     that final's own reading arrived misread or split. When no live reading lags its final by more than thirty
+     seconds, it checks that the duplicates stay within twice the number of ambiguous readings (misread, dropped, split,
+     repeated, or too short to match) plus one, and that its sessions with no ambiguous reading have none.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;

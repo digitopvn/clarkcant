@@ -31,12 +31,18 @@
  * live sentence is withheld only when one final accounts for it and for no other withheld sentence: the sentence it
  * matched, its late reading, or the first sentence in its turn that reads as nothing. A sentence no final accounts for
  * is answered, and when a match passed over such a sentence the matched one is answered too, since one of the two was
- * never delivered. Readings arrive in the order the finals were delivered, so a sentence that reads as a later final
- * ends an earlier final's turn.
+ * never delivered. Readings arrive in the order the finals were delivered, so a sentence that reads as a later final,
+ * or that a later final matched, ends an earlier final's turn.
  *
- * One loss is accepted: a sentence that reads as the whole of a final whose live reading never arrived, heard within
- * thirty seconds of it, is taken for that late reading and not answered. It cannot be told from a lagging live
- * transcription, and answering it would re-send every sentence of a lagging stretch.
+ * Three losses are accepted, each of a sentence that says again the words of a final delivered within thirty seconds
+ * of it, because the stream cannot tell it from that final's own reading:
+ * - the final's live reading never arrived, and the sentence reads as the whole of it: it is taken for that late
+ *   reading. Answering it would re-send every sentence of a lagging stretch;
+ * - the final's live reading arrived misread, in its turn and in order, while an earlier final's never arrived: the
+ *   misread reading is taken for the earlier final's, and the sentence for this final's late reading. The stream is the
+ *   same as one where the earlier final's reading arrived misread and this final's arrived late;
+ * - the live session was still reading the sentence when the recognizer failed, and the final's own live reading
+ *   arrived misread or split: what it has so far is taken for that final's reading still arriving.
  */
 
 const MAX_SENTENCES = 16;
@@ -75,6 +81,8 @@ interface Sentence {
   heardMs: number;
   /** A recognizer final moved the cursor into it, so it is not the late reading of an expired final. */
   aligned: boolean;
+  /** When the latest final that moved the cursor into it was delivered. */
+  alignedMs: number;
 }
 
 interface Pending {
@@ -147,6 +155,7 @@ export class LiveShadow {
           closed: fragment.isFinal,
           heardMs: this.#nowMs(),
           aligned: false,
+          alignedMs: Number.NEGATIVE_INFINITY,
         });
         this.#nextOrdinal += 1;
         if (this.#sentences.length > MAX_SENTENCES) this.#evict(this.#sentences.shift()!.ordinal);
@@ -161,7 +170,7 @@ export class LiveShadow {
     this.#expire();
     const said = words(text).map((word) => word.text);
     if (said.length < MIN_MATCH_WORDS) return;
-    if (this.#align(said, Number.POSITIVE_INFINITY, this.#pending.length)) {
+    if (this.#align(said, Number.POSITIVE_INFINITY, this.#pending.length, this.#nowMs())) {
       // Finals arrive in order: those still waiting were passed over, and their live reading is settled.
       this.#pending = [];
       return;
@@ -262,8 +271,9 @@ export class LiveShadow {
    *
    * Live readings arrive in the order the finals were delivered, so the expired finals are matched in that order
    * against every live sentence kept, before the cursor too, so each one is used up by its own reading wherever that
-   * lies. A live sentence a final moved the cursor into belongs to that final. One that reads as an earlier expired
-   * final is left for it, and one that reads as a later one ends this final's turn: its reading never arrived. The first
+   * lies. A live sentence a final moved the cursor into belongs to that final, and ends this final's turn when that
+   * final was delivered after it. One that reads as an earlier expired final is left for it, and one that reads as a
+   * later one ends this final's turn: its reading never arrived. The first
    * one that reads as none of them is taken to be this final's reading, misread: it uses the final up without being
    * excused, so the final cannot excuse a later sentence that only says the same words again, and it counts as
    * accounted for by that final. A sentence heard longer after the final than a late reading can take ends its turn.
@@ -307,7 +317,11 @@ export class LiveShadow {
     this.#expired.forEach((expired, final) => {
       for (let index = from; index < this.#sentences.length; index += 1) {
         const sentence = this.#sentences[index]!;
-        if (sentence.aligned) continue;
+        if (sentence.aligned) {
+          // A final delivered after this one matched it, so this final's reading, which came before, never arrived.
+          if (sentence.alignedMs > expired.deliveredMs) return;
+          continue;
+        }
         // Too long after the final to be its reading, and so is every sentence after it.
         if (sentence.heardMs - expired.deliveredMs > EXPIRED_MATCH_MS) return;
         const readsAs = reads[index]!;
@@ -330,9 +344,9 @@ export class LiveShadow {
 
   /**
    * Move the cursor past the live reading of `said`, if one starts at or after it. `explained`: the waiting finals this
-   * match discards, whose readings may be among the sentences it passes over.
+   * match discards, whose readings may be among the sentences it passes over. `deliveredMs`: when `said` was delivered.
    */
-  #align(said: readonly string[], lastOrdinal: number, explained: number): boolean {
+  #align(said: readonly string[], lastOrdinal: number, explained: number, deliveredMs: number): boolean {
     const passedOver: number[] = [];
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal || sentence.ordinal > lastOrdinal) continue;
@@ -345,6 +359,7 @@ export class LiveShadow {
       }
       this.#cursor = { ordinal: sentence.ordinal, offset: heard[covered - 1]!.end };
       sentence.aligned = true;
+      sentence.alignedMs = Math.max(sentence.alignedMs, deliveredMs);
       // Passing over an unmatched live sentence means this final may be that sentence's, read too differently to
       // match, and the one it did match only looks like it: where the cursor now stands is not known for certain.
       this.#unclear = passedOver.length > 0;
@@ -359,7 +374,7 @@ export class LiveShadow {
   #settlePending(): void {
     for (let index = 0; index < this.#pending.length; index += 1) {
       const pending = this.#pending[index]!;
-      if (!this.#align(pending.words, pending.lastOrdinal, index)) continue;
+      if (!this.#align(pending.words, pending.lastOrdinal, index, pending.deliveredMs)) continue;
       // Earlier finals were passed over: their live reading went by, too different to match, so it cannot arrive late.
       this.#pending.splice(0, index + 1);
       index = -1;

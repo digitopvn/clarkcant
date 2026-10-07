@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LiveShadow } from "../src/voice-live-shadow.ts";
 
 // A seeded simulation of the recognizer failing mid-session, judged without reference to any implementation: what the
-// person said and the recognizer had not delivered must come back, in order, apart from the one accepted loss, and the
+// person said and the recognizer had not delivered must come back, in order, apart from the accepted losses, and the
 // duplicates stay bounded by how ambiguous the readings were.
 const COMMANDS = [
   "chạy lại test đi nha",
@@ -241,7 +241,7 @@ function judge(session: Session, answer: string): Judged {
 }
 
 /**
- * The accepted loss: the lost sentence reads as a delivered final of the same command, heard within 30 s of it, while
+ * The accepted losses: the lost sentence reads as a delivered final of the same command, heard within 30 s of it, while
  * the live reading of that final, or of one delivered before it, never arrived. The session is then also one where the
  * lost sentence is that final's late reading. The same holds for the sentence the live session was still reading when
  * the recognizer failed, when the final's own reading was misread or split: it is then also that final's reading in
@@ -282,7 +282,7 @@ function ambiguous(session: Session): number {
 describe("the live reading kept while a recognizer is the source, over simulated sessions", () => {
   const SEEDS = 2000;
 
-  it("answers every undelivered sentence, in order, but for the accepted loss, and bounds the duplicates", () => {
+  it("answers every undelivered sentence, in order, but for the accepted losses, and bounds the duplicates", () => {
     const failures: string[] = [];
     for (let seed = 1; seed <= SEEDS; seed += 1) {
       const simulated = session(seed, seed % 4 === 0);
@@ -295,7 +295,10 @@ describe("the live reading kept while a recognizer is the source, over simulated
       if (simulated.maxLagMs > LATE_MS) continue;
       // Each ambiguous reading costs at most the sentence it passed over and the one matched; the sentence the live
       // session is still reading may cost one more.
-      const allowed = 2 * ambiguous(simulated) + 1;
+      // In these seeds a session with nothing ambiguous answers nothing twice, which catches a mass re-send early. Other
+      // sessions can still cost one: a sentence in progress whose first words are too few to match, or the rest of a
+      // sentence streamed after a final matched its beginning.
+      const allowed = ambiguous(simulated) === 0 ? 0 : 2 * ambiguous(simulated) + 1;
       if (extras > allowed) failures.push(`seed ${seed}: ${extras} duplicates, at most ${allowed} expected`);
     }
     expect(failures).toEqual([]);

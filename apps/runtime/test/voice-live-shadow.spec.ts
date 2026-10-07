@@ -363,6 +363,50 @@ describe("the live reading kept while a recognizer is the source", () => {
     expect(shadow.take()).toBe("rồi chạy lại test cho nó mở file voice session giúp tui");
   });
 
+  it("answers a command said again when a later final matched past the misread reading an earlier final took", () => {
+    const { shadow, advance } = shadowAt();
+    // The first final's live reading never arrives; the second's arrives misread, after the final stopped waiting.
+    shadow.delivered("xem log lỗi hôm qua đi");
+    advance(6000);
+    shadow.delivered("mở file voice session giúp tui");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u1", text: "mở phai vồi xe giúp lun", isFinal: true });
+    // The next final matches its own reading, passing over the misread one.
+    advance(2000);
+    shadow.hear({ utteranceId: "s:u2", text: "sửa cái hàm đọc cấu hình", isFinal: true });
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    // The person says the second command again, and the recognizer fails before delivering it. The second final's
+    // reading came before the third final's, so this cannot be its late reading.
+    advance(5000);
+    shadow.hear({ utteranceId: "s:u3", text: "mở file voice session giúp tui", isFinal: false });
+    expect(shadow.take()).toBe("mở file voice session giúp tui");
+  });
+
+  it("answers a command said again when earlier finals could only have taken its split reading past later matches", () => {
+    const { shadow, advance } = shadowAt();
+    // Two finals whose live readings never arrive.
+    shadow.delivered("xem log lỗi hôm qua đi");
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u1", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.delivered("mở file voice session giúp tui");
+    advance(2000);
+    shadow.hear({ utteranceId: "s:u2", text: "đẩy nhánh này lên github nhé", isFinal: true });
+    shadow.delivered("đẩy nhánh này lên github nhé");
+    advance(2000);
+    // This final's live reading arrives misread and split in two, after it stopped waiting.
+    shadow.delivered("chạy lại test đi nha");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u3", text: "chuy lại", isFinal: true });
+    advance(500);
+    shadow.hear({ utteranceId: "s:u4", text: "test đi nha", isFinal: true });
+    // The person says it again, and the recognizer fails. The two earlier finals' readings would have come before the
+    // matched sentences, so the split reading is the last final's and the repeat is not its late reading.
+    advance(8000);
+    shadow.hear({ utteranceId: "s:u5", text: "chạy lại test đi nha", isFinal: false });
+    expect(shadow.take()).toBe("chuy lại test đi nha chạy lại test đi nha");
+  });
+
   it("stays quick with a full backlog of long finals that never found their live reading", () => {
     const { shadow, advance } = shadowAt();
     const syllables = ["chạy", "lại", "test", "mở", "file", "voice", "session", "sửa", "hàm", "đọc", "cấu", "hình", "log"];
