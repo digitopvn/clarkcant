@@ -50,7 +50,13 @@ export function liveNodes(): {
         base: `http://127.0.0.1:${String(address.port)}`,
         services,
         token: services.runtime.identity.localToken,
-        stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+        // Every connection, not only the ones idle right now: the node keeps an idle one open for a minute, and one that
+        // goes idle after `close` would hold the stop (and the test's teardown) open that long.
+        stop: () =>
+          new Promise<void>((resolve) => {
+            server.close(() => resolve());
+            server.closeAllConnections();
+          }),
       };
       running.push(node);
       return node;
