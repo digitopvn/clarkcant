@@ -1,11 +1,11 @@
 /**
  * Chromium switches the desktop shell sets on itself before the app is ready.
  *
- * On Windows 11 22H2 and later, Chromium 139+ sets SO_RANDOMIZE_PORT on every TCP socket (the `TcpPortRandomizationWin`
+ * On Windows 11 22H2 and later, recent Chromium sets SO_RANDOMIZE_PORT on every TCP socket (the `TcpPortRandomizationWin`
  * feature, enabled by default in the Chromium that Electron 44 ships). Now and then the randomly picked local port
  * collides and connect() fails at once with WSAENOBUFS, which the renderer sees as `net::ERR_NO_BUFFER_SPACE`. Measured
  * against loopback with Playwright's Chromium, 32 of 540,000 connects failed that way with the feature on and none with
- * it off. The window talks only to its own node over loopback, and a single failed connect there is a lost message or
+ * it off. The window talks only to its own node, usually over loopback, and a single failed connect there is a lost message or
  * action: the client's requests are not retried, because a send cannot tell "never left" from "left and failed". The
  * feature protects web pages from counting each other's connections, which a window that loads only its own node does
  * not need, so the shell turns it off.
