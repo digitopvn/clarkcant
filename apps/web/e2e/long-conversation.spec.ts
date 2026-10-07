@@ -566,6 +566,64 @@ test("a row that arrived is announced once, and not again when it is mounted aga
   await expect(row(page, answered.messageId)).not.toHaveAttribute("aria-live", "off");
 });
 
+test("an answer drawn before the browser reports a scroll up does not take the reader back down", async ({ page }) => {
+  const { conversationId } = await seedConversation();
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  // The scripted proposal: a card whose answer, once decided, is a message more in the transcript.
+  await page.locator("[data-composer]").fill("chạy lệnh thử");
+  await page.locator("[data-send]").click();
+  const card = page.locator('[data-host-card="approval"][data-decision="pending"]').last();
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await settle(page);
+
+  // The decision's answer is held, so it arrives at a moment this test chooses.
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let answered = false;
+  await page.route("**/approvals/*/decide", async (route) => {
+    await held;
+    await route.continue();
+    answered = true;
+  });
+  await card.locator("[data-deny]").click();
+  // The reader is at the bottom, following, and the browser has said so.
+  await scroller(page).evaluate((node) => node.scrollTo({ top: node.scrollHeight, behavior: "instant" }));
+  await settle(page);
+
+  // A browser reports a scroll on its next frame, so an answer can be drawn between a scroll and its report: what a
+  // reader's scroll up, or a `scrollIntoView` before a press, looks like when the answer lands in that gap. The report
+  // is held back here until the answer is drawn.
+  await scroller(page).evaluate((node) => {
+    // SAFETY: a switch this spec reads; nothing in the application reads it.
+    const holder = window as unknown as { __holdScrollReports?: boolean };
+    holder.__holdScrollReports = true;
+    document.addEventListener(
+      "scroll",
+      (event) => {
+        if (holder.__holdScrollReports === true) event.stopImmediatePropagation();
+      },
+      { capture: true },
+    );
+    node.scrollTo({ top: node.scrollTop - 900, behavior: "instant" });
+  });
+  const reading = await rowBeingRead(page);
+  release();
+  await expect.poll(() => answered).toBe(true);
+  await expect(page.locator('[data-tool-name="decide_approval"]').last()).toBeAttached({ timeout: 20_000 });
+  await settle(page);
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+
+  // Once the scroll is reported, the answer counts as arrived below the reader, so the way back to it is offered.
+  await scroller(page).evaluate((node) => {
+    (window as unknown as { __holdScrollReports?: boolean }).__holdScrollReports = false;
+    node.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.locator("[data-jump-latest]")).toBeVisible();
+});
+
 /*
  * Pictures in a long conversation.
  *
