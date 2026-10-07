@@ -45,6 +45,14 @@ export interface TranscriptScore {
   preservation: Partial<Record<BenchmarkTermKind, { preserved: number; total: number; rate: number }>>;
   /** Utterances whose hypothesis equals the reference after whitespace is collapsed. */
   exactUtteranceRate: number;
+  /**
+   * Utterances whose hypothesis equals the reference ignoring case and trailing sentence punctuation as well.
+   *
+   * A real recognizer capitalises the first word and closes the sentence with a full stop, which the strict measure
+   * counts as a miss on every utterance. This measure forgives exactly that and nothing else, so it sits beside the
+   * strict one rather than replacing it.
+   */
+  audioExactUtteranceRate: number;
 }
 
 /** Words for WER: lower case, punctuation at the edges of a word dropped, punctuation inside one (a path) kept. */
@@ -105,6 +113,7 @@ export function scoreTranscripts(items: readonly ScoredTranscript[]): Transcript
   let characterEdits = 0;
   let referenceCharacters = 0;
   let exact = 0;
+  let audioTolerantExact = 0;
   let termsTotal = 0;
   let termsLost = 0;
   const preservation: TranscriptScore["preservation"] = {};
@@ -116,7 +125,8 @@ export function scoreTranscripts(items: readonly ScoredTranscript[]): Transcript
     const expected = characters(item.reference);
     characterEdits += editDistance(expected, characters(item.hypothesis));
     referenceCharacters += expected.length;
-    if (collapse(item.reference) === collapse(item.hypothesis)) exact += 1;
+    if (strictExact(item.reference, item.hypothesis)) exact += 1;
+    if (audioExact(item.reference, item.hypothesis)) audioTolerantExact += 1;
     for (const term of item.terms) {
       const kept = termPreserved(term.text, item.hypothesis);
       termsTotal += 1;
@@ -136,7 +146,19 @@ export function scoreTranscripts(items: readonly ScoredTranscript[]): Transcript
     technicalTermErrorRate: termsTotal === 0 ? 0 : termsLost / termsTotal,
     preservation,
     exactUtteranceRate: items.length === 0 ? 0 : exact / items.length,
+    audioExactUtteranceRate: items.length === 0 ? 0 : audioTolerantExact / items.length,
   };
+}
+
+/** Equal once whitespace is collapsed, and in nothing else. */
+export function strictExact(reference: string, hypothesis: string): boolean {
+  return collapse(reference) === collapse(hypothesis);
+}
+
+/** Equal once whitespace is collapsed, case is folded and sentence punctuation at the end is dropped. */
+export function audioExact(reference: string, hypothesis: string): boolean {
+  const fold = (text: string): string => collapse(text).toLowerCase().replace(/[\s.,!?;:…]+$/u, "");
+  return fold(reference) === fold(hypothesis);
 }
 
 function collapse(text: string): string {

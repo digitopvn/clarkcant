@@ -103,10 +103,14 @@ tiếng Anh có ngữ cảnh tiếng Việt, gồm tám mục âm phải đượ
 recognizer trong đó là giả lập: các lỗi transcription live điển hình được viết tay, không phải bản ghi âm. Normaliser
 không đổi câu tham chiếu chuẩn nào.
 
-| Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Utterance khớp hoàn toàn | Thay đổi | Abstain | Hồi quy |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| thô | 24.9% | 4.2% | 77.0% | 23.7% | - | - | - |
-| đã chuẩn hóa | 4.0% | 0.9% | 16.0% | 76.3% | 61 | 1 | 0 |
+| Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Khớp hoàn toàn (nghiêm ngặt) | Khớp hoàn toàn (dung sai âm thanh) | Thay đổi | Abstain | Hồi quy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| thô | 24.9% | 4.2% | 77.0% | 23.7% | 36.8% | - | - | - |
+| đã chuẩn hóa | 4.0% | 0.9% | 16.0% | 76.3% | 82.9% | 61 | 1 | 0 |
+
+Khớp nghiêm ngặt so sánh nguyên câu sau khi gộp khoảng trắng. Khớp dung sai âm thanh còn bỏ qua chữ hoa/thường và dấu
+câu ở cuối câu. Recognizer thật viết hoa chữ đầu và thêm dấu kết câu, nên khớp nghiêm ngặt luôn là 0% với âm thanh thật
+dù mọi từ đều đúng.
 
 Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (9/12 và 2/2 ở cả trước lẫn sau); symbol từ 1/20 lên 17/20, path
 từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
@@ -120,8 +124,12 @@ từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có
 - đoạn mơ hồ `voiceSession` / `voice_session` được abstain.
 
 Cùng lệnh đó với `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` nhận dạng bản ghi âm thật, chấm
-điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lượt chạy đó cần `GEMINI_API_KEY`, và dừng với thông báo
-"external gate" nếu không có key.
+điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lặp lại `--recognizer` để chạy nhiều recognizer trên cùng bộ bản
+ghi và chấm điểm chúng cạnh nhau trong một bảng, mỗi recognizer có tên `<id>-audio`. Lượt chạy đó cần `GEMINI_API_KEY`,
+và dừng với thông báo "external gate" nếu không có key. `--transcripts` in thêm transcript của từng utterance theo
+từng recognizer, cả thô lẫn đã chuẩn hóa, cạnh câu tham chiếu, và đánh dấu mỗi transcript đạt thước đo khớp nào. Dấu
+phân tách quen thuộc dùng được:
+`corepack pnpm --filter @clarkcant/voice-adapters bench:transcription -- --transcripts`.
 
 ## Hệ quả
 

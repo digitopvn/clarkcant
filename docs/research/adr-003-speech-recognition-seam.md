@@ -107,10 +107,14 @@ English with Vietnamese context, including eight negative entries that must come
 terms. Its recognizer outputs are simulated: they are typical live-transcription errors written by hand, not
 recordings. No canonical reference is changed by the normaliser.
 
-| Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| raw | 24.9% | 4.2% | 77.0% | 23.7% | - | - | - |
-| normalized | 4.0% | 0.9% | 16.0% | 76.3% | 61 | 1 | 0 |
+| Stage | WER | CER | Technical Term Error Rate | Exact (strict) | Exact (audio-tolerant) | Changes | Abstained | Regressions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| raw | 24.9% | 4.2% | 77.0% | 23.7% | 36.8% | - | - | - |
+| normalized | 4.0% | 0.9% | 16.0% | 76.3% | 82.9% | 61 | 1 | 0 |
+
+Strict exact compares whole utterances after collapsing whitespace. Audio-tolerant exact also ignores case and trailing
+sentence punctuation. A real recognizer capitalises the first word and closes the sentence, so strict exact is 0% for
+real audio even when every word is right.
 
 Commands and versions are never worse after normalisation (9/12 and 2/2 both before and after); symbols go from 1/20 to
 17/20, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
@@ -124,8 +128,12 @@ Commands and versions are never worse after normalisation (9/12 and 2/2 both bef
 - the ambiguous `voiceSession` / `voice_session` span abstains.
 
 The same command with `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` recognizes real recordings
-and scores them beside the corpus, reporting finalization latency. That run needs `GEMINI_API_KEY`, and stops with an
-"external gate" message without one.
+and scores them beside the corpus, reporting finalization latency. Repeat `--recognizer` to run several recognizers
+over the same recordings and score them side by side in one table, each as `<id>-audio`. That run needs
+`GEMINI_API_KEY`, and stops with an "external gate" message without one. `--transcripts` also prints every utterance's
+transcript per recognizer, raw and normalized, beside the reference, and marks which exact measure each one meets.
+The conventional separator works:
+`corepack pnpm --filter @clarkcant/voice-adapters bench:transcription -- --transcripts`.
 
 ## Consequences
 
