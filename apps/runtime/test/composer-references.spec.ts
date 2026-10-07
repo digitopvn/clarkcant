@@ -7,7 +7,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type ComposerReference, type ComposerReferenceSuggestion, type ComposerSuggestion, type ComposerSuggestionsResponse, type MessageRecord, SLASH_COMMANDS } from "@clarkcant/contracts";
 import { setPreference } from "@clarkcant/core";
 import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcant/pi-adapter";
-import { dismissNotification, getNotification, messagesSince, recordNotification, upsertProject } from "@clarkcant/storage";
+import {
+  appendMessage,
+  dismissNotification,
+  getNotification,
+  messagesSince,
+  nextMessageSequence,
+  recordNotification,
+  upsertProject,
+} from "@clarkcant/storage";
 
 import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
 import { COMPOSER_SUGGESTIONS_MAX, MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
@@ -163,6 +171,30 @@ describe("a skill named with a slash", () => {
     expect(prompt).toContain("Tham chiếu là con trỏ, không phải quyền");
     expect(prompt).toContain("/review xem thay đổi này");
     expectNoPath(prompt);
+  });
+
+  it("briefs the newest message's skill in a conversation longer than the window", async () => {
+    // More messages than the reader's window of 40, none naming anything, so the first 40 name nothing.
+    for (let index = 0; index < 45; index += 1) {
+      appendMessage(
+        services.runtime.db,
+        {
+          messageId: services.conductor.newId("msg") as never,
+          conversationId: conversationId as never,
+          role: index % 2 === 0 ? "user" : "assistant",
+          blocks: [{ type: "text", format: "plain", content: `tin ${String(index)}`, streaming: false }],
+          authorNodeId: services.runtime.identity.nodeId,
+          createdAt: AT as never,
+          delivery: "accepted",
+        },
+        nextMessageSequence(services.runtime.db, conversationId),
+      );
+    }
+    const response = await send("/review xem thay đổi này", [reviewRef]);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+
+    expect(referencesForLastUserMessage({ db: services.runtime.db, conversationId })).toEqual([{ type: "reference", reference: reviewRef }]);
+    expect(adapter.allPrompts()[0] ?? "").toContain('<skill name="review">');
   });
 
   it("refuses the message by name when the skill was edited after it was chosen", async () => {
