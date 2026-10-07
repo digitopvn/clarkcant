@@ -80,7 +80,10 @@ them before they mean anything.
      kind, because installed skill and extension names are often plain words (`test`, `review`, `weather`). An
      ordinary word starting a sentence ("Rebase", "Worktree", "Test", a skill called `deploy`, a proper noun such as
      ClarkCant beside a repository called `clarkcant`) keeps its capital, and so does `pnpm` on its own ("dùng PNPM"
-     stays as heard). A near match is never re-cased.
+     stays as heard). A lowercase tool name that is code-like only for a hyphen or a digit (`follow-up`, `check-in`,
+     `s3`) can also be an ordinary word, so it is lowered only with the evidence a plain word needs: "Follow-up with
+     the team tomorrow" and "S3 is down" keep their capitals, while "Daily-notes skill chạy lỗi khi build" becomes
+     `daily-notes skill ...`. A near match is never re-cased.
    - Commands are never changed except by casing, and no respelled word may complete one with its neighbours ("git re
      base" stays as heard). Only case is restored: `npm` never becomes `pnpm`, even when the vocabulary has pnpm
      (#574).

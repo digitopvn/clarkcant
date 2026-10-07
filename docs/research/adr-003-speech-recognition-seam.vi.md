@@ -76,8 +76,11 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      như vocabulary: "GPT-4o" thành `gpt-4o` khi vocabulary có `gpt-4o`. Tool được xét theo cách viết chứ không theo
      loại, vì tên skill và extension đã cài thường là từ thường (`test`, `review`, `weather`). Một từ thường đứng đầu
      câu ("Rebase", "Worktree", "Test", một skill tên `deploy`, một tên riêng như ClarkCant bên cạnh repository tên
-     `clarkcant`) giữ nguyên chữ hoa, và `pnpm` đứng một mình cũng vậy ("dùng PNPM" được giữ nguyên như đã nghe). Một
-     từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
+     `clarkcant`) giữ nguyên chữ hoa, và `pnpm` đứng một mình cũng vậy ("dùng PNPM" được giữ nguyên như đã nghe). Tên
+     tool viết thường mà chỉ mang dạng code nhờ một dấu gạch nối hoặc một chữ số (`follow-up`, `check-in`, `s3`) cũng
+     có thể là một từ thường, nên chỉ bị hạ chữ hoa khi có cùng bằng chứng mà một từ thường cần: "Follow-up with the
+     team tomorrow" và "S3 is down" giữ nguyên chữ hoa, còn "Daily-notes skill chạy lỗi khi build" thành
+     `daily-notes skill ...`. Một từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
    - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
      lệnh ("git re base" được giữ nguyên như đã nghe). Chỉ chữ hoa được khôi phục: `npm` không bao giờ thành `pnpm`, kể
      cả khi vocabulary có pnpm (#574).

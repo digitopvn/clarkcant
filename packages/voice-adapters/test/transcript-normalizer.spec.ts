@@ -195,6 +195,21 @@ describe("restoring the case of a code-like term heard exactly", () => {
     expect(normalizeTranscript("PNPM verify trước khi merge", tools).text).toBe("pnpm verify trước khi merge");
   });
 
+  it("lowers a hyphenated or digit skill name only with the evidence a plain word needs", () => {
+    const tools = buildRecognitionContext({ tools: ["follow-up", "check-in", "s3", "daily-notes", "todo.app"] });
+    const heard = (text: string): string => normalizeTranscript(text, tools).text;
+    // English prose with no technical anchor: an ordinary compound or brand keeps the capital it was written with.
+    for (const sentence of ["Follow-up with the team tomorrow", "Check-in at the hotel", "S3 is down", "Daily-notes for today"]) {
+      expect(heard(sentence)).toBe(sentence);
+    }
+    // With a technical anchor (a coding word, or a Vietnamese sentence carrying the name), the name is restored.
+    expect(heard("Daily-notes skill chạy lỗi khi build")).toBe("daily-notes skill chạy lỗi khi build");
+    expect(heard("Daily-notes skill broke the build")).toBe("daily-notes skill broke the build");
+    expect(heard("S3 bucket bị lỗi rồi")).toBe("s3 bucket bị lỗi rồi");
+    // Code punctuation other than a single hyphen is not an ordinary word.
+    expect(heard("Todo.app is open")).toBe("todo.app is open");
+  });
+
   it("is idempotent once case is restored", () => {
     for (const sentence of ["RedactSecrets có bắt được GitHub token không", "chạy PNPM verify trước khi push", "Git stash my changes before switching branches"]) {
       const once = restored(sentence);

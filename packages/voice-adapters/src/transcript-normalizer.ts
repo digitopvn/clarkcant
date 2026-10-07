@@ -173,8 +173,11 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // `redactSecrets`, but "Rebase" starting a sentence is the word rebase written as a sentence starts.
     const lowers = rule === "casing" && !raisesCaseOnly(source, term.text);
     if (lowers && !isCodeLike(term)) continue;
-    // A command heard in its own words is evidence enough for its own case: "Git stash" names no other command.
-    const needsContext = rule !== "casing" || !(isDistinctive(term) || (lowers && term.kind === "command"));
+    // A command heard in its own words is evidence enough for its own case: "Git stash" names no other command. A
+    // lowercase tool name that is code-like only for a hyphen or digit ("follow-up", "s3") may also be an ordinary
+    // word starting a sentence, so lowering it needs the same evidence as any plain word.
+    const needsContext =
+      rule !== "casing" || (lowers && isWordLikeTool(term)) || !(isDistinctive(term) || (lowers && term.kind === "command"));
     if (needsContext && !supported(hit.from, hit.to)) continue;
     if (result.changes.length >= MAX_NORMALIZATION_CHANGES) continue;
 
@@ -306,6 +309,15 @@ function isDistinctive(term: RecognitionTerm): boolean {
  */
 function isCodeLike(term: RecognitionTerm): boolean {
   return term.kind === "command" || /\p{Ll}\p{Lu}|\p{Lu}{2}\p{Ll}|\p{N}|[._/\\@#:-]/u.test(term.text);
+}
+
+/**
+ * A tool name that is all lowercase and code-like only because of a hyphen or a digit: `follow-up`, `check-in`, `s3`,
+ * `daily-notes`. Skill names like these are often ordinary English ("Follow-up with the team", "S3 is down"), so the
+ * spelling alone does not say a capital was the recognizer's.
+ */
+function isWordLikeTool(term: RecognitionTerm): boolean {
+  return term.kind === "tool" && /^[\p{Ll}\p{N}-]+$/u.test(term.text);
 }
 
 /** Whether `to` differs from `from` only by raising letters to capitals. Lowering is decided separately. */
