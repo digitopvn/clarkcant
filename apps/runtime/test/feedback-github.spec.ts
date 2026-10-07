@@ -122,6 +122,17 @@ describe("the REST client", () => {
     expect(seen[1]?.url.searchParams.get("creator")).toBe("ann");
   });
 
+  it("reads a token GitHub will not name an owner for as a lasting refusal, never echoing the token", async () => {
+    const token = "test-installation-token";
+    for (const status of [401, 403, 404]) {
+      const { fetch } = scripted(() => json({ message: "Resource not accessible by integration" }, status));
+      const refused = await createGithubRestClient({ repository: REPO, token, fetch }).viewerLogin().catch((cause: unknown) => cause);
+
+      expect(refused).toMatchObject({ kind: "refused", status, retryable: false });
+      expect(String((refused as Error).message)).not.toContain(token);
+    }
+  });
+
   it("does not ask whose token it is when it has none", async () => {
     const { fetch, seen } = scripted(() => json({ login: "nobody" }));
 
