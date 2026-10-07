@@ -676,8 +676,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     }
     const leaseId = lease.lease.leaseId;
     /*
-     * A run whose tidying up outlasts the node's shutdown can find storage already closed. The lease is then the lease
-     * sweeper's and the next boot's to recover, and what follows the release — taking the run's worktrees away — still runs.
+     * A run whose tidying up outlasts the node's shutdown can find storage already closed. Its lease then stays held until
+     * its time-to-live runs out, when the lease sweeper or the next run that asks for the capability reclaims it; what
+     * follows the release — taking the run's worktrees away — still runs.
      */
     const freeLease = (): void => {
       if (!deps.conductor.db.isOpen) return;

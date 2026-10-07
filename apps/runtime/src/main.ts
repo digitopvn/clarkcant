@@ -27,6 +27,7 @@ import { startUnknownEffectNoticeSweep } from "./effect-notices.ts";
 import { performEmergencyStop } from "./application/emergency-stop.ts";
 import { STOP_GRACE_MS } from "./process-tree.ts";
 import { killRunningCommandsNow, refuseNewCommands } from "./run-command.ts";
+import { shutdownStepBudget } from "./shutdown-budget.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
 import { attachTerminalGateway } from "./terminal-gateway.ts";
 import { attachApiSocket } from "./api-socket.ts";
@@ -503,6 +504,8 @@ async function main(): Promise<void> {
    * signal exits at once.
    */
   const SHUTDOWN_GRACE_MS = 5_000;
+  /** Kept back from waiting on stopped tasks, for the steps that make the exit clean: sessions, tokens, sockets, the database. */
+  const CLOSE_RESERVE_MS = 1_000;
   let closing = false;
   // An exit before a stop's grace has run out would skip its SIGKILL, since no timer fires after exit: taken now.
   const killChildrenNow = (): void => {
@@ -517,6 +520,7 @@ async function main(): Promise<void> {
     }
     closing = true;
     process.stderr.write(`received ${signal}; closing the node\n`);
+    const closeBy = Date.now() + SHUTDOWN_GRACE_MS;
     // Nothing new starts in a node that is closing: it would outlive the process that has to stop it.
     refuseNewCommands();
     services.taskDispatch?.close();
@@ -553,9 +557,18 @@ async function main(): Promise<void> {
           await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS + 100));
         }
         // A stopped task still tidies up after its worker ends (its browser, its lease, its worktrees) and writes as it
-        // does: the database stays open until that is done. The hard stop above still bounds the wait, and leaves what a
-        // run did not finish to the lease sweeper and the next boot.
-        await services.taskDispatch?.drain(SHUTDOWN_GRACE_MS);
+        // does, so the database stays open while it does — for what is left before the hard stop, less the time kept
+        // for the steps below. A task still tidying up past that is left to finish against a closed database: its
+        // worktrees still go, and a lease it could not release expires on its own.
+        const dispatch = services.taskDispatch;
+        if (dispatch !== undefined) {
+          const budget = shutdownStepBudget({ deadline: closeBy, now: Date.now(), reserveMs: CLOSE_RESERVE_MS });
+          if (!(await dispatch.drain(budget))) {
+            process.stderr.write(
+              `${String(dispatch.runningCount())} stopped task(s) still tidying up after ${String(budget)} ms; closing anyway\n`,
+            );
+          }
+        }
         await modelTurn?.dispose();
         // Every browser token still held is withdrawn where its provider allows, rather than left to lapse.
         await services.browserTokens?.close();

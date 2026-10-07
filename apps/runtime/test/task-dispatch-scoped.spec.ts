@@ -515,7 +515,7 @@ describe("stopping a task stops the commands its worker started on the host", ()
   }, 30_000);
 });
 
-describe("a node that closes waits for its stopped tasks to tidy up", () => {
+describe("a node that closes waits for its tasks to tidy up", () => {
   /** A repository task whose worker waits until the test lets it end. */
   function heldRepositoryRun(): {
     runtime: Runtime;
