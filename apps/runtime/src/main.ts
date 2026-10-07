@@ -558,15 +558,14 @@ async function main(): Promise<void> {
         }
         // A stopped task still tidies up after its worker ends (its browser, its lease, its worktrees) and writes as it
         // does, so the database stays open while it does — for what is left before the hard stop, less the time kept
-        // for the steps below. A task still tidying up past that is left to finish against a closed database: its
-        // worktrees still go, and a lease it could not release expires on its own.
+        // for the steps below. A task still tidying up past that is cut off when the process exits: a lease it did not
+        // release expires on its time-to-live, and the next boot's worktree sweep removes its worktree once the task has
+        // settled and holds nothing uncommitted.
         const dispatch = services.taskDispatch;
         if (dispatch !== undefined) {
           const budget = shutdownStepBudget({ deadline: closeBy, now: Date.now(), reserveMs: CLOSE_RESERVE_MS });
           if (!(await dispatch.drain(budget))) {
-            process.stderr.write(
-              `${String(dispatch.runningCount())} stopped task(s) still tidying up after ${String(budget)} ms; closing anyway\n`,
-            );
+            process.stderr.write(`stopped tasks were still tidying up after ${String(budget)} ms; closing anyway\n`);
           }
         }
         await modelTurn?.dispose();
