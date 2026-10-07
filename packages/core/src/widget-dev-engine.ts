@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
+import { lstatSync, readdirSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import {
@@ -125,6 +125,11 @@ export interface DevEngine {
   rebuild(trigger?: WidgetDevTrigger): Promise<DevEngineEvent>;
   /** Whether the folder is being watched: false after `close`, after a watch failure, or when watching was not asked for. */
   watching(): boolean;
+  /**
+   * Whether the folder is gone (`devRootState`): deleted, no longer a folder, or, while it was watched, replaced by another
+   * folder at the same path. False when it could not be looked at for another reason.
+   */
+  rootGone(): boolean;
   close(): void;
 }
 
@@ -217,6 +222,56 @@ function sizeOf(root: string): number {
 }
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
+
+/** Which folder a path named when it was first watched: its device and file id, which a folder made again does not keep. */
+export interface DevRootIdentity {
+  dev: bigint;
+  ino: bigint;
+}
+
+/** The identity of the folder at `root` now, or undefined when it cannot be read as a folder. */
+function devRootIdentityOf(root: string): DevRootIdentity | undefined {
+  try {
+    const stat = statSync(root, { bigint: true });
+    return stat.isDirectory() ? { dev: stat.dev, ino: stat.ino } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The errors that say a path is not there: anything else (a busy or locked folder on Windows) may pass on the next look. */
+const GONE_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]);
+
+/**
+ * Whether a dev folder is still the folder being developed.
+ *
+ * - `gone`: nothing is at the path, something other than a folder is, or — given the `identity` it was watched with — a
+ *   different folder is. A folder deleted and made again keeps its path but not its identity, and a watcher on the old
+ *   one hears nothing from the new one.
+ * - `unknown`: the folder could not be looked at for another reason (`EPERM`, `EBUSY` while an antivirus or indexer holds
+ *   it). That is not a folder that went away; the caller looks again next time.
+ * - `present`: the same folder is there.
+ */
+export function devRootState(root: string, identity?: DevRootIdentity): "present" | "gone" | "unknown" {
+  let stat: BigIntStats;
+  try {
+    stat = statSync(root, { bigint: true });
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    return code !== undefined && GONE_CODES.has(code) ? "gone" : "unknown";
+  }
+  if (!stat.isDirectory()) return "gone";
+  if (identity !== undefined && (stat.dev !== identity.dev || stat.ino !== identity.ino)) return "gone";
+  return "present";
+}
+
+/** Whether two failed builds failed the same way: the same diagnostics, so a second one tells nobody anything new. */
+const sameFailure = (before: WidgetDevBuild | undefined, after: WidgetDevBuild): boolean =>
+  before !== undefined &&
+  !before.ok &&
+  !after.ok &&
+  before.diagnosticsMore === after.diagnosticsMore &&
+  JSON.stringify(before.diagnostics) === JSON.stringify(after.diagnostics);
 
 /**
  * Why the folder's files could not be taken for a build. A folder over the size limit, or a link that points
@@ -359,14 +414,16 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   // Builds run one at a time, in order: a change that lands during a build is built after it.
   let queue: Promise<DevEngineEvent> = build("start");
   const ready = queue;
-  const enqueue = (trigger: WidgetDevTrigger): Promise<DevEngineEvent> => {
-    queue = queue.then(
-      () => build(trigger),
-      () => build(trigger),
-    );
+  const enqueue = (job: () => Promise<DevEngineEvent>): Promise<DevEngineEvent> => {
+    queue = queue.then(job, job);
     return queue;
   };
 
+  /**
+   * The folder watched, by identity: a folder deleted and made again at the same path before the next look is a folder
+   * the watcher does not hear (Windows keeps watching the deleted one), so it counts as gone. Only taken when watching.
+   */
+  let identity: DevRootIdentity | undefined;
   let watcher: FSWatcher | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let rootCheck: ReturnType<typeof setInterval> | undefined;
@@ -383,25 +440,21 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     watcher = undefined;
   };
   /**
-   * Whether the folder is still there, and if not, stop watching and say so. A folder deleted or renamed while watched
-   * is not reported by every platform's watcher (Windows reports neither an event nor an error), so this is checked on
-   * every change and on a timer rather than left to the watcher.
+   * Whether the folder is still there, and if not, stop watching and say so. A folder deleted, renamed or replaced while
+   * watched is not reported by every platform's watcher (Windows reports neither an event nor an error), so this is
+   * checked on every change and on a timer rather than left to the watcher. A folder that could not be looked at this
+   * time (`unknown`) is looked at again on the next tick rather than taken as gone.
    */
   const rootStillThere = (): boolean => {
     if (closed || watcher === undefined) return !closed;
-    let present: boolean;
-    try {
-      present = statSync(root).isDirectory();
-    } catch {
-      present = false;
-    }
-    if (present) return true;
+    if (devRootState(root, identity) !== "gone") return true;
     stopWatching();
     options.onRootGone?.();
     return false;
   };
   if (options.watch !== false) {
     try {
+      identity = devRootIdentityOf(root);
       watcher = watch(root, { recursive: true }, (_event, filename) => {
         const name = typeof filename === "string" ? filename : "";
         if (!rootStillThere()) return;
@@ -410,7 +463,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         timer = setTimeout(() => {
           timer = undefined;
           if (closed || !rootStillThere()) return;
-          void enqueue("change").then(
+          void enqueue(() => build("change")).then(
             (event) => {
               if (!closed) options.onBuild?.(event);
             },
@@ -431,14 +484,25 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       rootCheck.unref();
       // A save made before the platform watcher was live is built here. Only news is reported: files that did not change
       // build nothing new, and a folder that was already failing fails the same way, so where the watcher saw everything
-      // this is silent.
+      // this is silent. A build with no news leaves the last build as it was, rather than relabelled as a change made now.
       catchUp = setTimeout(() => {
         catchUp = undefined;
         if (closed || timer !== undefined || !rootStillThere()) return;
-        const before = last;
-        void enqueue("change").then(
+        let news = false;
+        void enqueue(async () => {
+          // Read once every build before it has settled, the first one included: a first build slower than the catch-up
+          // delay has not set the last build when the timer fires, and its failure would otherwise be news twice.
+          const before = last;
+          const event = await build("change");
+          news =
+            event.kind === "generation" ||
+            (event.kind === "failed" && !sameFailure(before, event.build)) ||
+            // Files back to the newest generation after a failed build: the failure is over, which is news.
+            (event.kind === "unchanged" && before?.ok === false);
+          if (!news && before !== undefined) last = before;
+          return event;
+        }).then(
           (event) => {
-            const news = event.kind === "generation" || (event.kind === "failed" && before?.ok !== false);
             if (!closed && news) options.onBuild?.(event);
           },
           (cause: unknown) => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause))),
@@ -457,11 +521,12 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     latest: () => newest,
     lastBuild: () => last,
     rebuild: async (trigger = "rebuild") => {
-      const event = await enqueue(trigger);
+      const event = await enqueue(() => build(trigger));
       if (!closed) options.onBuild?.(event);
       return event;
     },
     watching: () => watcher !== undefined && !closed,
+    rootGone: () => devRootState(root, identity) === "gone",
     close: () => {
       closed = true;
       stopWatching();

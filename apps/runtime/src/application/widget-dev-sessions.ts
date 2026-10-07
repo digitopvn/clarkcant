@@ -17,6 +17,7 @@ import {
   activeGeneration,
   cachedLocalSnapshotPath,
   devConsentScopeOf,
+  devRootState,
   getPreference,
   pinInstance,
   readDirectory,
@@ -665,18 +666,15 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * Whether a live session's folder has gone (deleted or renamed); when it has, the session is stopped as `folder-gone`
-   * before anything is built or installed from it. A platform watcher does not always report this (Windows reports
-   * nothing), so the check is made before each build is followed, not only on a watcher error.
+   * Whether a live session's folder has gone (deleted, renamed, or replaced by another folder at the same path while it
+   * was watched); when it has, the session is stopped as `folder-gone` before anything is built or installed from it. A
+   * platform watcher does not always report this (Windows reports nothing), so the check is made before each build is
+   * followed, not only on a watcher error. The session's engine answers, since it knows which folder it watches; a folder
+   * that could not be looked at this time (a busy or locked folder on Windows) is not taken as gone.
    */
   const stoppedIfGone = (sessionId: string, root: string): boolean => {
-    let present: boolean;
-    try {
-      present = statSync(root).isDirectory();
-    } catch {
-      present = false;
-    }
-    if (present) return false;
+    const engine = live.get(sessionId)?.engine;
+    if (!(engine === undefined ? devRootState(root) === "gone" : engine.rootGone())) return false;
     if (live.has(sessionId)) {
       markStopped(sessionId, "folder-gone");
       process.stderr.write(`widget dev: ${root} is gone, so its session was stopped; what it ran keeps running\n`);
