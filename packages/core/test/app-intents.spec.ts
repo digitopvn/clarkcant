@@ -274,11 +274,15 @@ describe("a command the registry does not know", () => {
     expect(match?.kind).toBe("refused");
     if (match?.kind !== "refused") throw new Error("unreachable");
     expect(match.say).toBe(APP_INTENT_NOT_UNDERSTOOD);
+    // Marked as naming no command, so a caller can tell it from a command it could not finish.
+    expect(match.unplaced).toBe(true);
 
     const resolution = resolveAppIntent({ text: sentence, mintConfirmationToken: mint });
     // No intent in any branch: the refusal is not a weak "intent" that a caller might act on.
     expect(resolution.kind).toBe("refused");
     expect("intent" in resolution).toBe(false);
+    // The mark stays on the match: a resolution carries only the sentence.
+    expect("unplaced" in resolution).toBe(false);
   });
 
   it("refuses a tab change that names no tab rather than guessing one", () => {
@@ -291,6 +295,8 @@ describe("a command the registry does not know", () => {
     // one particular tab is missing from it.
     for (const tab of SETTINGS_TABS) expect(match.say).toContain(tab);
     expect(match.say).not.toContain("plugins");
+    // A tab change is a command, named and not finished, so it is not marked as naming none.
+    expect(match.unplaced).toBeUndefined();
   });
 
   it("refuses an unknown command in English when asked, and in Vietnamese by default", () => {

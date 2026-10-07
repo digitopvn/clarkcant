@@ -221,6 +221,36 @@ describe("a message's files on the plain route while a turn is answering", () =>
     },
   );
 
+  it.each(["plain", "streaming"] as const)(
+    "keeps a host command the host turns down, sent with files, as its refusal on the %s route",
+    async (route) => {
+      const { adapter, interrupted, turn, conversationId, send, sendStreamed, upload, storedFiles, first, open } =
+        await start("interrupt");
+      const file = await upload();
+      const body = { text: "xoá hội thoại này", attachmentIds: [file] };
+      let answered = false;
+      const sending = route === "plain" ? send(body) : sendStreamed(body);
+      void sending.finally(() => {
+        answered = true;
+      });
+      try {
+        // Answered at once: a delete while a reply is running is refused by the host, never decided as a turn.
+        await vi.waitFor(() => expect(answered).toBe(true));
+      } finally {
+        open();
+      }
+      const sent = await sending;
+      expect(sent.status).toBe(200);
+      const decided = route === "plain" ? sent.body : (sent as { done?: unknown }).done;
+      expect(decided).toMatchObject({ appIntent: { kind: "refused" } });
+      expect(interrupted).not.toHaveBeenCalled();
+      expect((await first).stopped).toBeUndefined();
+      expect(adapter.allPrompts().some((prompt) => prompt.includes("xoá hội thoại này"))).toBe(false);
+      expect(storedFiles()).toEqual([]);
+      expect(turn.answering()).not.toContain(conversationId);
+    },
+  );
+
   it("still sends bare words the decider chose for the background to the background", async () => {
     const { backgrounded, interrupted, turn, conversationId, send, first, open } = await start("background");
     const sent = await send({ text: "tra giúp thời tiết mai" });
@@ -287,6 +317,26 @@ describe("a message with files whose words the host would answer", () => {
       expect(sent.body).toMatchObject({ code: "ATTACHMENT_NOT_AVAILABLE" });
     }
     expect(backgrounded).not.toHaveBeenCalled();
+  });
+});
+
+describe("a bare /background sent with files", () => {
+  it.each(["plain", "streaming"] as const)("is answered with its usage hint on the %s route", async (route) => {
+    const { adapter, backgrounded, upload, send, sendStreamed, storedFiles } = await node(["không dùng tới"]);
+    const file = await upload();
+    const body = { text: "/background", attachmentIds: [file] };
+    const sent = route === "plain" ? await send(body) : await sendStreamed(body);
+    expect(sent.status).toBe(200);
+    if (route === "plain") {
+      expect(sent.body).toMatchObject({ accepted: true, messageId: expect.any(String) });
+      expect(sent.body).not.toHaveProperty("resolution");
+    } else {
+      expect((sent as { done?: unknown }).done).toMatchObject({ resolution: "app-intent" });
+      expect((sent as { deltas: unknown[] }).deltas).toEqual([expect.stringContaining("/background")]);
+    }
+    expect(backgrounded).not.toHaveBeenCalled();
+    expect(adapter.allPrompts()).toEqual([]);
+    expect(storedFiles()).toEqual([]);
   });
 });
 

@@ -51,6 +51,7 @@ import { readDirectory,
   invocationPreflight,
   liveOwnerOf,
   liveStateOf,
+  matchAppIntent,
   applyWidgetStatePatch,
   FRAME_GRANT_LIFETIME_MS,
   mintFrameGrant,
@@ -88,6 +89,7 @@ import {
 import { type AppIntentDeps, decideAppIntent, mintConfirmation, preferredAppIntentLocale } from "../app-intents.ts";
 import { deleteConversation } from "../application/conversation-delete.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
+import { themeTargets } from "../application/appearance-intents.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
@@ -1075,6 +1077,26 @@ function answerTypedIntent(
 }
 
 /**
+ * Whether a refused sentence named no command at all, as opposed to one the host recognised and turned down.
+ *
+ * Read again from the core matcher, which writes nothing, with the same themes the decision saw, so the wire answer
+ * stays a plain refusal and no sentence is compared across languages.
+ */
+function namesNoCommand(services: Pick<NodeServices, "runtime" | "conductor">, text: string): boolean {
+  const match = matchAppIntent(text, {
+    themeTargets: () => {
+      try {
+        return themeTargets(readThemeRegistry(themeRegistryDeps(services)));
+      } catch {
+        // The decision already said so and read no themes either; the same empty list gives the same match.
+        return [];
+      }
+    },
+  });
+  return match?.kind === "refused" && match.unplaced === true;
+}
+
+/**
  * What a sent message is, before any turn machinery sees it: refused for a file it cannot carry, a command the host
  * answers, or a message for a turn with the files it carries.
  *
@@ -1087,7 +1109,9 @@ function answerTypedIntent(
  * is stored with its files and answered as a turn instead.
  *
  * A sentence shaped like a command that names none is not about the app. Without files it is answered "not
- * understood"; with files it is about them, so it is stored with them and answered as a turn too.
+ * understood"; with files it is about them, so it is stored with them and answered as a turn too. A command the host
+ * recognised and turned down (delete while a reply is running, a theme that is not installed, nothing waiting) stays
+ * the host's refusal: it was about the app, and it must not reach the turn decision that could interrupt a reply.
  */
 async function readSentMessage(
   services: ConversationServices,
@@ -1111,7 +1135,8 @@ async function readSentMessage(
 
   // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
   const slash = parseSlashCommand(text);
-  if (slash !== undefined && slash.command === "background" && attachedFiles) {
+  // A bare `/background` has no request to be about the files, so it gets its usage hint like any other command.
+  if (slash !== undefined && slash.command === "background" && slash.argument !== "" && attachedFiles) {
     return { kind: "message", attachmentRefs: attachments.refs };
   }
   if (slash !== undefined) {
@@ -1121,7 +1146,7 @@ async function readSentMessage(
   }
 
   const asked = typedAppIntent(services, conversationId, text, at);
-  if (asked.kind !== "none" && !(asked.kind === "refused" && attachedFiles)) {
+  if (asked.kind !== "none" && !(asked.kind === "refused" && attachedFiles && namesNoCommand(services, text))) {
     const said = answerTypedIntent(services, conversationId, asked);
     const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
     return { kind: "intent", asked, said, messageId: appended.messageId };
@@ -1236,9 +1261,10 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * A typed command to the application, and the files the message carries (`readSentMessage`).
      *
      * Checked before the turn machinery, because "mở settings" is not something to steer into a running answer. An
-     * intent is answered by the host and recorded with source "chat"; a command-shaped sentence that maps to nothing
-     * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
-     * anything else falls through untouched and reaches the agent exactly as before. The files are read first, so one
+     * intent is answered by the host and recorded with source "chat", a recognised command the host turns down is answered by it too; a command-shaped sentence
+     * that maps to nothing gets an honest "I did not understand" and no model turn when it carries no files, and with
+     * files is about them, so it becomes a turn like anything else, which reaches the agent exactly as before
+     * (`/background` with a request and files too). The files are read first, so one
      * that is not available refuses the message before anything is joined, stopped or started for it.
      */
     const sent = await readSentMessage(services, principal, {
@@ -1414,8 +1440,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * A typed command to the application, on the route the composer actually uses, and the files the message carries.
      *
      * The same reading as the non-streaming route (`readSentMessage`): the files first, then a slash command or a typed
-     * intent the host answers, whatever files are attached, except `/background` with files and a sentence the host
-     * could not place that carries files, which both become a turn. The difference is only where the decision travels, because
+     * intent the host answers, whatever files are attached, except `/background` with a request and files and a
+     * sentence that names no command and carries files, which both become a turn. The difference is only where the decision travels, because
      * this answer is a stream. A command is not a turn, so nothing is sent to the model: its sentence is a delta so a
      * client that renders replies renders this one too, and the `done` frame carries the record and the timeline the
      * other routes would have returned, plus the decision when the page has something to do.

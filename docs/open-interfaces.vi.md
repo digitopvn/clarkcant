@@ -186,9 +186,12 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   trên mọi đường đi: lệnh gạch chéo (slash command), lệnh ứng dụng gõ bằng chữ, hay trên `/messages` một tin nhắn gửi
   trong lúc có lượt đang trả lời, khi đó lượt đang chạy được giữ nguyên. Một lệnh của host, dù là lệnh gạch chéo
   (`/new`, `/thinking`) hay lệnh gõ bằng chữ (như "mở cài đặt" hay "dừng lại"), nói về ứng dụng chứ không về tệp, nên
-  vẫn được host trả lời kể cả khi tin nhắn có tệp đính kèm, và các tệp đó không được gắn vào tin nhắn nào. Ngoại lệ duy
-  nhất là `/background` có tệp đính kèm: yêu cầu của nó có thể nói về các tệp đó và việc chạy nền chỉ mang theo chữ,
-  nên tin nhắn được lưu cùng tệp của nó và được trả lời thành một lượt, với đúng phần chữ đã gõ. Một câu trông giống
+  vẫn được host trả lời kể cả khi tin nhắn có tệp đính kèm, và các tệp đó không được gắn vào tin nhắn nào. Điều này
+  gồm cả một lệnh mà host nhận ra rồi từ chối, như xoá cuộc trò chuyện khi đang có câu trả lời chạy: lời từ chối là câu
+  trả lời, và lượt đang chạy được giữ nguyên. Ngoại lệ duy nhất là `/background` có yêu cầu và có tệp đính kèm: yêu
+  cầu của nó có thể nói về các tệp đó và việc chạy nền chỉ mang theo chữ, nên tin nhắn được lưu cùng tệp của nó và
+  được trả lời thành một lượt, với đúng phần chữ đã gõ. Một `/background` không kèm yêu cầu luôn nhận hướng dẫn cách
+  dùng. Một câu trông giống
   lệnh nhưng không khớp lệnh nào sẽ được trả lời là "không hiểu" khi không có tệp đính kèm; khi có tệp đính kèm, nó
   được lưu cùng các tệp đó và được trả lời thành một lượt.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
