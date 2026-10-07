@@ -363,9 +363,13 @@ describe("the picker", () => {
     const all = await suggest("/", "");
     expect(all.status).toBe(200);
     const body = all.body as ComposerSuggestionsResponse;
-    // Commands first, then skills, up to the picker's eight rows: a bare slash shows the commands and the first skill,
-    // and typing reaches the rest.
-    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"].slice(0, COMPOSER_SUGGESTIONS_MAX));
+    // Commands first, then skills, up to the picker's eight rows. Both skills are shown however many commands there
+    // are; commands fill the rows the skills do not need, and typing reaches the rest.
+    expect(body.suggestions.map((row) => row.label)).toEqual([
+      ...SLASH_COMMANDS.slice(0, COMPOSER_SUGGESTIONS_MAX - 2),
+      "release-notes",
+      "review",
+    ]);
     expect(referenceRows(body.suggestions).every((row) => row.ref.kind === "skill")).toBe(true);
     // A command row writes the command, not a reference.
     expect(body.suggestions[0]).toMatchObject({ kind: "command", command: "new", trigger: "/" });
@@ -377,6 +381,23 @@ describe("the picker", () => {
     const narrowed = (await suggest("/", "rev")).body as ComposerSuggestionsResponse;
     expect(narrowed.suggestions.map((row) => row.label)).toEqual(["review"]);
     expect(refsOf(narrowed.suggestions)[0]).toEqual(reviewRef);
+  });
+
+  it("gives the person's skills an equal share of a bare slash, however many commands the node has", async () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({ ...REVIEW, name: `skill-${String(index).padStart(2, "0")}` }));
+    adapter.setSkills(many);
+    const half = COMPOSER_SUGGESTIONS_MAX / 2;
+
+    const body = (await suggest("/", "")).body as ComposerSuggestionsResponse;
+
+    expect(body.suggestions).toHaveLength(COMPOSER_SUGGESTIONS_MAX);
+    // Grouped as ranked: the first commands, then the first skills, half the rows each.
+    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS.slice(0, half), ...many.slice(0, half).map((skill) => skill.name)]);
+
+    // With no skills the commands take every row: a share one kind cannot fill goes to the other.
+    adapter.setSkills([]);
+    const bare = (await suggest("/", "")).body as ComposerSuggestionsResponse;
+    expect(bare.suggestions.map((row) => row.label)).toEqual(SLASH_COMMANDS.slice(0, COMPOSER_SUGGESTIONS_MAX));
   });
 
   it("offers projects and titled conversations after an at sign, leaving out the one being written in", async () => {

@@ -270,6 +270,29 @@ describe("a term the vocabulary spells two ways by case alone", () => {
   });
 });
 
+describe("words that run together into a longer term than a form starting the same way", () => {
+  it("writes the run-together package rather than the two-word name inside it", () => {
+    const session = buildRecognitionContext({ repositories: ["ClarkCant"], packages: ["clarkcant", "clarkcant-web"] });
+    const result = normalizeTranscript("sửa clark cant web trước", session);
+    expect(result.text).toBe("sửa clarkcant-web trước");
+    expect(result.changes).toEqual([{ from: "clark cant web", to: "clarkcant-web", rule: "spacing", kind: "package" }]);
+    expect(result.abstained).toEqual([]);
+  });
+
+  it("still abstains on the two-word name alone when the session spells it two ways by case", () => {
+    const session = buildRecognitionContext({ repositories: ["ClarkCant"], packages: ["clarkcant", "clarkcant-web"] });
+    const result = normalizeTranscript("sửa clark cant trước", session);
+    expect(result.text).toBe("sửa clark cant trước");
+    expect(result.abstained).toEqual([{ start: 4, end: 14, text: "clark cant", candidates: ["ClarkCant", "clarkcant"] }]);
+  });
+
+  it("still writes the shorter term when the next word does not complete the longer one", () => {
+    const session = buildRecognitionContext({ packages: ["clarkcant-web"] });
+    expect(normalizeTranscript("sửa clark cant trước", session).text).toBe("sửa ClarkCant trước");
+    expect(normalizeTranscript("sửa clark cant web trước", session).text).toBe("sửa clarkcant-web trước");
+  });
+});
+
 describe("a session term spelled one way beside the glossary's spelling", () => {
   it("keeps ClarkCant when the repository clarkcant is not the active one", () => {
     const session = buildRecognitionContext({ repositories: ["other-app", "clarkcant", "web"] });
