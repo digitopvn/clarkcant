@@ -155,6 +155,7 @@ from what the gateway already knows and never from the request body:
 | `cli-api` | any other token holder: `clarkcant api`, a script, or any other value of the header |
 | `automation` | a scheduled or standing automation's task |
 | `peer` | a task another node delegated to this one |
+| `channel` | a message on an external messaging channel bound to the conversation (set only by the node's channel service) |
 
 A body field such as `"origin": "person"` is ignored, so a machine surface cannot claim to be the person. The token
 is the trust boundary, as it is for `surface`: a holder that sends the composer's header itself is treated as the page.
@@ -202,6 +203,15 @@ The origin stays with the work it started:
 `execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and
 `clarkcant api`. So a program holding the node token can change this setting. Undoing `execution.machineTurns` puts
 back only that choice; it answers `undone: false` when the last policy write did not change it.
+
+A `channel` turn is different from the machine surfaces: its sender is someone on an external channel, not a holder of
+this node's token. Reads and local writes decide as the person's own turn does, but a risky effect it asks for is asked
+of the owner in every mode, unless a standing grant on that channel covers the category; a deny rule or a prohibition
+still wins. Such a user message also carries `authorPrincipalId` (the principal the channel's sender maps to, so the
+transcript can tell several speakers apart) and, when it answers a message of this conversation, `inReplyToMessageId`.
+Both are optional, set only by the node, and absent on every other message. No provider ships in this build and no
+HTTP route accepts channel deliveries yet; the substrate is described in
+[system-architecture.md](system-architecture.md) (§7.3, "External messaging channels").
 
 ### Which model answered: the model note
 

@@ -111,6 +111,8 @@ Main Clark giữ một `RuntimeSessionSynopsis` có giới hạn cho mỗi sessi
 | `ReachExpansionPlan`, `AcquisitionPlan`, `ReachConsent`, `reachWidening`, `consentDoesNotCover` | [`reach-expansion.ts`](../packages/contracts/src/reach-expansion.ts) | Một câu hỏi mạch lạc; đồng ý gắn với phạm vi |
 | `ExecutionEnvelope`, `DeliveryTarget`, `envelopeWidening` | [`execution-envelope.ts`](../packages/contracts/src/execution-envelope.ts) | Ranh giới quyền hạn của việc định kỳ (bản phác). Thư mục trong đó dùng lại task resource, vốn không nêu node; việc gắn chúng với một node thuộc về [#209](https://github.com/digitopvn/clarkcant/issues/209) |
 | `absoluteHostPathSchema`, `hostPathWithin` | [`host-path.ts`](../packages/contracts/src/host-path.ts) | Đường dẫn tuyệt đối đã chuẩn hóa và phép so chứa theo từng segment |
+| `IngressMode` | [`ingress-mode.ts`](../packages/contracts/src/ingress-mode.ts) | Cách sự kiện của một nguồn tới node (`webhook`, `poll`, `long-poll`, `stream`, `gateway`, `relay`, `local-watch`), dùng chung cho kênh và facet nguồn signal |
+| `ChannelAdapter`, `ChannelCapabilities`, `ChannelEvent`, `ChannelBinding`, `ExternalMessageLink`, `ChannelReplyRoute`, `ChannelDeliveryReceipt` | [`channels.ts`](../packages/contracts/src/channels.ts) | Kênh nhắn tin bên ngoài trung lập với nhà cung cấp ([#199](https://github.com/digitopvn/clarkcant/issues/199)); id của liên kết kênh được dự định là `target` mà `DeliveryTarget` dạng kênh của một envelope nêu tên, khi bộ định tuyến gửi của [#526](https://github.com/digitopvn/clarkcant/issues/526) hoàn thành |
 
 Chưa contract nào nằm trên một bề mặt công khai; [open-interfaces.vi.md](open-interfaces.vi.md) không đổi cho tới khi có.
 

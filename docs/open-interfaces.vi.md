@@ -158,6 +158,7 @@ Node cũng ghi lại ai đã bắt đầu mỗi lượt, thành `origin` của t
 | `cli-api` | mọi người giữ token khác: `clarkcant api`, một script, hoặc mọi giá trị khác của header |
 | `automation` | tác vụ của một tự động hoá đã lên lịch hoặc thường trực |
 | `peer` | tác vụ một node khác uỷ cho node này |
+| `channel` | một tin nhắn trên kênh nhắn tin bên ngoài được gắn với cuộc trò chuyện (chỉ dịch vụ kênh của node đặt giá trị này) |
 
 Một trường trong thân như `"origin": "person"` bị bỏ qua, nên một bề mặt máy không thể tự nhận là người dùng. Token là
 ranh giới tin cậy, giống như với `surface`: người giữ token tự gửi header của ô soạn thảo được xem như chính trang.
@@ -206,6 +207,15 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 `execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
 `clarkcant api`. Vì vậy một chương trình giữ token của node có thể đổi cài đặt này. Hoàn tác `execution.machineTurns`
 chỉ đặt lại đúng lựa chọn đó; nó trả về `undone: false` khi lần ghi chính sách gần nhất không đổi lựa chọn này.
+
+Lượt `channel` khác với các bề mặt máy: người gửi là một người trên kênh bên ngoài, không phải người giữ token của node
+này. Việc đọc và ghi cục bộ được quyết định như lượt của chính người dùng, nhưng một tác động rủi ro mà lượt đó yêu cầu
+luôn được hỏi chủ sở hữu ở mọi chế độ, trừ khi một quyền thường trực trên kênh đó bao gồm loại tác động ấy; quy tắc từ
+chối hoặc lệnh cấm vẫn thắng. Tin nhắn người dùng như vậy còn mang `authorPrincipalId` (principal mà người gửi trên kênh
+được ánh xạ tới, để bản ghi phân biệt được nhiều người nói) và, khi nó trả lời một tin nhắn của cuộc trò chuyện này,
+`inReplyToMessageId`. Cả hai đều không bắt buộc, chỉ node đặt, và không có trên mọi tin nhắn khác. Bản build này chưa
+kèm nhà cung cấp kênh nào và chưa có route HTTP nào nhận dữ liệu từ kênh; phần nền được mô tả trong
+[system-architecture.vi.md](system-architecture.vi.md) (§7.3, "Kênh nhắn tin bên ngoài").
 
 ### Model nào đã trả lời: ghi chú model
 
