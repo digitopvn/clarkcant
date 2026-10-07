@@ -168,7 +168,18 @@ import { devSessionRunning, readNodeDirectory } from "../application/widget-dev-
  */
 export type ConversationServices = Pick<
   NodeServices,
-  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl" | "widgetPerforms" | "providerAuth"
+  | "runtime"
+  | "conductor"
+  | "search"
+  | "jev"
+  | "projects"
+  | "projectSessions"
+  | "turnControl"
+  | "hostControl"
+  | "widgetPerforms"
+  | "providerAuth"
+  | "currentModel"
+  | "feedbackGithub"
 >;
 
 /** What the conversation routes need. */

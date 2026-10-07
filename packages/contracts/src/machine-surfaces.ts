@@ -80,6 +80,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "packages" && third === "connection")
       );
     case 4:
+      // POST /feedback/reports/:id/publish: filing a report on GitHub with the person's token, only on the person's own
+      // Create issue press. Nothing else files one: a machine surface, or Clark through `report_feedback`, can only
+      // prepare a report and show it to the person.
+      if (first === "feedback" && second === "reports" && fourth === "publish") return true;
       // POST /widget-dev/sessions/:id/rebuild and /place: installing the folder's newest build, and placing it. Stopping
       // a session (DELETE) and reading one stay reachable everywhere.
       if (first === "widget-dev" && second === "sessions") return fourth === "rebuild" || fourth === "place";
@@ -112,7 +116,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
 
 /**

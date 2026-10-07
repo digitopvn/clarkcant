@@ -468,6 +468,14 @@ export function textOfBlock(block: MessageBlock): string {
         `Clark ${block.installed.version}`,
         ...block.releases.map((release) => `${release.version}: ${release.entries.map((entry) => entry.summary).join("; ")}`),
       ].join(" — ");
+    case "feedback-card":
+      // The report's title and the issue it landed in, so "the bug I reported about voice" finds the card.
+      return [
+        block.title ?? block.description ?? `report ${block.kind ?? ""}`.trim(),
+        block.publication?.status === "published" ? `#${String(block.publication.issue.number)} ${block.publication.issue.title}` : undefined,
+      ]
+        .filter((part) => part !== undefined)
+        .join(" — ");
     case "browser-session-card":
     case "computer-session-card":
       return `${block.label} — ${block.driver === "user" ? "bạn" : "agent"} đang điều khiển`;

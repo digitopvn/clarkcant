@@ -1,0 +1,74 @@
+name: Feature request
+description: Something you would like ClarkCant to do.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The quickest way to ask for a feature is from inside ClarkCant: type `/report feature ...` or tell Clark what you would like. Clark checks for existing requests and notes how it fits the product philosophy.
+
+        Describe the problem and the outcome you want first. A proposed implementation is welcome as a direction, not a prescription. ClarkCant keeps one Clark and one conversation, stays open to extensions, and works on macOS, Windows and Linux; a request that conflicts with this is still recorded as asked, and maintainers decide how to proceed.
+
+        Tiếng Việt cũng được.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today, and for whom.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should be true once this exists.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: A concrete situation where you would use it.
+    validations:
+      required: false
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed direction (not prescriptive)
+      description: How it might work, if you have an idea.
+    validations:
+      required: false
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: What this request is deliberately not asking for.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: How you would know it works.
+    validations:
+      required: false
+  - type: dropdown
+    id: philosophy
+    attributes:
+      label: Philosophy fit
+      description: Your reading of how this fits ClarkCant's product philosophy. Maintainers confirm it.
+      options:
+        - Not sure
+        - Aligned
+        - Aligned, with constraints on how it is built
+        - In conflict with the philosophy as written
+    validations:
+      required: false
+  - type: textarea
+    id: replaceability
+    attributes:
+      label: Replaceability
+      description: Could a stronger model, a different runtime or another provider replace this implementation later? Which typed contract would keep it replaceable?
+    validations:
+      required: false

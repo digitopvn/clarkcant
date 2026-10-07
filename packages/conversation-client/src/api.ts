@@ -45,6 +45,12 @@ import {
   type AttachmentRef,
   composerSuggestionsResponseSchema,
   effectReconcileResponseSchema,
+  feedbackPrepareResponseSchema,
+  feedbackPublishResponseSchema,
+  type FeedbackPrepareResponse,
+  type FeedbackPublishResponse,
+  type FeedbackPublishIntent,
+  type FeedbackRequestInput,
   parseSseChunk,
   inboxResponseSchema,
   noticeSchema,
@@ -2724,6 +2730,35 @@ export class GatewayClient {
   ): Promise<EffectReconcileResponse> {
     const body = await this.#call<unknown>("POST", `/effects/${encodeURIComponent(effectId)}/reconcile`, { outcome, source });
     return effectReconcileResponseSchema.parse(body);
+  }
+
+  /**
+   * Prepare a product report from the Feedback Composer: the exact title and body that would be filed, and the safe
+   * diagnostics as the person reads them. Nothing is filed.
+   */
+  async prepareFeedback(request: FeedbackRequestInput, conversationId?: string): Promise<FeedbackPrepareResponse> {
+    const body = await this.#call<unknown>("POST", "/feedback/reports", {
+      request,
+      ...(conversationId === undefined ? {} : { conversationId }),
+    });
+    return feedbackPrepareResponseSchema.parse(body);
+  }
+
+  /**
+   * File a prepared report — the person's own Create issue — or find out what an earlier attempt came to. The result
+   * card is written into the conversation and comes back in the timeline.
+   */
+  async publishFeedback(
+    reportId: string,
+    conversationId: string,
+    options: { intent?: FeedbackPublishIntent; answers?: string } = {},
+  ): Promise<FeedbackPublishResponse & { timeline: Timeline }> {
+    const body = await this.#call<{ timeline: Timeline }>("POST", `/feedback/reports/${encodeURIComponent(reportId)}/publish`, {
+      conversationId,
+      ...(options.intent === undefined ? {} : { intent: options.intent }),
+      ...(options.answers === undefined ? {} : { answers: options.answers }),
+    });
+    return { ...feedbackPublishResponseSchema.parse(body), timeline: body.timeline };
   }
 
   /** The same, from the inbox's list of quieted kinds, for a kind with no notice left to act from. */

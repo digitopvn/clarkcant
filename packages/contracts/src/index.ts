@@ -68,6 +68,7 @@ export * from "./widget-dev-session.ts";
 export * from "./composer-references.ts";
 export * from "./slash-commands.ts";
 export * from "./release-notes.ts";
+export * from "./feedback.ts";
 export * from "./app-intents.ts";
 export * from "./conversation-deletion.ts";
 export * from "./surfaces.ts";

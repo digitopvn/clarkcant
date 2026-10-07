@@ -56,9 +56,10 @@ describe("what is written down", () => {
     // into the colour-scheme preference; 37 records the files a task handed to a paired node brought back; 38 holds the files a widget holds by reference;
     // 39 lets a person delete a conversation; 40 keeps package jobs; 41 keeps the accounts package services connect to;
     // 42 lets a finished install plan whose generation no longer runs leave the live set.
-    // 43 records which surface asked for each audited action; 44 keeps external messaging channels.
+    // 43 records which surface asked for each audited action; 44 keeps external messaging channels; 45 keeps product
+    // reports until GitHub holds them.
     // The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(44);
+    expect(currentSchemaVersion(db)).toBe(45);
   });
 
   it("reads back newest first, with the fields it was given", () => {

@@ -55,7 +55,7 @@ export type DirectoryIndexState =
 
 /** Where a listing came from: which configured source, of which kind, under the name a person recognises. */
 export interface DirectoryOrigin {
-  /** Stable id of the source on this node (`local`, `official`, `custom-<hash>`). */
+  /** Stable id of the source on this node (`local`, `official`, `custom-<hash>`, `widget-dev`). */
   id: string;
   kind: DirectorySourceKind;
   /** The index file's path, or the marketplace's name or address. */
