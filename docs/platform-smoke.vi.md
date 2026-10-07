@@ -149,9 +149,9 @@ Mỗi loại phiên Linux hiện được gì:
   đường Linux duy nhất có kiểm thử tự động. Dưới XWayland, compositor vẫn có thể ghi đè vị trí hoặc thứ tự xếp chồng;
   điều đó chưa được đo.
 - **Wayland gốc**, mặc định của Electron từ bản 38 khi phiên là Wayland: compositor quyết định cửa sổ nằm ở đâu, và
-  không có giao thức chuẩn nào cho ứng dụng giữ cửa sổ của mình trên các cửa sổ khác. Shell chỉ yêu cầu kích thước. Mọi
-  câu trả lời về chế độ đều ghi `position` là không hỗ trợ. Yêu cầu ghim bị từ chối kèm lý do đó, và thanh điều khiển
-  cửa sổ ẩn nút ghim. Một compositor xếp lát (tiling) cũng có thể bỏ qua kích thước của cửa sổ đang xếp lát; câu trả lời
+  không có giao thức chuẩn nào cho ứng dụng giữ cửa sổ của mình trên các cửa sổ khác. Shell vẫn gửi đầy đủ vị trí và
+  kích thước, nhưng chỉ kích thước có tác dụng. Mọi câu trả lời về chế độ đều ghi `position` là không hỗ trợ. Yêu cầu
+  ghim bị từ chối kèm lý do đó và không bao giờ được gửi đi, và thanh điều khiển cửa sổ ẩn nút ghim. Một compositor xếp lát (tiling) cũng có thể bỏ qua kích thước của cửa sổ đang xếp lát; câu trả lời
   báo kích thước cửa sổ thực sự có.
 - **Hyprland**: có một adapter (`apps/desktop/src/hyprland-window-controller.mjs`) ánh xạ các chế độ sang dispatcher
   của Hyprland qua socket yêu cầu của nó. Compact và orb cho cửa sổ nổi (floating) ở kích thước của chúng, orb còn ghim

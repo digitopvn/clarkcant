@@ -36,7 +36,7 @@ function exactPair(args: string): { first: number; second: number; selector: str
   return { first: Number(match[1]), second: Number(match[2]), selector: String(match[3]) };
 }
 
-function fakeHyprland(overrides: Partial<FakeClient> = {}, extra: FakeClient[] = []) {
+function fakeHyprland(overrides: Partial<FakeClient> = {}, extra: FakeClient[] = [], { delayMs = 0 } = {}) {
   const ours: FakeClient = {
     address: ADDRESS,
     pid: PID,
@@ -50,6 +50,8 @@ function fakeHyprland(overrides: Partial<FakeClient> = {}, extra: FakeClient[] =
   };
   const clients = [ours, ...extra];
   const dispatched: string[] = [];
+  /** Every request in arrival order, queries included. */
+  const requests: string[] = [];
   let focused = ours.address;
   let failOn: string | undefined;
 
@@ -61,6 +63,9 @@ function fakeHyprland(overrides: Partial<FakeClient> = {}, extra: FakeClient[] =
   };
 
   async function request(text: string): Promise<string> {
+    requests.push(text);
+    // A socket round trip takes time; a delay lets two verbs overlap the way they would against a real compositor.
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     if (text === "j/clients") return JSON.stringify(clients);
     const command = text.replace(/^dispatch /, "");
     dispatched.push(command);
@@ -109,6 +114,7 @@ function fakeHyprland(overrides: Partial<FakeClient> = {}, extra: FakeClient[] =
     request,
     ours,
     dispatched,
+    requests,
     failNext(prefix: string) {
       failOn = prefix;
     },
@@ -219,13 +225,45 @@ describe("the four modes as Hyprland dispatchers", () => {
     expect(hyprland.ours.fullscreen).toBe(0);
   });
 
-  it("refuses an unknown mode before asking Hyprland for anything", async () => {
+  it("refuses an unknown mode before asking Hyprland for anything, not even its client list", async () => {
     const hyprland = fakeHyprland();
     expect(await hyprlandController(hyprland).setMode("toast")).toEqual({
       ok: false,
       refused: '"toast" is not a window mode this build knows',
     });
-    expect(hyprland.dispatched).toEqual([]);
+    expect(hyprland.requests).toEqual([]);
+  });
+
+  it("runs overlapping verbs one after another, so a pin during the orb's collapse is not toggled twice", async () => {
+    const hyprland = fakeHyprland({}, [], { delayMs: 2 });
+    const controller = hyprlandController(hyprland);
+
+    const [orb, pin] = await Promise.all([controller.setMode("orb"), controller.setPinned(true)]);
+    expect(hyprland.requests).toEqual([
+      "j/clients",
+      `dispatch setfloating address:${ADDRESS}`,
+      "dispatch resizewindowpixel exact 148 148,address:" + ADDRESS,
+      `dispatch pin address:${ADDRESS}`,
+      "j/clients",
+      // The pin reads the window after the orb finished: already floating and pinned, so it sends nothing.
+      "j/clients",
+      "j/clients",
+    ]);
+    expect(orb).toMatchObject({ ok: true, mode: "orb", alwaysOnTop: true });
+    expect(pin).toMatchObject({ ok: true, alwaysOnTop: true });
+
+    // The person's pin now owns it: leaving the orb keeps the window pinned.
+    expect(await controller.setMode("normal")).toMatchObject({ mode: "normal", alwaysOnTop: true });
+  });
+
+  it("a failed verb does not block the ones queued behind it", async () => {
+    const hyprland = fakeHyprland();
+    hyprland.failNext("setfloating");
+    const controller = hyprlandController(hyprland);
+    const failing = controller.setMode("compact");
+    const next = controller.focus();
+    await expect(failing).rejects.toThrow(/did not accept/);
+    expect(await next).toMatchObject({ ok: true, applied: ["focus"] });
   });
 });
 

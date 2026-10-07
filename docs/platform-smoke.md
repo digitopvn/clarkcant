@@ -149,9 +149,9 @@ What each Linux session gets today:
   this is the only Linux path with automated coverage. Under XWayland the compositor may still override placement or
   stacking; that has not been measured.
 - **Native Wayland**, Electron's default since version 38 when the session is Wayland: the compositor decides where
-  windows go, and no standard protocol lets an app keep its window above others. The shell asks only for the size. Every
-  mode answer lists `position` as unsupported. A pin request is refused with that reason, and the window chrome hides
-  the pin button. A tiling compositor may also ignore the size of a tiled window; the answer reports the size the window
+  windows go, and no standard protocol lets an app keep its window above others. The shell still sends full bounds,
+  but only the size takes effect. Every mode answer lists `position` as unsupported. A pin request is refused with that
+  reason and never sent, and the window chrome hides the pin button. A tiling compositor may also ignore the size of a tiled window; the answer reports the size the window
   actually has.
 - **Hyprland**: there is an adapter (`apps/desktop/src/hyprland-window-controller.mjs`) that maps the modes to Hyprland
   dispatchers over its request socket. Compact and orb float the window at their size, the orb also pins it (shown on

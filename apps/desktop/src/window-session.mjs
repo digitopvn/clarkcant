@@ -88,7 +88,7 @@ export function selectWindowBackend({ session, requested }) {
   if (session.kind === "wayland") {
     return {
       backend: "electron-geometry",
-      reason: "native Wayland: the compositor owns window position and stacking, so only the size is requested",
+      reason: "native Wayland: the compositor owns window position and stacking, so only a size request takes effect",
     };
   }
   return { backend: "electron-geometry", reason: "the app owns its window geometry in this session" };
@@ -97,14 +97,17 @@ export function selectWindowBackend({ session, requested }) {
 /**
  * The Ozone platform Electron will run on, as far as the inputs say.
  *
- * An explicit `--ozone-platform` wins. Otherwise the legacy hint (switch, then `ELECTRON_OZONE_PLATFORM_HINT`) is
- * honoured, and failing that Electron's own default since version 38, `auto`: Wayland when the session is Wayland, X11
- * when there is an X display, nothing when there is neither.
+ * An explicit `--ozone-platform` wins. Otherwise the `--ozone-platform-hint` switch is honoured, and failing that
+ * Electron's own default since version 38, `auto`: Wayland when the session is Wayland, X11 when there is an X display,
+ * nothing when there is neither.
+ *
+ * `ELECTRON_OZONE_PLATFORM_HINT` is deliberately not read: Electron 38 stopped honouring it, so trusting it would report
+ * XWayland (and offer a pin) while Electron actually runs native Wayland.
  */
 function resolveOzonePlatform({ switches, env, waylandSession }) {
   const explicit = normalizeOzone(switches.ozonePlatform);
   if (explicit !== undefined) return explicit;
-  const hint = normalizeOzone(switches.ozonePlatformHint) ?? normalizeOzone(env.ELECTRON_OZONE_PLATFORM_HINT);
+  const hint = normalizeOzone(switches.ozonePlatformHint);
   if (hint !== undefined) return hint;
   if (waylandSession) return "wayland";
   if (nonEmpty(env.DISPLAY)) return "x11";

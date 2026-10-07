@@ -185,9 +185,13 @@ export function createHyprlandWindowController({ request, getWindow, pid, fallba
   }
 
   async function setMode(target) {
+    // Checked before anything is asked of Hyprland: an unknown mode costs no IPC at all.
+    if (!WINDOW_MODES.includes(target)) {
+      if (getWindow() === undefined) return refuse("there is no window to resize");
+      return refuse(`"${String(target)}" is not a window mode this build knows`);
+    }
     let client = await own();
     if (client === undefined) return refuse("there is no window to resize");
-    if (!WINDOW_MODES.includes(target)) return refuse(`"${String(target)}" is not a window mode this build knows`);
 
     // Out of full screen and out of maximized first: Hyprland ignores size requests for either.
     if (isFullScreen(client)) await setFullscreenState(client, 0, false);
@@ -220,7 +224,7 @@ export function createHyprlandWindowController({ request, getWindow, pid, fallba
     return state(target === "orb" ? ["float", "size", "pin"] : ["float", "size"]);
   }
 
-  return {
+  const controller = {
     backend,
     support: Object.freeze({ position: true, alwaysOnTop: true }),
 
@@ -296,4 +300,38 @@ export function createHyprlandWindowController({ request, getWindow, pid, fallba
       // Hyprland remembers the conversation's geometry at collapse time; a resize in between is the compositor's.
     },
   };
+
+  /*
+   * One verb at a time. Each verb reads the client list, dispatches several commands and updates `mode`,
+   * `beforeCollapse` and `pinnedByOrb` across awaits; two interleaved verbs (a pin clicked while the orb is collapsing)
+   * would each act on a stale reading of the other's half-done work. Verbs that call `setMode` internally use the
+   * unqueued function, because they already hold the turn.
+   */
+  let queue = Promise.resolve();
+  for (const name of SERIALIZED_VERBS) {
+    const verb = controller[name];
+    controller[name] = (...args) => {
+      const turn = queue.then(() => verb(...args));
+      // The next verb waits for this one to finish either way; a failure is still the caller's to see.
+      queue = turn.then(
+        () => undefined,
+        () => undefined,
+      );
+      return turn;
+    };
+  }
+  return controller;
 }
+
+/** The verbs that read and change Hyprland or this backend's own state, run strictly one after another. */
+const SERIALIZED_VERBS = Object.freeze([
+  "setMode",
+  "setPinned",
+  "focus",
+  "minimize",
+  "setFullscreen",
+  "restore",
+  "restoreIfCollapsed",
+  "resizePreset",
+  "snapshot",
+]);

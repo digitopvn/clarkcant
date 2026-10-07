@@ -3,13 +3,16 @@
  *
  * The renderer speaks only in intents (`normal`, `expanded`, `compact`, `orb`, pin, focus, minimize, full screen).
  * A backend turns those into window-system requests and answers with the state the window actually has afterwards,
- * read back rather than echoed, plus which parts it asked the window system for (`applied`) and which parts this
- * session cannot honour at all (`unsupported`). A part listed as unsupported was never requested, so the UI never
- * shows geometry or a pin that did not happen.
+ * read back rather than echoed, plus which parts of its request can take effect (`applied`) and which parts this
+ * session cannot honour at all (`unsupported`). An unsupported part is never reported as done: a refused pin is never
+ * sent, and a position the compositor ignores is listed as unsupported, so the UI never shows geometry or a pin that
+ * did not happen.
  *
  * Backends:
  * - `createElectronGeometryController` (this file): Electron's own bounds and stacking. Full on macOS, Windows and X11;
- *   under native Wayland it requests only the size and reports position and always-on-top as unsupported.
+ *   under native Wayland it still sends full bounds through `setBounds`, which Electron applies as a size only (the
+ *   compositor owns placement), so `applied` lists only the size, position is reported unsupported, and a pin is
+ *   refused without being sent.
  * - `createHyprlandWindowController` (`hyprland-window-controller.mjs`): Hyprland IPC, opt-in, unverified on a real
  *   compositor, wrapped in `withFallbackController` so any IPC failure degrades to Electron geometry.
  *
@@ -203,6 +206,8 @@ export function createElectronGeometryController({ getWindow, workAreaFor, suppo
       if (exitFullScreen) await applyFullScreen(window, false, settleMs);
       ensureModel(window);
       step(window, action);
+      // Full bounds on every platform. Under native Wayland Electron applies only the size and ignores x/y, which is
+      // why `geometryParts` then lists position as unsupported rather than applied.
       window.setBounds(model.bounds);
       if (reassertPin && support.alwaysOnTop) window.setAlwaysOnTop(model.alwaysOnTop);
       return state(window, geometryParts);

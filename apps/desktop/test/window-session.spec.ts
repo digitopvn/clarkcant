@@ -45,10 +45,11 @@ describe("detecting the desktop session", () => {
     ).toBe("wayland");
   });
 
-  it("the legacy hint, from the switch or the environment, is honoured when there is no explicit platform", () => {
+  it("the hint switch is honoured when there is no explicit platform; the environment variable Electron dropped is not", () => {
     const env = { WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" };
     expect(detectWindowSession({ platform: "linux", env, switches: { ozonePlatformHint: "x11" } }).kind).toBe("xwayland");
-    expect(detectWindowSession({ platform: "linux", env: { ...env, ELECTRON_OZONE_PLATFORM_HINT: "x11" } }).kind).toBe("xwayland");
+    // Electron 38+ ignores ELECTRON_OZONE_PLATFORM_HINT and runs native Wayland; reading it would offer a fake pin.
+    expect(detectWindowSession({ platform: "linux", env: { ...env, ELECTRON_OZONE_PLATFORM_HINT: "x11" } }).kind).toBe("wayland");
     expect(detectWindowSession({ platform: "linux", env, switches: { ozonePlatform: "auto" } }).kind).toBe("wayland");
   });
 
