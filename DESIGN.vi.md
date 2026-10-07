@@ -475,6 +475,15 @@ Từ ba bước làm việc liên tiếp trở lên (suy luận, lời gọi cô
 
 Thinking state kết thúc ngay khi content/tool event đầu tiên xuất hiện.
 
+Một hội thoại dài vẫn là một hội thoại liền mạch:
+
+- mở ra ở các tin nhắn mới nhất; lịch sử cũ hơn được tải khi người đọc cuộn gần lên đầu, không cần bấm nút nào, và được chèn vào phía trước mà không làm xê dịch dòng đang đọc;
+- chỉ những dòng quanh màn hình nằm trong tài liệu; dòng đang được focus, dòng có trình phát đang phát, dòng chứa khung nhúng (video, bản đồ) được dùng gần nhất, các dòng nằm trong vùng bôi chọn và dòng mới nhất luôn được giữ lại;
+- một surface cuộn đi rồi quay lại vẫn giữ trạng thái xem mà người dùng để lại trong phiên (nhóm đang mở, bản nháp, ô tìm kiếm), nhưng không bao giờ giữ bí mật đã gõ vào thẻ thông tin xác thực;
+- khi người đọc ở cách đáy hơn một màn hình và có nội dung mới đến ở đó, nút "Đến tin mới nhất" nổi phía trên chân transcript; nút này không bao giờ là chrome cố định và biến mất khi về tới đáy;
+- nếu tải lịch sử cũ hơn thất bại, giao diện báo ngay tại chỗ, giữ nguyên mọi thứ đang hiển thị và cho phép thử lại;
+- tính năng tìm trong trang của trình duyệt chỉ thấy các dòng đang nằm trong tài liệu, tức là mọi dòng của một hội thoại đến 60 tin nhắn. Tìm kiếm xa hơn về trước chưa được phát hành, và sẽ không được làm bằng cách giữ hàng nghìn dòng trong tài liệu.
+
 ### 6.6 Undo
 
 Action reversible nên tạo ephemeral Undo affordance trong timeline/status:
@@ -1242,6 +1251,12 @@ Dùng segmented controls, toggles và swatches:
     vẫn còn gắn, nếu không thì mở ở kích thước mặc định.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: mở subpanel.
+- Phiên bản & có gì mới: phiên bản và kênh Clark đang cài, cùng ghi chú phát hành đi kèm bản build, đọc được khi không
+  có mạng (`GET /changelog`). Đây là cùng danh sách mà `/changelog` và câu hỏi "có gì mới?" vẽ thành thẻ trong hội thoại:
+  các phiên bản mới nhất trước, các mục nhóm theo Thay đổi không tương thích, Tính năng, Sửa lỗi, Thay đổi khác. Bản chạy
+  từ mã nguồn còn nói ghi chú dừng ở commit nào và bản checkout có thể có thay đổi mới hơn. Không có nút cập nhật, trạng
+  thái cập nhật hay lựa chọn kênh cho tới khi có dịch vụ cập nhật. Khi không đọc được ghi chú, mục này nói rõ trong một
+  câu và phần còn lại của Cài đặt vẫn dùng được.
 
 Không hiển thị contrast debugging cho consumer; đưa vào Developer section.
 

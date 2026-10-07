@@ -25,6 +25,12 @@ export const MESSAGES_TIMELINE_VI = {
   "timeline.hostWritten.continuation": "Đã duyệt — Clark tiếp tục",
   "timeline.hostWritten.other": "Clark tiếp tục",
 
+  // VirtualTranscript.tsx — the top of the loaded history, and the way back to the newest turn
+  "timeline.history.loading": "Đang tải các tin nhắn trước…",
+  "timeline.history.failed": "Chưa tải được các tin nhắn trước. Mọi thứ đang hiển thị vẫn được giữ nguyên; thử lại để tải tiếp.",
+  "timeline.history.retry": "Thử lại",
+  "timeline.jumpToLatest": "Đến tin mới nhất",
+
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
@@ -175,6 +181,12 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.marketplace.lane.service": "dịch vụ",
   "blocks.marketplace.lane.declarative": "khai báo",
   "blocks.marketplace.lane.trustedNative": "native tin cậy",
+  "blocks.marketplace.listedBy": "liệt kê bởi {label}",
+  "blocks.marketplace.sourceState.stale": "đang hiện bản đã tải trước đó",
+  "blocks.marketplace.sourceState.notFetched": "chưa được tải",
+  "blocks.marketplace.sourceState.unreachable": "không kết nối được",
+  "blocks.marketplace.sourceState.unsupported": "không cung cấp directory cho ClarkCant",
+  "blocks.marketplace.sourceState.unreadable": "không đọc được",
 
   // blocks.tsx — session preview frame + control session card
   "blocks.session.loadingScreenshot": "Đang tải ảnh chụp màn hình…",
@@ -1032,6 +1044,11 @@ export const MESSAGES_TIMELINE_EN = {
   "timeline.hostWritten.continuation": "Approved — Clark carries on",
   "timeline.hostWritten.other": "Clark carries on",
 
+  "timeline.history.loading": "Loading earlier messages…",
+  "timeline.history.failed": "Earlier messages could not be loaded. Everything on screen is kept; try again to load them.",
+  "timeline.history.retry": "Try again",
+  "timeline.jumpToLatest": "Jump to latest",
+
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",
   "blocks.workSteps.done": "Worked through {count} steps",
@@ -1168,6 +1185,12 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.marketplace.lane.service": "service",
   "blocks.marketplace.lane.declarative": "declarative",
   "blocks.marketplace.lane.trustedNative": "trusted native",
+  "blocks.marketplace.listedBy": "listed by {label}",
+  "blocks.marketplace.sourceState.stale": "showing an earlier copy",
+  "blocks.marketplace.sourceState.notFetched": "not fetched yet",
+  "blocks.marketplace.sourceState.unreachable": "could not be reached",
+  "blocks.marketplace.sourceState.unsupported": "serves no ClarkCant directory",
+  "blocks.marketplace.sourceState.unreadable": "could not be read",
 
   "blocks.session.loadingScreenshot": "Loading screenshot…",
   "blocks.session.screenshotAlt": "Screenshot of session {label}{taken}",
