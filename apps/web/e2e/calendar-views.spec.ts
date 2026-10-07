@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { BOTTOM_FOLLOW_SLACK_PX } from "../../../packages/conversation-client/src/follow-bottom.ts";
+
 /**
  * The calendar's month, week and agenda views, placed in the conversation over sample events.
  *
@@ -109,6 +111,21 @@ async function heldView(page: Page, conversationId: string, instanceId: string):
 
 async function focused(page: Page, attribute: string): Promise<string | null> {
   return page.evaluate((name) => document.activeElement?.getAttribute(name) ?? null, attribute);
+}
+
+/**
+ * Whether the transcript kept still over two frames, and where it is against its bottom: at it, near enough that the
+ * client follows the bottom when the transcript changes, or away from it.
+ */
+async function transcriptMotion(page: Page): Promise<{ still: boolean; bottom: "at" | "following" | "away" }> {
+  return page.evaluate(async (slack) => {
+    const scroller = document.querySelector(".cc-scroll");
+    if (scroller === null) return { still: false, bottom: "away" as const };
+    const before = scroller.scrollTop;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const fromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    return { still: scroller.scrollTop === before, bottom: fromBottom <= 1 ? ("at" as const) : fromBottom <= slack ? ("following" as const) : ("away" as const) };
+  }, BOTTOM_FOLLOW_SLACK_PX);
 }
 
 async function horizontalOverflow(page: Page): Promise<number> {
@@ -443,9 +460,29 @@ test("the week view is usable at phone width without scrolling sideways, in the 
      * Tapped from the middle of the screen, and only once the point it lands on is the event itself: scrolled only "if
      * needed", the event can sit at the top edge, where whatever else the shared node has put at the top of the page can
      * take the touch instead.
+     *
+     * Placing the calendar sends the transcript after its bottom with a smooth scroll, and that scroll can still be
+     * running, or start again, after the event is put in the middle. A tap made then lands on whatever has moved under the
+     * point by the time the touch ends: the next event down. So the event is put in the middle until the transcript stays
+     * there, far enough from its bottom that the client no longer follows it, and only then tapped. The calendar's row
+     * also enters with a bounce, which can pause at its turn long enough to look settled and then move the event again,
+     * so that entrance is waited out first.
      */
     const offsite = calendar.locator(`li[data-date='2026-10-07'] ${event(OFFSITE)}`);
-    await offsite.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
+    // The row and card the calendar arrives in rise into place with a bounce; wait for that entrance to end.
+    await offsite.evaluate(async (element) => {
+      const entering = document.getAnimations().filter((animation) => {
+        const target = (animation.effect as KeyframeEffect | null)?.target;
+        return target instanceof Element && target.contains(element) && animation.effect?.getComputedTiming().endTime !== Infinity;
+      });
+      await Promise.all(entering.map((animation) => animation.finished.catch(() => undefined)));
+    });
+    await expect
+      .poll(async () => {
+        await offsite.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
+        return transcriptMotion(page);
+      })
+      .toEqual({ still: true, bottom: "away" });
     await expect
       .poll(() =>
         offsite.evaluate((element) => {
