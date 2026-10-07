@@ -45,7 +45,10 @@ describe("conservative documentation scope", () => {
   it("permits only known prose and its integrity manifest", () => {
     expect(classifyPaths(["README.md", "DESIGN.md", "AGENTS.md", "docs/manifest.json", "docs/guide.md", "plans/a/plan.md"]).full).toBe(false);
   });
-  it.each([[], ["unknown.md"], ["docs/example.json"], ["examples/a/README.md"], ["docs/a.md", "src/a.ts"], ["docs/../a.md"], ["docs//a.md"], ["/docs/a.md"], ["docs/./a.md"], ["docs\\a.md"], ["docs/a\n.md"], ["docs/a\0.md"], ["docs/a:stream.md"]].map((paths) => ({ paths })))("keeps full coverage for unsafe or unmapped paths $paths", ({ paths }) => {
+  it("permits the Vietnamese pairs of the root README and DESIGN", () => {
+    expect(classifyPaths(["README.vi.md", "DESIGN.vi.md"]).full).toBe(false);
+  });
+  it.each([[], ["unknown.md"], ["AGENTS.vi.md"], ["README.vi.md", "src/a.ts"],["docs/example.json"], ["examples/a/README.md"], ["docs/a.md", "src/a.ts"], ["docs/../a.md"], ["docs//a.md"], ["/docs/a.md"], ["docs/./a.md"], ["docs\\a.md"], ["docs/a\n.md"], ["docs/a\0.md"], ["docs/a:stream.md"]].map((paths) => ({ paths })))("keeps full coverage for unsafe or unmapped paths $paths", ({ paths }) => {
     expect(classifyPaths(paths).full).toBe(true);
   });
   it("skips runtime tests for a real prose-only commit and appends output", () => {

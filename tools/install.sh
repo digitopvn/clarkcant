@@ -41,7 +41,9 @@ else
     say "Using the existing checkout in $TARGET (not pulling; update it yourself with git pull)."
   else
     say "Cloning $REPO_URL ($REF) into $TARGET ..."
-    git clone --depth 1 --branch "$REF" "$REPO_URL" "$TARGET"
+    # Blobless, not shallow: the commit history and release tags let onboarding read the notes of every release this
+    # checkout holds (tools/release/history.mjs --source); file contents are downloaded only for the checked-out tree.
+    git clone --filter=blob:none --branch "$REF" "$REPO_URL" "$TARGET"
   fi
   ROOT="$(cd "$TARGET" && pwd)"
 fi
