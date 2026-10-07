@@ -62,6 +62,21 @@ function nextMessage(page: Page): Promise<Request> {
   return page.waitForRequest((request) => request.method() === "POST" && /\/messages(\/stream)?$/u.test(request.url()));
 }
 
+test("a bare slash lists the person's skills beside the node's commands", async ({ page }) => {
+  await openApp(page);
+  await composer(page).click();
+  await page.keyboard.type("/");
+
+  await expect(picker(page)).toBeVisible();
+  // However many commands the node has, its skills are not pushed out of the first list.
+  await expect(option(page, "new")).toBeVisible();
+  await expect(option(page, "release-notes")).toBeVisible();
+  await expect(option(page, "review")).toBeVisible();
+  await expect(picker(page).locator('[data-reference-kind="skill"]')).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(composer(page)).toHaveValue("/");
+});
+
 test("a skill chosen after a slash with the keyboard is sent, shown and briefed to the turn", async ({ page }) => {
   await openApp(page);
   await composer(page).click();
