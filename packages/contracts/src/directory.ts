@@ -50,6 +50,14 @@ export const packageSourceSchema = z.discriminatedUnion("kind", [
 ]);
 export type PackageSource = z.infer<typeof packageSourceSchema>;
 
+/**
+ * The state of one directory source, named so that "could not be consulted" is never shown as "nothing found":
+ * `ready`, `stale` (a remote source listed from its last copy because a refresh failed), `not-fetched`, `unreachable`,
+ * `unsupported` (the address serves no ClarkCant directory feed) and `unreadable` (read, and not a valid directory).
+ */
+export const directorySourceStateSchema = z.enum(["ready", "stale", "not-fetched", "unreachable", "unsupported", "unreadable"]);
+export type DirectorySourceState = z.infer<typeof directorySourceStateSchema>;
+
 /** The risk lane a facet runs in. Shown to the user, because the three are not equally trusted. */
 export const riskLaneSchema = z.enum(["isolated-ui", "service", "declarative", "trusted-native"]);
 export type RiskLane = z.infer<typeof riskLaneSchema>;

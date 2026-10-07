@@ -39,7 +39,12 @@ async function search(entries: readonly Record<string, unknown>[], query = "", f
   mkdirSync(folder, { recursive: true });
   const indexPath = join(folder, "directory.json");
   writeFileSync(indexPath, JSON.stringify(entries));
-  const tool = createSearchDirectoryTool({ indexPath, newId: () => "market_card" });
+  // A web host, so every fixture listing fits and the card's own bounds are what is under test.
+  const tool = createSearchDirectoryTool({
+    directory: { env: { CC_DIRECTORY_INDEX: indexPath }, dataDir: undefined },
+    newId: () => "market_card",
+    host: { platform: "web", hostApi: 1 },
+  });
   return (await tool.execute({ query })) as { text: string; hostCard?: Record<string, unknown> };
 }
 

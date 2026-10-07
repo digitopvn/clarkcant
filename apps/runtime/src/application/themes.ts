@@ -16,11 +16,9 @@ import {
   type ThemeProviderView,
   type UncheckedThemePackageView,
 } from "@clarkcant/contracts";
-import {
-  directoryIndexPath,
+import { readDirectory,
   installedThemes,
   listInstalledPackages,
-  readDirectoryIndex,
   readRegisteredPreference,
   resolveLocalSource,
   type InstalledPackageView,
@@ -98,7 +96,7 @@ function entryFor(entries: readonly DirectoryEntry[], installed: InstalledPackag
 
 export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
   const installed = listInstalledPackages({ db: deps.db, nodeId: deps.nodeId, now: nowInstant, newId: deps.newId });
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readDirectory({ env: process.env, dataDir: deps.dataDir });
   const cacheRoot = join(deps.dataDir, "package-cache");
 
   const themes: ThemeListingView[] = [CLARK_LISTING];

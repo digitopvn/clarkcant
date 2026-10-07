@@ -41,3 +41,6 @@ playwright-report/
 # previously committed screenshots were removed from the index in the same commit as this rule.
 plans/reports/evidence/*.png
 plans/reports/evidence/*.wav
+
+# The release workflow's plan output (tools/release/plan.mjs --out release-plan).
+release-plan/

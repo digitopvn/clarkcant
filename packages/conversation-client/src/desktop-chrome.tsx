@@ -33,6 +33,9 @@ export function DesktopChrome(): ReactElement | null {
   const closable = useMemo(() => hasCloseControl(), []);
   const [mode, setMode] = useState<WindowMode>("normal");
   const [pinned, setPinned] = useState(false);
+  // Unknown until the shell answers: under native Wayland it says the window cannot be kept on top, and a pin drawn
+  // before that answer would flash a control that cannot work. A shell that does not describe its window can pin.
+  const [pinnable, setPinnable] = useState<boolean | undefined>(undefined);
   const [fullScreen, setFullScreen] = useState(false);
   // What the shell last refused, so a refusal is visible rather than silent.
   const [problem, setProblem] = useState<string | undefined>(undefined);
@@ -45,9 +48,14 @@ export function DesktopChrome(): ReactElement | null {
     // Where the window really is. A reload keeps the window's pin, and a toggle started from the default flipped it
     // the wrong way.
     void readShellWindow().then((current) => {
-      if (cancelled || current === undefined) return;
+      if (cancelled) return;
+      if (current === undefined) {
+        setPinnable(true);
+        return;
+      }
       setMode(current.mode);
       setPinned(current.alwaysOnTop);
+      setPinnable(current.pinnable);
       setFullScreen(current.fullScreen);
     });
     const unsubscribe = controls ? subscribeWindowState((state) => setFullScreen(state.fullScreen)) : () => {};
@@ -101,18 +109,26 @@ export function DesktopChrome(): ReactElement | null {
         </span>
       )}
       <div className="cc-desktop-controls">
-        <button
-          type="button"
-          className="cc-desktop-button"
-          data-desktop-pin="true"
-          data-pinned={pinned ? "true" : "false"}
-          aria-pressed={pinned}
-          aria-label={t("shell.desktop.pinAria")}
-          title={t("shell.desktop.pinTitle")}
-          onClick={() => ask({ type: "set-always-on-top", value: !pinned })}
-        >
-          <ChromeIcon name="pin" />
-        </button>
+        {/*
+          No pin where the desktop cannot keep a window on top: a toggle that can only be refused is a fake control.
+          While the shell has not said yet, an invisible, unfocusable slot holds the pin's place so the strip does not
+          jump when it appears, and keyboard focus never lands on something that may vanish.
+        */}
+        {pinnable === undefined && <span className="cc-desktop-button" data-desktop-pin-pending="true" aria-hidden="true" />}
+        {pinnable === true && (
+          <button
+            type="button"
+            className="cc-desktop-button"
+            data-desktop-pin="true"
+            data-pinned={pinned ? "true" : "false"}
+            aria-pressed={pinned}
+            aria-label={t("shell.desktop.pinAria")}
+            title={t("shell.desktop.pinTitle")}
+            onClick={() => ask({ type: "set-always-on-top", value: !pinned })}
+          >
+            <ChromeIcon name="pin" />
+          </button>
+        )}
         {/* One place for the voice bar: shrink into it, or grow back out of it. */}
         {compact ? (
           <button
