@@ -41,6 +41,53 @@ type SdkModule = typeof import("@earendil-works/pi-coding-agent");
 type SdkSession = Awaited<ReturnType<SdkModule["createAgentSession"]>>["session"];
 type SdkEvent = Parameters<Parameters<SdkSession["subscribe"]>[0]>[0];
 type SdkTool = NonNullable<NonNullable<Parameters<SdkModule["createAgentSession"]>[0]>["customTools"]>[number];
+type SdkAgent = SdkSession["agent"];
+type SdkQueuedMessage = ReturnType<SdkAgent["peekQueuedMessages"]>[number];
+
+/**
+ * Take every message out of the agent's own steering and follow-up queues, in order.
+ *
+ * The agent offers no drain, only a peek that shows the steering queue when it holds anything and the follow-up queue
+ * otherwise, and only its first message unless the queue is in "all" mode. So both queues are switched to "all" for
+ * the read, the steering queue is peeked and cleared, and the follow-up queue is peeked and cleared. When the steering
+ * queue was empty both peeks show the same follow-up messages, which are the same objects; each queued message is its
+ * own object, so a first peek that starts with the follow-up queue's first message held no steering at all.
+ */
+function takeAgentQueues(agent: SdkAgent): { steering: SdkQueuedMessage[]; followUp: SdkQueuedMessage[] } {
+  const modes = { steering: agent.steeringMode, followUp: agent.followUpMode };
+  agent.steeringMode = "all";
+  agent.followUpMode = "all";
+  try {
+    const first = agent.peekQueuedMessages();
+    agent.clearSteeringQueue();
+    const followUp = agent.peekQueuedMessages();
+    agent.clearFollowUpQueue();
+    const steering = first.length > 0 && first[0] !== followUp[0] ? first : [];
+    return { steering, followUp };
+  } finally {
+    agent.steeringMode = modes.steering;
+    agent.followUpMode = modes.followUp;
+  }
+}
+
+type SdkImage = NonNullable<NonNullable<Parameters<SdkSession["prompt"]>[1]>["images"]>[number];
+
+/** The text and pictures of a queued person's message, as the session queued them; undefined for any other message. */
+function queuedUserParts(message: SdkQueuedMessage): { text: string; images: SdkImage[] } | undefined {
+  if (message.role !== "user") return undefined;
+  if (typeof message.content === "string") return { text: message.content, images: [] };
+  return {
+    text: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+    images: message.content.flatMap((part) => (part.type === "image" ? [part] : [])),
+  };
+}
+
+/** Whether a queued message can start a run: an extension's message, or a person's message with text or a picture. */
+function canStartRun(message: SdkQueuedMessage): boolean {
+  if (message.role === "custom") return true;
+  const parts = queuedUserParts(message);
+  return parts !== undefined && (parts.text !== "" || parts.images.length > 0);
+}
 
 /**
  * Convert one of our tool definitions into the SDK's shape.
@@ -1003,14 +1050,66 @@ export class RealPiAdapter implements PiAdapter {
    * as one prompt, so the session's own run applies — retry on a transient provider error, compaction, the streaming
    * flag and its settle events — which a bare `agent.continue()` skips. The sentences were already expanded when they
    * were steered, so they are not expanded again. Bounded and checked exactly as a prompt is.
+   *
+   * The agent's queue also holds what a Pi extension queued, interleaved with the person's steers. Clearing the
+   * session's queue clears the agent's too, so the whole queue is taken off, in the order Pi would deliver it: every
+   * steer, then every follow-up. The run starts from its head. When the head is the person's, it and the person's
+   * messages straight after it in the same queue are joined into one prompt, their pictures kept; when it is an
+   * extension's message, that message starts the run itself. Everything after the head is put back in the queue it came
+   * from, in its order, so a steer stays a steer and a follow-up a follow-up, and the run takes it from there exactly as
+   * Pi takes any queued message — in the default one-at-a-time mode, one steer per model call. Each message is sent
+   * once: from the head only, or from the queue only.
+   *
+   * Every call takes at least the head off the queue. A head this adapter cannot start a run with — neither an
+   * extension's message nor a person's message with text or a picture — is dropped with a process warning, and the run
+   * starts on the next message instead, so the rest is still answered in the same call. Only when nothing sendable is
+   * left does the call fail, naming what it dropped; a caller draining the queue in a loop always finishes.
    */
   async continueQueued(sessionId: string): Promise<void> {
     const entry = this.#require(sessionId);
-    if (!entry.session.agent.hasQueuedMessages()) return;
-    const { steering, followUp } = entry.session.clearQueue();
-    const text = [...steering, ...followUp].join("\n\n");
-    if (text === "") return;
-    await this.#bounded(sessionId, () => entry.session.prompt(text, { expandPromptTemplates: false }));
+    const { session } = entry;
+    if (!session.agent.hasQueuedMessages()) return;
+    const queued = takeAgentQueues(session.agent);
+    // The session's own text copies of the person's messages; the agent's messages carry the same text and pictures.
+    session.clearQueue();
+
+    const dropped: string[] = [];
+    let headQueue = queued.steering.length > 0 ? queued.steering : queued.followUp;
+    let head = headQueue[0];
+    while (head !== undefined && !canStartRun(head)) {
+      dropped.push(head.role);
+      headQueue.shift();
+      headQueue = queued.steering.length > 0 ? queued.steering : queued.followUp;
+      head = headQueue[0];
+    }
+    const droppedNote = `worker ${sessionId} dropped ${dropped.length} queued message(s) with nothing to send (${dropped.join(", ")})`;
+    if (head === undefined) {
+      if (dropped.length > 0) throw new Error(`${droppedNote}, and nothing sendable was left in its queue`);
+      return;
+    }
+    if (dropped.length > 0) process.emitWarning(`${droppedNote}; the run starts on the next queued message`);
+    let headLength = 1;
+    if (head.role === "user") {
+      while (headQueue[headLength]?.role === "user") headLength += 1;
+    }
+    const joined = headQueue.splice(0, headLength);
+    for (const message of queued.steering) session.agent.steer(message);
+    for (const message of queued.followUp) session.agent.followUp(message);
+
+    if (head.role === "custom") {
+      const { customType, content, display, details } = head;
+      await this.#bounded(sessionId, () => session.sendCustomMessage({ customType, content, display, details }, { triggerTurn: true }));
+      return;
+    }
+    const parts = joined.flatMap((message) => {
+      const part = queuedUserParts(message);
+      return part === undefined ? [] : [part];
+    });
+    const text = parts.map((part) => part.text).filter((sentence) => sentence !== "").join("\n\n");
+    const images = parts.flatMap((part) => part.images);
+    await this.#bounded(sessionId, () =>
+      session.prompt(text, { expandPromptTemplates: false, ...(images.length === 0 ? {} : { images }) }),
+    );
   }
 
   async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
