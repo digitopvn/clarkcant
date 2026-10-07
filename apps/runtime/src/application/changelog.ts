@@ -18,7 +18,8 @@ import {
  * `show_changelog` ("Clark có gì mới?", "what changed since 1.4?"), Settings, and `GET /changelog`. Each gets the same
  * view, built here from `release-notes.json` beside the runtime's `package.json`, which the release tooling writes
  * from the exact commits each version shipped (`tools/release/`). It is read from disk and needs no network, so "what's
- * new" works offline.
+ * new" works offline. A checkout run from source also reads the record it rebuilt from its own release tags, when it
+ * has one (`chooseReleaseHistory`).
  *
  * Nothing here can add an entry. The model receives the entries as data and may summarise them in the person's
  * language; the card it leaves is built here from the record, and `changelog-card` is host-owned, so a model or a
@@ -57,17 +58,46 @@ export function parseReleaseHistory(text: string): ReleaseHistoryRead {
   return { ok: true, history: parsed.data };
 }
 
+/**
+ * The record a checkout run from source rebuilt from its own release tags (`node tools/release/history.mjs --source`,
+ * run by onboarding). Git-ignored: release builds never commit their record back, so this is how a source checkout
+ * reads the notes of releases published after the committed baseline.
+ */
+export const SOURCE_RELEASE_NOTES_FILE = new URL("../../release-notes.local.json", import.meta.url);
+
+/**
+ * Which record a build answers from: the committed one, or the one a source checkout rebuilt beside it.
+ *
+ * The rebuilt record is read only by a build run from source, only when it holds to the contract, and only when it
+ * describes the same build (version and channel) as the committed record, so it can add releases its tags reach but
+ * can never change which version is installed. Anything else falls back to the committed record, which the build
+ * carries in every case.
+ */
+export function chooseReleaseHistory(committed: ReleaseHistoryRead, rebuilt: string | undefined): ReleaseHistoryRead {
+  if (!committed.ok || committed.history.build.channel !== "source" || rebuilt === undefined) return committed;
+  const local = parseReleaseHistory(rebuilt);
+  if (!local.ok) return committed;
+  const same = local.history.build.version === committed.history.build.version && local.history.build.channel === "source";
+  return same ? local : committed;
+}
+
+function readOptional(file: URL): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 /** The release record embedded with this build, read once: it cannot change while the build runs. */
 export function readEmbeddedReleaseHistory(): ReleaseHistoryRead {
   if (embedded !== undefined) return embedded;
-  let text: string;
-  try {
-    text = readFileSync(RELEASE_NOTES_FILE, "utf8");
-  } catch {
+  const text = readOptional(RELEASE_NOTES_FILE);
+  if (text === undefined) {
     // Not cached: a file that a later read can find (a restored install) should be found.
     return { ok: false, reason: "this build carries no release notes (release-notes.json is missing beside the runtime)", missing: true };
   }
-  embedded = parseReleaseHistory(text);
+  embedded = chooseReleaseHistory(parseReleaseHistory(text), readOptional(SOURCE_RELEASE_NOTES_FILE));
   return embedded;
 }
 

@@ -8,10 +8,12 @@
  * published release.
  *
  * Run directly, it writes the committed seed: `node tools/release/history.mjs --seed <commit>` records the baseline up
- * to <commit> in `apps/runtime/release-notes.json`, for the build that runs from source.
+ * to <commit> in `apps/runtime/release-notes.json`, for the build that runs from source. `--source` rebuilds, for a
+ * checkout run from source, the releases its own tags reach into `apps/runtime/release-notes.local.json` (git-ignored),
+ * which the runtime reads instead of the committed record; onboarding (`tools/setup.mjs`) runs it.
  */
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,7 +23,7 @@ import loadPreset from "conventional-changelog-conventionalcommits";
 import { filterRevertedCommitsSync } from "conventional-commits-filter";
 import { CommitParser } from "conventional-commits-parser";
 
-import { RELEASE_NOTES_PATH, readClarkVersion } from "./clark-version.mjs";
+import { RELEASE_NOTES_PATH, SOURCE_RELEASE_NOTES_PATH, readClarkVersion } from "./clark-version.mjs";
 import { BASELINE_VERSION, BOUNDS, CANONICAL_REPOSITORY, isPrerelease, releaseHistory, releaseRecord } from "./notes-data.mjs";
 import { COMMIT_ANALYZER_OPTIONS, NOTES_GENERATOR_OPTIONS, TAG_FORMAT } from "./release-config.mjs";
 
@@ -161,10 +163,11 @@ export function releasedVersions(repoRoot, ref, compare) {
  * source.
  *
  * A stable build lists stable releases only: once `dev` is merged into `main`, its beta tags are reachable from `main`
- * too, but the stable channel never received them. A beta build lists both, because it followed both.
+ * too, but the stable channel never received them. A beta build lists both, because it followed both. Without a planned
+ * release, `prereleases` says which of the two the history follows.
  */
-export async function buildHistory(repoRoot, { ref, planned, compare }) {
-  const stable = planned === undefined || !isPrerelease(planned.version);
+export async function buildHistory(repoRoot, { ref, planned, compare, prereleases }) {
+  const stable = planned === undefined ? prereleases !== true : !isPrerelease(planned.version);
   const versions = releasedVersions(repoRoot, ref, compare).filter(
     (version) => compare(version, BASELINE_VERSION) >= 0 && (!stable || !isPrerelease(version)),
   );
@@ -202,17 +205,97 @@ export async function writeSeed(repoRoot, commit) {
   return history;
 }
 
-if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const index = process.argv.indexOf("--seed");
-  const commit = index === -1 ? undefined : process.argv[index + 1];
-  if (commit === undefined) {
-    process.stderr.write("usage: node tools/release/history.mjs --seed <commit>\n");
-    process.exit(2);
+/**
+ * The release history a checkout run from source can read from its own git: every published release whose tag is
+ * reachable from `HEAD`, down to the baseline, with the build still the checkout's version on the `source` channel.
+ *
+ * Release builds embed their history and never commit it back, so the committed record stays at the baseline. A
+ * checkout that holds the history and the tags (a full clone, `git pull` follows the tags of what it fetches) rebuilds
+ * the same records a release build embedded, with the same parser, analyzer and notes generator, so nothing here is
+ * invented: a release is listed only when its tag is in this checkout. Commits after the newest reachable tag are not a
+ * release and are not listed; the runtime says the notes reach that tag's commit.
+ *
+ * The history follows the beta channel when the newest reachable release is a prerelease, as a beta build would.
+ * Throws, naming what is missing, when the checkout is shallow or the baseline tag is not reachable.
+ */
+export async function sourceHistory(repoRoot, { compare }) {
+  let shallow;
+  try {
+    shallow = git(repoRoot, ["rev-parse", "--is-shallow-repository"]).trim() === "true";
+  } catch {
+    throw new Error("this tree is not a git checkout, so it holds no release history to read notes from");
   }
-  const history = await writeSeed(REPO_ROOT, commit);
-  const [record] = history.releases;
-  process.stdout.write(
-    `${RELEASE_NOTES_PATH}: baseline ${record?.version} up to ${record?.commitRange.to}, ` +
-      `${record?.entries.length} entries listed, ${record?.omittedEntries} more counted\n`,
-  );
+  if (shallow) {
+    throw new Error(
+      "this checkout is shallow, so it holds no release history to read notes from; " +
+        "`git fetch --unshallow --tags` fetches it",
+    );
+  }
+  const versions = releasedVersions(repoRoot, "HEAD", compare);
+  if (!versions.includes(BASELINE_VERSION)) {
+    throw new Error(`the baseline tag ${tagOf(BASELINE_VERSION)} is not reachable from this checkout; \`git fetch --tags\` fetches the release tags`);
+  }
+  const newest = versions[0];
+  const releases = await buildHistory(repoRoot, { ref: "HEAD", compare, prereleases: newest !== undefined && isPrerelease(newest) });
+  return releaseHistory({ version: readClarkVersion(repoRoot), channel: "source", releases });
+}
+
+/**
+ * Write the source checkout's release record beside the committed one (`SOURCE_RELEASE_NOTES_PATH`, git-ignored), held
+ * to the contract first. On failure the previous file is removed, so the runtime falls back to the committed record
+ * instead of showing notes this checkout could no longer rebuild; the error says why.
+ *
+ * @param {string} repoRoot
+ * @param {{ compare: (a: string, b: string) => number, validate: (history: unknown) => unknown }} contract
+ */
+export async function writeSourceNotes(repoRoot, { compare, validate }) {
+  const path = join(repoRoot, SOURCE_RELEASE_NOTES_PATH);
+  try {
+    const history = validate(await sourceHistory(repoRoot, { compare }));
+    writeFileSync(path, `${JSON.stringify(history, null, 2)}\n`);
+    return history;
+  } catch (error) {
+    rmSync(path, { force: true });
+    throw error;
+  }
+}
+
+function argumentOf(name) {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? undefined : process.argv[index + 1];
+}
+
+if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  if (process.argv.includes("--source")) {
+    const repoRoot = resolve(argumentOf("--repo") ?? REPO_ROOT);
+    // The contract is read only here: it needs the workspace's install, and `--seed` and the plan's imports do not.
+    const { compareReleaseVersions, releaseHistorySchema } = await import("../../packages/contracts/src/release-notes.ts");
+    try {
+      const history = await writeSourceNotes(repoRoot, { compare: compareReleaseVersions, validate: (value) => releaseHistorySchema.parse(value) });
+      const [newest] = history.releases;
+      process.stdout.write(
+        newest?.kind === "release"
+          ? `${SOURCE_RELEASE_NOTES_PATH}: release notes up to ${newest.version} (${newest.commitRange.to.slice(0, 7)}), ${history.releases.length} records\n`
+          : `${SOURCE_RELEASE_NOTES_PATH}: no published release is reachable from this checkout yet; the notes reach the baseline ${newest?.version}\n`,
+      );
+    } catch (error) {
+      process.stderr.write(
+        `release notes not refreshed: ${error instanceof Error ? error.message : String(error)}. ` +
+          `Clark shows the notes committed with this checkout (${RELEASE_NOTES_PATH}).\n`,
+      );
+      process.exitCode = 1;
+    }
+  } else {
+    const commit = argumentOf("--seed");
+    if (commit === undefined) {
+      process.stderr.write("usage: node tools/release/history.mjs --seed <commit> | --source [--repo <checkout>]\n");
+      process.exit(2);
+    }
+    const history = await writeSeed(REPO_ROOT, commit);
+    const [record] = history.releases;
+    process.stdout.write(
+      `${RELEASE_NOTES_PATH}: baseline ${record?.version} up to ${record?.commitRange.to}, ` +
+        `${record?.entries.length} entries listed, ${record?.omittedEntries} more counted\n`,
+    );
+  }
 }

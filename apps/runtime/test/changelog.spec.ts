@@ -11,6 +11,8 @@ import {
   CHANGELOG_FALLBACK_URL,
   RELEASE_NOTES_FILE,
   type ReleaseHistoryRead,
+  SOURCE_RELEASE_NOTES_FILE,
+  chooseReleaseHistory,
   describeChangelog,
   parseReleaseHistory,
   readChangelog,
@@ -90,6 +92,58 @@ describe("the embedded release notes", () => {
     const wrong = parseReleaseHistory(JSON.stringify({ schemaVersion: 2 }));
     expect(wrong.ok).toBe(false);
     if (!wrong.ok) expect(wrong.reason).toMatch(/contract/);
+  });
+});
+
+describe("a checkout run from source reading the releases its tags reach", () => {
+  const baseline = {
+    version: "0.2.1",
+    kind: "baseline",
+    date: "2026-10-01",
+    previousVersion: null,
+    commitRange: { from: null, to: RANGE.from },
+    notes: "history",
+    entries: [],
+    omittedEntries: 0,
+    artifacts: [],
+  };
+  const history = (build: { version: string; channel: string }, releases: unknown[]) =>
+    JSON.stringify({ schemaVersion: 1, build, source: SOURCE, releases });
+  const committed = parseReleaseHistory(history({ version: "0.2.1", channel: "source" }, [baseline]));
+  const rebuilt = history({ version: "0.2.1", channel: "source" }, [
+    { ...record("0.3.0", "0.2.1", "keep the queued message"), commitRange: { from: RANGE.from, to: RANGE.to } },
+    baseline,
+  ]);
+
+  it("answers from the rebuilt record, so a release published after the baseline is listed and its commit is named", () => {
+    const answer = readChangelog({}, () => chooseReleaseHistory(committed, rebuilt));
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    expect(answer.view.installed).toEqual({ version: "0.2.1", channel: "source" });
+    expect(answer.view.releases.map((release) => release.version)).toEqual(["0.3.0", "0.2.1"]);
+    expect(answer.view.notesCover).toEqual({ commit: RANGE.to, date: "2026-10-06" });
+    expect(describeChangelog(answer.view)).toContain("keep the queued message");
+  });
+
+  it("keeps the committed record when there is no rebuilt one, or it breaks its contract", () => {
+    expect(chooseReleaseHistory(committed, undefined)).toBe(committed);
+    expect(chooseReleaseHistory(committed, "{")).toBe(committed);
+    expect(chooseReleaseHistory(committed, JSON.stringify({ schemaVersion: 1 }))).toBe(committed);
+  });
+
+  it("never lets a rebuilt record change which version or channel is installed", () => {
+    const otherVersion = history({ version: "0.3.0", channel: "source" }, [baseline]);
+    expect(chooseReleaseHistory(committed, otherVersion)).toBe(committed);
+    const published = history({ version: "0.2.1", channel: "stable" }, [baseline]);
+    expect(chooseReleaseHistory(committed, published)).toBe(committed);
+  });
+
+  it("is ignored by a published build, which is exactly what its own record describes", () => {
+    expect(chooseReleaseHistory(FIXTURE, rebuilt)).toBe(FIXTURE);
+  });
+
+  it("is read from beside the committed record", () => {
+    expect(SOURCE_RELEASE_NOTES_FILE.pathname.endsWith("/apps/runtime/release-notes.local.json")).toBe(true);
   });
 });
 

@@ -485,7 +485,23 @@ function installLocal() {
   }
   if (!run("pnpm", ["install", "--frozen-lockfile"])) return false;
   // The web build holds the widget runtime the node serves to widget frames (CC_WEB_DIST).
-  return run("pnpm", ["run", "build"]);
+  if (!run("pnpm", ["run", "build"])) return false;
+  refreshReleaseNotes();
+  return true;
+}
+
+/**
+ * Rebuild the release notes this checkout's own tags reach (`tools/release/history.mjs --source`), so a `git pull`
+ * that brought a published release also brings its notes. Best effort, never a reason to fail onboarding: when the
+ * isolated release tooling cannot install or the checkout holds no release history (a shallow clone), Clark shows the
+ * notes committed with the checkout and the reason is printed.
+ */
+function refreshReleaseNotes() {
+  if (!run("pnpm", ["--dir", "tools/release", "install", "--frozen-lockfile"])) {
+    stdout.write(yellow("The release tooling did not install, so the release notes were not refreshed; Clark shows the notes committed with this checkout.\n"));
+    return;
+  }
+  run("node", ["tools/release/history.mjs", "--source"]);
 }
 
 if (resolve(argv[1] ?? "") === fileURLToPath(import.meta.url)) {
