@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect } from "vitest";
 
+import { removeTestDirectory, trackedTests } from "../../../tools/test-cleanup.ts";
 import {
   ensureManagedWorktree,
   findManagedWorktrees,
@@ -18,6 +19,13 @@ import {
  * Against real repositories and real git, for the same reason as `worktree.spec.ts`: what matters is what git does to
  * the person's tree, and a model of git would only agree with itself.
  */
+
+/**
+ * Each test spawns git many times, through the helper below and through the module under test. A spawn takes about
+ * 40 ms alone, but 150 to 350 ms (p99 near 2 s) while the full suite runs on a loaded Windows machine, and a test that
+ * takes 3.5 s alone took up to 19 s there. The budget is that worst case with room to spare.
+ */
+const { it, settled } = trackedTests(60_000);
 
 let dirs: string[] = [];
 
@@ -49,8 +57,9 @@ beforeEach(() => {
   dirs = [];
 });
 
-afterEach(() => {
-  for (const path of dirs) rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+afterEach(async () => {
+  await settled();
+  for (const path of dirs) await removeTestDirectory(path);
 });
 
 describe("a task works in its own worktree, never in the person's tree", () => {

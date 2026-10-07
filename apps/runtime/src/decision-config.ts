@@ -80,9 +80,9 @@ export function decisionConfigFromEnv(
   /**
    * The key a person typed into the interface, when there is one.
    *
-   * Read through a function rather than handed over as a value, because it is read when the selector is built and the
-   * point of storing one is that it works without restarting the node. The typed key wins when both exist
-   * (`provider-credential.ts`): it is the person's most recent statement of which key to use.
+   * Read through a function rather than handed over as a value, so a running node can read it again
+   * (`liveDecisionConfig`). The typed key wins when both exist (`provider-credential.ts`): it is the person's most
+   * recent statement of which key to use.
    */
   stored?: StoredCredential,
 ): DecisionConfig {
@@ -112,6 +112,31 @@ export function decisionConfigFromEnv(
     noulOnFloor: 0.85,
     noulOffFloor: 0.15,
   };
+}
+
+/**
+ * The configuration a running node decides with: its credential is resolved each time a decision reads it.
+ *
+ * A key saved in the credential card, or removed from it, is used from the next decision on, without a restart. Built
+ * once and read at start-up, the card would say "the node is using the new key" while the decider kept the old one, or
+ * kept calling with a key the person had removed. The key and whether the provider is enabled are the two fields that
+ * follow it, and both are read through `decisionConfigFromEnv`, so the rule that picks the key stays the one in
+ * `provider-credential.ts`. A field in `overrides` is fixed at the value given, which is how a test pins one.
+ */
+export function liveDecisionConfig(
+  env: NodeJS.ProcessEnv,
+  stored: StoredCredential | undefined,
+  overrides: Partial<DecisionConfig> = {},
+): DecisionConfig {
+  const config: DecisionConfig = { ...decisionConfigFromEnv(env, stored), ...overrides };
+  for (const field of ["apiKey", "enabled"] as const) {
+    if (field in overrides) continue;
+    Object.defineProperty(config, field, {
+      enumerable: true,
+      get: () => decisionConfigFromEnv(env, stored)[field],
+    });
+  }
+  return config;
 }
 
 /**

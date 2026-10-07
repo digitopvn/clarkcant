@@ -156,8 +156,12 @@ docker compose up -d --build    # với Docker
 Đây là cách cập nhật duy nhất hiện nay. Clark chưa có bộ tự cập nhật và chưa có bản phát hành nào. Cách đánh phiên
 bản, kênh stable và beta, và các bản phát hành có ký số đang được lên kế hoạch được mô tả ở [phát hành](releases.vi.md).
 Để xem phiên bản đang cài thay đổi gì, hãy hỏi Clark “có gì mới?”, gõ `/changelog`, hoặc mở Cài đặt → Trải nghiệm →
-Phiên bản & có gì mới. Bản checkout chạy từ mã nguồn mang ghi chú baseline đã được commit, nên Clark nêu commit mà ghi
-chú dừng lại; các thay đổi sau commit đó không được liệt kê, và `git pull` không bổ sung chúng.
+Phiên bản & có gì mới. Onboarding dựng lại ghi chú của mọi bản phát hành đã công bố mà các tag của bản checkout này với
+tới được, nên chạy nó sau `git pull` sẽ mang về ghi chú của các bản phát hành mà lần pull đã tải (khởi động lại node để
+đọc chúng); onboarding Docker không làm mới chúng. Clark nêu commit mà ghi chú dừng lại; các thay đổi sau bản phát
+hành mới nhất không được liệt kê. Bản clone nông (`git clone --depth`) không có lịch sử phát hành, nên nó hiển thị ghi
+chú đã commit kèm bản checkout cho đến khi chạy `git fetch --unshallow --tags`; trình cài đặt clone với
+`--filter=blob:none` để tránh điều đó. Chi tiết: [phát hành](releases.vi.md#changelog-trong-clark).
 
 ## Xử lý sự cố
 

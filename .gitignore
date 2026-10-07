@@ -44,3 +44,6 @@ plans/reports/evidence/*.wav
 
 # The release workflow's plan output (tools/release/plan.mjs --out release-plan).
 release-plan/
+
+# Release notes a source checkout rebuilds from its own tags (tools/release/history.mjs --source).
+apps/runtime/release-notes.local.json

@@ -15,6 +15,12 @@ import { join } from "node:path";
 
 export const RELEASE_NOTES_PATH = "apps/runtime/release-notes.json";
 
+/**
+ * The record a checkout run from source rebuilds from its own release tags (`history.mjs --source`). Git-ignored and
+ * never stamped: it carries the same build version as the committed record, which the runtime requires before reading it.
+ */
+export const SOURCE_RELEASE_NOTES_PATH = "apps/runtime/release-notes.local.json";
+
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 /** Repository-relative paths of the manifests that carry the Clark version, the canonical root first. */
