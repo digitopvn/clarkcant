@@ -10,9 +10,11 @@
  * absent must not be the thing that puts one in a log.
  */
 
+import { CREDENTIAL_VARIABLES, type ResolvedCredential, resolveProviderCredential } from "./provider-credential.ts";
+
 export const LIVE_VOICE_PROBE_STATUS = "opt-in-check-implemented";
 
-/** The environment variable the node reads first, before its own vault. */
+/** The environment variable the node reads when its own vault holds no voice key. */
 export const VOICE_CREDENTIAL_ENV = "GEMINI_API_KEY";
 
 export type LiveVoiceProbe =
@@ -34,16 +36,25 @@ export interface LiveVoiceProbeInput {
  * provided for the live session" from somewhere much harder to read.
  */
 export function probeLiveVoice(input: LiveVoiceProbeInput): LiveVoiceProbe {
-  const fromEnvironment = input.env[VOICE_CREDENTIAL_ENV];
-  if (typeof fromEnvironment === "string" && fromEnvironment !== "") {
-    return { available: true, source: "environment" };
-  }
-  if (typeof input.vaultCredential === "string" && input.vaultCredential !== "") {
-    return { available: true, source: "vault" };
-  }
+  const key = voiceCredential(input);
+  if (key.source !== "none") return { available: true, source: key.source };
   return {
     available: false,
     reason: "requires-live-account",
     detail: `no voice provider credential: ${VOICE_CREDENTIAL_ENV} is unset and this node's vault holds none for its owner`,
   };
+}
+
+/**
+ * The voice key in effect: the vault's when it holds one, else the environment's (`provider-credential.ts`).
+ *
+ * The one place voice resolves its key, used by the live session, the dedicated recognizer and this probe alike, so a
+ * probe cannot report one source while a session opens on another.
+ */
+export function voiceCredential(input: LiveVoiceProbeInput): ResolvedCredential {
+  return resolveProviderCredential({
+    stored: input.vaultCredential,
+    env: input.env,
+    variables: CREDENTIAL_VARIABLES["gemini"] ?? [VOICE_CREDENTIAL_ENV],
+  });
 }

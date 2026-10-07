@@ -9,7 +9,7 @@ import { nowInstant } from "@clarkcant/contracts";
 
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "../autonomy-settings.ts";
 import { cycleModelPool, readCurrentAlias, readModelPool, selectModelProfile, writeModelPool } from "../model-registry.ts";
-import { availableCredentials } from "../readiness.ts";
+import { availableCredentials, credentialSources } from "../readiness.ts";
 import { ownerLocale } from "../host-text.ts";
 import { toolsTab } from "../tool-catalogue.ts";
 import { type NodeServices } from "../services.ts";
@@ -266,12 +266,13 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
    * says nothing an operator could not read out of their own .env file. Names only, never values, and never a length.
    */
   if (segments.length === 1 && segments[0] === "readiness" && request.method === "GET") {
+    const held = { env: process.env, vault: credentialNames(runtime.db, runtime.identity.ownerPrincipalId) };
     return json(200, {
       model: deps.services.model !== null,
-      credentials: availableCredentials({
-        env: process.env,
-        vault: credentialNames(runtime.db, runtime.identity.ownerPrincipalId),
-      }),
+      credentials: availableCredentials(held),
+      // Where each key in effect comes from (`vault`, `environment` or `none`), so a card can say which one the node
+      // uses when both places hold one. A source, never a value.
+      sources: credentialSources(held),
     });
   }
 

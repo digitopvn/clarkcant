@@ -89,6 +89,16 @@ import {
   terminalSocketUrl,
 } from "./terminal-socket.ts";
 
+/** Where the key in effect for one credential comes from: the key saved in the node, its environment, or neither. */
+export type CredentialSource = "vault" | "environment" | "none";
+
+/** What `GET /readiness` answers. `sources` is absent from a node older than it. Names and sources, never values. */
+export interface NodeReadinessAnswer {
+  model: boolean;
+  credentials: string[];
+  sources?: Partial<Record<string, CredentialSource>>;
+}
+
 /** A press on a page the node recorded in its activity log: what was pressed, and the page's host and path. */
 export interface RecentEffectAction {
   verb: "click";
@@ -1474,9 +1484,10 @@ export class GatewayClient {
    * What this node has already been told: whether it can run a model, and which credentials it already holds.
    *
    * Names only, never values. The first run reads this to skip questions the machine has already answered, and a client
-   * that asked for a value here would be asking for exactly the thing the asking exists to avoid.
+   * that asked for a value here would be asking for exactly the thing the asking exists to avoid. `sources` says where
+   * each key in effect comes from, so a card can say which one the node uses when both places hold one.
    */
-  readiness(): Promise<{ model: boolean; credentials: string[] }> {
+  readiness(): Promise<NodeReadinessAnswer> {
     return this.#call("GET", "/readiness");
   }
 

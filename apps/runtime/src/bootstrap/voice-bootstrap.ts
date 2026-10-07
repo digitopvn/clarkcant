@@ -40,7 +40,8 @@ import type { WidgetPerformer } from "../application/widget-actions.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { pendingForConversation } from "../interactions.ts";
-import { availableCredentials } from "../readiness.ts";
+import { credentialSources } from "../readiness.ts";
+import { voiceCredential } from "../voice-live-check.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type NodeServices } from "../services.ts";
 import { accumulateAnswerText } from "../voice-answer.ts";
@@ -168,14 +169,9 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     deps.services.voiceLiveUtterance = voiceLiveUtterance;
   }
 
-  const credential = (): string | undefined =>
-    voiceFixture
-      ? "fixture-credential"
-      : // The vault first, then the environment. A key typed into the credential card is a key the person
-        // expects to be used, and an environment variable that happens to be absent must not make that
-        // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
-        deps.env["GEMINI_API_KEY"] ??
-        readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME);
+  const storedVoiceCredential = (): string | undefined =>
+    readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME);
+  const credential = nodeVoiceCredential({ fixture: voiceFixture, env: deps.env, stored: storedVoiceCredential });
 
   const voice = attachVoiceGateway({
     server: deps.server,
@@ -395,22 +391,41 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
    * be refused" on a node whose credential card had just been filled in — a line that was not merely unhelpful but
    * wrong about what this node would do.
    */
-  const voiceHasCredential = availableCredentials({
-    env: process.env,
+  // Which key a session would open on, by source and never by value, so an operator with a key in both places can
+  // read which one is in effect.
+  const voiceKeySource = credentialSources({
+    env: deps.env,
     vault: credentialNames(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId),
-  }).includes(VOICE_CREDENTIAL_NAME);
+  })[VOICE_CREDENTIAL_NAME];
   process.stderr.write(
     voiceFixture
       ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"
-      : voiceHasCredential
-        ? `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"})\n`
+      : voiceKeySource === "vault" || voiceKeySource === "environment"
+        ? `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"}; key from the ${voiceKeySource})\n`
         : "voice: no credential for the live provider, so a voice session will be refused by name rather than failing silently\n",
   );
 
   return { capabilities: () => voice.capabilities(), close: () => voice.close() };
 }
 
-type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];
+/**
+ * The key a voice session and the dedicated recognizer open on.
+ *
+ * The vault first, then the environment (`voiceCredential`): a key typed into the credential card is the key the person
+ * expects to be used, and an older variable in the environment must not quietly answer instead. Read at open time
+ * rather than cached, so the next attempt after typing one finds it. The scripted fixture never reaches a provider, so
+ * it gets a placeholder rather than a key.
+ */
+export function nodeVoiceCredential(input: {
+  fixture: boolean;
+  env: Record<string, string | undefined>;
+  stored: () => string | undefined;
+}): () => string | undefined {
+  return () =>
+    input.fixture ? "fixture-credential" : voiceCredential({ env: input.env, vaultCredential: input.stored() }).value;
+}
+
+type SpokenWidgetActionInput =Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];
 type SpokenApprovalInput = Parameters<NonNullable<VoiceGatewayOptions["decideApproval"]>>[0];
 
 /**

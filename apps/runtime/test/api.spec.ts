@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
@@ -862,6 +862,26 @@ describe("a secret a person types", () => {
 
     expect(response.status).toBe(400);
     expect(JSON.stringify(response.body)).not.toContain("secret-shaped");
+  });
+
+  it("is the key in effect when the environment holds one too, and readiness says so without either value", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "env-gemini-not-a-real-key");
+    vi.stubEnv("TYPESAFE_API_KEY", "env-typesafe-not-a-real-key");
+    try {
+      await request("POST", "/credentials", { body: { fields: [{ name: "gemini", value: "AIza-saved-not-a-real-key" }] } });
+      const response = await request("GET", "/readiness");
+
+      expect(response.status).toBe(200);
+      const body = response.body as { credentials?: string[]; sources?: Record<string, string> };
+      expect(body.credentials).toEqual(["gemini", "typesafe"]);
+      expect(body.sources).toEqual({ gemini: "vault", typesafe: "environment" });
+      const text = JSON.stringify(body);
+      for (const value of ["env-gemini-not-a-real-key", "env-typesafe-not-a-real-key", "AIza-saved-not-a-real-key"]) {
+        expect(text).not.toContain(value);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
