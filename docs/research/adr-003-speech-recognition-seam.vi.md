@@ -45,8 +45,37 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      ngừng, và một con trỏ đánh dấu recognizer đã gửi tới đâu: một bản final dời con trỏ khi các từ của nó, đúng thứ
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
-     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, chỉ câu live mới nhất được trả lời. Mọi quy tắc đều ưu
-     tiên trả lời một số từ hai lần hơn là làm mất chúng.
+     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
+     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mười sáu
+     bản final hết hạn gần nhất mà chưa có cách đọc live được ghi nhớ, vì cách đọc đó thường chỉ tới sau khi recognizer
+     đã chốt câu kế tiếp; chúng được đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con
+     trỏ. Bản final bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua
+     rồi. Câu live nào bị giữ lại tuân theo một phép đếm, vì mỗi bản final của recognizer chỉ ứng với nhiều nhất một câu
+     live. Một câu live chỉ bị giữ lại khi có một bản final ứng với nó và không ứng với câu bị giữ lại nào khác: câu mà
+     bản final đó khớp, cách đọc muộn của nó, hoặc câu đầu tiên tới lượt nó mà không đọc giống bản final nào. Câu không
+     ứng với bản final nào sẽ được trả lời, và khi một lần khớp đã vượt qua một câu như vậy thì câu được khớp cũng được
+     trả lời, vì một trong hai câu chưa bao giờ được gửi. Cách đọc live tới theo đúng thứ tự các bản final đã được gửi,
+     nên một câu đọc giống một bản final sau, hoặc đã được một bản final sau khớp, sẽ kết thúc lượt của bản final
+     trước. Quy tắc này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời
+     nguyên câu. Có ba trường hợp mất được chấp nhận, mỗi trường hợp là một câu nói lại các từ của một bản final đã gửi
+     trong vòng ba mươi giây quanh nó, vì luồng live không thể phân biệt câu đó với cách đọc của chính bản final ấy:
+     - cách đọc live của bản final không bao giờ tới, và câu đọc giống trọn bản final: câu bị coi là cách đọc muộn ấy.
+       Nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi lại;
+     - cách đọc live của bản final tới nhưng bị đọc sai, đúng lượt và đúng thứ tự, trong khi cách đọc của một bản final
+       trước không bao giờ tới: cách đọc sai bị coi là của bản final trước, và câu bị coi là cách đọc muộn của bản final
+       này. Luồng live giống hệt một luồng mà cách đọc của bản final trước tới nhưng bị đọc sai, còn cách đọc của bản
+       final này tới muộn;
+     - phiên live vẫn đang đọc câu đó khi recognizer hỏng, và cách đọc live của chính bản final đã tới nhưng bị đọc sai
+       hoặc bị tách đôi: phần đã nghe được bị coi là cách đọc của bản final ấy vẫn đang tới.
+
+     Một mô phỏng có seed của các phiên bị hỏng (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) kiểm tra
+     quy tắc này. Mọi câu chưa được gửi đều được trả lại, theo thứ tự. Một câu bị mất chỉ được chấp nhận khi nó nói lại
+     các từ của một bản final khác đã gửi trong vòng ba mươi giây quanh lúc câu được nghe lần đầu, và hoặc cách đọc
+     live của bản final đó hay của một bản final trước nó không bao giờ tới, hoặc câu vẫn đang được đọc khi recognizer
+     hỏng và cách đọc của chính bản final đó đã tới nhưng bị đọc sai hoặc bị tách đôi. Khi không cách đọc live nào chậm
+     hơn bản final của nó quá ba mươi giây, mô phỏng kiểm tra rằng số câu trùng lặp không vượt quá hai lần số cách đọc
+     mơ hồ (đọc sai, bị mất, bị tách đôi, nói lại, hoặc quá ngắn để khớp) cộng một, và rằng các phiên mô phỏng không có
+     cách đọc mơ hồ nào thì không có câu trùng lặp nào.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;
