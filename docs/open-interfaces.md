@@ -706,7 +706,11 @@ row. Without one, it answers `409 DIRECTORY_SOURCE_UNREAD` when an earlier sourc
 `409 DIRECTORY_SOURCE_CHANGED` when the package is installed from a different source. With one, it answers
 `409 DIRECTORY_SOURCE_CHANGED` when another source owns the listing by now. The node records the source on the
 installed generation (`directorySource`), and update notices come only from that source; a generation installed
-before sources were recorded counts as installed from the index file. An install approval holds the source that owned
+before sources were recorded counts as installed from the index file. The builds of the node's
+[widget dev sessions](#widget-dev-sessions) are listed in front of every other source under their own source,
+`widget-dev` (kind `widget-dev`), and only on this node, never in a search: an install whose `sourceId` names another
+source answers `409 DIRECTORY_SOURCE_CHANGED` rather than taking a session's build of the same id and version. An
+install approval holds the source that owned
 the listing when the person was asked, and `POST /packages/approvals/{id}/decision` with `granted` answers
 `409 DIRECTORY_SOURCE_CHANGED` when another source owns it by then. A listing from a marketplace installs through
 exactly the same checks as one from a file.

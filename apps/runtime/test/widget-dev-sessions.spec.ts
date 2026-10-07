@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,7 +13,15 @@ import {
   type WidgetDefinition,
   type WidgetDevSessionView,
 } from "@clarkcant/contracts";
-import { EXECUTION_POLICY_PREFERENCE_KEY, setPreference, writeRegisteredPreference } from "@clarkcant/core";
+import {
+  DIRECTORY_FEED_FORMAT,
+  EXECUTION_POLICY_PREFERENCE_KEY,
+  customFeedId,
+  listInstalledPackages,
+  refreshDirectory,
+  setPreference,
+  writeRegisteredPreference,
+} from "@clarkcant/core";
 
 import { createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
 import { WIDGET_DEV_STORE_MAX, readDevSessions, writeDevSessions } from "../src/application/widget-dev-store.ts";
@@ -643,5 +652,112 @@ describe("a widget dev session", () => {
     // Bounded: the node looks for the folder at least once a second (`DEV_ENGINE_ROOT_CHECK_MS`), and on every change.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+  });
+});
+
+describe("the directory a widget dev session lists its builds in", () => {
+  const restoreEnv: Record<string, string | undefined> = {};
+  const servers: Server[] = [];
+
+  /** Set (or, with no value, remove) a directory setting for this test only. */
+  function setEnv(name: string, value?: string): void {
+    if (!(name in restoreEnv)) restoreEnv[name] = process.env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+
+  /** A marketplace feed on loopback that lists this package's id and version under another publisher's archive. */
+  async function startFeed(): Promise<string> {
+    const listing = {
+      packageId: PACKAGE,
+      version: VERSION,
+      displayName: "Timer",
+      description: "Someone else's timer.",
+      source: { kind: "npm", name: "timer", version: VERSION },
+      publisher: { id: "someone-else", sourceUrl: "https://example.org", license: "MIT" },
+      preview: {},
+      facets: ["ui"],
+      isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
+      platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+      hostApi: { min: 1, max: 1 },
+      permissionsSummary: [],
+      riskTier: "isolated-ui",
+      sizeBytes: 1024,
+      digest: `sha256:${"1".repeat(64)}`,
+    };
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ format: DIRECTORY_FEED_FORMAT, entries: [listing], nextCursor: null }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("the feed did not bind");
+    return `http://127.0.0.1:${String(address.port)}/api/v1/directory`;
+  }
+
+  const installedSource = () =>
+    listInstalledPackages({
+      db: services.runtime.db,
+      nodeId: services.runtime.identity.nodeId,
+      now: () => new Date().toISOString() as Instant,
+      newId: (prefix: string) => `${prefix}_x`,
+    }).find((installed) => installed.packageId === PACKAGE)?.directorySource;
+
+  beforeEach(() => {
+    // The node's defaults: no index file, no feed of the person's own, and the official Marketplace on.
+    setEnv("CC_DIRECTORY_INDEX");
+    setEnv("CC_DIRECTORY_MARKETPLACES");
+    setEnv("CC_OFFICIAL_MARKETPLACE");
+  });
+
+  afterEach(async () => {
+    for (const [name, value] of Object.entries(restoreEnv)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      delete restoreEnv[name];
+    }
+    await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))));
+  });
+
+  it("activates and serves the folder on a fresh node whose Marketplace was never fetched", async () => {
+    const conversationId = await conversation();
+    const started = session(await call("POST", "/widget-dev/sessions", { root, conversationId }));
+    expect(started).toMatchObject({ status: "live", activation: { state: "active", generation: 1 } });
+
+    const frame = await live(conversationId, started.placed?.instanceId ?? "");
+    expect(await served(frame.frame.url)).toContain("first");
+  });
+
+  it("refuses to activate while the person's index file cannot be read", async () => {
+    const indexPath = join(dir, "index.json");
+    writeFileSync(indexPath, "[ {broken");
+    setEnv("CC_DIRECTORY_INDEX", indexPath);
+
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.activation).toMatchObject({ state: "refused", code: "DIRECTORY_UNREADABLE" });
+    expect(started.running).toBeUndefined();
+  });
+
+  it("names its own source, so an install from a row naming a marketplace never takes the session's build", async () => {
+    const feedUrl = await startFeed();
+    setEnv("CC_DIRECTORY_MARKETPLACES", feedUrl);
+
+    // The feed was never fetched, so nothing tells the session the id and version are listed elsewhere.
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.activation).toMatchObject({ state: "active", generation: 1 });
+    expect(installedSource()).toMatchObject({ id: "widget-dev", kind: "widget-dev" });
+
+    // Fetched now, the marketplace lists the same id and version; the person presses Install on its card.
+    await refreshDirectory({ env: process.env, dataDir: join(dir, "node") });
+    const pressed = await call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION, sourceId: customFeedId(feedUrl) });
+    expect(pressed.status).toBe(409);
+    expect(pressed.body).toMatchObject({ code: "DIRECTORY_SOURCE_CHANGED" });
+    expect(installedSource()?.id).toBe("widget-dev");
+
+    // And the session's next build is refused for the id the directory now lists.
+    writePackage("<!doctype html><p>second</p>\n");
+    const rebuilt = session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`));
+    expect(rebuilt.activation).toMatchObject({ code: "PACKAGE_LISTED" });
   });
 });

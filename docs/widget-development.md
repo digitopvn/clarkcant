@@ -2892,7 +2892,9 @@ widget"), or call `POST /widget-dev/sessions` as the owner
 ([open interfaces](open-interfaces.md#widget-dev-sessions)). The node watches the folder with the same build engine
 the dev host uses: every change that reads as a package becomes an immutable generation named by the digest of its
 files, is copied into the node's package cache and listed for this node alone, and is installed through the ordinary
-install path. Nothing goes through npm, the Marketplace or a directory index, and nothing is published. A root
+install path. Those listings name their own source, `widget-dev`, which the installed generation records, so pressing
+Install on a marketplace row that lists the same id and version is refused rather than installing the session's files.
+Nothing goes through npm, the Marketplace or a directory index, and nothing is published. A root
 `node_modules` folder is left out of each build; built output such as `dist` is kept.
 
 Clark develops widgets in its own widget workspace (`<dataDir>/widget-workspace`), where it scaffolds a new widget. To
