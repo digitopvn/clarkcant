@@ -268,3 +268,54 @@ test("the Widget Library previews the map fixture with the production renderer a
   expect(beyondTheNode(requests)).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("map-library-dark-narrow.png") });
 });
+
+test("a key pressed after a selection is answered, before the page draws the answer, is kept", async ({ page }) => {
+  test.setTimeout(120_000);
+  const refused: string[] = [];
+  page.on("response", (response) => {
+    if (response.url().includes("/actions") && response.status() === 409) refused.push(response.request().postData() ?? "");
+  });
+  // The press is put in the gap a person's quick second press can land in: the answer to the write before it has been
+  // read, and the page has not drawn it yet. Only the next answer that arrives while the switch is set is held to it.
+  await page.addInitScript(() => {
+    // SAFETY: a switch and a hook this spec sets; nothing in the application reads them.
+    const probe = window as unknown as { __pressAfterAnswer?: boolean };
+    const original = window.fetch.bind(window);
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const response = await original(...args);
+      const url = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].href : args[0].url;
+      if (!url.includes("/actions") || probe.__pressAfterAnswer !== true) return response;
+      probe.__pressAfterAnswer = false;
+      const read = response.text.bind(response);
+      response.text = () =>
+        read().then((body) => {
+          // Microtasks after the client's own handlers have run, and before React's next render task.
+          let after = Promise.resolve();
+          for (let step = 0; step < 30; step += 1) after = after.then(() => undefined);
+          void after.then(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true })));
+          return body;
+        });
+      response.json = () => response.text().then((body) => JSON.parse(body) as unknown);
+      return response;
+    };
+  });
+  await openApp(page);
+  await say(page, "đặt bản đồ");
+  const viewport = page.getByRole("region", { name: "Bản đồ: Chặng giao hàng" }).last();
+  await expect(viewport).toBeVisible({ timeout: 20_000 });
+  const card = page.locator("[data-widget-instance]").filter({ has: viewport }).last();
+  const instanceId = await instanceOf(viewport);
+  const conversation = await conversationId(page);
+  await viewport.focus();
+  await page.keyboard.press("n");
+  await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ selectedId: "hanoi" });
+
+  await page.evaluate(() => {
+    (window as unknown as { __pressAfterAnswer?: boolean }).__pressAfterAnswer = true;
+  });
+  await page.keyboard.press("n");
+  // The second press selected the place after Đà Nẵng, and the node holds it rather than refusing it.
+  await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ selectedId: "hcm" });
+  await expect(card.locator("[data-map-feature='hcm']")).toHaveAttribute("data-selected", "true");
+  expect(refused).toEqual([]);
+});
