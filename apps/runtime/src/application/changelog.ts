@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   CLARK_REPOSITORY_URL,
@@ -70,15 +72,37 @@ export const SOURCE_RELEASE_NOTES_FILE = new URL("../../release-notes.local.json
  *
  * The rebuilt record is read only by a build run from source, only when it holds to the contract, and only when it
  * describes the same build (version and channel) as the committed record, so it can add releases its tags reach but
- * can never change which version is installed. Anything else falls back to the committed record, which the build
- * carries in every case.
+ * can never change which version is installed. The checkout must also still hold the newest release the record lists
+ * (`reachesHead`): a checkout moved back past that release without onboarding again would otherwise list a release it
+ * no longer contains. Anything else falls back to the committed record, which the build carries in every case.
  */
-export function chooseReleaseHistory(committed: ReleaseHistoryRead, rebuilt: string | undefined): ReleaseHistoryRead {
+export function chooseReleaseHistory(
+  committed: ReleaseHistoryRead,
+  rebuilt: string | undefined,
+  reachesHead: (commit: string) => boolean,
+): ReleaseHistoryRead {
   if (!committed.ok || committed.history.build.channel !== "source" || rebuilt === undefined) return committed;
   const local = parseReleaseHistory(rebuilt);
   if (!local.ok) return committed;
   const same = local.history.build.version === committed.history.build.version && local.history.build.channel === "source";
-  return same ? local : committed;
+  if (!same) return committed;
+  const newest = local.history.releases[0];
+  return newest !== undefined && reachesHead(newest.commitRange.to) ? local : committed;
+}
+
+const RUNTIME_DIR = fileURLToPath(new URL("../..", import.meta.url));
+
+/**
+ * Whether `commit` is HEAD or an ancestor of it in the checkout the runtime runs from. Best effort and bounded: when
+ * git is missing, slow, or does not know the commit, the answer is no, so the committed record is shown.
+ */
+export function commitReachesHead(commit: string, cwd: string = RUNTIME_DIR): boolean {
+  try {
+    execFileSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, "HEAD"], { stdio: "ignore", timeout: 5_000, windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readOptional(file: URL): string | undefined {
@@ -97,7 +121,7 @@ export function readEmbeddedReleaseHistory(): ReleaseHistoryRead {
     // Not cached: a file that a later read can find (a restored install) should be found.
     return { ok: false, reason: "this build carries no release notes (release-notes.json is missing beside the runtime)", missing: true };
   }
-  embedded = chooseReleaseHistory(parseReleaseHistory(text), readOptional(SOURCE_RELEASE_NOTES_FILE));
+  embedded = chooseReleaseHistory(parseReleaseHistory(text), readOptional(SOURCE_RELEASE_NOTES_FILE), commitReachesHead);
   return embedded;
 }
 

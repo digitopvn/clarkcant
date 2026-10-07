@@ -55,8 +55,8 @@ function commit(root, message) {
 }
 
 /** Refresh the source notes of a checkout: the record it wrote, or the reason it gave. */
-function refresh(root) {
-  const run = spawnSync(process.execPath, [HISTORY, "--source", "--repo", root], { encoding: "utf8" });
+function refresh(root, nodeOptions = []) {
+  const run = spawnSync(process.execPath, [...nodeOptions, HISTORY, "--source", "--repo", root], { encoding: "utf8" });
   const path = join(root, LOCAL);
   return { status: run.status, stderr: run.stderr, record: existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined };
 }
@@ -163,6 +163,26 @@ test("a blobless clone, as the installers make, holds the history and tags the n
     record.releases.map(({ version }) => version),
     ["0.3.0", "0.2.1"],
   );
+});
+
+test("a checkout that cannot load the contract refuses with a reason and removes notes it can no longer check", () => {
+  const root = repository();
+  writeFileSync(join(root, LOCAL), "{}\n");
+  // The contract fails to load, as it does before `pnpm install` brings its dependencies.
+  const hooks = temporary();
+  writeFileSync(
+    join(hooks, "hooks.mjs"),
+    'export async function resolve(specifier, context, next) {\n  if (specifier.endsWith("/release-notes.ts")) throw new Error("zod is not installed");\n  return next(specifier, context);\n}\n',
+  );
+  writeFileSync(join(hooks, "register.mjs"), `import { register } from "node:module";\nregister(${JSON.stringify(pathToFileURL(join(hooks, "hooks.mjs")).href)});\n`);
+
+  const { status, stderr, record } = refresh(root, ["--import", pathToFileURL(join(hooks, "register.mjs")).href]);
+
+  assert.equal(status, 1);
+  assert.match(stderr, /release notes not refreshed: the release-notes contract could not be loaded/);
+  assert.match(stderr, /notes committed with this checkout/);
+  assert.doesNotMatch(stderr, /\n\s+at /);
+  assert.equal(record, undefined);
 });
 
 test("a checkout without the baseline tag refuses and names the fetch that brings it", () => {

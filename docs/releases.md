@@ -102,15 +102,19 @@ reachable from `HEAD`, with the same parser, analyzer and notes generator a rele
 the releases the pull fetched; restart the node to read them.
 
 - The runtime reads the rebuilt record only on the `source` channel, only when it matches its contract, and only when it
-  names the same build version as the committed record. It adds releases; it never changes the installed version. In
-  every other case the committed record is used.
+  names the same build version as the committed record. It adds releases; it never changes the installed version. It
+  is also read only while the checkout still holds the newest release it lists (that release's commit is `HEAD` or an
+  ancestor of it, by `git merge-base --is-ancestor`), so a checkout moved back past a release without onboarding again
+  shows the committed record. In every other case the committed record is used.
+- The rebuilt record is git-ignored, so `git status` never shows it; onboarding rebuilds it from the checkout's own
+  tags, and deleting it returns Clark to the committed record.
 - Commits after the newest reachable tag are not a release and are not listed. The history follows the beta channel
   when the newest reachable release is a prerelease.
 - Nothing is rebuilt, and the committed record is used, when the release tooling cannot install, the tree is not a git
-  checkout, or the checkout is shallow (`git clone --depth`) or lacks the baseline tag. The command says which and how
-  to fix it (`git fetch --unshallow --tags`, `git fetch --tags`), and removes an earlier rebuilt record. The installers
-  clone with `--filter=blob:none`, which keeps the history and tags while downloading file contents only for the
-  checked-out tree.
+  checkout, the release-notes contract cannot be loaded, or the checkout is shallow (`git clone --depth`) or lacks the
+  baseline tag. The command says which and how to fix it (`git fetch --unshallow --tags`, `git fetch --tags`), and
+  removes an earlier rebuilt record. The installers clone with `--filter=blob:none`, which keeps the history and tags
+  while downloading file contents only for the checked-out tree.
 - A Docker image carries the rebuilt record only if it was written before the image was built: the image has no git
   history, and Docker onboarding does not install the release tooling on the host.
 

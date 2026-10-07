@@ -501,7 +501,8 @@ function refreshReleaseNotes() {
     stdout.write(yellow("The release tooling did not install, so the release notes were not refreshed; Clark shows the notes committed with this checkout.\n"));
     return;
   }
-  run("node", ["tools/release/history.mjs", "--source"]);
+  // The Node running onboarding, not whichever `node` is first on PATH; without a shell, so a path with spaces holds.
+  run(process.execPath, ["tools/release/history.mjs", "--source"], { shell: false });
 }
 
 if (resolve(argv[1] ?? "") === fileURLToPath(import.meta.url)) {

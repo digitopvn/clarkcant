@@ -101,14 +101,19 @@ phát hành dùng, rồi ghi vào `apps/runtime/release-notes.local.json` (bị 
 sẽ mang về ghi chú của các bản phát hành mà lần pull đã tải; khởi động lại node để đọc chúng.
 
 - Runtime chỉ đọc bản ghi dựng lại trên kênh `source`, chỉ khi nó đúng hợp đồng, và chỉ khi nó nêu cùng phiên bản build
-  với bản ghi đã commit. Nó thêm các bản phát hành; nó không bao giờ đổi phiên bản đang cài. Mọi trường hợp khác dùng bản
-  ghi đã commit.
+  với bản ghi đã commit. Nó thêm các bản phát hành; nó không bao giờ đổi phiên bản đang cài. Nó cũng chỉ được đọc khi bản
+  checkout vẫn còn chứa bản phát hành mới nhất mà nó liệt kê (commit của bản phát hành đó là `HEAD` hoặc tổ tiên của
+  `HEAD`, theo `git merge-base --is-ancestor`), nên bản checkout bị lùi về trước một bản phát hành mà không chạy lại
+  onboarding sẽ hiển thị bản ghi đã commit. Mọi trường hợp khác dùng bản ghi đã commit.
+- Bản ghi dựng lại bị git bỏ qua, nên `git status` không bao giờ hiện nó; onboarding dựng lại nó từ chính các tag của bản
+  checkout, và xoá nó sẽ đưa Clark về bản ghi đã commit.
 - Các commit sau tag mới nhất với tới được không phải một bản phát hành và không được liệt kê. Lịch sử theo kênh beta khi
   bản phát hành mới nhất với tới được là bản prerelease.
 - Không có gì được dựng lại, và bản ghi đã commit được dùng, khi công cụ phát hành không cài được, cây thư mục không phải
-  bản checkout git, hoặc bản checkout là bản nông (`git clone --depth`) hay thiếu tag baseline. Lệnh nói rõ trường hợp
-  nào và cách sửa (`git fetch --unshallow --tags`, `git fetch --tags`), và xoá bản ghi dựng lại trước đó. Các trình cài
-  đặt clone với `--filter=blob:none`, giữ lịch sử và tag nhưng chỉ tải nội dung tệp cho cây đang checkout.
+  bản checkout git, không nạp được hợp đồng ghi chú phát hành, hoặc bản checkout là bản nông (`git clone --depth`) hay
+  thiếu tag baseline. Lệnh nói rõ trường hợp nào và cách sửa (`git fetch --unshallow --tags`, `git fetch --tags`), và
+  xoá bản ghi dựng lại trước đó. Các trình cài đặt clone với `--filter=blob:none`, giữ lịch sử và tag nhưng chỉ tải nội
+  dung tệp cho cây đang checkout.
 - Image Docker chỉ mang bản ghi dựng lại nếu nó được ghi trước khi dựng image: image không có lịch sử git, và onboarding
   Docker không cài công cụ phát hành trên máy chủ.
 

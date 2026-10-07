@@ -268,9 +268,22 @@ function argumentOf(name) {
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   if (process.argv.includes("--source")) {
     const repoRoot = resolve(argumentOf("--repo") ?? REPO_ROOT);
-    // The contract is read only here: it needs the workspace's install, and `--seed` and the plan's imports do not.
-    const { compareReleaseVersions, releaseHistorySchema } = await import("../../packages/contracts/src/release-notes.ts");
     try {
+      let contract;
+      try {
+        // The contract is read only here: it needs the workspace's install and a Node that strips types, and `--seed`
+        // and the plan's imports do not.
+        contract = await import("../../packages/contracts/src/release-notes.ts");
+      } catch (error) {
+        // Without the contract nothing can be checked, so an earlier rebuilt record is not kept either.
+        rmSync(join(repoRoot, SOURCE_RELEASE_NOTES_PATH), { force: true });
+        throw new Error(
+          `the release-notes contract could not be loaded (${error instanceof Error ? error.message : String(error)}); ` +
+            "run it with the Node version this repository supports, after `pnpm install`",
+          { cause: error },
+        );
+      }
+      const { compareReleaseVersions, releaseHistorySchema } = contract;
       const history = await writeSourceNotes(repoRoot, { compare: compareReleaseVersions, validate: (value) => releaseHistorySchema.parse(value) });
       const [newest] = history.releases;
       process.stdout.write(
