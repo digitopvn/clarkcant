@@ -1,6 +1,6 @@
 {
   "name": "@clarkcant/runtime",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Headless node: composition root, authenticated command gateway over HTTP and WebSocket, node identity, lifecycle and health.",
   "license": "Apache-2.0",

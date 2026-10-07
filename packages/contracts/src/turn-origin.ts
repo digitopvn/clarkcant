@@ -10,6 +10,8 @@ import { z } from "zod";
  *   not mark itself as the composer.
  * - `automation`: one of the person's automations firing on its schedule or trigger.
  * - `peer`: another node the person paired, handing work over.
+ * - `channel`: a message on an external messaging channel bound to the conversation (Telegram, Discord, ...), accepted
+ *   by the host's channel intake. Who wrote it is the message's `authorPrincipalId`, not the origin.
  *
  * The node derives it from what it already knows about the request — the surface mark its own relays set, and which
  * code path accepted the message — and never from anything a client puts in a body. MCP and the WebSocket relay build
@@ -20,7 +22,7 @@ import { z } from "zod";
  * Recorded, not acted on by default: the execution policy treats every origin exactly like the person unless the
  * person opts into asking for machine-surface turns (`ExecutionPolicyConfig.machineTurns`).
  */
-export const TURN_ORIGINS = ["person", "mcp", "relay", "cli-api", "automation", "peer"] as const;
+export const TURN_ORIGINS = ["person", "mcp", "relay", "cli-api", "automation", "peer", "channel"] as const;
 export const turnOriginSchema = z.enum(TURN_ORIGINS);
 export type TurnOrigin = z.infer<typeof turnOriginSchema>;
 

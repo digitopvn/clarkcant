@@ -27,6 +27,7 @@ import implementationStatusRegistry from "./invariants/implementation-status-reg
 import tsxFilesAreTypechecked from "./invariants/tsx-files-are-typechecked.mjs";
 import prBodiesCloseNothing from "./invariants/pr-bodies-close-nothing.mjs";
 import requiredChecksMatchWorkflow from "./invariants/required-checks-match-workflow.mjs";
+import clarkVersionSingleSource from "./invariants/clark-version-single-source.mjs";
 
 const CHECKS = [
   docsManifestIntegrity,
@@ -42,6 +43,7 @@ const CHECKS = [
   tsxFilesAreTypechecked,
   prBodiesCloseNothing,
   requiredChecksMatchWorkflow,
+  clarkVersionSingleSource,
 ];
 
 const ctx = await buildContext();

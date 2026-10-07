@@ -80,6 +80,12 @@ export default defineConfig({
       "packages/widget-cli/test/dev-host.spec.ts",
     ],
     environment: "node",
+    /*
+     * The official Marketplace is a directory source a node reads by default. A test run must never reach it: a suite
+     * that exercises remote directories passes its own feed URL and a fake fetch, and every other suite reads only the
+     * index file it configures, as before.
+     */
+    env: { CC_OFFICIAL_MARKETPLACE: "off" },
     // Corepack's first resolution of pnpm outside this repository can download a release; do it once, before the
     // workers, rather than inside whichever test happens to pack an npm archive first.
     globalSetup: ["packages/widget-cli/test/resolve-pnpm.global-setup.ts"],

@@ -20,11 +20,10 @@ import {
   captureSnapshot,
   createInstance,
   createTask,
-  directoryIndexPath,
   markEffectUnknown,
   modelReplyCard,
   prepareEffect,
-  readDirectoryIndex,
+  readDirectory,
   readExecutionPolicy,
   readPackage,
   requestApproval,
@@ -1912,7 +1911,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * a model calls, so the card shows what the listing says the package reaches before anybody presses Install.
      */
     if (/tìm gói tra từ|find the lookup package/i.test(input.text)) {
-      const tool = createSearchDirectoryTool({ indexPath: directoryIndexPath(process.env), newId: (prefix) => `${prefix}_lookup` });
+      const tool = createSearchDirectoryTool({
+        directory: { env: process.env, dataDir: deps.services().runtime.dataDir },
+        newId: (prefix) => `${prefix}_lookup`,
+      });
       const answer = await tool.execute({ query: "lookup" });
       // No directory on this node: no card, and the turn is answered the ordinary way.
       if (answer.hostCard === undefined) return undefined;
@@ -1926,7 +1928,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      */
     if (/tìm gói trên máy|find the local package|(?:tìm lại các gói khớp|search the packages again for) “harbor”/i.test(input.text)) {
       const tool = createSearchDirectoryTool({
-        indexPath: directoryIndexPath(process.env),
+        directory: { env: process.env, dataDir: deps.services().runtime.dataDir },
         newId: (prefix) => `${prefix}_local_${Date.now().toString(36)}`,
       });
       const answer = await tool.execute({ query: "harbor" });
@@ -2386,7 +2388,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      */
     if (/bảng tính tham chiếu|reference spreadsheet/iu.test(input.text)) {
       const services = deps.services();
-      const index = readDirectoryIndex(directoryIndexPath(process.env));
+      const index = readDirectory({ env: process.env, dataDir: services.runtime.dataDir });
       const entry = index.kind === "configured" ? index.entries.find((candidate) => candidate.packageId === SPREADSHEET_PACKAGE_ID) : undefined;
       const definition = entry?.source.kind === "local" ? readPackage(entry.source.path).facets[0]?.definition : undefined;
       if (definition === undefined) {

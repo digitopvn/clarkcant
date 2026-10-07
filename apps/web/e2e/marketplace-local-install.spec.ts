@@ -117,10 +117,11 @@ test("Install on a listing by a path on this machine installs it, without asking
 
   const install = page.waitForRequest((sent) => sent.url().endsWith("/packages/install") && sent.method() === "POST");
   await listed.locator(`[data-install-package='${PACKAGE}']`).click();
-  // What the button sent back is what the node read of the files when it listed them.
-  const body = (await install).postDataJSON() as { packageId?: unknown; contentDigest?: unknown };
+  // What the button sent back is what the node read of the files when it listed them, and the source the row named.
+  const body = (await install).postDataJSON() as { packageId?: unknown; contentDigest?: unknown; sourceId?: unknown };
   expect(body.packageId).toBe(PACKAGE);
   expect(body.contentDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+  expect(body.sourceId).toBe("local");
 
   const state = listed.locator("[data-install-state]");
   await expect(state).toHaveAttribute("data-install-state", "installed", { timeout: 20_000 });

@@ -1,6 +1,6 @@
 {
   "name": "@clarkcant/app-worker",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Worker host process: runs one app-managed Pi session per run, reports evidence, never owns task authority.",
   "license": "Apache-2.0",

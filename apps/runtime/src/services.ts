@@ -49,6 +49,7 @@ import type { PackageJobHost } from "./job-host.ts";
 import type { BrowserTokenBroker } from "./browser-token-broker.ts";
 import { BROWSER_TASK_CAPABILITY, BROWSER_TASK_NOT_ROUTABLE } from "./task-browser.ts";
 import type { TaskDispatcher } from "./task-dispatch.ts";
+import type { ChannelService } from "./channels/channel-service.ts";
 import {
   type VectorIndexService,
   createVectorIndexService,
@@ -304,6 +305,14 @@ export interface NodeServices {
    * stays in the outbox until a pass runs.
    */
   peerDelivery?: { kick(): void; stop(): void };
+  /**
+   * External messaging channels: the adapters this node has, deliveries received from them, and the turns and replies
+   * they become.
+   *
+   * Assigned after boot, like `automation`, which it kicks when a channel message is recorded. Absent in a test that
+   * builds `NodeServices` directly; a channel message recorded there waits for a service to route it.
+   */
+  channels?: ChannelService;
   /**
    * The containers that run installed packages' service facets.
    *
