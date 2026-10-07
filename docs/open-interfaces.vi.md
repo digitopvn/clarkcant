@@ -926,9 +926,12 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 vẫn hiện là đang chạy:
 
 - `watch-failed`: bộ theo dõi bị lỗi.
-- `folder-gone`: thư mục đã bị xoá hoặc đổi tên. Node kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng,
-  vì Windows không báo gì khi một thư mục đang được theo dõi bị xoá. Lý do này cũng dùng khi thư mục không còn sau một
-  lần khởi động lại.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, hoặc bị xoá rồi một thư mục mới được tạo lại ở cùng đường dẫn, mà bộ
+  theo dõi không còn nghe thấy (node so sánh device và file id của thư mục với những giá trị lúc bắt đầu theo dõi). Node
+  kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được
+  theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục tạm thời không xem được vì lý do khác, chẳng hạn
+  phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra
+  lại. Lý do này cũng dùng khi thư mục không còn sau một lần khởi động lại.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
 - `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
   phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.

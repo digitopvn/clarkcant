@@ -921,9 +921,12 @@ node starts with no sessions; the file is never overwritten.
 reading as live:
 
 - `watch-failed`: the watcher failed.
-- `folder-gone`: the folder was deleted or renamed. The node checks for the folder at least once a second and before
-  each build, because Windows reports nothing when a watched folder is deleted. The same reason applies when the folder
-  is missing after a restart.
+- `folder-gone`: the folder was deleted or renamed, or it was deleted and a new folder was made at the same path, which
+  the watcher no longer hears (the node compares the folder's device and file id with the ones it started watching).
+  The node checks for the folder at least once a second and before each build, because Windows reports nothing when a
+  watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an
+  antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again. The same reason
+  applies when the folder is missing after a restart.
 - `capacity`: the node is already watching eight folders as it resumes.
 - `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
   whose folder is outside the widget workspace.

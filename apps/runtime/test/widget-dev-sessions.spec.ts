@@ -1,7 +1,8 @@
+import type * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,6 +31,20 @@ import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+
+/** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
+const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  const statSync = ((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+    if (statFailure.path !== undefined && resolve(String(path)) === statFailure.path) {
+      throw Object.assign(new Error(`EPERM: operation not permitted, stat '${String(path)}'`), { code: "EPERM" });
+    }
+    return actual.statSync(path, options);
+  }) as typeof actual.statSync;
+  return { ...actual, statSync, default: { ...actual, statSync } };
+});
 
 /**
  * A live widget authoring session, driven over the HTTP API the app uses.
@@ -187,6 +202,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  statFailure.path = undefined;
   services.widgetDev?.close();
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true });
@@ -653,6 +669,37 @@ describe("a widget dev session", () => {
     // Bounded: the node looks for the folder at least once a second (`DEV_ENGINE_ROOT_CHECK_MS`), and on every change.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+  });
+
+  it("stops a watched session as folder-gone when its folder is deleted and made again before anything looks", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // In one turn of the event loop: the path names a folder again, but not the one being watched.
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    writePackage("<!doctype html><p>a new folder</p>\n");
+    const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+  });
+
+  it("keeps a watched session live through a folder it cannot look at for a moment", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    statFailure.path = resolve(root);
+    const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    expect(rebuilt.status).toBe(200);
+    expect(session(rebuilt).status).toBe("live");
+    statFailure.path = undefined;
+
+    // Still watched: the next save builds and runs.
+    writePackage("<!doctype html><p>second</p>\n");
+    const next = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
+    expect(next).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
   });
 });
 
