@@ -321,6 +321,29 @@ describe("words that run together into a longer term than a form starting the sa
         { start: 8, end: 24, text: "user service api", candidates: ["userservice-api", "userserviceApi"] },
       ]);
     });
+
+    // A span rewritten into a run-together term would take its absorbed word with it, so that word never vouches for
+    // another span rewritten the same way: two guesses must not support each other.
+    it("leaves two run-together spans as heard when only each other's absorbed words support them", () => {
+      const session = buildRecognitionContext({ tools: ["web"], packages: ["webapp"] });
+      const result = normalizeTranscript("the web app and the web app", session);
+      expect(result.text).toBe("the web app and the web app");
+      expect(result.changes).toEqual([]);
+    });
+
+    it("leaves set up the web app for grandma as heard", () => {
+      const session = buildRecognitionContext({ tools: ["set", "web"], packages: ["setup", "webapp"] });
+      const result = normalizeTranscript("set up the web app for grandma", session);
+      expect(result.text).toBe("set up the web app for grandma");
+      expect(result.changes).toEqual([]);
+    });
+
+    it("leaves the front end of the web app as heard", () => {
+      const session = buildRecognitionContext({ tools: ["front", "web"], packages: ["frontend", "webapp"] });
+      const result = normalizeTranscript("the front end of the web app", session);
+      expect(result.text).toBe("the front end of the web app");
+      expect(result.changes).toEqual([]);
+    });
   });
 });
 

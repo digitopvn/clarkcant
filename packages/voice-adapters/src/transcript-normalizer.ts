@@ -131,7 +131,9 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   tokens.forEach((token, index) => {
     if (TECHNICAL_CUES.has(token.lower)) anchors.push(index);
   });
-  const addEvidence = (hit: Hit): void => {
+  // Words a run-together term absorbed, kept apart: they support every other span except one that absorbed words too.
+  const absorbed: number[] = [];
+  const addEvidence = (hit: Hit, into: number[]): void => {
     const unique = distinctTerms(hit.candidates);
     const source = text.slice(tokens[hit.from]!.start, tokens[hit.to - 1]!.end);
     // Only a term heard in its own spelling, case aside, is evidence: a corrected span supporting another correction
@@ -144,18 +146,25 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
       source.toLowerCase() === term.text.toLowerCase() &&
       unique.some((candidate) => source === candidate.text || isDistinctive(candidate))
     ) {
-      for (let at = hit.from; at < hit.to; at += 1) anchors.push(at);
+      for (let at = hit.from; at < hit.to; at += 1) into.push(at);
       return;
     }
     // Words that ran together into a longer term are evidence still, exactly as they would have been on their own:
-    // "web" heard exactly says the sentence is about code whether or not "web app" goes on to read as `webapp`.
+    // "web" heard exactly says the sentence is about code whether or not "web app" goes on to read as `webapp`. Only
+    // a shorter form starting the span opens it up; the exact matches after that form count too.
     if (hit.passedOver !== undefined) {
-      addEvidence(hit.passedOver);
-      for (const inner of hitsBetween(tokens, text, hit.passedOver.to, hit.to, lexicon)) addEvidence(inner);
+      addEvidence(hit.passedOver, absorbed);
+      for (const inner of hitsBetween(tokens, text, hit.passedOver.to, hit.to, lexicon)) addEvidence(inner, absorbed);
     }
   };
-  for (const hit of hits) addEvidence(hit);
-  const supported = (from: number, to: number): boolean => codeSwitched || anchors.some((at) => at < from || at >= to);
+  for (const hit of hits) addEvidence(hit, anchors);
+  const outside = (at: number, hit: Hit): boolean => at < hit.from || at >= hit.to;
+  // A span that absorbed words is rewritten only on evidence that is not itself a guess: another such span's absorbed
+  // word would be rewritten away too, and the two ("the web app and the web app") would vouch for each other.
+  const supported = (hit: Hit): boolean =>
+    codeSwitched ||
+    anchors.some((at) => outside(at, hit)) ||
+    (hit.passedOver === undefined && absorbed.some((at) => outside(at, hit)));
 
   const result: NormalizationResult = { text, changes: [], abstained: [], technical: [] };
   const replacements: Array<{ start: number; end: number; to: string }> = [];
@@ -201,7 +210,7 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // word starting a sentence, so lowering it needs the same evidence as any plain word.
     const needsContext =
       rule !== "casing" || (lowers && isWordLikeTool(term)) || !(isDistinctive(term) || (lowers && term.kind === "command"));
-    if (needsContext && !supported(hit.from, hit.to)) continue;
+    if (needsContext && !supported(hit)) continue;
     if (result.changes.length >= MAX_NORMALIZATION_CHANGES) continue;
 
     replacements.push({ start, end, to: term.text });
