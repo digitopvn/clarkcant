@@ -495,7 +495,8 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
     `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
     version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có
-    (`readDirectoryIndex`, cùng resolver dùng khi cài — không viết resolver thứ hai). Pi SDK không được kiểm tra: nó
+    (`readDirectory`, ghép mọi nguồn đã cấu hình, cùng lần đọc mà installer dùng — không viết resolver thứ hai); trước
+    mỗi lượt nó làm mới các nguồn từ xa mà node này đã từng tải. Pi SDK không được kiểm tra: nó
     được pin chính xác trong `packages/pi-adapter` và đóng gói cùng ClarkCant, nên hộp thư không có gì để làm với một
     bản mới hơn; mỗi lượt kiểm tra rút (bằng thao tác bỏ thông báo thông thường) mọi thông báo `update:pi:` mà node đã
     ghi trước đó. Directory thường liệt kê nhiều

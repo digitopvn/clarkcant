@@ -3054,6 +3054,41 @@ apart from the sentence, as code. The install still refuses an artifact that doe
 Publishing stays strict: the entry `clark widget publish` writes is checked against the strict `directoryEntrySchema`,
 where an unknown field is a mistake rather than a newer format.
 
+**Directory sources and the feed format.** A node's directory is composed from sources, in precedence order
+([directory-sources.ts](../packages/core/src/directory-sources.ts)):
+
+1. the index file `CC_DIRECTORY_INDEX` names, read exactly as above;
+2. each marketplace or catalog feed in `CC_DIRECTORY_MARKETPLACES` (HTTPS URLs separated by commas or spaces; plain
+   HTTP only to this machine's loopback), in the order given;
+3. the official ClarkCant Marketplace feed, `https://marketplace.clarkcant.cc/api/v1/directory`, on by default and
+   turned off with `CC_OFFICIAL_MARKETPLACE=off`.
+
+A package id belongs to the first source that lists it: a later source's listings for the same id are left out and
+counted as `shadowed`, so a marketplace cannot add versions, or an update, to a package your own index or catalog
+names. A remote source is fetched only when someone asks for something: a search (when the copy is older than 15
+minutes), an install of a listing missing from the copy (older than one minute), and the update check, which only
+refreshes sources this node fetched before. The last good copy is kept under `<dataDir>/directory-cache/` with the time
+it was fetched; a failed refresh keeps listing it as `stale`, with the reason. A source that was never fetched is
+`not-fetched`; one that cannot be reached and has no copy is `unreachable`; an address that answers 404, 405 or 501 is
+`unsupported`; a feed that is not a valid directory is `unreadable` — never an empty list that reads as "nothing found".
+
+A feed ([marketplace-directory.ts](../packages/core/src/marketplace-directory.ts)) serves directory entries in the
+shape above, optionally in pages:
+
+    GET <feed url>                  → { "format": "clarkcant-directory@1", "entries": [<entry>, …], "nextCursor": "<opaque>" | null }
+    GET <feed url>?cursor=<opaque>  → the next page
+
+A bare JSON array (a static file on any HTTPS host) is read as a one-page feed, so an organisation can publish a
+private catalog without running a service. Entries are read with the same rules as an index file, plus two: a remote
+listing may not name a path on this machine (`source.kind: "local"`), and the official Marketplace lists npm packages
+only. One refresh is bounded (10 s, 8 MiB per page, 20 pages, 5,000 entries) and a feed past a bound is refused whole.
+The request carries no credentials, cookies or identifying headers, an address with a username or password is refused,
+and redirects are not followed. A listing remains a pointer: installing it re-resolves the exact npm version, checks the
+registry's integrity and the entry's `digest` (the runtime content digest `clark widget pack` records as
+`npm.contentDigest`), reads the downloaded `clarkcant.json` and asks the policy, exactly as for a listing in a file.
+Nothing a listing carries grants a permission. The official Marketplace does not serve this feed yet; until it does,
+that source reports `unsupported` by name.
+
 The Pi package catalog is a good reference for discovery: packages have manifest resources and a preview image/video, are shared via npm/git and indexed in the catalog. ClarkCant should keep those ergonomics, but executable widgets default to isolation instead of full-process trust.
 
 ---
@@ -3197,7 +3232,14 @@ This section states which parts of the document already have code, so that nobod
   A row also repeats the listing's `declaredReach` (what installing lets the package reach) and `widgetAppearance` claims, under the
   same schemas as the directory entry, so the row shows them before the Install press. A card that does not match its
   contract is left out of the reply and the node logs `host card dropped` with the card type and the failing field
-  paths, never a value. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
+  paths, never a value. Search reads every configured directory source at once (the index file, configured
+  marketplaces and the official Marketplace; see "Directory sources and the feed format" in §18) and leaves out, and
+  counts, listings that cannot run on this host (platform or host API). Rows from several sources say which source
+  listed them (`origin`), and a source that is stale, not fetched yet, unreachable, unsupported or unreadable is named on
+  the card (`sources`) instead of looking like an empty result. `search_directory` with `packageId` lists every
+  version of one package with its full listing details for the agent to relay — the same tool and the same card, not a
+  second discovery path. There is still no ClarkCant artifact registry: listings point at npm, git or a path, and the
+  bytes come from there.
 - The dev host's in-page script: it collects facts and forwards actions, while every decision lives in a tested function —
   but the script itself needs a browser to run, and that is stated instead of implying that the whole dev host is covered.
 - Detach/attach: the desktop's detached host window **really exists** (`apps/desktop/src/main.mjs` opens it via

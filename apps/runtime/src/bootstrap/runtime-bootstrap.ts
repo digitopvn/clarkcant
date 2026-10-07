@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { type Instant } from "@clarkcant/contracts";
-import { type CoordinationDeps, directoryIndexPath, readDirectoryIndex, readExecutionPolicy } from "@clarkcant/core";
+import { readDirectory, type CoordinationDeps, readExecutionPolicy } from "@clarkcant/core";
 import { RealPiAdapter } from "@clarkcant/pi-adapter";
 import { appendAuditEvent, readCredential } from "@clarkcant/storage";
 
@@ -417,7 +417,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     engine: () => detectServiceEngine(),
     // The listing is read at each change rather than captured, so a directory edited while the node runs is followed.
     packageRoot: (generation) => {
-      const index = readDirectoryIndex(directoryIndexPath(process.env));
+      const index = readDirectory({ env: process.env, dataDir: services.runtime.dataDir });
       if (index.kind !== "configured") return undefined;
       return packageRootFrom(index.entries, join(services.runtime.dataDir, "package-cache"))(generation);
     },
@@ -466,6 +466,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     ? undefined
     : startUpdateCheckTimer({
         services: deps.services,
+        dataDir: deps.services.runtime.dataDir,
         installDeps: {
           db: deps.services.runtime.db,
           nodeId: deps.services.runtime.identity.nodeId,

@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
-import { directoryIndexPath, readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
+import { readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
 import { keyVariableFor } from "@clarkcant/pi-adapter";
@@ -535,7 +535,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           conversationId: turn.conversationId,
         },
         // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
-        directory: { indexPath: directoryIndexPath(deps.env), newId: deps.services().conductor.newId },
+        directory: { directory: { env: deps.env, dataDir: deps.dataDir }, newId: deps.services().conductor.newId },
         // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
         // generator: the model supplies what to remember, never who it belongs to.
         memory: { conversationId: turn.conversationId, newId: deps.services().conductor.newId },

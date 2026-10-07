@@ -1,8 +1,8 @@
 import { entryFitsHost, platformForHost, type Instant, type Platform } from "@clarkcant/contracts";
 import {
   HOST_API_VERSION,
-  directoryIndexPath,
-  readDirectoryIndex,
+  readDirectory,
+  refreshDirectory,
   listInstalledPackages,
   type InstallDeps,
   type InstalledPackageView,
@@ -21,8 +21,10 @@ import {
 /**
  * Checking whether an installed package or widget has a newer version published.
  *
- * The upstream is the directory index this node already reads for search and install (`packages/core`'s
- * `readDirectoryIndex`/`directoryIndexPath`) — no second resolver, no network call of its own. A directory that is not
+ * The upstream is the directory this node already reads for search and install (`packages/core`'s `readDirectory`, every
+ * configured source composed) — no second resolver. The pass itself reads only local state; the timer first refreshes the
+ * remote sources this node has fetched before (never making first contact with one), so a package installed from a
+ * marketplace hears about its next version. A directory that is not
  * configured, or entries that name no newer version, produce nothing. A directory commonly lists several versions of
  * the same package; every entry for that `packageId` is considered, filtered to the ones the installer would actually
  * accept (`entryFitsHost`, the same host/platform preflight `installPackage` runs, plus a non-empty digest), and the
@@ -233,8 +235,10 @@ function sourceKindOf(source: { kind: "local" | "git" | "npm" }): "npm" | "git" 
 export interface UpdateCheckJobDeps {
   services: NoticeServices;
   installDeps: InstallDeps;
-  /** Where the directory index lives, when one is configured. Defaults to reading `CC_DIRECTORY_INDEX`. */
+  /** Where the directory sources are configured. Defaults to this process's environment. */
   env?: NodeJS.ProcessEnv;
+  /** The node's data folder, where remote directory copies are kept. Without it only the index file is read. */
+  dataDir?: string;
   now?: () => Instant;
   intervalMs?: number;
   /** The platform directory entries are checked against. Defaults to this process's host; a test pins it. */
@@ -245,7 +249,7 @@ export interface UpdateCheckJobDeps {
 export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport {
   const now = deps.now ?? (() => new Date().toISOString() as Instant);
   const installed = listInstalledPackages(deps.installDeps);
-  const index = readDirectoryIndex(directoryIndexPath(deps.env ?? process.env));
+  const index = readDirectory({ env: deps.env ?? process.env, dataDir: deps.dataDir });
   const directory: UpdateCandidate[] =
     index.kind === "configured"
       ? index.entries.map((entry) => ({
@@ -272,7 +276,7 @@ export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport 
  * Start the periodic job: an unref'd interval, so it never holds the process open on its own.
  *
  * Runs once shortly after start (so a node does not wait a full interval to say anything), then every `intervalMs`. A
- * pass reads only local state and finishes before the next tick can start, so passes never overlap. A pass that throws
+ * tick that arrives while a pass (with its bounded directory refresh) is still running is skipped, so passes never overlap. A pass that throws
  * is reported on stderr and the next tick runs as usual. The caller runs `stop()` when the node closes, the same as
  * every other unref'd timer this runtime owns (`pi-session-watch.ts`, `server.ts`'s keep-alive).
  */
@@ -280,13 +284,21 @@ export function startUpdateCheckTimer(deps: UpdateCheckJobDeps): { stop: () => v
   const intervalMs = deps.intervalMs ?? DEFAULT_UPDATE_CHECK_INTERVAL_MS;
   let stopped = false;
 
+  let running = false;
   const runOnce = (): void => {
-    if (stopped) return;
-    try {
-      runUpdateCheckOnce(deps);
-    } catch (cause: unknown) {
-      process.stderr.write(`update check: not completed — ${cause instanceof Error ? cause.message : String(cause)}\n`);
-    }
+    if (stopped || running) return;
+    running = true;
+    // Refresh never throws and is bounded by its own timeout; a source it could not reach is listed from its last copy.
+    void refreshDirectory({ env: deps.env ?? process.env, dataDir: deps.dataDir }, { onlyIfCached: true })
+      .then(() => {
+        if (!stopped) runUpdateCheckOnce(deps);
+      })
+      .catch((cause: unknown) => {
+        process.stderr.write(`update check: not completed — ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      })
+      .finally(() => {
+        running = false;
+      });
   };
 
   const startTimer = setTimeout(runOnce, 0);

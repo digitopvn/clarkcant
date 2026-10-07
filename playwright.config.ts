@@ -166,6 +166,8 @@ export default defineConfig({
          * could ever walk is the refusal.
          */
         CC_DIRECTORY_INDEX: join(process.cwd(), "apps", "web", "e2e", "fixtures", "directory.json"),
+        // The journeys read only that fixture: a browser suite must not depend on, or reach, the live Marketplace.
+        CC_OFFICIAL_MARKETPLACE: "off",
         /*
          * The fake providers the egress and image-generator journeys reach listen on loopback (`127.0.0.1:8879` and
          * `127.0.0.1:8881`). A node refuses loopback,

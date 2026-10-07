@@ -18,6 +18,7 @@ export function createUpdateCheckFixture(services: NodeServices): NonNullable<No
     run: async () => {
       const report = runUpdateCheckOnce({
         services,
+        dataDir: services.runtime.dataDir,
         installDeps: {
           db: services.runtime.db,
           nodeId: services.runtime.identity.nodeId,

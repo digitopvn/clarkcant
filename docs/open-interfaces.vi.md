@@ -698,6 +698,18 @@ Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `file
 phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi cả hai, dấu phần trăm thành `_` trong tên ASCII, và
 một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
 
+**Listing đến từ đâu.** Directory mà một node tìm và cài từ đó được ghép từ các nguồn: file index mà
+`CC_DIRECTORY_INDEX` trỏ tới, từng feed trong `CC_DIRECTORY_MARKETPLACES`, và ClarkCant Marketplace chính thức (bật
+trừ khi `CC_OFFICIAL_MARKETPLACE=off`); thứ tự ưu tiên, cách làm mới và định dạng feed nằm ở
+[metadata directory](widget-development.vi.md#18-directory-metadata). Card `marketplace-results` mang
+`origin: { kind, label }` trên mỗi dòng khi card chứa nhiều nguồn (`kind` là `local-file`, `custom-marketplace` hoặc
+`official-marketplace`), và `sources: [{ kind, label, state, fetchedAt?, reason? }]` cho mỗi nguồn chưa trả lời đầy
+đủ (`state` là `stale`, `not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`). `search_directory` nhận thêm
+`packageId` tuỳ chọn và khi đó liệt kê mọi version của gói đó kèm thông tin chi tiết. `POST /packages/install` làm mới
+một nguồn từ xa một lần khi listing không có trong bản sao của node, trả `404 NOT_IN_DIRECTORY` có nêu tên nguồn nào
+chưa trả lời, và `409 DIRECTORY_UNREADABLE` khi không đọc được nguồn nào. Một listing từ marketplace được cài qua đúng
+những bước kiểm tra như listing từ file.
+
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
 liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với

@@ -19,6 +19,8 @@ export * from "./package-sources.ts";
 export * from "./package-fetch.ts";
 export * from "./install-consent.ts";
 export * from "./directory-index.ts";
+export * from "./directory-sources.ts";
+export * from "./marketplace-directory.ts";
 export * from "./install-from-source.ts";
 export * from "./install-from-entry.ts";
 export * from "./package-files.ts";

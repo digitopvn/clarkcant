@@ -6,10 +6,8 @@ import {
   type Principal,
   type WaitingItem,
 } from "@clarkcant/contracts";
-import {
+import { readDirectory,
   decideApproval,
-  directoryIndexPath,
-  readDirectoryIndex,
   unreadFieldsOf,
   type DirectoryIndexState,
 } from "@clarkcant/core";
@@ -73,7 +71,7 @@ export function listPendingInstallApprovals(
       ORDER BY requested_at, approval_id`,
     now,
   );
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
   return rows.flatMap((row): InstallApprovalItem[] => {
     const asked = findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id);
     if (asked === undefined || asked.digest !== row.operation_digest) return [];
@@ -184,7 +182,7 @@ export async function decideInstallApproval(
   }
 
   if (input.decision === "granted") {
-    const entry = listedEntry(readDirectoryIndex(directoryIndexPath(process.env)), asked.packageId, asked.version);
+    const entry = listedEntry(readDirectory({ env: process.env, dataDir: runtime.dataDir }), asked.packageId, asked.version);
     if (entry === undefined || entry.digest !== asked.digest) {
       audit("refused", { code: "DIGEST_MISMATCH" });
       return {

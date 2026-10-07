@@ -38,12 +38,13 @@ import {
   declaredWidgetIds,
   deriveGrantedCapabilities,
   digestOfDirectory,
-  directoryIndexPath,
+  directoryProblems,
   effectCategoryForLane,
   fetchGitArtifact,
   fetchNpmArtifact,
   installFromEntry,
-  readDirectoryIndex,
+  readDirectory,
+  refreshDirectory,
   readExecutionPolicy,
   readPackage,
   recordEffectExecution,
@@ -51,6 +52,7 @@ import {
   resolveLocalSource,
   snapshotLocalPackage,
   type CoordinationDeps,
+  type DirectoryIndexState,
 } from "@clarkcant/core";
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
@@ -74,6 +76,9 @@ import { hostText, ownerLocale } from "../host-text.ts";
 
 /** How long a pending install approval stays good for, and how long the plan it produces may live. */
 const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
+
+/** How old this node's copy of a remote directory may be before an install of a listing missing from it fetches again. */
+const MISSING_LISTING_REFRESH_AGE_MS = 60_000;
 
 export interface PackageInstallDeps {
   runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
@@ -438,16 +443,35 @@ export async function installPackage(
     };
   }
 
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  /*
+   * The directory every configured source composes (`readDirectory`). A listing a remote source added since this node's
+   * copy was fetched is looked for once more after a refresh, so an install pressed on a fresh marketplace card is not
+   * refused for a copy that was a minute old. The listing is still only a pointer: everything below re-checks it.
+   */
+  const directory = { env: process.env, dataDir: runtime.dataDir };
+  const listedIn = (state: DirectoryIndexState) =>
+    state.kind === "configured"
+      ? state.entries.find((candidate) => candidate.packageId === packageId && candidate.version === version)
+      : undefined;
+  let index = readDirectory(directory);
+  if (listedIn(index) === undefined) {
+    await refreshDirectory(directory, { maxAgeMs: MISSING_LISTING_REFRESH_AGE_MS });
+    index = readDirectory(directory);
+  }
   if (index.kind === "not-configured") return { kind: "refused", status: 409, code: "NO_DIRECTORY", message: index.reason };
   if (index.kind === "unreadable") {
     return { kind: "refused", status: 409, code: "DIRECTORY_UNREADABLE", message: index.reason };
   }
-  const entry = index.entries.find(
-    (candidate) => candidate.packageId === packageId && candidate.version === version,
-  );
+  const entry = listedIn(index);
   if (entry === undefined) {
-    return { kind: "refused", status: 404, code: "NOT_IN_DIRECTORY", message: `${packageId}@${version} is not in the directory` };
+    // A package missing because its marketplace is down is not reported as a package that does not exist.
+    const problems = directoryProblems(index.sources);
+    return {
+      kind: "refused",
+      status: 404,
+      code: "NOT_IN_DIRECTORY",
+      message: `${packageId}@${version} is not in the directory${problems === undefined ? "" : ` (${problems})`}`,
+    };
   }
 
   /*
@@ -1334,7 +1358,7 @@ export function resolveGenerationGrantedCapabilities(
   if (generation.grantedCapabilities !== null) return generation.grantedCapabilities;
 
   const { runtime } = deps;
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
   const entry =
     index.kind === "configured"
       ? index.entries.find(

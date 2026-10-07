@@ -1,4 +1,4 @@
-import { directoryIndexPath, listInstalledPackages, readDirectoryIndex } from "@clarkcant/core";
+import { readDirectory, listInstalledPackages } from "@clarkcant/core";
 import { nowInstant, type ServiceConnectionRequirement } from "@clarkcant/contracts";
 
 import type { PackageConnectionBroker } from "../package-connections.ts";
@@ -39,6 +39,6 @@ function declaredConnection(deps: PackageInstallDeps, packageId: string): Servic
     newId: deps.conductor.newId,
   }).find((entry) => entry.packageId === packageId);
   if (installed === undefined) return undefined;
-  const manifest = installedManifest(installed, runtime.dataDir, readDirectoryIndex(directoryIndexPath(process.env)));
+  const manifest = installedManifest(installed, runtime.dataDir, readDirectory({ env: process.env, dataDir: runtime.dataDir }));
   return manifest === "unreadable" ? undefined : installedConnection(manifest);
 }
