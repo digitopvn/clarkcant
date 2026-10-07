@@ -261,7 +261,7 @@ function actionBody(
     state: state?.body ?? {},
     pinId: null,
     ...extra,
-    timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    timeline: buildTimeline(services, { conversationId, instanceIds: [checked.instance.instanceId] }),
   };
 }
 
@@ -1663,9 +1663,9 @@ export async function invokeWidgetAction(
       state: outcome.state,
       pinId: outcome.pinId ?? null,
       outcome: "done",
-      // The whole page comes back after a mutation, so the client does not have to guess whether
-      // its cursor is still valid.
-      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+      // The newest page comes back after a mutation, with the instance acted on even when its message is further up, so
+      // the client merges it into the window it holds without guessing whether its cursor is still valid.
+      timeline: buildTimeline(services, { conversationId: request.conversationId, instanceIds: [outcome.instanceId] }),
     },
   };
 }

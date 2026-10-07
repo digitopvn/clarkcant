@@ -25,6 +25,12 @@ export const MESSAGES_TIMELINE_VI = {
   "timeline.hostWritten.continuation": "Đã duyệt — Clark tiếp tục",
   "timeline.hostWritten.other": "Clark tiếp tục",
 
+  // VirtualTranscript.tsx — the top of the loaded history, and the way back to the newest turn
+  "timeline.history.loading": "Đang tải các tin nhắn trước…",
+  "timeline.history.failed": "Chưa tải được các tin nhắn trước. Mọi thứ đang hiển thị vẫn được giữ nguyên; thử lại để tải tiếp.",
+  "timeline.history.retry": "Thử lại",
+  "timeline.jumpToLatest": "Đến tin mới nhất",
+
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
@@ -1031,6 +1037,11 @@ export const MESSAGES_TIMELINE_EN = {
 
   "timeline.hostWritten.continuation": "Approved — Clark carries on",
   "timeline.hostWritten.other": "Clark carries on",
+
+  "timeline.history.loading": "Loading earlier messages…",
+  "timeline.history.failed": "Earlier messages could not be loaded. Everything on screen is kept; try again to load them.",
+  "timeline.history.retry": "Try again",
+  "timeline.jumpToLatest": "Jump to latest",
 
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",

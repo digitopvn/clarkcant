@@ -141,7 +141,7 @@ function instanceRows(): number {
 }
 
 function timelineActions(instanceId: string) {
-  return buildTimeline(services, { conversationId, afterSequence: 0 }).instances.find(
+  return buildTimeline(services, { conversationId }).instances.find(
     (entry) => entry.instanceId === instanceId,
   )?.actions;
 }
@@ -636,7 +636,7 @@ describe("pressing a bound button", () => {
     expect(composed).toHaveLength(1);
     expect(composed[0]?.text).toBe("Tóm tắt cuộc trò chuyện");
     expect(composed[0]?.note).toContain("You offered it for: Ba dòng thôi.");
-    const users = buildTimeline(services, { conversationId, afterSequence: 0 }).messages.filter(
+    const users = buildTimeline(services, { conversationId }).messages.filter(
       (message) => (message as { role?: unknown }).role === "user",
     );
     expect(JSON.stringify(users.at(-1))).toContain("Tóm tắt cuộc trò chuyện");
@@ -709,7 +709,7 @@ describe("pressing a bound button", () => {
     expect(pinned).toMatchObject({ ok: true });
     if (!pinned.ok) throw new Error("unreachable");
     expect(pinned.body).toMatchObject({ pinId: expect.any(String) });
-    expect(buildTimeline(services, { conversationId, afterSequence: 0 }).pins.map((pin) => pin.instanceId)).toContain(instanceId);
+    expect(buildTimeline(services, { conversationId }).pins.map((pin) => pin.instanceId)).toContain(instanceId);
   });
 });
 
@@ -798,7 +798,7 @@ describe("an invoke button", () => {
     expect(asked).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "approval-required" }) });
     if (!asked.ok) throw new Error("unreachable");
     const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
-    const card = buildTimeline(services, { conversationId, afterSequence: 0 }).messages
+    const card = buildTimeline(services, { conversationId }).messages
       .flatMap((message) => (message as { blocks: MessageBlock[] }).blocks)
       .find((block) => block.type === "approval-card" && block.approvalId === approvalId) as
       | Extract<MessageBlock, { type: "approval-card" }>
@@ -1721,7 +1721,7 @@ describe("a button whose capability runs as a durable job", () => {
     expect(asked).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "approval-required" }) });
     if (!asked.ok) throw new Error("unreachable");
     const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
-    const card = buildTimeline(services, { conversationId, afterSequence: 0 }).messages
+    const card = buildTimeline(services, { conversationId }).messages
       .flatMap((message) => (message as { blocks: MessageBlock[] }).blocks)
       .find((block) => block.type === "approval-card" && block.approvalId === approvalId) as
       | Extract<MessageBlock, { type: "approval-card" }>

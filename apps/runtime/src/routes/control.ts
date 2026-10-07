@@ -262,7 +262,7 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       decision,
       taskId,
       redispatched: decided.redispatched,
-      timeline: buildTimeline(services, { conversationId: decided.conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId: decided.conversationId }),
     });
   }
 
