@@ -1,5 +1,7 @@
 # clarkcant
 
+> English (default) · [Tiếng Việt](README.vi.md)
+
 Conversation-first agent platform: a portable runtime that anyone can install on their
 own machine or VPS, plus paired execution nodes, rich widgets in the conversation, and
 capability packs that install through chat.
@@ -19,9 +21,9 @@ ledger: every scope item (V01–V18) and every acceptance test (T01–T72) from
 [`docs/implementation-plan.md`](docs/implementation-plan.md) with a status of PASS,
 BLOCKED or NOT-IMPLEMENTED, and the evidence for each. Nothing there is marked complete.
 
-Tra trạng thái và điều kiện còn thiếu tại [bảng conformance](docs/conformance-traceability.md).
-Test từng lớp không thay thế kiểm chứng hành trình; các hành trình trình duyệt nằm
-trong [apps/web/e2e](apps/web/e2e). Fixture không chứng minh provider thật hoạt động.
+Look up status and the conditions still missing in the [conformance ledger](docs/conformance-traceability.md).
+Per-layer tests do not replace journey verification; the browser journeys live
+in [apps/web/e2e](apps/web/e2e). A fixture does not prove that a real provider works.
 
 ## What actually works
 
@@ -248,10 +250,10 @@ specifiers, and the TypeScript syntax that Node's type-stripping loader cannot e
 
 ## Documentation
 
-Định hướng UI/UX nằm trong [DESIGN.md](DESIGN.md), quy trình dành cho agent nằm trong
-[AGENTS.md](AGENTS.md). Attachments có bằng chứng tại [browser tests](apps/web/e2e/attachments.spec.ts)
-và [runtime tests](apps/runtime/test/attachment-in-turn.spec.ts); không suy ra các giai đoạn
-voice/action parity hay compact desktop đã hoàn tất từ phần attachments.
+UI/UX direction lives in [DESIGN.md](DESIGN.md), and the agent workflow in
+[AGENTS.md](AGENTS.md). Attachments are evidenced by [browser tests](apps/web/e2e/attachments.spec.ts)
+and [runtime tests](apps/runtime/test/attachment-in-turn.spec.ts); do not infer from the attachments
+work that the voice/action parity or compact desktop phases are complete.
 
 Read in this order: [`docs/scope-lock.md`](docs/scope-lock.md),
 [`docs/system-architecture.md`](docs/system-architecture.md),

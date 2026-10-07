@@ -4,6 +4,11 @@ import { DatabaseSync } from "node:sqlite";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { widgetInstanceSchema, widgetSnapshotSchema } from "../../../packages/contracts/src/index.ts";
+import { PRESENTATION_RETENTION } from "../../../packages/conversation-client/src/presentation-retention.ts";
+import { definitionDigest } from "../../../packages/widget-host/src/index.ts";
+import { IMAGE } from "../../../packs/data-canvas/src/index.ts";
+
 /**
  * A conversation far longer than one timeline page, in a real browser against a real node.
  *
@@ -27,10 +32,16 @@ const FOLD_AT = 1_100;
 /** Generous for a 720px screen with a screen of rows mounted on either side; the history holds 1,200. */
 const MOUNTED_BOUND = 90;
 
+function identity(): { localToken: string; nodeId: string; ownerPrincipalId: string } {
+  const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as Record<string, unknown>;
+  const { localToken, nodeId, ownerPrincipalId } = parsed;
+  if (typeof localToken !== "string" || localToken === "") throw new Error("no local token for the e2e node");
+  if (typeof nodeId !== "string" || typeof ownerPrincipalId !== "string") throw new Error("the e2e node's identity names no node or owner");
+  return { localToken, nodeId, ownerPrincipalId };
+}
+
 function token(): string {
-  const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
-  if (typeof parsed.localToken !== "string" || parsed.localToken === "") throw new Error("no local token for the e2e node");
-  return parsed.localToken;
+  return identity().localToken;
 }
 
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -50,10 +61,23 @@ function wording(sequence: number): string {
   return `Tin nhắn số ${String(sequence)}. ${filler}`.trim();
 }
 
-/** A conversation with `MESSAGES` stored messages, written straight into the node's store in one transaction. */
-async function seedConversation(): Promise<{ conversationId: string; idOf: (sequence: number) => string }> {
+interface SeededMessage {
+  role: "user" | "assistant";
+  blocks: Record<string, unknown>[];
+}
+
+/**
+ * A conversation with `count` stored messages, written straight into the node's store in one transaction.
+ *
+ * `write` gives each message its role and blocks, and may write the records a block names (an instance, a snapshot)
+ * through the same open store, so a message and what it draws land together.
+ */
+async function seed(
+  count: number,
+  write: (input: { db: DatabaseSync; sequence: number; messageId: string; createdAt: string }) => SeededMessage,
+  run = Date.now().toString(36),
+): Promise<{ conversationId: string; idOf: (sequence: number) => string }> {
   const conversation = await api<{ conversationId: string }>("POST", "/conversations", { title: "long conversation" });
-  const run = Date.now().toString(36);
   const idOf = (sequence: number): string => `msg_long_${run}_${String(sequence)}`;
   const db = new DatabaseSync(join(DATA_DIR, "node.sqlite"));
   try {
@@ -62,14 +86,10 @@ async function seedConversation(): Promise<{ conversationId: string; idOf: (sequ
        VALUES (?, ?, ?, ?, NULL, 'accepted', ?, ?, ?)`,
     );
     db.exec("BEGIN");
-    for (let sequence = 1; sequence <= MESSAGES; sequence += 1) {
+    for (let sequence = 1; sequence <= count; sequence += 1) {
       const messageId = idOf(sequence);
-      const role = sequence % 2 === 1 ? "user" : "assistant";
       const createdAt = new Date(Date.UTC(2026, 9, 1, 0, 0, sequence)).toISOString();
-      const blocks =
-        sequence === FOLD_AT
-          ? [{ type: "reasoning", content: "Suy luận được ghi lại cho hàng có thể mở ra." }, { type: "text", format: "markdown", content: wording(sequence) }]
-          : [{ type: "text", format: "markdown", content: wording(sequence) }];
+      const { role, blocks } = write({ db, sequence, messageId, createdAt });
       insert.run(
         messageId,
         conversation.conversationId,
@@ -93,6 +113,17 @@ async function seedConversation(): Promise<{ conversationId: string; idOf: (sequ
     db.close();
   }
   return { conversationId: conversation.conversationId, idOf };
+}
+
+/** A conversation of `MESSAGES` text messages, one of them holding a fold a person can open. */
+async function seedConversation(): Promise<{ conversationId: string; idOf: (sequence: number) => string }> {
+  return seed(MESSAGES, ({ sequence }) => ({
+    role: sequence % 2 === 1 ? "user" : "assistant",
+    blocks:
+      sequence === FOLD_AT
+        ? [{ type: "reasoning", content: "Suy luận được ghi lại cho hàng có thể mở ra." }, { type: "text", format: "markdown", content: wording(sequence) }]
+        : [{ type: "text", format: "markdown", content: wording(sequence) }],
+  }));
 }
 
 async function openConversation(page: Page, conversationId: string): Promise<void> {
@@ -591,4 +622,300 @@ test("an answer drawn before the browser reports a scroll up does not take the r
     node.dispatchEvent(new Event("scroll"));
   });
   await expect(page.locator("[data-jump-latest]")).toBeVisible();
+});
+
+/*
+ * Pictures in a long conversation.
+ *
+ * Every message below draws an imported image the way a placed `canvas.image@1` does: a surface block naming its
+ * instance, the instance and the snapshot the message keeps, all written into the node's store. The picture bytes are
+ * answered for those references by the page's network layer, each tagged with its reference after the image's end, so
+ * every object URL the page makes can be traced back to the picture it holds. The authenticated read, the object URL,
+ * the renderer and what the conversation keeps or lets go are the production path.
+ */
+
+/** One page of the timeline: the whole conversation is held, so every read here is a picture's, not a page's. */
+const PICTURE_MESSAGES = 200;
+/** A one-pixel PNG; what is counted is which pictures are held, not what they show. */
+const PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
+const PICTURE_TAG = "#picture:";
+
+interface PictureConversation {
+  conversationId: string;
+  idOf: (sequence: number) => string;
+  refOf: (sequence: number) => string;
+  instanceOf: (sequence: number) => string;
+  /** The picture a mounted row draws, from its message id. */
+  refOfRow: (messageId: string) => string;
+}
+
+/** A conversation of `PICTURE_MESSAGES` messages, each drawing its own imported picture. */
+async function seedPictureConversation(): Promise<PictureConversation> {
+  const owner = identity();
+  const packageDigest = definitionDigest(IMAGE);
+  const run = Date.now().toString(36);
+  const refOf = (sequence: number): string => `img_long_${run}_${String(sequence)}`;
+  const instanceOf = (sequence: number): string => `winst_long_${run}_${String(sequence)}`;
+  const seeded = await seed(PICTURE_MESSAGES, ({ db, sequence, messageId, createdAt }) => {
+    const imageRef = refOf(sequence);
+    const alt = `Ảnh số ${String(sequence)}`;
+    const instance = widgetInstanceSchema.parse({
+      instanceId: instanceOf(sequence),
+      definitionRef: { id: IMAGE.id, version: IMAGE.version, packageDigest },
+      ownerNodeId: owner.nodeId,
+      ownerPrincipalId: owner.ownerPrincipalId,
+      revision: 1,
+      presentationRevision: 1,
+      dataRevision: 1,
+      actionBindingRevision: 1,
+      props: { imageRef, alt, title: alt },
+      dataRefs: [],
+      connectionRefs: [],
+      actionBindingIds: [],
+      lifecycle: "ready",
+    });
+    const snapshot = widgetSnapshotSchema.parse({
+      snapshotId: `wsnap_${instance.instanceId}`,
+      instanceId: instance.instanceId,
+      messageId,
+      capturedRevision: instance.revision,
+      capturedAt: createdAt,
+      textAlternative: alt,
+      presentationRef: `catalog:${IMAGE.id}`,
+      stale: false,
+    });
+    db.prepare(
+      `INSERT INTO widget_instances
+         (instance_id, definition_id, definition_version, package_digest, owner_node_id, owner_principal_id,
+          revision, presentation_revision, data_revision, action_binding_revision, lifecycle, document, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      instance.instanceId,
+      instance.definitionRef.id,
+      instance.definitionRef.version,
+      instance.definitionRef.packageDigest,
+      instance.ownerNodeId,
+      instance.ownerPrincipalId,
+      instance.revision,
+      instance.presentationRevision,
+      instance.dataRevision,
+      instance.actionBindingRevision,
+      instance.lifecycle,
+      JSON.stringify(instance),
+      createdAt,
+    );
+    db.prepare(
+      `INSERT INTO widget_snapshots (snapshot_id, instance_id, message_id, captured_revision, captured_at, stale, document)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`,
+    ).run(snapshot.snapshotId, instance.instanceId, messageId, snapshot.capturedRevision, snapshot.capturedAt, JSON.stringify(snapshot));
+    return {
+      role: "assistant",
+      blocks: [
+        { type: "text", format: "markdown", content: wording(sequence) },
+        { type: "surface", definitionRef: { id: IMAGE.id, version: IMAGE.version }, snapshot },
+        { type: "widget-ref", instanceId: instance.instanceId, displayMode: "inline", textAlternative: alt },
+      ],
+    };
+  }, run);
+  const prefix = seeded.idOf(0).slice(0, -1);
+  return {
+    conversationId: seeded.conversationId,
+    idOf: seeded.idOf,
+    refOf,
+    instanceOf,
+    refOfRow: (messageId) => refOf(Number(messageId.slice(prefix.length))),
+  };
+}
+
+/**
+ * Answers the seeded picture references with real image bytes, and counts every read of each.
+ *
+ * The bytes carry their reference after the image's end, where a decoder stops reading, so an object URL made from
+ * them names the picture it holds (`pictureUrls`).
+ */
+async function servePictures(page: Page): Promise<Map<string, number>> {
+  const reads = new Map<string, number>();
+  await page.route(
+    (url) => url.origin === GATEWAY && /^\/images\/img_long_/u.test(url.pathname),
+    async (route) => {
+      const ref = new URL(route.request().url()).pathname.split("/").pop() ?? "";
+      reads.set(ref, (reads.get(ref) ?? 0) + 1);
+      await route.fulfill({ status: 200, contentType: "image/png", body: Buffer.concat([PIXEL_PNG, Buffer.from(`${PICTURE_TAG}${ref}`)]) });
+    },
+  );
+  return reads;
+}
+
+/** Remember every object URL the page makes and every one it revokes; both still reach the browser's own. */
+async function watchObjectUrls(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const created = new Map<string, Blob>();
+    const revoked = new Set<string>();
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (object: Blob | MediaSource): string => {
+      const url = create(object);
+      if (object instanceof Blob) created.set(url, object);
+      return url;
+    };
+    URL.revokeObjectURL = (url: string): void => {
+      revoked.add(url);
+      revoke(url);
+    };
+    // SAFETY: a record this spec reads back; nothing in the application reads it.
+    (window as unknown as { __objectUrls?: unknown }).__objectUrls = { created, revoked };
+  });
+}
+
+interface PictureUrl {
+  url: string;
+  ref: string;
+  revoked: boolean;
+}
+
+/** Every object URL made for a seeded picture, with the picture it holds and whether it was revoked. */
+async function pictureUrls(page: Page): Promise<PictureUrl[]> {
+  return page.evaluate(async (tag) => {
+    // SAFETY: the record installed by `watchObjectUrls`.
+    const seen = (window as unknown as { __objectUrls?: { created: Map<string, Blob>; revoked: Set<string> } }).__objectUrls;
+    if (seen === undefined) throw new Error("object URLs are not being watched");
+    const found: { url: string; ref: string; revoked: boolean }[] = [];
+    for (const [url, blob] of seen.created) {
+      const tail = await blob.slice(Math.max(0, blob.size - 128)).text();
+      const at = tail.lastIndexOf(tag);
+      if (at >= 0) found.push({ url, ref: tail.slice(at + tag.length), revoked: seen.revoked.has(url) });
+    }
+    return found;
+  }, PICTURE_TAG);
+}
+
+/**
+ * Whether the page can still draw an object URL: a revoked one is gone from the browser, not only from a list.
+ *
+ * Loaded as a picture, the way the transcript uses it, rather than fetched: the page's policy lets pictures, not
+ * scripts, read `blob:` addresses.
+ */
+async function readable(page: Page, url: string): Promise<boolean> {
+  return page.evaluate(
+    (target) =>
+      new Promise<boolean>((resolve) => {
+        const probe = new Image();
+        probe.onload = () => resolve(true);
+        probe.onerror = () => resolve(false);
+        probe.src = target;
+      }),
+    url,
+  );
+}
+
+/** The pictures drawn now: those of the mounted rows, and the pinned one. */
+async function drawnRefs(page: Page, pictures: PictureConversation, pinned: string | undefined): Promise<Set<string>> {
+  const drawn = new Set((await mountedIds(page)).map(pictures.refOfRow));
+  if (pinned !== undefined) drawn.add(pinned);
+  return drawn;
+}
+
+/** The pictures with an object URL the page still holds. Each is held by one URL, never two. */
+function liveRefs(urls: readonly PictureUrl[]): string[] {
+  const live = urls.filter((entry) => !entry.revoked).map((entry) => entry.ref);
+  expect(new Set(live).size, "no picture is held by two live object URLs").toBe(live.length);
+  return live;
+}
+
+test("pictures scrolled past the budget have their object URLs revoked; drawn and pinned ones stay live", async ({ page }) => {
+  const pictures = await seedPictureConversation();
+  const newest = PICTURE_MESSAGES;
+  // A picture near the newest is pinned, so it is drawn wherever the transcript is. Not the newest itself: the newest
+  // row stays mounted wherever the transcript is, and would be drawn without the pin.
+  const pinnedAt = newest - 2;
+  const pinned = pictures.refOf(pinnedAt);
+  await api("POST", `/conversations/${encodeURIComponent(pictures.conversationId)}/pins`, {
+    instanceId: pictures.instanceOf(pinnedAt),
+    displayMode: "compact",
+  });
+  await watchObjectUrls(page);
+  const reads = await servePictures(page);
+  await openConversation(page, pictures.conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", String(PICTURE_MESSAGES));
+  const shown = row(page, pictures.idOf(newest)).locator(`img[data-image-ref="${pictures.refOf(newest)}"]`);
+  await expect(shown).toBeInViewport();
+  await expect(shown).toHaveAttribute("src", /^blob:/u);
+
+  // Up to the first message: at every stop, only what is drawn and at most a budget of recently drawn pictures are held.
+  const budget = PRESENTATION_RETENTION.pictures;
+  for (let step = 0; step < 300; step += 1) {
+    await scrollBy(page, -2_400);
+    await expect
+      .poll(async () => {
+        const live = liveRefs(await pictureUrls(page));
+        const drawn = await drawnRefs(page, pictures, pinned);
+        return live.filter((ref) => !drawn.has(ref)).length;
+      }, { message: "pictures held beyond those drawn" })
+      .toBeLessThanOrEqual(budget);
+    if ((await row(page, pictures.idOf(1)).count()) > 0 && (await scroller(page).evaluate((node) => node.scrollTop)) === 0) break;
+  }
+  await expect(row(page, pictures.idOf(1))).toBeInViewport();
+
+  // At rest at the top: every drawn picture is held, and exactly a budget's worth of the most recently drawn others.
+  await expect
+    .poll(async () => {
+      const live = new Set(liveRefs(await pictureUrls(page)));
+      const drawn = await drawnRefs(page, pictures, pinned);
+      return { drawnHeld: [...drawn].every((ref) => live.has(ref)), others: [...live].filter((ref) => !drawn.has(ref)).length };
+    })
+    .toEqual({ drawnHeld: true, others: budget });
+
+  const urls = await pictureUrls(page);
+  // Far more pictures were drawn on the way up than the budget keeps; each was read once, never again.
+  expect(new Set(urls.map((entry) => entry.ref)).size).toBeGreaterThan(budget * 2);
+  for (const [ref, count] of reads) expect(count, `${ref} was read once`).toBe(1);
+
+  // The picture just above the newest was drawn first and let go long ago: its URL is revoked in the browser.
+  const released = urls.filter((entry) => entry.ref === pictures.refOf(newest - 1));
+  expect(released.length).toBe(1);
+  expect(released[0]?.revoked).toBe(true);
+  expect(await readable(page, released[0]?.url ?? "")).toBe(false);
+
+  // The pinned picture is still held, by the URL it was first read into.
+  const kept = urls.filter((entry) => entry.ref === pinned);
+  expect(kept.map((entry) => entry.revoked)).toEqual([false]);
+  expect(await readable(page, kept[0]?.url ?? "")).toBe(true);
+
+  // Every picture on screen draws from a live URL.
+  const sources = await page.locator(".cc-transcript-rows img[data-image-ref]").evaluateAll((images) =>
+    images.map((image) => ({ ref: image.getAttribute("data-image-ref") ?? "", src: image.getAttribute("src") ?? "" })),
+  );
+  expect(sources.length).toBeGreaterThan(0);
+  const revoked = new Set(urls.filter((entry) => entry.revoked).map((entry) => entry.url));
+  for (const source of sources) {
+    expect(revoked.has(source.src), `${source.ref} draws from a revoked URL`).toBe(false);
+    expect(await readable(page, source.src)).toBe(true);
+  }
+});
+
+test("a picture scrolled a little way off is kept, and drawn again without being read again", async ({ page }) => {
+  const pictures = await seedPictureConversation();
+  // The one before the newest: the newest row stays mounted wherever the transcript is.
+  const newest = pictures.idOf(PICTURE_MESSAGES - 1);
+  const ref = pictures.refOf(PICTURE_MESSAGES - 1);
+  await watchObjectUrls(page);
+  const reads = await servePictures(page);
+  await openConversation(page, pictures.conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", String(PICTURE_MESSAGES));
+  const shown = row(page, newest).locator(`img[data-image-ref="${ref}"]`);
+  await expect(shown).toHaveAttribute("src", /^blob:/u);
+  const source = await shown.getAttribute("src");
+
+  // Up until its row is no longer mounted, and no further.
+  for (let step = 0; step < 20 && (await row(page, newest).count()) > 0; step += 1) await scrollBy(page, -600);
+  await expect(row(page, newest)).toHaveCount(0);
+  expect(reads.size, "fewer pictures were drawn on the way than the budget keeps").toBeLessThanOrEqual(PRESENTATION_RETENTION.pictures);
+  await settle(page);
+  expect((await pictureUrls(page)).filter((entry) => entry.ref === ref).map((entry) => entry.revoked)).toEqual([false]);
+
+  // Back down: the same URL draws it at once, and the node was asked for it only the first time.
+  await toNewest(page);
+  await expect(shown).toBeInViewport();
+  await expect(shown).toHaveAttribute("src", source ?? "");
+  expect(reads.get(ref)).toBe(1);
 });

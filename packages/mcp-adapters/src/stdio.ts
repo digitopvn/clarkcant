@@ -22,6 +22,8 @@ import { type McpToolMetadata, mcpToolMetadataSchema, normalizeMcpToolResult, ty
 
 export interface StdioMcpTransportOptions {
   serverId: string;
+  /** The Clark version this client introduces itself with in initialize; the host passes its own, never a literal. */
+  clientVersion: string;
   command: string;
   args?: readonly string[];
   env?: Record<string, string>;
@@ -195,7 +197,7 @@ export class StdioMcpTransport implements McpTransport {
       protocolVersion: "2025-06-18",
       capabilities:
         this.#options.serverRequests === undefined ? {} : { experimental: this.#options.serverRequests.experimental },
-      clientInfo: { name: "clarkcant", version: "0.2.0" },
+      clientInfo: { name: "clarkcant", version: this.#options.clientVersion },
     })) as Partial<ServerHandshake>;
 
     if (typeof result?.protocolVersion !== "string") {

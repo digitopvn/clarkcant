@@ -590,6 +590,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // bound, and each perform through the same widget-action path a press takes, asked of the page showing it.
         widgets: {
           place: { services: deps.services, conversationId: turn.conversationId, messageId: () => turn.messageId?.() },
+          // "Work on the widget in this folder with me": a live authoring session, shown and reloaded here.
+          develop: {
+            sessions: () => deps.services().widgetDev,
+            conversationId: turn.conversationId,
+            messageId: () => turn.messageId?.(),
+            origin: turn.origin,
+          },
           perform: {
             services: deps.services,
             conversationId: turn.conversationId,

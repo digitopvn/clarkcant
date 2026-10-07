@@ -46,8 +46,8 @@ describe("the live voice probe", () => {
   });
 
   it("finds a credential the person typed into the node's own vault", () => {
-    // The vault is checked second because the environment wins, and both are real: a key typed into the credential
-    // card is a key the person expects to be used.
+    // The vault is checked first, and wins over the environment: a key typed into the credential card is a key the
+    // person expects to be used.
     const probe = probeLiveVoice({ env: {}, vaultCredential: "stored-in-the-vault" });
     expect(probe).toEqual({ available: true, source: "vault" });
   });

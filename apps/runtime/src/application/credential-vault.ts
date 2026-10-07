@@ -89,7 +89,7 @@ export function storeCredentialFields(
   for (const field of fields as CredentialFieldInput[]) {
     const name = typeof field.name === "string" ? field.name.trim() : "";
     const value = typeof field.value === "string" ? field.value : "";
-    if (name === "" || value === "") {
+    if (name === "" || value.trim() === "") {
       return { ok: false, code: "INVALID_SCHEMA", message: "every credential field needs a name and a value" };
     }
     /*

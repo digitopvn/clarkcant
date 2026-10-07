@@ -8,8 +8,8 @@ import {
 } from "@clarkcant/contracts";
 import {
   decideApproval,
+  devConsentScopeOf,
   originOf,
-  readDirectory,
   unreadFieldsOf,
   type DirectoryIndexState,
 } from "@clarkcant/core";
@@ -25,6 +25,7 @@ import {
   type PackageInstallDeps,
 } from "./package-install.ts";
 import { reachChangeAgainstInstalled } from "../package-reach-change.ts";
+import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
  * An install the person's execution policy asked about, from the question to the answer.
@@ -47,6 +48,19 @@ type InstallApprovalItem = Extract<WaitingItem, { kind: "install-approval" }>;
 function listedEntry(index: DirectoryIndexState, packageId: string, version: string): DirectoryEntry | undefined {
   if (index.kind !== "configured") return undefined;
   return index.entries.find((candidate) => candidate.packageId === packageId && candidate.version === version);
+}
+
+/**
+ * What an install approval names: the artifact, or, for a widget dev session's generation, the consent scope it was
+ * asked under. The listing must still name both: the exact files (`digest`) and, for a dev generation, the same scope.
+ */
+function askedOperation(asked: { digest: string; consentScope?: string }): string {
+  return asked.consentScope ?? asked.digest;
+}
+
+function stillListedAsAsked(entry: DirectoryEntry | undefined, asked: { digest: string; consentScope?: string }): entry is DirectoryEntry {
+  if (entry === undefined || entry.digest !== asked.digest) return false;
+  return asked.consentScope === undefined || devConsentScopeOf(entry) === asked.consentScope;
 }
 
 /**
@@ -74,14 +88,13 @@ export function listPendingInstallApprovals(
       ORDER BY requested_at, approval_id`,
     now,
   );
-  const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
+  const index = readNodeDirectory(runtime.dataDir);
   return rows.flatMap((row): InstallApprovalItem[] => {
     const asked = findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id);
-    if (asked === undefined || asked.digest !== row.operation_digest) return [];
+    if (asked === undefined || askedOperation(asked) !== row.operation_digest) return [];
     const entry = listedEntry(index, asked.packageId, asked.version);
-    if (entry === undefined || entry.digest !== row.operation_digest) return [];
-    // A listing by a path on this machine whose files changed since the question is left out the same way, and so is a
-    // listing another source owns by now.
+    if (!stillListedAsAsked(entry, asked)) return [];
+    // A listing by a path on this machine whose files changed since the question is left out the same way.
     if (!localFilesUnchanged(entry, asked.localDigest)) return [];
     const origin = originOf(index, entry);
     if (approvalSourceRefusal({ ...asked, origin, askedSourceId: asked.sourceId }) !== undefined) return [];
@@ -165,7 +178,7 @@ export async function decideInstallApproval(
     "SELECT operation_digest, task_id FROM approvals WHERE approval_id = ?",
     input.approvalId,
   );
-  if (asked === undefined || row === undefined || row.task_id !== null || row.operation_digest !== asked.digest) {
+  if (asked === undefined || row === undefined || row.task_id !== null || row.operation_digest !== askedOperation(asked)) {
     return { ok: false, status: 409, code: "NOT_AN_INSTALL_APPROVAL", message: "this approval is not an install that was asked about" };
   }
   const audit = (result: "installed" | "denied" | "expired" | "refused" | "failed", extra: { code?: string; generationId?: string } = {}) =>
@@ -174,11 +187,12 @@ export async function decideInstallApproval(
       packageId: asked.packageId,
       version: asked.version,
       digest: asked.digest,
+      ...(asked.consentScope === undefined ? {} : { consentScope: asked.consentScope }),
       result,
       ...extra,
     });
 
-  if (input.seenOperationDigest !== asked.digest) {
+  if (input.seenOperationDigest !== askedOperation(asked)) {
     audit("refused", { code: "APPROVAL_FORGED" });
     return {
       ok: false,
@@ -189,9 +203,9 @@ export async function decideInstallApproval(
   }
 
   if (input.decision === "granted") {
-    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
+    const index = readNodeDirectory(runtime.dataDir);
     const entry = listedEntry(index, asked.packageId, asked.version);
-    if (entry === undefined || entry.digest !== asked.digest) {
+    if (!stillListedAsAsked(entry, asked)) {
       audit("refused", { code: "DIGEST_MISMATCH" });
       return {
         ok: false,
@@ -236,10 +250,11 @@ export async function decideInstallApproval(
     {
       approved: {
         approvalId: input.approvalId,
-        digest: asked.digest,
+        digest: askedOperation(asked),
         ...(asked.localDigest === undefined ? {} : { localDigest: asked.localDigest }),
         ...(asked.sourceId === undefined ? {} : { sourceId: asked.sourceId }),
       },
+      ...(asked.consentScope === undefined ? {} : { consentScope: asked.consentScope }),
     },
   );
   if (installed.kind === "installed") {

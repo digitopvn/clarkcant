@@ -1,11 +1,13 @@
 import { join } from "node:path";
 
 import { type Instant } from "@clarkcant/contracts";
-import { readDirectory, type CoordinationDeps, readExecutionPolicy } from "@clarkcant/core";
+import { type CoordinationDeps, readExecutionPolicy } from "@clarkcant/core";
 import { RealPiAdapter } from "@clarkcant/pi-adapter";
 import { appendAuditEvent, readCredential } from "@clarkcant/storage";
 
 import { providerAuthPort } from "../application/provider-sign-in.ts";
+import { createWidgetDevSessions } from "../application/widget-dev-sessions.ts";
+import { readNodeDirectory } from "../application/widget-dev-store.ts";
 
 import { DEFAULT_NARROWING } from "../autonomy-settings.ts";
 import { contextBundlesFor } from "../context-bundle.ts";
@@ -417,7 +419,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     engine: () => detectServiceEngine(),
     // The listing is read at each change rather than captured, so a directory edited while the node runs is followed.
     packageRoot: (generation) => {
-      const index = readDirectory({ env: process.env, dataDir: services.runtime.dataDir });
+      // The node's view, so a widget dev session's generation is found like any other installed package.
+      const index = readNodeDirectory(services.runtime.dataDir);
       if (index.kind !== "configured") return undefined;
       return packageRootFrom(index.entries, join(services.runtime.dataDir, "package-cache"))(generation);
     },
@@ -446,6 +449,15 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   services.browserTokens = createBrowserTokenBroker({
     audit: browserTokenAudit(services),
     log: (line) => process.stderr.write(`${line}\n`),
+  });
+  /*
+   * Live widget authoring sessions, after the service host and token broker their installs tell. Sessions that were live
+   * when the node stopped watch their folders again, in the background: a folder that is gone stops its session.
+   */
+  const widgetDev = createWidgetDevSessions(() => services);
+  services.widgetDev = widgetDev;
+  void widgetDev.resume().catch((cause: unknown) => {
+    process.stderr.write(`widget dev: sessions not resumed — ${cause instanceof Error ? cause.message : String(cause)}\n`);
   });
 
   if (sessionFixture) {
@@ -617,7 +629,13 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
         "update check: periodic job started — installed packages/widgets against the directory index; the Pi SDK ships pinned with ClarkCant and is not checked\n",
   );
 
-  return { stopUpdateChecks: () => updateChecks?.stop() };
+  return {
+    stopUpdateChecks: () => {
+      updateChecks?.stop();
+      // Beside the update check: both are timers and watchers this function started, ended when the node closes.
+      widgetDev.close();
+    },
+  };
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   PERSON_ONLY_REFUSAL,
 } from "@clarkcant/contracts";
 
+import { clarkVersion } from "../application/changelog.ts";
 import { MCP_PATH, MCP_PROTOCOL_VERSIONS } from "../open-interfaces.ts";
 import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, json } from "./http.ts";
 
@@ -49,7 +50,7 @@ interface ToolResult {
 /** Enough for any real client, few enough that one request cannot queue unbounded tool calls. */
 const MAX_BATCH = 32;
 
-const SERVER_INFO = { name: "clarkcant", title: "ClarkCant", version: "1.0.0" };
+const SERVER_INFO = { name: "clarkcant", title: "ClarkCant" };
 
 const INSTRUCTIONS =
   "ClarkCant is one conversational agent, Clark. Use ask_clark for anything you would ask a person-facing assistant " +
@@ -238,7 +239,8 @@ async function answerOne(deps: McpRouteDeps, message: unknown): Promise<unknown>
       return rpcResult(id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: SERVER_INFO,
+        // Clark's own version, so an MCP host sees the build it is talking to.
+        serverInfo: { ...SERVER_INFO, version: clarkVersion() },
         instructions: INSTRUCTIONS,
       });
     }

@@ -19,6 +19,10 @@ describe("what a node already has", () => {
     expect(availableCredentials({ env: { TYPESAFE_API_KEY: "" }, vault: [] })).toEqual([]);
   });
 
+  it("does not count another provider's key as the TypeSafe key, because Jev cannot use it", () => {
+    expect(availableCredentials({ env: { OPENROUTER_API_KEY: "set" }, vault: [] })).toEqual([]);
+  });
+
   it("reports names only, and only ones it knows how to look for", () => {
     const names = availableCredentials({ env: { SOMETHING_ELSE: "set" }, vault: ["unrelated"] });
     expect(names).toEqual([]);

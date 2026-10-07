@@ -64,6 +64,7 @@ export * from "./service-artifacts.ts";
 export * from "./browser-token.ts";
 export * from "./declared-reach.ts";
 export * from "./reach-change.ts";
+export * from "./widget-dev-session.ts";
 export * from "./composer-references.ts";
 export * from "./slash-commands.ts";
 export * from "./release-notes.ts";
