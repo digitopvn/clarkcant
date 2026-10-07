@@ -6,6 +6,7 @@ import {
   GEMINI_TTS_FLASH_LITE_MODEL,
   GEMINI_TTS_FLASH_MODEL,
   GeminiTtsClient,
+  readSampleRate,
   type FetchLike,
 } from "../src/gemini-tts.ts";
 
@@ -226,5 +227,31 @@ describe("GeminiTtsClient", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("readSampleRate", () => {
+  const pcm = new Uint8Array(320);
+
+  it("refuses a zero, fractional or implausibly large rate", () => {
+    expect(readSampleRate("audio/L16;rate=0", pcm)).toBeUndefined();
+    expect(readSampleRate("audio/L16;rate=24000.5", pcm)).toBeUndefined();
+    expect(readSampleRate("audio/L16;rate=99999999999999999999", pcm)).toBeUndefined();
+    expect(readSampleRate("audio/L16;rate=384001", pcm)).toBeUndefined();
+    expect(readSampleRate("audio/wav", wav(0, Buffer.alloc(320)))).toBeUndefined();
+    expect(readSampleRate("audio/wav", wav(500000, Buffer.alloc(320)))).toBeUndefined();
+  });
+
+  it("trusts the WAV header over a conflicting mime rate", () => {
+    expect(readSampleRate("audio/wav;rate=16000", wav(24000, Buffer.alloc(320)))).toBe(24000);
+  });
+
+  it("uses the mime rate for headerless PCM", () => {
+    expect(readSampleRate("audio/L16;codec=pcm;rate=16000", pcm)).toBe(16000);
+  });
+
+  it("falls back to the mime rate when a WAV is truncated before its format chunk", () => {
+    const truncated = wav(24000, Buffer.alloc(320)).subarray(0, 20);
+    expect(readSampleRate("audio/wav;rate=16000", truncated)).toBe(16000);
   });
 });

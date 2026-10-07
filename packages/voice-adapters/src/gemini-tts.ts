@@ -255,16 +255,24 @@ function collectAudioBlocks(node: unknown, into: Array<{ data: string; mimeType:
 /**
  * The sample rate the audio is actually in.
  *
- * Raw PCM states it as a mime parameter (`audio/L16;codec=pcm;rate=24000`); a WAV clip states it in its `fmt ` chunk.
- * The mime parameter wins when both are present, since it is the provider's own label for this response.
+ * A WAV clip states it in its `fmt ` chunk; raw PCM states it as a mime parameter (`audio/L16;codec=pcm;rate=24000`).
+ * The WAV header wins when both are present, since it describes the bytes themselves; the mime parameter is only
+ * read for headerless audio, or a WAV whose `fmt ` chunk cannot be read. A rate that is not a whole number of
+ * hertz within `1..MAX_SAMPLE_RATE_HZ` counts as unreadable.
  */
 export function readSampleRate(mimeType: string, audio: Uint8Array): number | undefined {
-  const parameter = /(?:^|;)\s*rate\s*=\s*"?(\d+)"?\s*(?:;|$)/i.exec(mimeType);
-  if (parameter !== null) {
-    const rate = Number(parameter[1]);
-    return rate > 0 ? rate : undefined;
-  }
-  return readWavSampleRate(audio);
+  return readWavSampleRate(audio) ?? readMimeSampleRate(mimeType);
+}
+
+const MAX_SAMPLE_RATE_HZ = 384_000;
+
+function saneSampleRate(rate: number): number | undefined {
+  return Number.isInteger(rate) && rate >= 1 && rate <= MAX_SAMPLE_RATE_HZ ? rate : undefined;
+}
+
+function readMimeSampleRate(mimeType: string): number | undefined {
+  const parameter = /(?:^|;)\s*rate\s*=\s*"?([\d.]+)"?\s*(?:;|$)/i.exec(mimeType);
+  return parameter === null ? undefined : saneSampleRate(Number(parameter[1]));
 }
 
 function readWavSampleRate(audio: Uint8Array): number | undefined {
@@ -276,8 +284,7 @@ function readWavSampleRate(audio: Uint8Array): number | undefined {
     const size = view.getUint32(offset + 4, true);
     if (id === "fmt ") {
       if (size < 8 || offset + 16 > audio.length) return undefined;
-      const rate = view.getUint32(offset + 12, true);
-      return rate > 0 ? rate : undefined;
+      return saneSampleRate(view.getUint32(offset + 12, true));
     }
     // Chunks are word-aligned: an odd-sized chunk is followed by one pad byte.
     offset += 8 + size + (size % 2);
