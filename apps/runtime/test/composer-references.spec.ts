@@ -27,7 +27,13 @@ import {
   upsertProject,
 } from "@clarkcant/storage";
 
-import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
+import {
+  referenceBrief,
+  referencedSkillIds,
+  referencesForLastUserMessage,
+  resolveComposerReferences,
+  wordsBesideReferences,
+} from "../src/composer-references.ts";
 import { COMPOSER_SUGGESTIONS_MAX, MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createModelTurn } from "../src/model-turn.ts";
@@ -111,6 +117,7 @@ beforeEach(async () => {
           skillBody,
           notice: (noticeId) => getNotification(services.runtime.db, services.runtime.identity.ownerPrincipalId, noticeId)?.notice,
         }),
+      skillsFor: (id) => referencedSkillIds(referencesForLastUserMessage({ db: services.runtime.db, conversationId: id })),
     },
   });
   if (turn === undefined) throw new Error("the test environment did not configure a model");
@@ -404,6 +411,33 @@ describe("a skill that shares its name with a command", () => {
     expect(prompt).toContain(NEW_SKILL.body);
     // The host briefed the skill, so pi is not handed a leading `/skill:` to expand a second time.
     expect(prompt.startsWith(" /skill:new một app ghi chú")).toBe(true);
+  });
+
+  it("hands pi a leading /skill: only when the message does not name that skill by reference", () => {
+    const words = "/skill:new một app ghi chú";
+    // Chosen in the picker: the host includes the skill, so pi is told the words with a space in front.
+    expect(wordsBesideReferences(words, ["new"])).toBe(` ${words}`);
+    // Typed by hand, or beside a different skill: pi expands it, as it always has.
+    expect(wordsBesideReferences(words, [])).toBe(words);
+    expect(wordsBesideReferences(words, ["review"])).toBe(words);
+    // Not a leading `/skill:` token: nothing for pi to expand.
+    expect(wordsBesideReferences("/new", ["new"])).toBe("/new");
+    expect(wordsBesideReferences("xem /skill:new", ["new"])).toBe("xem /skill:new");
+    expect(wordsBesideReferences("/skill: rỗng", ["new"])).toBe("/skill: rỗng");
+  });
+
+  it("keeps pi from inserting the current file when the chosen revision is gone by the time the turn runs", async () => {
+    const blocks = [{ type: "reference" as const, reference: newRef }];
+    // The skill changed after the message was sent: the host says it was not inserted.
+    const brief = await referenceBrief({
+      blocks,
+      projects: services.projects,
+      skillBody: async () => ({ ok: false, reason: "changed" }),
+    });
+    expect(brief).toContain("Kỹ năng /skill:new: đã thay đổi hoặc bị gỡ sau khi gửi, nên không được chèn.");
+    expect(brief).not.toContain('<skill name="new">');
+    // Decided from the message's references, not from the brief: pi must not insert the file as it is now either.
+    expect(wordsBesideReferences("/skill:new một app ghi chú", referencedSkillIds(blocks))).toBe(" /skill:new một app ghi chú");
   });
 
   it("leaves a typed /new to the command", async () => {

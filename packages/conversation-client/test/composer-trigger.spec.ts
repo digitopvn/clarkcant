@@ -61,6 +61,14 @@ describe("a skill named like a slash command", () => {
     expect(liveReferences(sent, [{ ref: newSkill }])).toEqual([{ ref: newSkill }]);
   });
 
+  it("does not read the /skill of /skill:new as a skill called skill", () => {
+    const skillSkill: ComposerReference = { kind: "skill", skillId: "skill", source: "personal", revision: "c".repeat(64), label: "skill" };
+    expect(liveReferences("/skill:new xem", [{ ref: newSkill }, { ref: skillSkill }])).toEqual([{ ref: newSkill }]);
+    // A colon followed by a space still ends a token, as after a project being named.
+    expect(liveReferences("/skill: xem", [{ ref: skillSkill }])).toEqual([{ ref: skillSkill }]);
+    expect(withoutToken("/skill:new /skill xem", "/skill")).toBe("/skill:new xem");
+  });
+
   it("leaves a typed /new to the command, with no skill riding along", () => {
     expect(parseSlashCommand("/new")).toEqual({ command: "new", argument: "" });
     expect(liveReferences("/new", [{ ref: newSkill }])).toEqual([]);

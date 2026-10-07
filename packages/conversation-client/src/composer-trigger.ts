@@ -26,6 +26,17 @@ const SPACE = /\s/u;
 /** What may stand right after a token that is still the reference: the end, a space, or closing punctuation. */
 const AFTER_TOKEN = /[\s.,;:!?)\]}"'”’»]/u;
 
+/**
+ * Whether a token that stops at `end` ends there. A colon ends it only before a space or the end of the text, so the
+ * `/skill` of `/skill:new` is not a skill called `skill`.
+ */
+function tokenEndsAt(text: string, end: number): boolean {
+  const after = text[end];
+  if (after === undefined) return true;
+  if (after === ":") return end + 1 === text.length || SPACE.test(text[end + 1] ?? "");
+  return AFTER_TOKEN.test(after);
+}
+
 export function activeTrigger(draft: string, caret: number): ActiveTrigger | undefined {
   if (caret < 0 || caret > draft.length) return undefined;
   let tokenStart = caret;
@@ -85,8 +96,7 @@ export function tokenPresent(text: string, token: string): boolean {
     const index = text.indexOf(token, from);
     if (index < 0) return false;
     const before = index === 0 ? "" : (text[index - 1] ?? "");
-    const after = text[index + token.length];
-    if ((before === "" || !WORD.test(before)) && (after === undefined || AFTER_TOKEN.test(after))) return true;
+    if ((before === "" || !WORD.test(before)) && tokenEndsAt(text, index + token.length)) return true;
     from = index + 1;
   }
 }
@@ -107,9 +117,8 @@ export function withoutToken(draft: string, token: string): string {
   for (;;) {
     const index = draft.indexOf(token, from);
     if (index < 0) return draft;
-    const after = draft[index + token.length];
-    if (after === undefined || AFTER_TOKEN.test(after)) {
-      const cut = after === " " ? token.length + 1 : token.length;
+    if (tokenEndsAt(draft, index + token.length)) {
+      const cut = draft[index + token.length] === " " ? token.length + 1 : token.length;
       return `${draft.slice(0, index)}${draft.slice(index + cut)}`;
     }
     from = index + 1;

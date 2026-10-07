@@ -133,6 +133,11 @@ async function promptSkill(
   before?: () => void,
   guard: NonNullable<WorkerBrief["contextGuard"]> = guardFor(allowed),
 ): Promise<string> {
+  return promptText("/skill:deploy to staging", guard, before);
+}
+
+/** One prompt through the real SDK and the adapter, with or without a context guard; the user text it sent. */
+async function promptText(text: string, guard: WorkerBrief["contextGuard"], before?: () => void): Promise<string> {
   const captured: Captured = { sent: [] };
   const sdk = await realSdkCapturing(captured);
   const model = await catalogueModel(sdk);
@@ -141,10 +146,10 @@ async function promptSkill(
     goal: "deploy",
     projectRoots: [],
     allowedCapabilityRefs: [],
-    contextGuard: guard,
+    ...(guard === undefined ? {} : { contextGuard: guard }),
   });
   before?.();
-  await adapter.prompt(handle.sessionId, "/skill:deploy to staging");
+  await adapter.prompt(handle.sessionId, text);
   await adapter.dispose(handle.sessionId);
   expect(captured.sent).toHaveLength(1);
   return captured.sent[0] ?? "";
@@ -196,4 +201,24 @@ describe("a /skill: message on the real SDK", () => {
     expect(sent).toContain("Run the deploy script.");
     expect(sent).not.toContain(CREDENTIAL);
   }, 60_000);
+});
+
+/*
+ * The host writes a skill the person chose, whose name is also a command's, as `/skill:<name>`, and includes that skill
+ * itself; it hands the words to pi with one space in front so they are not expanded a second time. That relies on the
+ * SDK's own rule, pinned here with and without a guard: only a prompt that starts with `/skill:` is expanded.
+ */
+describe("a /skill: message with a space in front, on the real SDK", () => {
+  it("is sent as typed, while the same words without the space are expanded", async () => {
+    writeSkill("Run the deploy script.");
+    for (const guard of [undefined, guardFor(EVERY)]) {
+      const expanded = await promptText("/skill:deploy to staging", guard);
+      expect(expanded).toContain('<skill name=\\"deploy\\"');
+
+      const typed = await promptText(" /skill:deploy to staging", guard);
+      expect(typed).not.toContain("<skill name=");
+      expect(typed).not.toContain("Run the deploy script.");
+      expect(typed).toContain("/skill:deploy to staging");
+    }
+  }, 120_000);
 });
