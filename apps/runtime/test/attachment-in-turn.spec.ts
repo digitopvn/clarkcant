@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
+import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
 import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../src/attachments.ts";
 import { createModelTurn } from "../src/model-turn.ts";
@@ -246,7 +247,39 @@ describe("what a stored user message carries", () => {
     // Counted in the prompt too, since that is what the model is charged for.
     expect((adapter.allPrompts()[0] ?? "").split("mot-lan.txt")).toHaveLength(2);
   });
+
+  it("the newest user message's files are read in a conversation longer than the window", async () => {
+    await turnWithModel(["Đã đọc tệp cũ.", "Đã đọc tệp mới."]);
+    const old = await uploadText("cu.txt", "cũ");
+    expect((await send("tệp cũ", [old])).status).toBe(200);
+    // More messages than the reader's window of 40, so the first 40 end with an old user message, not the newest.
+    appendPlainMessages(45);
+    const latest = await uploadText("moi.txt", "mới");
+    expect((await send("tệp mới", [latest])).status).toBe(200);
+
+    const refs = attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId });
+    expect(refs.map((ref) => ref.attachmentId)).toEqual([latest]);
+  });
 });
+
+/** Plain text messages without files, alternating user and assistant, stored the way the node stores them. */
+function appendPlainMessages(count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    appendMessage(
+      services.runtime.db,
+      {
+        messageId: services.conductor.newId("msg") as never,
+        conversationId: conversationId as never,
+        role: index % 2 === 0 ? "user" : "assistant",
+        blocks: [{ type: "text", format: "plain", content: `tin ${String(index)}`, streaming: false }],
+        authorNodeId: services.runtime.identity.nodeId,
+        createdAt: AT as never,
+        delivery: "accepted",
+      },
+      nextMessageSequence(services.runtime.db, conversationId),
+    );
+  }
+}
 
 describe("authorising the ids a client sends", () => {
   it("refuses an id that does not exist without naming it back", async () => {
