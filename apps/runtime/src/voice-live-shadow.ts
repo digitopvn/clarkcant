@@ -15,8 +15,7 @@
  *
  * Every rule leans towards answering words twice over losing them:
  * - a final shorter than three words never moves the cursor, because short common sentences ("cái này không") look
- *   alike whatever was said. It still accounts for one sentence under three words that the match of a final delivered
- *   after it passes over, so a short reply ("ừ") before a command is not answered again;
+ *   alike whatever was said;
  * - two readings match only when they differ by a few characters, never by a whole word;
  * - a final whose live reading has not arrived waits only for the live sentence in progress and the next one, and only
  *   for a few seconds, so it cannot match an unrelated sentence later;
@@ -33,7 +32,10 @@
  * matched, its late reading, or the first sentence in its turn that reads as nothing. A sentence no final accounts for
  * is answered, and when a match passed over such a sentence the matched one is answered too, since one of the two was
  * never delivered. Readings arrive in the order the finals were delivered, so a sentence that reads as a later final,
- * or that a later final matched, ends an earlier final's turn.
+ * or that a later final matched, ends an earlier final's turn. A final under three words never matches, but it is still
+ * the reading of one short sentence: it accounts for one sentence under three words, and nothing longer, that the
+ * match of a final delivered after it passed over and no other final accounts for, so a short reply ("ừ") before a
+ * command is not answered again.
  *
  * Three losses are accepted, each of a sentence that says again the words of a final delivered within thirty seconds
  * of it, because the stream cannot tell it from that final's own reading:
@@ -102,11 +104,12 @@ interface Unsure {
   matched: number;
   /** The live sentences it passed over on the way, which may be its misread reading. */
   passedOver: number[];
-  /**
-   * Finals that may each own one of the passed-over sentences: the waiting finals the match discarded, and the short
-   * finals delivered before it, up to the number of short sentences it passed over.
-   */
+  /** Waiting finals the match discarded, each of which may own one of the passed-over sentences. */
   explained: number;
+  /** Short finals delivered before the match, each of which may own one short passed-over sentence and no other. */
+  shortFinals: number;
+  /** The passed-over sentences under three words, the only ones a short final can be the reading of. */
+  shortPassedOver: number[];
 }
 
 interface Word {
@@ -198,7 +201,13 @@ export class LiveShadow {
     }
     // Its live reading may be the sentence in progress, or the next one if the live session is that far behind.
     const now = this.#nowMs();
-    this.#pending.push({ words: said, sequence, deliveredMs: now, deadlineMs: now + PENDING_MS, lastOrdinal: this.#nextOrdinal });
+    this.#pending.push({
+      words: said,
+      sequence,
+      deliveredMs: now,
+      deadlineMs: now + PENDING_MS,
+      lastOrdinal: this.#nextOrdinal,
+    });
     if (this.#pending.length > MAX_PENDING) {
       this.#forget(this.#pending.splice(0, 1));
       this.#unclear = true;
@@ -270,7 +279,9 @@ export class LiveShadow {
    * over more sentences than other finals account for, one of those sentences or the one it matched was never
    * delivered. All of them are answered, which costs one duplicate and never loses the undelivered one. A passed-over
    * sentence is accounted for when a final moved the cursor into it, or an expired final took it as its late or misread
-   * reading; each waiting final the match discarded accounts for one more.
+   * reading; each waiting final the match discarded accounts for one more, and each short final delivered before it
+   * for one more of the short sentences no other final accounted for. A short final's count is settled here, after the
+   * late readings, so it is never spent on a longer sentence.
    */
   #owed(late: ReadonlySet<Sentence>, misread: ReadonlySet<Sentence>): Set<number> {
     const accounted = new Set<number>();
@@ -280,7 +291,8 @@ export class LiveShadow {
     const owed = new Set<number>();
     for (const unsure of this.#unsure) {
       const unaccounted = unsure.passedOver.filter((ordinal) => !accounted.has(ordinal));
-      if (unaccounted.length <= unsure.explained) continue;
+      const shortLeft = unsure.shortPassedOver.filter((ordinal) => !accounted.has(ordinal)).length;
+      if (unaccounted.length <= unsure.explained + Math.min(unsure.shortFinals, shortLeft)) continue;
       for (const ordinal of unaccounted) owed.add(ordinal);
       owed.add(unsure.matched);
     }
@@ -369,13 +381,19 @@ export class LiveShadow {
    * match discards, whose readings may be among the sentences it passes over. `deliveredMs`: when `said` was delivered,
    * and `sequence` its place among every final delivered.
    *
-   * Short finals delivered before `said` are passed with it, since their readings came before its own. Each accounts
-   * for one short sentence the match passed over, and for nothing longer: a short final is the reading of a short
-   * sentence, never of a command read too differently to match.
+   * Short finals delivered before `said` are passed with it, since their readings came before its own, and recorded
+   * with the short sentences the match passed over, so `#owed` can let each account for one of them and for nothing
+   * longer: a short final is the reading of a short sentence, never of a command read too differently to match.
    */
-  #align(said: readonly string[], lastOrdinal: number, explained: number, deliveredMs: number, sequence: number): boolean {
+  #align(
+    said: readonly string[],
+    lastOrdinal: number,
+    explained: number,
+    deliveredMs: number,
+    sequence: number,
+  ): boolean {
     const passedOver: number[] = [];
-    let shortPassedOver = 0;
+    const shortPassedOver: number[] = [];
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal || sentence.ordinal > lastOrdinal) continue;
       const from = sentence.ordinal === this.#cursor.ordinal ? this.#cursor.offset : 0;
@@ -383,7 +401,7 @@ export class LiveShadow {
       const covered = coveredWords(said, heard.map((word) => word.text));
       if (covered === 0) {
         if (heard.length > 0) passedOver.push(sentence.ordinal);
-        if (heard.length > 0 && heard.length < MIN_MATCH_WORDS) shortPassedOver += 1;
+        if (heard.length > 0 && heard.length < MIN_MATCH_WORDS) shortPassedOver.push(sentence.ordinal);
         continue;
       }
       this.#cursor = { ordinal: sentence.ordinal, offset: heard[covered - 1]!.end };
@@ -392,11 +410,12 @@ export class LiveShadow {
       // Passing over an unmatched live sentence means this final may be that sentence's, read too differently to
       // match, and the one it did match only looks like it: where the cursor now stands is not known for certain.
       this.#unclear = passedOver.length > 0;
-      const shortBefore = this.#short.filter((short) => short < sequence).length;
+      const shortFinals = this.#short.filter((short) => short < sequence).length;
       this.#short = this.#short.filter((short) => short > sequence);
-      const accounted = explained + Math.min(shortBefore, shortPassedOver);
       // A match that passes over no more sentences than the finals it discards can never owe one.
-      if (passedOver.length > accounted) this.#unsure.push({ matched: sentence.ordinal, passedOver, explained: accounted });
+      if (passedOver.length > explained) {
+        this.#unsure.push({ matched: sentence.ordinal, passedOver, explained, shortFinals, shortPassedOver });
+      }
       return true;
     }
     return false;
@@ -426,7 +445,10 @@ export class LiveShadow {
   /** A live sentence no longer kept cannot be answered, nor counted against a match that passed over it. */
   #evict(ordinal: number): void {
     this.#unsure = this.#unsure.filter((unsure) => unsure.matched !== ordinal);
-    for (const unsure of this.#unsure) unsure.passedOver = unsure.passedOver.filter((passed) => passed !== ordinal);
+    for (const unsure of this.#unsure) {
+      unsure.passedOver = unsure.passedOver.filter((passed) => passed !== ordinal);
+      unsure.shortPassedOver = unsure.shortPassedOver.filter((passed) => passed !== ordinal);
+    }
   }
 
   /** Remember finals that stopped waiting without their live reading, which may still arrive late. */

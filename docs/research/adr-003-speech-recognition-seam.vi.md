@@ -45,8 +45,9 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      ngừng, và một con trỏ đánh dấu recognizer đã gửi tới đâu: một bản final dời con trỏ khi các từ của nó, đúng thứ
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, nhưng mỗi bản như vậy ứng với một
-     câu live ngắn hơn ba từ mà lần khớp của một bản final gửi sau nó vượt qua, nên một câu trả lời ngắn không bị trả
-     lời lại. Bản final mà cách đọc live của nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
+     câu live ngắn hơn ba từ, và không ứng với câu nào dài hơn, mà lần khớp của một bản final gửi sau nó vượt qua và
+     chưa có bản final nào khác ứng với, nên một câu trả lời ngắn không bị trả lời lại. Bản final mà cách đọc live của
+     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
      được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mười sáu
      bản final hết hạn gần nhất mà chưa có cách đọc live được ghi nhớ, vì cách đọc đó thường chỉ tới sau khi recognizer
      đã chốt câu kế tiếp; chúng được đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con

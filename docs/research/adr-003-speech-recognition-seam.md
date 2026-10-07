@@ -46,11 +46,12 @@ them before they mean anything.
      the live transcription. The live reading is kept as the live session cut it, never split at a pause, and a cursor
      marks how far the recognizer delivered: a final moves it when its words are, in order and within a few characters,
      the beginning of what the live reading holds next, so a final may cover only the first part of a live utterance.
-     Finals shorter than three words never move it, but each accounts for one live sentence under three words that the
-     match of a final delivered after it passes over, so a short reply is not answered again. A final whose live
-     reading does not arrive soon expires. When the alignment is unclear, every live sentence after the last fully covered one is answered, whole and in order, so a
-     sentence the live session split into two utterances is not lost. The last sixteen finals that expired without
-     their live reading are remembered, because that reading often arrives only after the recognizer finalized the next
+     Finals shorter than three words never move it, but each accounts for one live sentence under three words, and
+     nothing longer, that the match of a final delivered after it passes over and no other final accounts for, so a
+     short reply is not answered again. A final whose live reading does not arrive soon expires. When the alignment is
+     unclear, every live sentence after the last fully covered one is answered, whole and in order, so a sentence the
+     live session split into two utterances is not lost. The last sixteen finals that expired without their live
+     reading are remembered, because that reading often arrives only after the recognizer finalized the next
      sentence; they are matched in the order they were delivered against every live sentence kept, before the cursor
      too. A final that a later final's match passed over is not remembered, because its live reading already went by.
      Which live sentence is withheld follows one count, since each recognizer final accounts for at most one live

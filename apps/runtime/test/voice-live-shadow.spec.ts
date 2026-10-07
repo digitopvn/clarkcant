@@ -448,13 +448,35 @@ describe("the live reading kept while a recognizer is the source", () => {
 
   it("does not let a short final account for a short reply heard before a command it was delivered after", () => {
     const { shadow } = shadowAt();
-    // The command's final waits; the short final after it belongs to a reply said after the command.
-    shadow.delivered("chạy lại test đi nha");
-    shadow.delivered("ừ");
+    // A reply the recognizer never delivered, then a command whose final waits for its reading.
     shadow.hear({ utteranceId: "s:u1", text: "được", isFinal: true });
+    shadow.delivered("chạy lại test đi nha");
+    // This short final belongs to a reply said after the command, whose reading comes after the command's.
+    shadow.delivered("ừ");
     shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
     // No final accounts for the reply before the command, so it and the matched command are answered.
     expect(shadow.take()).toBe("được chạy lại test đi nha");
+  });
+
+  it("does not spend a short final on a passed-over command once an expired final took the short reply", () => {
+    const { shadow, advance } = shadowAt();
+    // A final whose live reading never arrives, and which stops waiting.
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    advance(500);
+    shadow.delivered("ừ");
+    advance(1500);
+    // The command's reading arrives misread, so its final waits; then the person says the command again.
+    shadow.hear({ utteranceId: "s:u2", text: "hinh lại xử lóc nhờ", isFinal: true });
+    advance(500);
+    shadow.delivered("chạy lại test đi nha");
+    advance(1500);
+    shadow.hear({ utteranceId: "s:u3", text: "chạy lại test đi nha", isFinal: true });
+    advance(1000);
+    // The expired final takes the reply as its misread reading, so the short final has no short sentence left to
+    // account for: it is not the reading of the misread command, and both command sentences are answered.
+    expect(shadow.take()).toBe("hinh lại xử lóc nhờ chạy lại test đi nha");
   });
 
   it("lets a short final account for one short reply only, and never for a passed-over command", () => {
