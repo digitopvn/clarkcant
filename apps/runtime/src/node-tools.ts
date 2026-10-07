@@ -67,6 +67,7 @@ import {
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { createMapTilesTool, type MapTilesToolDeps } from "./map-tiles-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
+import { type ShowChangelogToolDeps, createShowChangelogTool } from "./show-changelog-tool.ts";
 import { type ActOnNoticeToolDeps, createActOnNoticeTool } from "./act-on-notice-tool.ts";
 import { type InspectUiDeps, createInspectUiTool } from "./inspect-ui-tool.ts";
 import { createTerminalTools } from "./terminal-tools.ts";
@@ -262,6 +263,13 @@ export function createNodeTools(input: {
    */
   mapTiles?: MapTilesToolDeps;
   /**
+   * What this version of Clark changed (`show-changelog-tool.ts`), from the release notes embedded with the build.
+   *
+   * Absent means `show_changelog` is not registered: its answer is a card in the reply, and a turn with nowhere to
+   * record one would leave the model describing a card nobody sees.
+   */
+  changelog?: ShowChangelogToolDeps;
+  /**
    * Who asked for the turn these tools run in (`TurnOrigin`), read at call time. Given to the command and terminal
    * tools, which share the node-wide command deps and so cannot carry a turn's value of their own.
    */
@@ -337,6 +345,7 @@ export function createNodeTools(input: {
     ...(input.automations === undefined ? [] : createAutomationTools(input.automations)),
     ...(input.browserTasks === undefined ? [] : [createBrowserTaskTool(input.browserTasks)]),
     ...(input.mapTiles === undefined ? [] : [createMapTilesTool(input.mapTiles)]),
+    ...(input.changelog === undefined ? [] : [createShowChangelogTool(input.changelog)]),
   ];
 }
 

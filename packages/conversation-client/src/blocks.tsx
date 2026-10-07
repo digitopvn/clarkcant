@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import {
   attachmentRefSchema,
+  changelogCardSchema,
   commandCardSchema,
   modelNoteSchema,
   referenceBlockSchema,
@@ -22,6 +23,7 @@ import { useT } from "./i18n/locale-context.tsx";
 import { useSurfaceViewState } from "./surface-view-state.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
+import { ChangelogCardBlock } from "./changelog-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
@@ -2012,6 +2014,11 @@ export function renderBlock(
       return card.success ? (
         <CommandCardBlock key={index} block={card.data} t={t} {...(actions === undefined ? {} : { actions })} />
       ) : null;
+    }
+    case "changelog-card": {
+      // Read through the contract, like the command card: a card that does not match it draws nothing.
+      const card = changelogCardSchema.safeParse(block);
+      return card.success ? <ChangelogCardBlock key={index} block={card.data} t={t} /> : null;
     }
     case "terminal-session-card":
       return (
