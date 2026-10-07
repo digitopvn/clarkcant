@@ -217,6 +217,8 @@ interface ShellDetachBridge {
     live: unknown;
     appearance?: AppearanceSnapshot | undefined;
   }): Promise<{ ok: boolean; refused?: string }>;
+  /** Close the detached window, which hands the instance back. Optional for a shell built before it existed. */
+  attachWidget?(): Promise<unknown>;
   onWidgetReattached?(callback: (payload: { instanceRef?: string }) => void): (() => void) | void;
 }
 
@@ -289,6 +291,12 @@ export function PinnedLiveSurface({
    */
   const [keepPlaying, setKeepPlaying] = useState(false);
   const ownerToken = useRef<string>(newOwnerToken());
+  /*
+   * Whether this surface handed its instance to a detached window that is still open. While it is, the window holds
+   * the lease and this surface does not refresh it; and if this surface goes away first (another conversation opened,
+   * the pin closed), it closes the window, because nothing else would be left to take the instance back.
+   */
+  const detachedHere = useRef(false);
   /*
    * Graph events go to the node one at a time, each against the revision the one before it produced, and the surface is
    * re-read once they have all landed. Sent together they would race for one revision; re-read after each, a query typed
@@ -395,6 +403,8 @@ export function PinnedLiveSurface({
 
     void claim();
     const timer = setInterval(() => {
+      // The detached window holds the lease now; re-claiming it here would take the widget out from under it.
+      if (detachedHere.current) return;
       void client
         .claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
@@ -497,6 +507,7 @@ export function PinnedLiveSurface({
         .catch(() => undefined);
       return;
     }
+    detachedHere.current = true;
     setOwnership("elsewhere");
     setNotice(t("shell.live.detachedOpen"));
   }, [client, conversationId, instanceId, live, title, t]);
@@ -513,6 +524,7 @@ export function PinnedLiveSurface({
     if (bridge?.onWidgetReattached === undefined) return;
     // A shell older than the unsubscribe returns nothing; there is nothing to remove then.
     const unsubscribe = bridge.onWidgetReattached(() => {
+      detachedHere.current = false;
       void client
         .claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
@@ -530,6 +542,22 @@ export function PinnedLiveSurface({
     });
     return typeof unsubscribe === "function" ? unsubscribe : undefined;
   }, [client, conversationId, instanceId, load]);
+
+  /*
+   * Leaving with the widget still detached closes its window.
+   *
+   * The window is a view this surface opened, and this surface is the one listening to take the instance back. Once it
+   * is gone - another conversation opened, the pin closed - a window left open would hold the lease with nobody to hand
+   * it back to. Closing it releases the lease; the conversation shows the widget again when it is next opened.
+   */
+  useEffect(
+    () => () => {
+      if (!detachedHere.current) return;
+      detachedHere.current = false;
+      void shellDetachBridge()?.attachWidget?.().catch(() => undefined);
+    },
+    [],
+  );
 
   const detachAvailable = shellDetachBridge() !== undefined && canShowDetached(live);
 

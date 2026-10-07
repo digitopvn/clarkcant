@@ -2185,6 +2185,10 @@ Detach does not reset state/subscriptions/media.
 
 Closing a detached window only moves presentation ownership; it does not delete the instance.
 
+A detached window holds the instance's live-owner lease as the `detached` surface and keeps it refreshed while it is
+open. It closes, and hands the instance back, when the conversation view that opened it goes away, when the
+conversation window closes, when the app quits, or when another surface has taken the lease.
+
 Only composed widgets can be detached today. A widget that runs in its own (isolated) frame stays in the
 conversation: a detached window holds no credential, and that frame needs the conversation's credential to save
 state, publish its semantic view and renew its URL. The conversation does not offer Detach for it, and the desktop
