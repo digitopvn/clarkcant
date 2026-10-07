@@ -57,14 +57,11 @@ import {
   reviewDetachedIntent,
   reviewDetachedAppearance,
 } from "./detached-window.mjs";
-import {
-  COMPACT_MIN_SIZE,
-  WINDOW_MODE_PRESETS,
-  actionForMode,
-  fitIntoWorkArea,
-  initialWindowMode,
-  nextWindowMode,
-} from "./window-mode.mjs";
+import { COMPACT_MIN_SIZE } from "./window-mode.mjs";
+import { createElectronGeometryController, withFallbackController } from "./window-controller.mjs";
+import { createHyprlandWindowController } from "./hyprland-window-controller.mjs";
+import { createHyprlandSocketTransport, hyprlandSocketPath } from "./hyprland-ipc.mjs";
+import { detectWindowSession, geometrySupportFor, selectWindowBackend } from "./window-session.mjs";
 import { placementToRemember, restoredPlacement } from "./window-placement.mjs";
 import { applyChromiumSwitches } from "./chromium-switches.mjs";
 
@@ -193,13 +190,55 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
 ].sort());
 
 /**
- * The window's remembered mode, in the process that owns the window.
- *
- * Held here rather than in the renderer because a renderer comes and goes: a reload must not move the window
- * back to its expanded size, and returning from compact has to restore what the person had rather than a
- * default. `undefined` until the first request, when it is learned from the window itself.
+ * The desktop session the window lives in: macOS, Windows, X11, XWayland or native Wayland, and whether Hyprland is the
+ * compositor. Read once, before the app is ready, from the environment and Electron's own Ozone switches.
  */
-let windowMode;
+const windowSession = detectWindowSession({
+  platform: process.platform,
+  env: process.env,
+  switches: {
+    ozonePlatform: app.commandLine.getSwitchValue("ozone-platform"),
+    ozonePlatformHint: app.commandLine.getSwitchValue("ozone-platform-hint"),
+  },
+});
+
+/** `--window-backend <name>` or `CLARKCANT_WINDOW_BACKEND`: the opt-in for the Hyprland backend. */
+const windowBackendFlag = argv.indexOf("--window-backend");
+const windowBackendChoice = selectWindowBackend({
+  session: windowSession,
+  requested: windowBackendFlag >= 0 ? argv[windowBackendFlag + 1] : process.env.CLARKCANT_WINDOW_BACKEND,
+});
+
+/**
+ * Electron geometry: the backend on macOS, Windows and X11, and under native Wayland with position and always-on-top
+ * reported as unsupported. It also holds the window's remembered mode, in the process that owns the window, because a
+ * renderer comes and goes: a reload must not move the window back to its expanded size, and returning from compact has
+ * to restore what the person had rather than a default.
+ */
+const geometryController = createElectronGeometryController({
+  getWindow: liveShellWindow,
+  workAreaFor,
+  support: geometrySupportFor(windowSession),
+});
+
+/**
+ * What every window channel goes through. The Hyprland backend only when asked for and Hyprland is running, and even
+ * then with Electron geometry behind it: it is unverified on a real compositor, so the first IPC failure hands the
+ * window back for the rest of the session and says so.
+ */
+const windowController =
+  windowBackendChoice.backend === "hyprland" && windowSession.hyprland !== undefined
+    ? withFallbackController(
+        createHyprlandWindowController({
+          request: createHyprlandSocketTransport(hyprlandSocketPath(windowSession.hyprland)),
+          getWindow: liveShellWindow,
+          pid: process.pid,
+          fallbackPreset: (name) => geometryController.resizePreset(name),
+        }),
+        geometryController,
+        { onDegrade: (reason) => process.stderr.write(`window backend: Hyprland given up, using Electron geometry (${reason})\n`) },
+      )
+    : geometryController;
 
 /**
  * Notifications currently on screen, kept alive here.
@@ -243,8 +282,7 @@ function readWindowPlacement() {
  * only the next window's placement, so it is reported and nothing else.
  */
 function rememberWindowPlacement(window, openedAs) {
-  const collapsed = windowMode !== undefined && windowMode.mode !== "normal";
-  const normalBounds = collapsed ? windowMode.normalBounds : window.getNormalBounds();
+  const normalBounds = windowController.collapsedNormalBounds() ?? window.getNormalBounds();
   const placement = placementToRemember({ normalBounds, maximized: window.isMaximized(), fullScreen: window.isFullScreen(), openedAs });
   try {
     writeFileSync(windowPlacementPath(), JSON.stringify(placement));
@@ -269,37 +307,6 @@ function liveShellWindow() {
   return shellWindow === undefined || shellWindow.isDestroyed() ? undefined : shellWindow;
 }
 
-/**
- * Bring a collapsed window back to its normal size and place, before it is focused and handed a notification's
- * click — the same "expand" transform `desktop:restoreWindow` already performs, reused here rather than
- * duplicated so the two paths cannot drift apart.
- *
- * Only `compact` and `orb` count as collapsed: `expanded` is still the conversation, just given more room, so a
- * click there is left alone the way clicking any other visible window would be.
- */
-function restoreToNormalIfCollapsed(window) {
-  if (windowMode === undefined || (windowMode.mode !== "compact" && windowMode.mode !== "orb")) return;
-  windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
-  window.setBounds(windowMode.bounds);
-}
-
-/**
- * What the window actually became, read back off the window.
- *
- * Every field here is observed rather than computed from the request. The OS may clamp a size or a position, and
- * a shell that echoed what it asked for could not tell the difference between that and what happened — which is
- * the whole reason the smoke test reads `getBounds()` instead of trusting an answer.
- */
-function describeWindow(window, mode) {
-  return {
-    ok: true,
-    mode: mode?.mode ?? null,
-    bounds: window.getBounds(),
-    minimumSize: window.getMinimumSize(),
-    alwaysOnTop: window.isAlwaysOnTop(),
-    focused: window.isFocused(),
-  };
-}
 
 /**
  * Whether the window is full screen or minimized, read off the window.
@@ -311,29 +318,6 @@ function windowState(window) {
   return { ok: true, fullScreen: window.isFullScreen(), minimized: window.isMinimized() };
 }
 
-/**
- * Enter or leave full screen and wait until the window says it has.
- *
- * On macOS the change is an animated move into its own Space, and `isFullScreen()` read straight after the call
- * still answers the old value. Waiting for the window's own event is what lets the answer be what happened
- * rather than what was asked. The wait is bounded, so a window manager that never sends the event costs a
- * moment rather than a hung request, and the answer is then whatever the window reports.
- */
-async function applyFullScreen(window, value) {
-  if (window.isFullScreen() === value) return;
-  const settled = new Promise((resolve) => {
-    const event = value ? "enter-full-screen" : "leave-full-screen";
-    const timer = setTimeout(done, 1500);
-    function done() {
-      clearTimeout(timer);
-      window.removeListener(event, done);
-      resolve();
-    }
-    window.once(event, done);
-  });
-  window.setFullScreen(value);
-  await settled;
-}
 
 /**
  * Answer a channel only after the call has passed review.
@@ -465,10 +449,17 @@ function registerHandlers() {
     const target = reviewNotificationTarget(input?.target);
     const notification = new Notification({ title, body });
     const forget = () => activeNotifications.delete(notification);
-    notification.on("click", () => {
+    notification.on("click", async () => {
       forget();
       if (shellWindow.isDestroyed()) return;
-      restoreToNormalIfCollapsed(shellWindow);
+      // Out of the bar or the orb first, through the same controller as `desktop:restoreWindow`, so the two cannot
+      // drift apart. A click while expanded leaves the window alone, as clicking any visible window would.
+      try {
+        await windowController.restoreIfCollapsed();
+      } catch (cause) {
+        process.stderr.write(`notification click: window not restored (${cause instanceof Error ? cause.message : String(cause)})\n`);
+      }
+      if (shellWindow.isDestroyed()) return;
       if (shellWindow.isMinimized()) shellWindow.restore();
       shellWindow.focus();
       shellWindow.webContents.send("desktop:notificationClicked", target === undefined ? {} : { target });
@@ -598,58 +589,28 @@ function registerHandlers() {
   });
 
   handle("desktop:setCompactMode", async (action) => {
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    if (liveShellWindow() === undefined) return { ok: false, refused: "there is no window to resize" };
     if (!["enter-compact", "expand", "set-always-on-top"].includes(action?.type)) {
       return { ok: false, refused: "that is not a window mode this build knows" };
     }
-    // A full-screen window ignores new bounds, so the voice bar would never appear. Leave full screen first.
-    if (action.type !== "set-always-on-top") await applyFullScreen(window, false);
-
-    // Learned from the window the first time rather than assumed, so a window somebody already moved is
-    // remembered where it actually is.
-    if (windowMode === undefined) {
-      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
-    }
-    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, action);
-    window.setBounds(windowMode.bounds);
-    window.setAlwaysOnTop(windowMode.alwaysOnTop);
-
-    // Every field read off the window rather than computed by the model. The OS may clamp a size or a position,
-    // and a shell that echoed its own request could not tell the difference between that and what happened.
-    return {
-      ok: true,
-      mode: windowMode.mode,
-      bounds: window.getBounds(),
-      minimumSize: window.getMinimumSize(),
-      alwaysOnTop: window.isAlwaysOnTop(),
-    };
+    // The older channel speaks in actions; the controller speaks in modes and a pin. Leaving full screen first is this
+    // channel's own behaviour (a full-screen window ignores new bounds, so the voice bar would never appear).
+    return action.type === "set-always-on-top"
+      ? await windowController.setPinned(action.value === true)
+      : await windowController.setMode(action.type === "enter-compact" ? "compact" : "normal", {
+          exitFullScreen: true,
+          reassertPin: true,
+        });
   });
 
   /*
    * The window's named modes.
    *
-   * A mode name from the renderer, and everything else decided here: bounds live in this process, so a
-   * renderer cannot ask for geometry off the edge of the screen or larger than the display. The answer reports
-   * what the window actually has afterwards, read back off the window, because the OS may clamp a size or a
-   * position and a shell that echoed its own request could not tell that difference.
+   * A mode name from the renderer, and everything else decided here: bounds live in this process, so a renderer cannot
+   * ask for geometry off the edge of the screen or larger than the display. The answer reports what the window actually
+   * has afterwards, read back off the window, and which parts this desktop could not honour at all.
    */
-  handle("desktop:setWindowMode", async (mode) => {
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
-    const action = actionForMode(mode);
-    if (action === undefined) {
-      // Refused rather than coerced into `normal`: silently growing a window somebody asked to shrink is worse
-      // than not moving it.
-      return { ok: false, refused: `"${String(mode)}" is not a window mode this build knows` };
-    }
-    if (windowMode === undefined) {
-      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
-    }
-    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, action);
-    window.setBounds(windowMode.bounds);
-    return describeWindow(window, windowMode);
-  });
+  handle("desktop:setWindowMode", async (mode) => windowController.setMode(mode));
 
   /*
    * A named size, with the mode left alone.
@@ -658,22 +619,7 @@ function registerHandlers() {
    * for, and a preset is about how big it is. Folding them together would make resizing the conversation window
    * change it into the voice bar.
    */
-  handle("desktop:resizeWindowPreset", async (name) => {
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
-    const preset = WINDOW_MODE_PRESETS[String(name)];
-    if (preset === undefined) {
-      return { ok: false, refused: `"${String(name)}" is not a size preset this build knows` };
-    }
-    const current = window.getBounds();
-    window.setBounds(
-      fitIntoWorkArea(
-        { x: current.x, y: current.y, width: preset.width, height: preset.height },
-        workAreaFor(window),
-      ),
-    );
-    return describeWindow(window, windowMode);
-  });
+  handle("desktop:resizeWindowPreset", async (name) => windowController.resizePreset(name));
 
   /*
    * Back to the size and place the window had before it was collapsed.
@@ -681,16 +627,7 @@ function registerHandlers() {
    * The remembered bounds live in this process, so a reload that loses the renderer's idea of where the window
    * was does not also lose the window's own position.
    */
-  handle("desktop:restoreWindow", async () => {
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to restore" };
-    if (windowMode === undefined) {
-      return { ok: false, refused: "this window has not been moved by the shell yet, so there is nothing to restore" };
-    }
-    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
-    window.setBounds(windowMode.bounds);
-    return describeWindow(window, windowMode);
-  });
+  handle("desktop:restoreWindow", async () => windowController.restore());
 
   /*
    * Bring the window forward.
@@ -698,13 +635,7 @@ function registerHandlers() {
    * A request that came from voice or from an app intent has nobody behind it to click the window, so the shell
    * is what has to make it the one being looked at.
    */
-  handle("desktop:focusWindow", async () => {
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to focus" };
-    if (window.isMinimized()) window.restore();
-    window.focus();
-    return { ok: true, focused: window.isFocused(), bounds: window.getBounds() };
-  });
+  handle("desktop:focusWindow", async () => windowController.focus());
 
   /*
    * Close the window, as the title bar's close button would. Whether the app then quits is the existing
@@ -730,13 +661,7 @@ function registerHandlers() {
    * minimized window cannot be clicked, so bringing it back belongs to the OS, to `desktop:focusWindow` or to
    * the host shortcut.
    */
-  handle("desktop:minimizeWindow", async () => {
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to minimize" };
-    if (!window.isMinimizable()) return { ok: false, refused: "this window cannot be minimized" };
-    window.minimize();
-    return windowState(window);
-  });
+  handle("desktop:minimizeWindow", async () => windowController.minimize());
 
   /*
    * Take the whole screen, or give it back.
@@ -746,18 +671,14 @@ function registerHandlers() {
    * track of for us; entering it from the voice bar grows the conversation first, because a full-screen voice
    * bar is a very large empty strip.
    */
-  handle("desktop:setFullScreen", async (value) => {
-    if (typeof value !== "boolean") return { ok: false, refused: "full screen must be true or false" };
-    const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
-    if (!window.isFullScreenable()) return { ok: false, refused: "this window cannot go full screen" };
-    if (value && windowMode !== undefined && windowMode.mode !== "normal") {
-      windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
-      window.setBounds(windowMode.bounds);
-    }
-    await applyFullScreen(window, value);
-    return windowState(window);
-  });
+  handle("desktop:setFullScreen", async (value) => windowController.setFullscreen(value));
+
+  /** The window part of the status, or `null` when there is no window left to describe. */
+  async function describeShellWindow() {
+    const snapshot = await windowController.snapshot();
+    if (snapshot === undefined || snapshot === null) return null;
+    return { ...snapshot, session: windowSession.kind, backendReason: windowBackendChoice.reason };
+  }
 
   handle("desktop:getStatus", async () => ({
     ok: true,
@@ -771,14 +692,9 @@ function registerHandlers() {
     keepRunningOnWindowClose,
     // Read off the window, so a renderer that reloaded learns what the window is rather than assuming the default:
     // the chrome's pin toggle assumed "not pinned" after a reload, and pressing it pinned a window that already was.
-    window:
-      shellWindow === undefined || shellWindow.isDestroyed()
-        ? null
-        : {
-            mode: windowMode?.mode ?? "normal",
-            alwaysOnTop: shellWindow.isAlwaysOnTop(),
-            fullScreen: shellWindow.isFullScreen(),
-          },
+    // `pinnable` is false where the session cannot keep a window on top, so the chrome offers no pin it cannot honour;
+    // `session` and `backend` say which desktop the window is on and what drives it, for diagnostics.
+    window: await describeShellWindow(),
     channels: [...IPC_CHANNELS],
   }));
 
@@ -1043,18 +959,8 @@ async function createShellWindow({ show = true, url } = {}) {
   // A window somebody dragged is the window they expect back, so a resize while expanded is remembered as the
   // size to return to. A resize during compact is the bar being moved, and remembering that as the normal size
   // would make expanding do nothing at all.
-  window.on("resize", () => {
-    if (windowMode === undefined) {
-      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
-    }
-    // Only a normal window's size is the one to return to: the bar and an expanded window are sizes the shell
-    // chose, and remembering either would make restoring leave the window where it is.
-    if (windowMode.mode !== "normal") return;
-    // Full screen is borrowed space, not a size the person chose; leaving it must not return to the whole screen.
-    if (window.isFullScreen()) return;
-    const bounds = window.getBounds();
-    windowMode = { ...windowMode, bounds, normalBounds: bounds };
-  });
+  // Only a normal window's size is the one to return to; the controller decides which resizes count.
+  window.on("resize", () => windowController.noteResize(window));
 
   return window;
 }
@@ -1162,9 +1068,20 @@ async function runSmokeTest() {
       "expanding restores the bounds Electron had before compact",
       JSON.stringify(boundsAfter) === JSON.stringify(boundsBefore),
     ],
+    // Where the session cannot keep a window on top (native Wayland), the honest answer is a refusal and an unpinned
+    // window, not a pin flag Electron set on a window nothing keeps above the others.
+    observed.status?.window?.pinnable === false
+      ? [
+          "a pin this desktop cannot honour is refused, and the window is not reported pinned",
+          observed.pinned?.ok === false && observed.status.window.alwaysOnTop === false,
+        ]
+      : [
+          "always on top is reported by the window, not by the model",
+          observed.pinned?.ok === true && observed.pinned.alwaysOnTop === true && pinnedNow === true,
+        ],
     [
-      "always on top is reported by the window, not by the model",
-      observed.pinned?.ok === true && observed.pinned.alwaysOnTop === true && pinnedNow === true,
+      "the status names the window backend and the desktop session it chose",
+      typeof observed.status?.window?.backend === "string" && typeof observed.status?.window?.session === "string",
     ],
     ["a window mode this build does not know is refused", observed.refusedUnknownMode?.ok === false],
     ["a full-screen request that is not a boolean is refused", observed.refusedNonBooleanFullScreen?.ok === false],
