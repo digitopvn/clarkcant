@@ -299,11 +299,16 @@ khi tải lại. Lần ghi không nhận được phản hồi là `unknown`, v�
 tìm dấu và không bao giờ gửi; kiểm tra một báo cáo chưa từng gửi trả `409 NOTHING_SENT`. Khi danh sách của chính GitHub
 cho thấy không có dấu ít nhất hai phút sau lần thử (tính từ lúc thử gửi, không phải lần kiểm tra gần nhất), báo cáo
 chuyển thành `failed` kèm `retryable`, và thẻ có nút Gửi lại, gửi nó lần đầu tiên. Không gửi gì khi chưa kiểm tra được
-GitHub. Dấu được tìm trong các issue do chủ token mở (`creator`, lấy từ `GET /user`), tối đa ba trang 100 mục. Khi danh
+GitHub. Dấu được tìm trong các issue do tài khoản đã gửi lần ghi đó mở (`creator`: login từ `GET /user` được node
+ghi lại lúc gửi, nên thay `github_token` sau đó cũng không làm mất báo cáo), tối đa ba trang 100 mục. Khi không có login
+được ghi lại, node hỏi chủ hiện tại của token; token mà GitHub không cho biết chủ (như token cài đặt của GitHub App) thì
+được quét không lọc. Login được giữ trên node và chỉ hiện lại cho chính chủ của nó trong liên kết tìm kiếm của trường
+hợp không thể ngã ngũ bên dưới. Khi danh
 sách đó vẫn dài hơn phạm vi đọc, hoặc sổ hiệu ứng không còn ghi lần thử, việc kiểm tra không thể ngã ngũ: báo cáo là
 `unknown` kèm `inconclusive: { since, searchUrl, manualUrl }`, và thẻ ghi "Clark không thể biết GitHub đã giữ báo cáo
-này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó." Thay cho Kiểm tra lại, thẻ dẫn tới các issue người dùng
-đã mở từ lần thử và trang tạo issue đã điền sẵn, cảnh báo rằng gửi lại có thể tạo bản trùng, và có nút Vẫn gửi
+này hay chưa, và kiểm tra lại cũng không thay đổi được điều đó." Thay cho Kiểm tra lại, thẻ dẫn tới các issue mà tài khoản
+đã gửi báo cáo mở từ lần thử (`author:<login>` trong `searchUrl`, hoặc `author:@me` khi không có login được ghi lại) và
+trang tạo issue đã điền sẵn, cảnh báo rằng gửi lại có thể tạo bản trùng, và có nút Vẫn gửi
 (`intent: "send-anyway"`, chỉ nhận cho báo cáo như vậy, nếu không thì `409 NOT_INCONCLUSIVE`), có thể gửi nó hai lần.
 Node không bao giờ tự gửi lại. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
 ngũ được ghi vào hội thoại của nó thành thẻ kết quả. Các trạng thái khác là `needs-access` (chưa có `github_token`; kèm
@@ -494,11 +499,13 @@ tham chiếu đó, trước khi bất cứ thứ gì được lưu. Những gì 
 Tham chiếu là con trỏ, không phải quyền: đọc, chạy hay thay đổi thứ nó trỏ tới vẫn đi qua các bước kiểm tra thường lệ
 của node.
 
-`GET /composer/suggestions` là thứ lấp đầy bộ chọn: kỹ năng sau `/`; dự án, dịch vụ, hội thoại (theo tiêu đề, hoặc theo
-phần đầu tin nhắn đầu tiên khi tiêu đề chỉ là tên mặc định của client) và việc nền sau `@`; một thư mục của dự án sau
-`@<dự án>/`. Tối đa 8 dòng, xếp theo khớp chính xác, rồi khớp đầu, rồi khớp một phần, rồi theo loại (dự án, dịch vụ, hội
-thoại, việc nền), thứ dùng gần đây lên trước, gõ dấu hay không đều được. Khi chưa gõ gì sau `@`, mỗi loại đều có phần
-dòng của mình. Dòng không chọn được sẽ nói lý do trong `disabledReason`. Dịch vụ được gọi bằng id mà gói của nó đặt và
+`GET /composer/suggestions` là thứ lấp đầy bộ chọn: các lệnh gạch chéo của node, rồi đến kỹ năng, sau `/`; dự án, dịch
+vụ, hội thoại (theo tiêu đề, hoặc theo phần đầu tin nhắn đầu tiên khi tiêu đề chỉ là tên mặc định của client) và việc nền
+sau `@`; một thư mục của dự án sau `@<dự án>/`. Tối đa 8 dòng, xếp theo khớp chính xác, rồi khớp đầu, rồi khớp một phần,
+rồi theo loại (lệnh, kỹ năng; hoặc dự án, dịch vụ, hội thoại, việc nền), thứ dùng gần đây lên trước, gõ dấu hay không đều
+được. Khi chưa gõ gì sau `/` hoặc `@`, mỗi loại đều có phần dòng của mình, và phần một loại không dùng hết thì nhường cho
+các loại khác, nên `/` trống luôn liệt kê kỹ năng dù node có bao nhiêu lệnh. Dòng không chọn được sẽ nói lý do trong
+`disabledReason`. Dịch vụ được gọi bằng id mà gói của nó đặt và
 chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao giờ kèm thứ nó được khởi động cùng hay lý do nó lỗi;
 `serviceKey` của nó còn gắn với thế hệ gói đang chạy nó, nên một bản cập nhật làm tham chiếu cũ hết hiệu lực.
 

@@ -2146,23 +2146,41 @@ không, lần bấm bị từ chối trước khi có gì được gửi, và ng
 trước khi yêu cầu được gửi đi được ghi là chưa gửi, không phải kết quả chưa rõ. Câu trả lời của widget, sau một lần bấm
 trực tiếp hay sau một lời “đồng ý”, được đọc lên như lời của widget (“Widget báo: …”), trên một dòng, bằng ngôn ngữ của
 người dùng, với dấu ngoặc kép được vô hiệu hóa và các ký tự điều khiển hướng chữ hay ký tự độ rộng bằng không bị loại
-bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục. Bộ phân
-giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như `định dạng chỗ này thành phần trăm`, chưa
-được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục.
+
+Bộ phân giải giọng nói chỉ khớp theo nhãn. Một câu không nói nhãn nào của widget đang mở, như `định dạng chỗ này thành
+phần trăm`, được chuyển cho lượt giọng nói của Clark như mọi câu khác, dù widget cho phép gì. Khi widget đó có hành
+động Clark thực hiện được và trang của phiên đã gửi `widgetPerform: 1`, dữ liệu của lượt còn liệt kê widget và từng
+hành động được cho phép: binding id, nhãn, mô tả và schema input. Danh sách được đọc khi lượt bắt đầu, nên một lượt
+phải chờ sau lượt khác sẽ không nhận được gì nếu trong lúc đó widget đã đóng hoặc một widget khác được chọn. Mô tả chỉ
+được liệt kê từ một định nghĩa mà widget có thể đã được đặt từ đó: một gói đang chạy, cùng phiên bản và digest của
+instance, khai báo hành động với đúng nhãn và schema input mà binding của nó đã ghi lại. Id widget, nhãn, mô tả và
+schema là lời của chính gói, mỗi phần được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có thể thực hiện một hành động qua
+`perform_widget_action`, cùng công cụ, schema, chính sách thực thi và thẻ của host như một yêu cầu gõ chữ. Thẻ mà lượt
+đặt ra được đọc lên bằng ngôn ngữ của người dùng. Host không thêm quy tắc khớp nào, gói không khai báo cách nói nào, và
+cả lượt lẫn widget đều không thể tự duyệt hành động. Chỉ khi node không có agent để trả lời thì câu đó mới bị từ chối,
+bằng ngôn ngữ của người dùng, bằng cách nêu những gì widget cho phép hoặc nói rằng không có widget nào đang mở
+([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:
 
 - [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts): hành động chưa khai báo, input sai schema,
   frame chưa mount, bên gọi không thực hiện được, lời từ chối của trang và của widget, lỗi, hết thời gian chờ, Dừng,
   chặn khi kết quả chưa rõ, chính sách và thẻ phê duyệt, giọng nói, danh sách nút bấm, các công cụ và việc đặt widget.
+  Nó cũng bao quát một câu nói không nêu nhãn nào: lượt và dữ liệu của nó, thẻ được trả lời bằng lời nói, tiếng Anh,
+  widget bị bỏ chọn, bị đổi hay bị đóng, khi không có agent, và lời của gói được vô hiệu hóa.
+- [turn-control.spec.ts](../apps/runtime/test/turn-control.spec.ts): dữ liệu được đọc khi một lượt đang chờ bắt đầu.
 - [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts): báo cáo của trang.
 - [frame-performs.spec.ts](../packages/conversation-client/test/frame-performs.spec.ts): việc trang tìm frame và trả
   lời.
 - [session.spec.ts](../packages/widget-host/test/session.spec.ts) và
   [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts): bridge.
 - Hành trình trên trình duyệt [widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts): định dạng một vùng
-  bảng tính và thay đoạn đang chọn của trình soạn thảo từ điều người dùng gõ trong ô soạn tin. Nó cũng kiểm tra rằng
-  một stream HTTP thuần và một widget đã đóng đều bị từ chối với `FRAME_NOT_MOUNTED`.
+  bảng tính và thay đoạn đang chọn của trình soạn thảo từ điều người dùng gõ trong ô soạn tin. Nó cũng định dạng một
+  vùng từ một câu nói không nêu nhãn nào, qua socket giọng nói. Nó cũng kiểm tra rằng một stream HTTP thuần và một
+  widget đã đóng đều bị từ chối với `FRAME_NOT_MOUNTED`.
+- Hành trình trên trình duyệt [voice-widget-action.spec.ts](../apps/web/e2e/voice-widget-action.spec.ts): một câu nói
+  không nêu nhãn nào của một surface đến được lượt của Clark và để nguyên surface.
 
 ---
 

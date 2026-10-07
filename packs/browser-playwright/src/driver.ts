@@ -339,14 +339,17 @@ export class BrowserDriver {
         : { args: [`--host-resolver-rules=${this.#hostResolverRules.join(",")}`] }),
     });
     this.#context = context;
-    const [existing] = context.pages();
-    const page = existing ?? (await context.newPage());
+    let page: Page;
     /*
      * One page. A script cannot open a window, and a new tab that opens anyway (a link's `target`) is closed at once.
      * The page's documents are held to the declared sites before they load; where the page ended up is still checked
-     * after every navigation and before every observation. A page these could not be set up on is never handed out.
+     * after every navigation and before every observation. A page these could not be set up on is never handed out,
+     * and a browser whose page could not even be opened is closed here, so it does not keep holding the profile while
+     * the next call starts another one on it.
      */
     try {
+      const [existing] = context.pages();
+      page = existing ?? (await context.newPage());
       await context.addInitScript(() => {
         window.open = () => null;
       });

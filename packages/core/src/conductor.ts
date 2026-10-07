@@ -160,6 +160,8 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     note?: string;
     /** See `UserMessageInput.data`, carried through unchanged for the same reason. */
     data?: string;
+    /** See `UserMessageInput.dataAtStart`, carried through unchanged: a fixture reads it when it starts answering. */
+    dataAtStart?: () => string | undefined;
     /** The turn's interface language (`ConductorDeps.locale`), for the words a composed surface shows the person. */
     locale: AppIntentLocale;
   }) => Promise<{ block: MessageBlock; text: string } | undefined>;
@@ -272,6 +274,8 @@ export interface ModelTurnInput {
   note?: string;
   /** See `UserMessageInput.data`, which this carries through unchanged. */
   data?: string;
+  /** See `UserMessageInput.dataAtStart`, which this carries through unchanged. */
+  dataAtStart?: () => string | undefined;
   /**
    * Everything the turn does while it runs: text, reasoning, and tool calls.
    *
@@ -432,6 +436,14 @@ export interface UserMessageInput {
    * job to have made it inert (see `renderActionContext`), and the model's to read it as a quotation, not an order.
    */
   data?: string;
+  /**
+   * More of `data`, read once when the turn actually starts rather than when the message arrived.
+   *
+   * A message can wait behind a turn that is still running, and some material describes the moment the turn runs — what
+   * is on the person's screen — so it is read then, after the wait, and is not given at all when it no longer holds
+   * (`undefined`). Placed and made inert exactly like `data`; a message carrying it is never steered into a running turn.
+   */
+  dataAtStart?: () => string | undefined;
   /**
    * Which surface this message came in on: the composer, or a spoken sentence the deterministic
    * matcher and the widget resolver both passed on.
@@ -767,6 +779,7 @@ export async function handleUserMessage(
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.note === undefined ? {} : { note: input.note }),
       ...(input.data === undefined ? {} : { data: input.data }),
+      ...(input.dataAtStart === undefined ? {} : { dataAtStart: input.dataAtStart }),
       locale,
     });
     if (composed !== undefined) {
@@ -983,6 +996,7 @@ async function runModelTurn(
       userMessageId,
       ...(input.note === undefined ? {} : { note: input.note }),
       ...(input.data === undefined ? {} : { data: input.data }),
+      ...(input.dataAtStart === undefined ? {} : { dataAtStart: input.dataAtStart }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.channelAuthority === undefined ? {} : { channelAuthority: input.channelAuthority }),
