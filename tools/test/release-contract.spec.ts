@@ -80,6 +80,17 @@ describe("one Clark version", () => {
 
   it("is stamped from a plan only when the plan releases something", () => {
     const dir = checkout();
+    // As in this repository before the first release: the embedded record holds only the baseline.
+    const baseline = releaseRecord({
+      version: BASELINE_VERSION,
+      baseline: true,
+      date: "2026-10-06",
+      previousVersion: null,
+      commitRange: { from: null, to: RANGE.from },
+      notes: "history",
+      commits: [],
+    });
+    writeJson(join(dir, RELEASE_NOTES_PATH), releaseHistory({ version: BASELINE_VERSION, channel: "source", releases: [baseline] }));
     const record = releaseRecord({
       version: "0.2.2",
       date: "2026-10-06T08:00:00Z",
@@ -90,7 +101,10 @@ describe("one Clark version", () => {
     });
     const history = releaseHistory({ version: "0.2.2", channel: "stable", releases: [record] });
     expect(stampPlan(dir, { release: true, version: "0.2.2", history })).toBe("0.2.2");
-    expect(JSON.parse(readFileSync(join(dir, RELEASE_NOTES_PATH), "utf8")).releases[0].version).toBe("0.2.2");
+    const stamped = JSON.parse(readFileSync(join(dir, RELEASE_NOTES_PATH), "utf8"));
+    expect(stamped.releases[0].version).toBe("0.2.2");
+    // The source follows the stamped releases: once one is published it is the releases page, not the baseline's commits.
+    expect(stamped.source).toBe(historySource(stamped.releases));
     expect(() => stampPlan(dir, { release: false })).toThrow(/releases nothing/);
     expect(() => stampPlan(dir, { release: true, version: "0.2.3", history })).toThrow(/matching release history/);
   });
