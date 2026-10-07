@@ -11,6 +11,7 @@ import { writeBlob } from "../src/blobs.ts";
 import { releaseConversationAttachments } from "../src/attachments.ts";
 import { sweepConversationFileCleanup } from "../src/conversation-file-cleanup.ts";
 import { beginActionRun, endActionRun } from "../src/application/action-runs.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 const AT = "2026-09-30T09:00:00.000Z" as Instant;
 let db: Database;
@@ -41,7 +42,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-delete-")); db = openDatabase({path: ":memory:"}); migrate(db); now = AT;
   createConversation(db, {conversationId: id, homeNodeId: nodeId, at: AT}); policy("autonomous");
 });
-afterEach(() => { db.close(); rmSync(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 100}); });
+afterEach(async () => { db.close(); await removeTestDirectory(dir); });
 
 it("releases attachments and finalized unattached widget files only after commit, preserving shared bytes", () => {
   const shared = attachment(); const exclusive = artifact();

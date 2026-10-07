@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,7 @@ import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/ga
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { conversationUiContext } from "../src/widget-semantic.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The state-only write a host-held player sends while it plays (#380).
@@ -116,9 +117,9 @@ beforeEach(() => {
   sequence = 0;
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("continuous playback through the state-only write", () => {

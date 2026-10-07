@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,7 @@ import { invokeWidgetAction } from "../src/application/widget-actions.ts";
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The calendar's month, week and agenda views, placed the way a model's `show_view` places them and used the way a
@@ -131,9 +132,9 @@ beforeEach(() => {
   dataset("ds_calendar", ROWS);
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("the model's vocabulary", () => {

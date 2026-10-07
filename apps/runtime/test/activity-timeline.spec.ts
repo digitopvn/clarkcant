@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,7 @@ import { compileLayout, layoutLeafWidgets } from "../src/compose-layout.ts";
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The activity timeline, placed the way a model's `show_view` places it and used the way a person uses it.
@@ -115,9 +116,9 @@ beforeEach(() => {
     .run(CONVERSATION, services.runtime.identity.nodeId, AT, AT);
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("the model's vocabulary", () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +24,7 @@ import { ownedResources } from "../src/preflight.ts";
 import { listRunningCommands } from "../src/run-command.ts";
 import { createTaskDispatcher, type TaskDispatcher, type TaskDispatcherDeps } from "../src/task-dispatch.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * What a dispatched task may touch, decided from the task.
@@ -66,7 +67,7 @@ afterEach(async () => {
 
 function tempDir(prefix: string): string {
   const path = mkdtempSync(join(tmpdir(), prefix));
-  cleanup.push(() => rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  cleanup.push(() => removeTestDirectory(path));
   return path;
 }
 

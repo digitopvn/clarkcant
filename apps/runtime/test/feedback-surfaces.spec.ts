@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +23,7 @@ import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { SURFACE_HEADER } from "../src/routes/http.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createFakeGithub, type FakeGithub } from "../src/test-support/fake-github.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Every way of reporting reaches the one report service: `/report`, the composer's routes, and `report_feedback` for a
@@ -48,9 +49,9 @@ beforeEach(async () => {
   conversationId = (created.body as { conversationId: string }).conversationId;
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 function call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {

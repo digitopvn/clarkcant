@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +37,7 @@ import { handleRequest } from "../src/gateway.ts";
 import { reconcileFeedbackAtStart } from "../src/routes/feedback.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { FAKE_GITHUB_VIEWER, createFakeGithub, type FakeGithub } from "../src/test-support/fake-github.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The product report service against an in-process GitHub.
@@ -75,10 +76,10 @@ beforeEach(async () => {
   conversationId = (created.body as { conversationId: string }).conversationId;
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 function bug(description: string, extra: Partial<FeedbackRequest> = {}): FeedbackRequest {

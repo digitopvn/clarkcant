@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,6 +26,7 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { toneWav } from "../src/test-support/media-fixtures.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The audio player and the document preview, placed the way a model's `show_view` places them.
@@ -177,9 +178,9 @@ beforeEach(() => {
   answer = (url) => ({ ok: true, bytes: toneWav({ seconds: 2 }), mimeType: "audio/wav", durationSeconds: 2, origin: new URL(url).origin });
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("the model's vocabulary", () => {

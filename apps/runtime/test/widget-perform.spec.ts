@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -48,6 +48,7 @@ import { deliverToVoiceFrame, spokenApprovalWiring, spokenWidgetAction, voicePer
 import { attachVoiceGateway, type VoiceGateway } from "../src/voice-session.ts";
 import { buildWidgetSemantic, focusedSemanticView } from "../src/widget-semantic.ts";
 import { conversationOfferedActions, createPerformWidgetActionTool, listPlaceableWidgets, placeWidget } from "../src/widget-perform-tool.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Clark performing an action an isolated widget offers.
@@ -255,9 +256,9 @@ beforeEach(() => {
     .run(conversationId, services.runtime.identity.nodeId, AT, AT);
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("binding an action a widget offers", () => {

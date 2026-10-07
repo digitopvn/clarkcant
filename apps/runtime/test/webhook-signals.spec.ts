@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import { startAutomationService, type AutomationService } from "../src/automatio
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { SIGNED_WEBHOOK_BODY_LIMIT, bodyLimitForPath, createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Anything that can sign a POST, delivering to a running node.
@@ -39,10 +40,10 @@ beforeEach(() => {
   services.automation = service;
 });
 
-afterEach(() => {
+afterEach(async () => {
   service.stop();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 function sign(body: Uint8Array | string, secret = SECRET): string {

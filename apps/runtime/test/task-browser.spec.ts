@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -32,6 +32,7 @@ import {
   sameSites,
   taskProfileDir,
 } from "../src/task-browser.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The browser a task's worker drives, answered on the node.
@@ -64,9 +65,9 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 function runningTask(goal = "gửi đơn trên http://shop.example/form"): { taskId: string; conversationId: string } {
