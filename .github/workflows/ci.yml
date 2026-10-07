@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Only main: a PR branch is already checked by `pull_request`, and pushing it too ran every job twice per commit.
+  # With the merge gate not strict, this run on main is what checks the combined tree after each merge.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   # A manual run can repeat chosen browser specs, so a test that failed only on
   # the runner can be shown to pass there more than once. Left empty, the
@@ -37,8 +39,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The runtime executes TypeScript directly, so the floor matters.
-        node: ["22.19", "24"]
+        # The Node 22.19 floor is still booted by the e2e, service container and desktop jobs; a second full
+        # unit-test leg on it is left out while the project is bootstrapping.
+        node: ["24"]
         os: [ubuntu-latest]
         include:
           # The first desktop target is macOS, whose temporary directory sits behind a
@@ -222,9 +225,16 @@ jobs:
   # say CI told nobody anything about it. It boots its own node and web server
   # on fixed ports, so it needs nothing
   # from this runner beyond the browser it launches.
+  #
+  # One worker ran the whole suite for about 44 minutes, the longest job by far. Each shard is its own runner with
+  # its own node and data directory, so the suite is split by spec file without sharing any state between shards.
   e2e:
-    name: e2e (browser suite)
+    name: e2e (browser suite ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -247,13 +257,21 @@ jobs:
       # The inputs reach the shell through the environment, never through the
       # script text, so a manual run cannot inject a command. A repeat turns
       # retries off: a test that needed its retry did not pass that many times.
+      # Chosen specs run whole on the first shard; the other shards have nothing to do.
       - name: Browser suite
         env:
           E2E_SPECS: ${{ inputs.e2e_specs }}
           E2E_REPEAT: ${{ inputs.e2e_repeat }}
+          E2E_SHARD: ${{ matrix.shard }}
         run: |
           set -f
           args=()
+          if [ -z "$E2E_SPECS" ]; then
+            args+=(--shard="$E2E_SHARD/6")
+          elif [ "$E2E_SHARD" != 1 ]; then
+            echo "Chosen specs run on shard 1"
+            exit 0
+          fi
           if [ -n "$E2E_REPEAT" ]; then
             case "$E2E_REPEAT" in
               *[!0-9]* | 0*) echo "e2e_repeat must be a positive whole number, got '$E2E_REPEAT'" >&2; exit 1 ;;
@@ -274,7 +292,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: e2e-test-results
+          name: e2e-test-results-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
