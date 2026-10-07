@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 
+import { chromiumTestArgs } from "../../../tools/chromium-test-args.ts";
 import { startDevHost, type DevHost } from "../src/dev-host.ts";
 
 let host: DevHost | undefined;
@@ -24,7 +25,7 @@ afterEach(async () => {
 describe("simulated jobs in Chromium", () => {
   it("starts a job from a press, steps its progress, and ends it by completion, failure and the widget's own cancel", async () => {
     host = await startDevHost({ root: `${process.cwd()}/apps/web/e2e/fixtures/notes-service`, port: 0, watchFiles: false });
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
     const page = await browser.newPage();
     const requests: string[] = [];
     page.on("request", (request) => requests.push(request.url()));
