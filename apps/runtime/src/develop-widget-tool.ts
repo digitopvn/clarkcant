@@ -39,7 +39,7 @@ export function describeDevSession(view: WidgetDevSessionView): string {
   if (activation.state === "none") lines.push("No generation runs yet.");
   if (view.status === "stopped" && view.stopReason !== undefined && view.stopReason !== "requested") {
     const why = {
-      "watch-failed": "watching its folder failed",
+      "watch-failed": "watching its folder failed (the platform stopped reporting changes, or the folder could not be read for 30 s; the node's log names the error)",
       "folder-gone": "its folder is gone",
       capacity: "the node already watches as many folders as it can",
       "root-refused": "its folder is no longer one it may watch",

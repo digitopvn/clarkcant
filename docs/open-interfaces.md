@@ -860,9 +860,12 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 | `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
 
-Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` and
-`503 WIDGET_DEV_UNAVAILABLE`:
+Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
+`404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
+`409 NOT_PLACED` and `503 WIDGET_DEV_UNAVAILABLE`:
+
+- `403 ROOT_UNREADABLE` is for a folder that is there but cannot be read, for example while an antivirus holds it; the
+  message names the error, such as `EPERM`.
 
 - `409 TOO_MANY_SESSIONS` is for a ninth live session on the node, or for a store that already holds 256 sessions that
   all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
@@ -920,23 +923,28 @@ node starts with no sessions; the file is never overwritten.
 **When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
 reading as live:
 
-- `watch-failed`: the watcher failed, or the folder could not be looked at for 30 seconds in a row for a reason other
-  than "not found" (see below). The node's log names the error, for example `EPERM`.
-- `folder-gone`: the folder was deleted or renamed, or the path no longer names a folder. The node checks for the folder
-  at least once a second and before each build, because Windows reports nothing when a watched folder is deleted. Only
-  "not found" counts: a folder that cannot be looked at for another reason, such as an antivirus or indexer holding it
-  (`EPERM`, `EBUSY`), keeps the session live and is checked again, for up to 30 seconds of continuous failures; after
-  that the session stops as `watch-failed`. The same reason applies when the folder is missing after a restart.
+- `watch-failed`: the watcher failed; the folder could not be looked at for 30 seconds in a row for a reason other
+  than "not found" (see below); the folder was found under a new file id more than 30 times in 60 seconds; or, after a
+  restart, the folder cannot be read (`ROOT_UNREADABLE`). The node's log names the error, for example `EPERM`.
+- `folder-gone`: the folder was deleted or renamed, the path no longer names a folder, or the path now leads to another
+  folder through a symbolic link or junction (at the folder itself or at a folder above it). The node checks for the
+  folder at least once a second and before each build, because Windows reports nothing when a watched folder is
+  deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an antivirus or
+  indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again, for up to 30 seconds of
+  continuous failures; after that the session stops as `watch-failed`. The same reason applies when the folder is
+  missing after a restart.
+- `capacity`: the node is already watching eight folders as it resumes.
+- `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
+  whose folder is outside the widget workspace.
 
 A folder that is still there with another identity does not stop the session. The node compares the folder's device and
 file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
 `rm -rf out && build`), or the filesystem gave it a new id (some FUSE mounts and network drives do). The node watches
-the folder now at that path and builds it, as it builds a saved change.
+the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids. This holds only
+while the path still resolves to the real path the session started from: a link swapped in at the folder or above it
+leads to a folder nobody chose, so the session stops as `folder-gone` instead.
 
 In every case, the generation that runs keeps running.
-- `capacity`: the node is already watching eight folders as it resumes.
-- `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
-  whose folder is outside the widget workspace.
 
 **Consent.** The policy decides each install under a **consent scope** rather than the artifact. The scope is the
 package id together with everything the build binds about its reach:

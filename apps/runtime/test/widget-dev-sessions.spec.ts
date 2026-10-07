@@ -1,5 +1,5 @@
 import type * as fs from "node:fs";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -678,7 +678,7 @@ describe("a widget dev session", () => {
     expect(started.status).toBe("live");
 
     // In one turn of the event loop, as `rm -rf out && build`: the path names a folder again, but not the one watched.
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    rmSync(root, { recursive: true, force: true });
     writePackage("<!doctype html><p>a new folder</p>\n");
     const rebuilt = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
     expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
@@ -695,7 +695,8 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    statFailure.path = resolve(root);
+    // The engine looks at the canonical path a start stores (on macOS, `/private/var/...` for a `/var/...` temp folder).
+    statFailure.path = realpathSync.native(root);
     // Bounded: the node looks at the folder once a second, so the bound is passed on the second look at the latest.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "watch-failed", activation: { state: "active", generation: 1 } });
@@ -707,7 +708,8 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    statFailure.path = resolve(root);
+    // The engine looks at the canonical path a start stores (on macOS, `/private/var/...` for a `/var/...` temp folder).
+    statFailure.path = realpathSync.native(root);
     const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
     expect(rebuilt.status).toBe(200);
     expect(session(rebuilt).status).toBe("live");
@@ -717,6 +719,39 @@ describe("a widget dev session", () => {
     writePackage("<!doctype html><p>second</p>\n");
     const next = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
     expect(next).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
+  it("stops a watched session as folder-gone when a folder above it is swapped for a link to another tree, and builds nothing there", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // `projects/timer` now leads, through `projects`, to a tree the person never chose for this session.
+    const elsewhere = join(dir, "elsewhere");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], join(elsewhere, "timer"), { id: "com.example.elsewhere" });
+    const projects = join(dir, "projects");
+    rmSync(projects, { recursive: true, force: true });
+    symlinkSync(elsewhere, projects, process.platform === "win32" ? "junction" : "dir");
+
+    const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", packageId: PACKAGE, activation: { state: "active", generation: 1 } });
+  });
+
+  it("says a folder that is there but cannot be read cannot be read, at a start and at a resume", async () => {
+    // A start and a resume look at the path as given, before it is made canonical.
+    statFailure.path = resolve(root);
+    const refused = await call("POST", "/widget-dev/sessions", { root });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ code: "ROOT_UNREADABLE" });
+    expect((refused.body as { message: string }).message).toContain("cannot be read on this node (EPERM)");
+
+    writeDevSessions(join(dir, "node"), [{ sessionId: "wdev_unreadable", root, status: "live" as const, startedAt: new Date().toISOString() }]);
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+    const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
+    expect(views.find((view) => view.sessionId === "wdev_unreadable")).toMatchObject({ status: "stopped", stopReason: "watch-failed" });
   });
 });
 

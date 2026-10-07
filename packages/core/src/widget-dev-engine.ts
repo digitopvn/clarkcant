@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, lstatSync, openSync, readdirSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
+import { closeSync, lstatSync, openSync, readdirSync, realpathSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import {
@@ -55,6 +55,13 @@ export const DEV_ENGINE_ROOT_UNREADABLE_MS = 30_000;
  * build would otherwise be lost; inotify and Windows watch from the moment `watch` returns.
  */
 export const DEV_ENGINE_WATCH_CATCH_UP_MS = 500;
+/**
+ * How many times a watched folder may be found under a new file id (`replaced`) within `DEV_ENGINE_REARM_WINDOW_MS`
+ * before watching stops. A build that makes its output folder again re-arms once per build; a filesystem that gives the
+ * folder a new id on every look would otherwise re-watch and copy the whole folder every second, without end.
+ */
+export const DEV_ENGINE_REARM_MAX = 30;
+export const DEV_ENGINE_REARM_WINDOW_MS = 60_000;
 /**
  * Folders at the package root that are not the package: version control, and the author's installed dependencies, which
  * the package does not ship and which may hold thousands of files and links (a pnpm `node_modules` is junctions). Left
@@ -138,8 +145,9 @@ export interface DevEngine {
   /** Whether the folder is being watched: false after `close`, after a watch failure, or when watching was not asked for. */
   watching(): boolean;
   /**
-   * Whether the folder is gone (`devRootState`): deleted, or no longer a folder. False when another folder is at the path
-   * (the watcher moves to it) or when it could not be looked at for another reason.
+   * Whether the folder is gone (`devRootState`): deleted, no longer a folder, or another folder reached through a link or
+   * junction. False when another folder is at the path itself (the watcher moves to it) or when it could not be looked
+   * at for another reason.
    */
   rootGone(): boolean;
   close(): void;
@@ -270,16 +278,36 @@ type DevRootLook =
   | { state: "gone" }
   | { state: "unknown"; code: string };
 
-function lookAtDevRoot(root: string, identity?: DevRootIdentity): DevRootLook {
+/** The canonical path of `root`, or undefined when it cannot be resolved. */
+function canonicalPathOf(root: string): string | undefined {
+  try {
+    return realpathSync.native(root);
+  } catch {
+    return undefined;
+  }
+}
+
+const lookFailed = (cause: unknown): DevRootLook => {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return code !== undefined && GONE_CODES.has(code) ? { state: "gone" } : { state: "unknown", code: code ?? messageOf(cause) };
+};
+
+function lookAtDevRoot(root: string, identity?: DevRootIdentity, canonical?: string): DevRootLook {
   let stat: BigIntStats;
   try {
     stat = statSync(root, { bigint: true });
   } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException).code;
-    return code !== undefined && GONE_CODES.has(code) ? { state: "gone" } : { state: "unknown", code: code ?? messageOf(cause) };
+    return lookFailed(cause);
   }
   if (!stat.isDirectory()) return { state: "gone" };
   if (identity !== undefined && (stat.dev !== identity.dev || stat.ino !== identity.ino)) {
+    // Another folder at the path is the folder being developed only when the path still leads where it led when watching
+    // started: the path itself, or a folder above it, swapped for a link or junction leads into a tree nobody chose.
+    try {
+      if (canonical === undefined || lstatSync(root).isSymbolicLink() || realpathSync.native(root) !== canonical) return { state: "gone" };
+    } catch (cause) {
+      return lookFailed(cause);
+    }
     return { state: "replaced", identity: { dev: stat.dev, ino: stat.ino } };
   }
   return { state: "present" };
@@ -292,7 +320,9 @@ function lookAtDevRoot(root: string, identity?: DevRootIdentity): DevRootLook {
  * - `replaced`: given the `identity` it was watched with, a different folder is at the path. A folder deleted and made
  *   again (`rm -rf out && build`) keeps its path but not its identity, and a watcher on the old one hears nothing from the
  *   new one; some filesystems (FUSE mounts without stable inode numbers, some network drives) also give a folder that
- *   is still there a new id. Either way there is a folder to watch, so the watcher moves to it.
+ *   is still there a new id. Either way there is a folder to watch, so the watcher moves to it. A different folder
+ *   reached through a link or junction (at the path or at a folder above it), so that the path no longer resolves to
+ *   the canonical path watching started from, is `gone` instead: it is not the folder that was chosen.
  * - `unknown`: the folder could not be looked at for another reason (`EPERM`, `EBUSY` while an antivirus or indexer holds
  *   it). That is not a folder that went away; the caller looks again next time.
  * - `present`: the same folder is there.
@@ -461,8 +491,12 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    * watching.
    */
   let identity: DevRootIdentity | undefined;
+  /** Where the folder's path resolved when watching started: a folder at the path that resolves elsewhere is not it. */
+  let canonical: string | undefined;
   /** When the folder first failed to be looked at, in the run of failures going on now (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
   let unreadableSince: number | undefined;
+  /** When the folder was last watched anew (`DEV_ENGINE_REARM_MAX` within `DEV_ENGINE_REARM_WINDOW_MS`). */
+  const rearms: number[] = [];
   const unreadableMs = options.rootUnreadableMs ?? DEV_ENGINE_ROOT_UNREADABLE_MS;
   /**
    * The watched folder held open, on Linux and macOS, while it is watched. A folder deleted there frees its file id, and
@@ -504,7 +538,8 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
-      if (closed || !rootStillThere()) return;
+      // A folder watched anew by this look has its own build scheduled; building here as well would build it twice.
+      if (closed || !rootStillThere() || timer !== undefined) return;
       void enqueue(() => build("change")).then((event) => {
         if (!closed) options.onBuild?.(event);
       }, watchFailed);
@@ -538,19 +573,22 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    * checked on every change and on a timer rather than left to the watcher.
    *
    * - Another folder at the path (`replaced`) is watched in place of the old one and built: it is where the person's
-   *   files are now, whether a build made it again or the filesystem gave the same folder a new id.
+   *   files are now, whether a build made it again or the filesystem gave the same folder a new id. One reached through a
+   *   link or junction is `gone`. More than `DEV_ENGINE_REARM_MAX` of these within `DEV_ENGINE_REARM_WINDOW_MS` stops
+   *   watching as a watch failure.
    * - A folder that could not be looked at this time (`unknown`) is looked at again on the next tick rather than taken as
    *   gone, until it has failed for `rootUnreadableMs` in a row: then watching stops as a watch failure that says why.
    */
   const rootStillThere = (): boolean => {
     if (closed || watcher === undefined) return !closed;
-    const look = lookAtDevRoot(root, identity);
+    const look = lookAtDevRoot(root, identity, canonical);
     if (look.state === "unknown") {
-      const at = Date.now();
+      // A monotonic clock: a clock set back, or a machine asleep, neither stretches nor cuts short the bound.
+      const at = performance.now();
       unreadableSince ??= at;
       if (at - unreadableSince < unreadableMs) return true;
       stopWatching();
-      const failingMs = at - unreadableSince;
+      const failingMs = Math.round(at - unreadableSince);
       const failing = failingMs < 1000 ? `${String(failingMs)} ms` : `${String(Math.round(failingMs / 1000))} s`;
       options.onWatchError?.(new Error(`the folder could not be looked at for ${failing} (${look.code}), so it is no longer watched`));
       return false;
@@ -558,6 +596,20 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     unreadableSince = undefined;
     if (look.state === "present") return true;
     if (look.state === "replaced") {
+      const at = performance.now();
+      while (rearms.length > 0 && at - (rearms[0] ?? at) > DEV_ENGINE_REARM_WINDOW_MS) rearms.shift();
+      rearms.push(at);
+      const idOf = (id: DevRootIdentity | undefined): string => (id === undefined ? "none" : `${String(id.dev)}:${String(id.ino)}`);
+      if (rearms.length > DEV_ENGINE_REARM_MAX) {
+        stopWatching();
+        options.onWatchError?.(
+          new Error(
+            `the folder was found under a new file id more than ${String(DEV_ENGINE_REARM_MAX)} times in ${String(DEV_ENGINE_REARM_WINDOW_MS / 1000)} s (last ${idOf(identity)} to ${idOf(look.identity)}), so it is no longer watched; its filesystem may not keep file ids stable`,
+          ),
+        );
+        return false;
+      }
+      process.stderr.write(`widget dev: watching ${root} anew: its file id changed from ${idOf(identity)} to ${idOf(look.identity)}\n`);
       release();
       try {
         identity = look.identity;
@@ -568,45 +620,56 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         return false;
       }
       scheduleBuild();
+      // As at the start: a save the new watcher could not see yet (FSEvents starts asynchronously) is built then.
+      scheduleCatchUp();
       return true;
     }
     stopWatching();
     options.onRootGone?.();
     return false;
   };
+  /**
+   * Build once more `DEV_ENGINE_WATCH_CATCH_UP_MS` after a watcher starts, for a save made before the platform watcher was
+   * live. Only news is reported: files that did not change build nothing new, and a folder that was already failing fails
+   * the same way, so where the watcher saw everything this is silent. A build with no news leaves the last build as it
+   * was, rather than relabelled as a change made now.
+   */
+  const scheduleCatchUp = (): void => {
+    if (catchUp !== undefined) clearTimeout(catchUp);
+    catchUp = setTimeout(() => {
+      catchUp = undefined;
+      // A change already waiting to build reads the folder anyway; so does the build of a folder this look watched anew.
+      if (closed || timer !== undefined || !rootStillThere() || timer !== undefined) return;
+      let news = false;
+      void enqueue(async () => {
+        // Read once every build before it has settled, the first one included: a first build slower than the catch-up
+        // delay has not set the last build when the timer fires, and its failure would otherwise be news twice.
+        const before = last;
+        const event = await build("change");
+        news =
+          event.kind === "generation" ||
+          (event.kind === "failed" && !sameFailure(before, event.build)) ||
+          // Files back to the newest generation after a failed build: the failure is over, which is news.
+          (event.kind === "unchanged" && before?.ok === false);
+        if (!news && before !== undefined) last = before;
+        return event;
+      }).then(
+        (event) => {
+          if (!closed && news) options.onBuild?.(event);
+        },
+        watchFailed,
+      );
+    }, DEV_ENGINE_WATCH_CATCH_UP_MS);
+    catchUp.unref();
+  };
   if (options.watch !== false) {
     try {
       identity = devRootIdentityOf(root);
+      canonical = canonicalPathOf(root);
       arm();
       rootCheck = setInterval(() => void rootStillThere(), options.rootCheckMs ?? DEV_ENGINE_ROOT_CHECK_MS);
       rootCheck.unref();
-      // A save made before the platform watcher was live is built here. Only news is reported: files that did not change
-      // build nothing new, and a folder that was already failing fails the same way, so where the watcher saw everything
-      // this is silent. A build with no news leaves the last build as it was, rather than relabelled as a change made now.
-      catchUp = setTimeout(() => {
-        catchUp = undefined;
-        if (closed || timer !== undefined || !rootStillThere()) return;
-        let news = false;
-        void enqueue(async () => {
-          // Read once every build before it has settled, the first one included: a first build slower than the catch-up
-          // delay has not set the last build when the timer fires, and its failure would otherwise be news twice.
-          const before = last;
-          const event = await build("change");
-          news =
-            event.kind === "generation" ||
-            (event.kind === "failed" && !sameFailure(before, event.build)) ||
-            // Files back to the newest generation after a failed build: the failure is over, which is news.
-            (event.kind === "unchanged" && before?.ok === false);
-          if (!news && before !== undefined) last = before;
-          return event;
-        }).then(
-          (event) => {
-            if (!closed && news) options.onBuild?.(event);
-          },
-          watchFailed,
-        );
-      }, DEV_ENGINE_WATCH_CATCH_UP_MS);
-      catchUp.unref();
+      scheduleCatchUp();
     } catch (cause) {
       stopWatching();
       watchFailed(cause);
@@ -624,7 +687,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       return event;
     },
     watching: () => watcher !== undefined && !closed,
-    rootGone: () => lookAtDevRoot(root, identity).state === "gone",
+    rootGone: () => lookAtDevRoot(root, identity, canonical).state === "gone",
     close: () => {
       closed = true;
       stopWatching();

@@ -863,9 +863,12 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 | `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
 
-Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` và
-`503 WIDGET_DEV_UNAVAILABLE`:
+Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
+`404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
+`409 NOT_PLACED` và `503 WIDGET_DEV_UNAVAILABLE`:
+
+- `403 ROOT_UNREADABLE` dành cho thư mục vẫn còn đó nhưng không đọc được, chẳng hạn khi phần mềm diệt virus đang giữ nó;
+  thông báo ghi rõ lỗi, ví dụ `EPERM`.
 
 - `409 TOO_MANY_SESSIONS` dành cho phiên đang chạy thứ chín trên node, hoặc cho kho lưu đã giữ 256 phiên mà phiên nào
   cũng vẫn đang chạy bản đã dựng. Các phiên đã dừng cũ hơn và không còn chạy gì sẽ bị quên trước để lấy chỗ.
@@ -925,23 +928,28 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 **Khi việc theo dõi dừng.** Một phiên mà thư mục không còn theo dõi được sẽ được đánh dấu là đã dừng, kèm lý do, thay vì
 vẫn hiện là đang chạy:
 
-- `watch-failed`: bộ theo dõi bị lỗi, hoặc thư mục không xem được liên tục trong 30 giây vì một lý do khác "không tìm
-  thấy" (xem bên dưới). Nhật ký của node ghi rõ lỗi, ví dụ `EPERM`.
-- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, hoặc đường dẫn không còn là một thư mục. Node kiểm tra thư mục ít nhất
-  mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được theo dõi bị xoá. Chỉ lỗi
-  "không tìm thấy" mới được tính: một thư mục không xem được vì lý do khác, chẳng hạn phần mềm diệt virus hoặc trình lập
-  chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra lại, tối đa 30 giây lỗi liên tục; sau
-  đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng khi thư mục không còn sau một lần khởi động lại.
+- `watch-failed`: bộ theo dõi bị lỗi; thư mục không xem được liên tục trong 30 giây vì một lý do khác "không tìm
+  thấy" (xem bên dưới); thư mục mang một file id mới quá 30 lần trong 60 giây; hoặc, sau một lần khởi động lại, thư mục
+  không đọc được (`ROOT_UNREADABLE`). Nhật ký của node ghi rõ lỗi, ví dụ `EPERM`.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, đường dẫn không còn là một thư mục, hoặc đường dẫn giờ dẫn tới một thư
+  mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một thư mục phía trên nó). Node kiểm tra
+  thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được theo dõi bị
+  xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục không xem được vì lý do khác, chẳng hạn phần mềm diệt virus
+  hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra lại, tối đa 30 giây
+  lỗi liên tục; sau đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng khi thư mục không còn sau một lần khởi
+  động lại.
+- `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
+- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
+  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
 
 Một thư mục vẫn còn đó nhưng mang định danh khác không làm phiên dừng. Node so sánh device và file id của thư mục với
 những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
 `rm -rf out && build`), hoặc hệ thống tệp đã cấp cho nó một id mới (một số ổ FUSE và ổ mạng làm vậy). Node theo dõi thư
-mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu.
+mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu, và ghi id cũ lẫn id mới vào nhật ký.
+Điều này chỉ đúng khi đường dẫn vẫn phân giải về đúng đường dẫn thật lúc phiên bắt đầu: một liên kết được tráo vào ở thư
+mục hoặc phía trên nó dẫn tới một thư mục không ai chọn, nên phiên dừng với lý do `folder-gone`.
 
 Trong mọi trường hợp, generation đang chạy vẫn tiếp tục chạy.
-- `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
-- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
-  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
 
 **Sự đồng ý.** Chính sách quyết định mỗi lần cài theo một **phạm vi đồng ý** thay vì theo artifact. Phạm vi là id gói
 cùng mọi thứ bản dựng ràng buộc về phạm vi tiếp cận của nó:

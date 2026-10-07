@@ -241,7 +241,12 @@ export function createWidgetDevSessions(
     const resolved = resolve(given);
     try {
       if (!statSync(resolved).isDirectory()) return refusal(400, "ROOT_NOT_A_FOLDER", `${resolved} is not a folder`);
-    } catch {
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      // Only "not found" means not there: a folder an antivirus or indexer holds (`EPERM`, `EBUSY`) is there, unreadable.
+      if (code !== undefined && code !== "ENOENT" && code !== "ENOTDIR") {
+        return refusal(403, "ROOT_UNREADABLE", `${resolved} cannot be read on this node (${code})`);
+      }
       return refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
     }
     const root = realOrUndefined(resolved);
@@ -900,8 +905,9 @@ export function createWidgetDevSessions(
         const checked = checkRoot(stored.root, { kind: stored.initiative?.kind ?? "person" });
         if (!checked.ok) {
           const gone = checked.code === "ROOT_NOT_FOUND" || checked.code === "ROOT_NOT_A_FOLDER";
-          markStopped(stored.sessionId, gone ? "folder-gone" : "root-refused");
-          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}), so its session was stopped; what it ran keeps running\n`);
+          // A folder that is there but cannot be read is not gone, nor refused: watching it failed.
+          markStopped(stored.sessionId, gone ? "folder-gone" : checked.code === "ROOT_UNREADABLE" ? "watch-failed" : "root-refused");
+          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}: ${checked.message}), so its session was stopped; what it ran keeps running\n`);
           continue;
         }
         if (live.size >= WIDGET_DEV_LIVE_MAX) {
