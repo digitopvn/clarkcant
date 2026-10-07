@@ -2337,8 +2337,15 @@ export async function createModelTurn(options: {
       if ((await Promise.race([ended, untilAborted(stop, ended)])) === "stopped") return stoppedBeforeStart();
       claimed = await claimTurn(input.conversationId, input.principal, input.origin, stop);
     }
-    // Read now that this turn holds the conversation: what it describes may have changed while it waited.
-    const atStart = input.dataAtStart?.()?.trim() ?? "";
+    // Read now that this turn holds the conversation: what it describes may have changed while it waited. A hook that
+    // throws gives no data rather than an error here, before the run's `finally`, that would keep the conversation busy.
+    const atStart = ((): string => {
+      try {
+        return input.dataAtStart?.()?.trim() ?? "";
+      } catch {
+        return "";
+      }
+    })();
     if (atStart !== "") input = { ...input, data: [input.data?.trim() ?? "", atStart].filter((part) => part !== "").join("\n\n") };
     const turn = claimed.turn;
     const preparedResolve = claimed.prepared;

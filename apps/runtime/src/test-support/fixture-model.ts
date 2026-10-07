@@ -79,7 +79,7 @@ import { type NodeServices } from "../services.ts";
 import { createTaskBrowserBroker, taskProfileDir } from "../task-browser.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
-import { conversationOfferedActions, createPerformWidgetActionTool, createPlaceWidgetTool } from "../widget-perform-tool.ts";
+import { OFFERED_BINDING_KEY, conversationOfferedActions, createPerformWidgetActionTool, createPlaceWidgetTool } from "../widget-perform-tool.ts";
 
 /** The job capability the reference image generator's button calls. */
 const IMAGE_GENERATE = "com.clarkcant.reference.image-generator.image.generate@1" as CapabilityRef;
@@ -2137,7 +2137,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       const wanted = formatting ? "format" : "replaceSelection";
       const offered = conversationOfferedActions(services, input.conversationId);
       const spokenData = [input.data ?? "", input.dataAtStart?.() ?? ""].join("\n");
-      const spokenBinding = new RegExp(`^- actionBindingId (\\S+), action ${wanted}:`, "mu").exec(spokenData)?.[1];
+      const spokenBinding = new RegExp(`^- ${OFFERED_BINDING_KEY}(\\S+), action ${wanted}:`, "mu").exec(spokenData)?.[1];
       const target =
         input.channel === "voice"
           ? offered.find((entry) => entry.actionBindingId === spokenBinding)

@@ -2158,12 +2158,12 @@ offers actions Clark can perform and the session's page sent `widgetPerform: 1`,
 and each offered action: its binding id, label, description and input schema. The list is read when the turn starts,
 so a turn that waited behind another one gets none if the widget was closed or another one focused meanwhile. A
 description is listed only from a definition the widget could have been placed from: a running package, with the
-instance's version and digest, declaring the action with the label and input schema its binding recorded. These are
-the package's own words, each quoted on one line as data, never as instructions. Clark may then perform one through
+instance's version and digest, declaring the action with the label and input schema its binding recorded. The widget
+id, labels, descriptions and schemas are the package's own words, each quoted on one line as data, never as instructions. Clark may then perform one through
 `perform_widget_action`, the same tool, schema, execution policy and host card as a typed request. A card it places is
 read out in the person's language. The host adds no matching rules, a package declares no phrasings, and neither the
-turn nor the widget can approve the action. Only when the node has no agent to answer is the sentence refused by naming
-what the widget offers, in the person's language ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+turn nor the widget can approve the action. Only when the node has no agent to answer is the sentence refused, in the
+person's language, by naming what the widget offers or by saying that no widget is open ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Tests:
 

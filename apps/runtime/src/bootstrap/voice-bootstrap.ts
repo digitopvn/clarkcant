@@ -55,7 +55,7 @@ import {
   attachVoiceGateway,
 } from "../voice-session.ts";
 import { FOCUSED_WIDGET_NOTE, focusedWidgetActionsContext } from "../widget-perform-tool.ts";
-import { NO_FOCUSED_SURFACE_SAY, type VoiceWidgetApproval, type VoiceWidgetRun } from "../widget-voice-action.ts";
+import { actionGoneSay, noFocusedSurfaceSay, type VoiceWidgetApproval, type VoiceWidgetRun } from "../widget-voice-action.ts";
 
 /**
  * The voice socket, and everything a live session needs to reach the rest of the node.
@@ -626,22 +626,22 @@ async function runSpokenWidgetAction(
   services: NodeServices,
   { conversationId, action, focused, onWidgetPerform }: SpokenWidgetActionInput,
 ): Promise<VoiceWidgetRun> {
+  const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
   const instanceId = focused?.instanceId;
-  if (instanceId === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
+  if (instanceId === undefined) return { ok: false, say: noFocusedSurfaceSay(locale) };
 
   const target = widgetActionTarget(services, instanceId, action.actionBindingId);
   if (target === undefined) {
     // The page's view was older than the instance, or the action is gone. Either way this is a refusal and not a
     // guess: invoking a binding the instance no longer announces is exactly what the digest check exists for.
-    return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
+    return { ok: false, say: actionGoneSay(locale) };
   }
   if (target.kind === "perform" && onWidgetPerform === undefined) {
     // An action the widget offers runs in the frame on the screen that shows it. A session whose page did not say it
     // can hand one to a frame and report back has no way to reach it, so the press is refused before anything is sent.
-    const performLocale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
     return {
       ok: false,
-      say: performLocale === "vi"
+      say: locale === "vi"
         ? `Tôi không bấm “${action.label}” bằng giọng nói được. Bạn nhờ Clark làm việc đó trong cuộc trò chuyện nhé; chưa có gì được gửi.`
         : `I can't press “${action.label}” by voice. Ask Clark to do it in the conversation instead; nothing was sent.`,
     };
@@ -670,7 +670,6 @@ async function runSpokenWidgetAction(
     { askedBy: "person-voice", ...(onWidgetPerform === undefined ? {} : { perform: voicePerformer(services, onWidgetPerform) }) },
   );
 
-  const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
   // Said from the code and details in the person's language: a call that may have run is never "could not do it".
   if (!result.ok) return { ok: false, say: spokenActionRefusal(action.label, { code: result.code, ...(result.detail === undefined ? {} : { detail: result.detail }) }, locale) };
   if (result.body.outcome === "background") {

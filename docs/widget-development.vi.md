@@ -2154,12 +2154,12 @@ phần trăm`, được chuyển cho lượt giọng nói của Clark như mọi
 hành động được cho phép: binding id, nhãn, mô tả và schema input. Danh sách được đọc khi lượt bắt đầu, nên một lượt
 phải chờ sau lượt khác sẽ không nhận được gì nếu trong lúc đó widget đã đóng hoặc một widget khác được chọn. Mô tả chỉ
 được liệt kê từ một định nghĩa mà widget có thể đã được đặt từ đó: một gói đang chạy, cùng phiên bản và digest của
-instance, khai báo hành động với đúng nhãn và schema input mà binding của nó đã ghi lại. Đó là lời của chính gói, mỗi
-phần được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có thể thực hiện một hành động qua
+instance, khai báo hành động với đúng nhãn và schema input mà binding của nó đã ghi lại. Id widget, nhãn, mô tả và
+schema là lời của chính gói, mỗi phần được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có thể thực hiện một hành động qua
 `perform_widget_action`, cùng công cụ, schema, chính sách thực thi và thẻ của host như một yêu cầu gõ chữ. Thẻ mà lượt
 đặt ra được đọc lên bằng ngôn ngữ của người dùng. Host không thêm quy tắc khớp nào, gói không khai báo cách nói nào, và
-cả lượt lẫn widget đều không thể tự duyệt hành động. Chỉ khi node không có agent để trả lời thì câu đó mới bị từ chối
-bằng cách nêu những gì widget cho phép, bằng ngôn ngữ của người dùng
+cả lượt lẫn widget đều không thể tự duyệt hành động. Chỉ khi node không có agent để trả lời thì câu đó mới bị từ chối,
+bằng ngôn ngữ của người dùng, bằng cách nêu những gì widget cho phép hoặc nói rằng không có widget nào đang mở
 ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:

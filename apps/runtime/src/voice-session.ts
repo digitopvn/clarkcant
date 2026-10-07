@@ -1160,7 +1160,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        * was focused as it was said offers actions Clark can perform on a page that can reach its frame, the turn is given
        * those actions as data — read when the turn starts, so a widget closed or unfocused while it waited is not
        * described as on screen. No host heuristic guesses which action was meant, and the agent can only perform one
-       * through the typed tool path. Only with no agent wired is the sentence refused, by naming what the widget offers.
+       * through the typed tool path. Only with no agent wired is the sentence refused: by naming what the widget offers,
+       * or by saying that none is open.
        */
       let focusedAtSentence: string | undefined;
       if (options.widgetAction !== undefined) {
@@ -1178,23 +1179,22 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           runWidgetAction(resolved.action);
           return;
         }
-        if (resolved.focused) {
-          if (answer === undefined) {
-            send({ type: "transcript", role: "assistant", text: resolved.say, final: true });
-            say(resolved.say);
-            return;
-          }
-          focusedAtSentence = focusedInstanceId;
+        // With no agent to answer, the refusal is the answer, whether or not a widget is focused.
+        if (answer === undefined) {
+          send({ type: "transcript", role: "assistant", text: resolved.say, final: true });
+          say(resolved.say);
+          return;
         }
+        if (resolved.focused) focusedAtSentence = focusedInstanceId;
       }
       const focusedWidgetContext = options.focusedWidgetContext;
       // The focused widget's offered actions, read when the turn starts: only while the same widget is still focused,
-      // and only for a page that can hand a perform to its frame.
+      // on a session that is still open, and only for a page that can hand a perform to its frame.
       const widgetContext =
         focusedAtSentence === undefined || focusedWidgetContext === undefined
           ? undefined
           : (): string | undefined =>
-              performsWidgets && focusedInstanceId === focusedAtSentence
+              performsWidgets && !closing && ws.readyState === ws.OPEN && focusedInstanceId === focusedAtSentence
                 ? focusedWidgetContext({ conversationId: askIn, instanceId: focusedAtSentence })
                 : undefined;
 

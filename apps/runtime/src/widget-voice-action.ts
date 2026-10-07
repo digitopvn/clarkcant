@@ -98,6 +98,18 @@ const NO_FOCUSED_SURFACE: Record<SpeechLocale, string> = {
 
 export const NO_FOCUSED_SURFACE_SAY = NO_FOCUSED_SURFACE.vi;
 
+/** The refusal when no widget is focused, in the person's language. */
+export function noFocusedSurfaceSay(locale: SpeechLocale): string {
+  return NO_FOCUSED_SURFACE[locale];
+}
+
+/** The refusal when the focused widget no longer offers the action a sentence named, in the person's language. */
+export function actionGoneSay(locale: SpeechLocale): string {
+  return locale === "vi"
+    ? "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé."
+    : "The open widget no longer offers that action. Open it again and try once more.";
+}
+
 /**
  * Match a sentence to one of the actions this instance offers.
  *
