@@ -26,6 +26,8 @@ export * from "./install-from-entry.ts";
 export * from "./package-files.ts";
 export * from "./widget-document.ts";
 export * from "./widget-package.ts";
+export * from "./directory-entry-of.ts";
+export * from "./widget-dev-engine.ts";
 export * from "./widget-frame.ts";
 export * from "./frame-grant.ts";
 export * from "./installed-packages.ts";

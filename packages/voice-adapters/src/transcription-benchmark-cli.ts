@@ -30,7 +30,9 @@ import {
  *     corpus vocabulary, and the default) and `gemini-live` (the conversational baseline's input transcription). The
  *     key is read from GEMINI_API_KEY and never printed; without one the run stops and says which gate is missing.
  *     A recognizer that fails is named with its error and left out of the table, the ones that completed are still
- *     scored, and the run exits 1.
+ *     scored, and the run exits 1. The run exits 3 instead when a completed recognizer came back with a session term the
+ *     person did not say (see `vocabulary-bias` in the corpus), and names the `vocabulary-bias` entries the manifest left
+ *     unrecorded.
  *
  *   --transcripts prints every utterance's transcript per recognizer, as heard and normalised, beside the reference.
  *   --corpus <file> scores another corpus. A leading `--` (what `pnpm <script> -- --flag` forwards) is accepted.
@@ -160,6 +162,20 @@ async function main(): Promise<number> {
   process.stdout.write(`${formatBenchmarkReport(corpus, results)}\n`);
   if (args.transcripts) process.stdout.write(`\n${formatTranscripts(corpus, recognizers, context)}\n`);
   for (const failure of failed) process.stderr.write(`${failure.id} failed and is not in the report: ${failure.error}\n`);
+  if (args.audio === undefined) return failed.length === 0 ? 0 : 1;
+  // The audio run is the regression check for vocabulary bias: a session term heard but not said fails it, whether the
+  // bias or an ordinary mishearing put it there. It outranks a failed recognizer, whose run scored nothing to check.
+  let biased = false;
+  for (const id of args.recognizers.filter((name) => !failed.some((failure) => failure.id === name))) {
+    const audioResult = results.find((result) => result.recognizer === `${id}-audio`);
+    const uncovered = corpus.utterances.filter((utterance) => utterance.categories.includes("vocabulary-bias") && utterance.recognizers[`${id}-audio`] === undefined);
+    if (uncovered.length > 0) process.stderr.write(`${id}: not checked for vocabulary bias, no recording: ${uncovered.map((utterance) => utterance.id).join(", ")}\n`);
+    if (audioResult !== undefined && audioResult.substitutions.length > 0) {
+      process.stderr.write(`${id}: vocabulary term heard but not said: ${audioResult.substitutions.join(", ")} (a session term the person did not say; the bias or an ordinary mishearing may have put it there)\n`);
+      biased = true;
+    }
+  }
+  if (biased) return 3;
   return failed.length === 0 ? 0 : 1;
 }
 
