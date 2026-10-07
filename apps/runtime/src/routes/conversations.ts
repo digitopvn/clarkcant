@@ -1204,6 +1204,16 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     // name instead of a turn starting without the thing it was asked about.
     const references = await resolveComposerReferences(services, { value: parsed.value.references });
     if (!references.ok) return fail(400, "REFERENCE_NOT_AVAILABLE", references.message);
+    // Resolved here as well, before anything is joined, stopped or started, so a file that is not available refuses the
+    // message the same way whether or not a turn is answering, and never after the running answer was cut off.
+    const attachments = resolveAttachmentRefs({
+      db: services.runtime.db,
+      principalId: runtime.identity.ownerPrincipalId,
+      conversationId,
+      ids: parsed.value.attachmentIds,
+    });
+    if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
+    const attachedFiles = attachments.refs.length > 0;
 
     /*
      * A message sent while the assistant is still working.
@@ -1243,12 +1253,11 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
        * Stop still cancels it while it waits. It does not cut the running turn off: joining was what the decider chose,
        * and taking the running turn's place was not.
        *
-       * A message with attachments is not joined at all: a steer carries only its words, so it waits the same way, and
-       * is stored with its files and answered in a turn of its own that reads them.
+       * A message with attachments is neither joined nor sent to the background: a steer and a background request both
+       * carry only its words, so it waits the same way, and is stored with its files and answered in a turn of its own
+       * that reads them.
        */
-      if (action === "steer") {
-        const ids: unknown = parsed.value.attachmentIds;
-        const attachedFiles = Array.isArray(ids) && ids.length > 0;
+      if (action === "steer" || (action === "background" && attachedFiles)) {
         if (!attachedFiles && (await control.steer(conversationId, text, composerSurface(request).origin))) {
           return json(202, {
             accepted: true,
@@ -1296,13 +1305,6 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     }
 
     const at_ = at() as never;
-    const attachments = resolveAttachmentRefs({
-      db: services.runtime.db,
-      principalId: runtime.identity.ownerPrincipalId,
-      conversationId,
-      ids: parsed.value.attachmentIds,
-    });
-    if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
 
     // A `control_app` call this turn makes is otherwise silent on this route: there is no stream to carry
     // it, so it is collected here and reported in the response instead, for a caller of the plain HTTP

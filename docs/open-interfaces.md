@@ -178,13 +178,16 @@ The origin stays with the work it started:
   host in its own language ("Approved — Clark carries on") rather than as the person's words, and treats any kind or
   version it does not know the same way; search and a new session's recap leave it out.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the
-  running turn (a steer), interrupts it, or runs in the background. A message whose origin differs from the running
-  turn's, a typed message during a spoken turn, or a message that carries attachments, is never steered into it. When
-  a steer was chosen for such a
-  message, it does not interrupt the running turn either: it waits and is answered as a turn of its own, with its own
-  origin, and Stop cancels it while it waits. A running turn is interrupted only when the decider chose that, when the
-  new message carries references, or when a background run has no worker to take it. A message sent to the background lane is recorded in the audit log with its
-  origin.
+  running turn (a steer), interrupts it, or runs in the background. Its `references` and `attachmentIds` are checked
+  first, so a reference or file that is not available, or an `attachmentIds` that is not a list of ids, is refused
+  with the same `400` whether or not a turn is answering, and the running turn is left as it was. A message whose
+  origin differs from the running turn's, a typed message during a spoken turn, or a message that carries attachments,
+  is never steered into it, and a message that carries attachments never runs in the background either. When a steer,
+  or for a message with attachments the background, was chosen for such a message, it does not interrupt the running
+  turn either: it waits and is answered as a turn of its own, with its own origin and files, and Stop cancels it while
+  it waits. A running turn is interrupted only when the decider chose that, when the new message carries references,
+  or when a background run has no worker to take it. A message sent to the background lane is recorded in the audit
+  log with its origin.
 - A turn that is only being set up — its session still being created, or a model switch still pending — is not
   answering yet. A Stop reaches it, but a new message is not decided against it: the message never stops it, and is
   answered after it the way the next point describes. Two quick messages after a model switch are both answered.
