@@ -41,6 +41,57 @@ type SdkModule = typeof import("@earendil-works/pi-coding-agent");
 type SdkSession = Awaited<ReturnType<SdkModule["createAgentSession"]>>["session"];
 type SdkEvent = Parameters<Parameters<SdkSession["subscribe"]>[0]>[0];
 type SdkTool = NonNullable<NonNullable<Parameters<SdkModule["createAgentSession"]>[0]>["customTools"]>[number];
+type SdkAgent = SdkSession["agent"];
+type SdkQueuedMessage = ReturnType<SdkAgent["peekQueuedMessages"]>[number];
+
+/**
+ * Take every message out of the agent's own steering and follow-up queues, in order.
+ *
+ * The agent offers no drain, only a peek that shows the steering queue when it holds anything and the follow-up queue
+ * otherwise, and only its first message unless the queue is in "all" mode. So both queues are switched to "all" for
+ * the read, the steering queue is peeked and cleared, and the follow-up queue is peeked and cleared. When the steering
+ * queue was empty both peeks show the same follow-up messages, which are the same objects; each queued message is its
+ * own object, so a first peek that starts with the follow-up queue's first message held no steering at all.
+ */
+function takeAgentQueues(agent: SdkAgent): { steering: SdkQueuedMessage[]; followUp: SdkQueuedMessage[] } {
+  const modes = { steering: agent.steeringMode, followUp: agent.followUpMode };
+  agent.steeringMode = "all";
+  agent.followUpMode = "all";
+  try {
+    const first = agent.peekQueuedMessages();
+    agent.clearSteeringQueue();
+    const followUp = agent.peekQueuedMessages();
+    agent.clearFollowUpQueue();
+    const steering = first.length > 0 && first[0] !== followUp[0] ? first : [];
+    return { steering, followUp };
+  } finally {
+    agent.steeringMode = modes.steering;
+    agent.followUpMode = modes.followUp;
+  }
+}
+
+/** The text of a queued person's message, as the session keeps its own copy of it; undefined for any other message. */
+function queuedUserText(message: SdkQueuedMessage): string | undefined {
+  if (message.role !== "user") return undefined;
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n");
+}
+
+/**
+ * The queued messages the session holds no text copy of — what a Pi extension queued — with each copied text matched
+ * to one message at most, so a steer sent twice is still re-sent twice.
+ */
+function withoutCopiedText(messages: readonly SdkQueuedMessage[], copies: string[]): SdkQueuedMessage[] {
+  return messages.filter((message) => {
+    const text = queuedUserText(message);
+    const index = text === undefined ? -1 : copies.indexOf(text);
+    if (index === -1) return true;
+    copies.splice(index, 1);
+    return false;
+  });
+}
 
 /**
  * Convert one of our tool definitions into the SDK's shape.
@@ -1003,14 +1054,46 @@ export class RealPiAdapter implements PiAdapter {
    * as one prompt, so the session's own run applies — retry on a transient provider error, compaction, the streaming
    * flag and its settle events — which a bare `agent.continue()` skips. The sentences were already expanded when they
    * were steered, so they are not expanded again. Bounded and checked exactly as a prompt is.
+   *
+   * The agent's queue also holds what a Pi extension queued, which the session keeps no text copy of; clearing the
+   * session's queue clears the agent's too. Those messages are put back in the agent's queue, each in the queue it came
+   * from and in its order, and the run Pi starts for the sentences takes them from there, as it takes any queued
+   * message. Each is sent once: the sentences only in the prompt, the extension's messages only from the queue. With no
+   * sentence to send, the first extension message starts the run itself.
    */
   async continueQueued(sessionId: string): Promise<void> {
     const entry = this.#require(sessionId);
-    if (!entry.session.agent.hasQueuedMessages()) return;
-    const { steering, followUp } = entry.session.clearQueue();
+    const { session } = entry;
+    if (!session.agent.hasQueuedMessages()) return;
+    const queued = takeAgentQueues(session.agent);
+    const { steering, followUp } = session.clearQueue();
+    const copies = [...steering, ...followUp];
+    const extensionSteering = withoutCopiedText(queued.steering, copies);
+    const extensionFollowUp = withoutCopiedText(queued.followUp, copies);
     const text = [...steering, ...followUp].join("\n\n");
-    if (text === "") return;
-    await this.#bounded(sessionId, () => entry.session.prompt(text, { expandPromptTemplates: false }));
+
+    const starter = text === "" ? (extensionSteering.shift() ?? extensionFollowUp.shift()) : undefined;
+    for (const message of extensionSteering) session.agent.steer(message);
+    for (const message of extensionFollowUp) session.agent.followUp(message);
+
+    if (text !== "") {
+      await this.#bounded(sessionId, () => session.prompt(text, { expandPromptTemplates: false }));
+      return;
+    }
+    if (starter === undefined) return;
+    if (starter.role === "custom") {
+      const { customType, content, display, details } = starter;
+      await this.#bounded(sessionId, () => session.sendCustomMessage({ customType, content, display, details }, { triggerTurn: true }));
+      return;
+    }
+    // A person's message queued past the session, which keeps no copy of it: sent as the prompt it would have been.
+    const starterText = queuedUserText(starter);
+    if (starterText !== undefined && starterText !== "") {
+      await this.#bounded(sessionId, () => session.prompt(starterText, { expandPromptTemplates: false }));
+      return;
+    }
+    // Nothing this adapter can start a run with: left queued for the next run to take, rather than dropped.
+    session.agent.steer(starter);
   }
 
   async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
