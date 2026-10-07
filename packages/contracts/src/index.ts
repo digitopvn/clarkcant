@@ -83,6 +83,8 @@ export * from "./inbox.ts";
 export * from "./memory.ts";
 export * from "./implementation-status.ts";
 export * from "./signals.ts";
+export * from "./ingress-mode.ts";
+export * from "./channels.ts";
 export * from "./delegation.ts";
 export * from "./read-context.ts";
 export * from "./runtime-fabric.ts";

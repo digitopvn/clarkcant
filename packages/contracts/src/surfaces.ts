@@ -969,6 +969,14 @@ export const messageRecordSchema = z.strictObject({
    * (`HostWrittenMessage`). Set only by the node's own code path, never from a body.
    */
   hostWritten: hostWrittenMessageSchema.optional(),
+  /**
+   * Who wrote a user message, when it was not the conversation's owner on this node: the principal an external
+   * channel's sender maps to, so several people in one group are told apart. Set only by the host's channel intake,
+   * never from a body. Provider ids never appear here; they live in the channel's message links.
+   */
+  authorPrincipalId: z.string().min(1).max(128).optional(),
+  /** The message in this conversation this one answers, when its channel said so. Set only by the host. */
+  inReplyToMessageId: z.string().min(1).max(128).optional(),
 });
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 
