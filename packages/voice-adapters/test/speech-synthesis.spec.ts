@@ -16,7 +16,7 @@ function recordingFetch(): { fetch: FetchLike; bodies: Array<Record<string, unkn
     return {
       ok: true,
       status: 200,
-      json: async () => ({ steps: [{ outputs: [{ type: "audio", data: Buffer.from("clip").toString("base64"), mime_type: "audio/wav" }] }] }),
+      json: async () => ({ steps: [{ outputs: [{ type: "audio", data: Buffer.from("clip").toString("base64"), mime_type: "audio/L16;codec=pcm;rate=24000" }] }] }),
       text: async () => "",
     };
   };
@@ -43,7 +43,8 @@ describe("speech synthesis through the Gemini TTS seam", () => {
     expect(keys).toEqual(["per-call-key"]);
     expect(bodies[0]?.["model"]).toBe(GEMINI_TTS_FLASH_MODEL);
     expect(JSON.stringify(bodies[0])).not.toContain("per-call-key");
-    expect(clip.mimeType).toBe("audio/wav");
+    expect(clip.mimeType).toBe("audio/L16;codec=pcm;rate=24000");
+    expect(clip.sampleRateHz).toBe(24000);
     expect(Buffer.from(clip.audio).toString()).toBe("clip");
   });
 
