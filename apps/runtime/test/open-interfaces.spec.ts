@@ -10,13 +10,15 @@ import { WebSocket } from "ws";
 import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, createInstance, pinInstance, writeRegisteredPreference } from "@clarkcant/core";
 import { TABLE } from "@clarkcant/data-canvas";
-import { getNotification, listArtifactsForConversation, listAuditEvents } from "@clarkcant/storage";
+import { appendMessage, getNotification, listArtifactsForConversation, listAuditEvents, nextMessageSequence } from "@clarkcant/storage";
 
 import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
 import { isWidgetArtifactWritePayload } from "../src/application/machine-artifact-writes.ts";
 import { isWidgetPerformPayload } from "../src/application/widget-actions.ts";
 import { recordNodeNotice } from "../src/notices.ts";
+import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { MCP_PROTOCOL_VERSIONS } from "../src/open-interfaces.ts";
+import { handleMcpRoute } from "../src/routes/mcp.ts";
 import { createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -227,6 +229,158 @@ describe("MCP endpoint", () => {
     });
     const text = (read.body as { result: { content: { text: string }[] } }).result.content[0]?.text ?? "";
     expect(text).toContain("hello Clark");
+  });
+
+  it("hands back a cursor that reads, as `after`, exactly the messages written since", async () => {
+    type Read = { result: { content: { text: string }[]; structuredContent: { cursor: number; messages: unknown[] } } };
+    const ask = async (text: string, conversationId?: string): Promise<string> => {
+      const asked = await mcp({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "ask_clark", arguments: { text, ...(conversationId === undefined ? {} : { conversationId }) } },
+      });
+      return (asked.body as { result: { structuredContent: { conversationId: string } } }).result.structuredContent.conversationId;
+    };
+    const read = async (conversationId: string, after?: number): Promise<Read["result"]> =>
+      ((
+        await mcp({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "read_conversation", arguments: { conversationId, ...(after === undefined ? {} : { after }) } },
+        })
+      ).body as Read).result;
+
+    const conversationId = await ask("first question");
+    await ask("second question", conversationId);
+    const before = await read(conversationId);
+    expect(before.structuredContent.messages).toHaveLength(4);
+    // The cursor is a message position, not the event cursor, which runs ahead of it.
+    expect(before.structuredContent.cursor).toBe(4);
+
+    await ask("third question", conversationId);
+    const since = await read(conversationId, before.structuredContent.cursor);
+    expect(since.structuredContent.messages).toHaveLength(2);
+    expect(since.content[0]?.text).toContain("third question");
+    expect(since.content[0]?.text).not.toContain("second question");
+
+    const nothingNew = await read(conversationId, since.structuredContent.cursor);
+    expect(nothingNew.structuredContent.messages).toEqual([]);
+    expect(nothingNew.structuredContent.cursor).toBe(since.structuredContent.cursor);
+    expect(nothingNew.content[0]?.text).toBe("No messages after 6.");
+
+    // A cursor past the newest message - a guess, or the event cursor this tool used to hand back - comes back as the
+    // newest message, so the next message written is not skipped.
+    let clamped = 0;
+    for (const inflated of [18, 999_999]) {
+      const stale = await read(conversationId, inflated);
+      expect(stale.structuredContent.messages).toEqual([]);
+      expect(stale.structuredContent.cursor).toBe(6);
+      clamped = stale.structuredContent.cursor;
+    }
+    await ask("fourth question", conversationId);
+    const afterStale = await read(conversationId, clamped);
+    expect(afterStale.content[0]?.text).toContain("fourth question");
+    expect(afterStale.structuredContent.cursor).toBe(8);
+  });
+
+  it("delivers a message stored while a stale cursor is being read, on the next read", async () => {
+    const created = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_conversation", arguments: {} } });
+    const conversationId = (created.body as { result: { structuredContent: { conversationId: string } } }).result.structuredContent
+      .conversationId;
+    const store = (content: string): void => {
+      appendMessage(
+        services.runtime.db,
+        {
+          messageId: services.conductor.newId("msg") as never,
+          conversationId: conversationId as never,
+          role: "user",
+          blocks: [{ type: "text", format: "plain", content, streaming: false }],
+          authorNodeId: services.runtime.identity.nodeId,
+          createdAt: "2026-10-06T00:00:00.000Z" as never,
+          delivery: "accepted",
+        },
+        nextMessageSequence(services.runtime.db, conversationId),
+      );
+    };
+    store("already there");
+
+    type Result = { result: { content: { text: string }[]; structuredContent: { cursor: number; messages: unknown[] } } };
+    const gateway: GatewayDeps = { services, now: () => "2026-10-06T00:00:00.000Z", newConversationId: () => "conv_unused" };
+    // The tool's reads go through this dispatch, so a message can be stored between its first timeline read and the next.
+    let timelineReads = 0;
+    const readThroughRace = async (after: number): Promise<Result["result"]> => {
+      const answered = await handleMcpRoute({
+        request: {
+          method: "POST",
+          path: "/mcp",
+          query: {},
+          headers: { authorization: `Bearer ${token()}` },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "read_conversation", arguments: { conversationId, after } } }),
+        },
+        dispatch: async (inner) => {
+          const response = await handleRequest(gateway, inner);
+          if (inner.path.endsWith("/timeline")) {
+            timelineReads += 1;
+            if (timelineReads === 1) store("stored between the reads");
+          }
+          return response;
+        },
+      });
+      return (answered?.body as Result).result;
+    };
+
+    const stale = await readThroughRace(999_999);
+    expect(stale.structuredContent.messages).toEqual([]);
+    expect(stale.structuredContent.cursor).toBe(1);
+    const next = await readThroughRace(stale.structuredContent.cursor);
+    expect(next.content[0]?.text).toContain("stored between the reads");
+    expect(next.structuredContent.cursor).toBe(2);
+  });
+
+  it("reads the newest messages of a long conversation when no cursor is given", async () => {
+    const created = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_conversation", arguments: {} } });
+    const conversationId = (created.body as { result: { structuredContent: { conversationId: string } } }).result.structuredContent
+      .conversationId;
+    // Longer than one page, so the first page ends far from the newest message.
+    for (let index = 1; index <= 230; index += 1) {
+      appendMessage(
+        services.runtime.db,
+        {
+          messageId: services.conductor.newId("msg") as never,
+          conversationId: conversationId as never,
+          role: "user",
+          blocks: [{ type: "text", format: "plain", content: `message ${String(index)}`, streaming: false }],
+          authorNodeId: services.runtime.identity.nodeId,
+          createdAt: "2026-10-06T00:00:00.000Z" as never,
+          delivery: "accepted",
+        },
+        nextMessageSequence(services.runtime.db, conversationId),
+      );
+    }
+    const read = await mcp({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "read_conversation", arguments: { conversationId } },
+    });
+    type Result = { result: { content: { text: string }[]; structuredContent: { cursor: number; hasNewer: boolean; messages: unknown[] } } };
+    const result = (read.body as Result).result;
+    expect(result.content[0]?.text).toContain("message 230");
+    expect(result.content[0]?.text).not.toContain("message 1\n");
+    expect(result.structuredContent).toMatchObject({ cursor: 230, hasNewer: false });
+
+    // Reading forward from the start says when more is left, and the cursor reads exactly the rest.
+    const page = async (after: number) =>
+      ((await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "read_conversation", arguments: { conversationId, after } } }))
+        .body as Result).result.structuredContent;
+    const first = await page(0);
+    expect(first).toMatchObject({ cursor: 200, hasNewer: true });
+    expect(first.messages).toHaveLength(200);
+    const rest = await page(first.cursor);
+    expect(rest).toMatchObject({ cursor: 230, hasNewer: false });
+    expect(rest.messages).toHaveLength(30);
   });
 
   it("stops one conversation's reply through the same route as the Stop button, and says when there was none", async () => {

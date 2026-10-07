@@ -103,7 +103,7 @@ async function select(instanceId: string, input: Record<string, unknown>, princi
 }
 
 function carried(instanceId: string) {
-  const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+  const timeline = buildTimeline(services, { conversationId: CONVERSATION });
   return timeline.instances.find((instance) => instance.instanceId === instanceId) as { state?: unknown; props?: Record<string, unknown> } | undefined;
 }
 
@@ -152,7 +152,7 @@ describe("placing a timeline", () => {
       allowedDataRefs: [],
     });
 
-    const text = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 }).snapshots[0]?.textAlternative ?? "";
+    const text = buildTimeline(services, { conversationId: CONVERSATION }).snapshots[0]?.textAlternative ?? "";
     expect(text).toBe(
       "Release: Activity timeline (Asia/Saigon, newest first): 5 entries. " +
         "2026-10-01: 02:15 Late alert [warning]. " +
@@ -213,7 +213,7 @@ describe("placing a timeline", () => {
       tone: (["neutral", "info", "success", "warning", "danger"] as const)[index % 5],
     }));
     const instanceId = await place({ title: "t".repeat(MAX_TIMELINE_TITLE), entries, truncated: true, timezone: "Asia/Saigon" });
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     const snapshot = timeline.snapshots[0];
     expect(snapshot?.unreadable).not.toBe(true);
     expect(snapshot?.textAlternative.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);

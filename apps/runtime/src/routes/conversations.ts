@@ -31,6 +31,7 @@ import {
   graphSemanticState,
   nowInstant,
   parseSlashCommand,
+  parseTimelinePageQuery,
   semanticProposalSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
@@ -1342,7 +1343,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       messageIds: outcome.messages.map((message) => message.messageId),
       // The whole timeline page is returned so the client does not have to guess whether
       // its cursor is still valid after its own write.
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
       // Present only while non-zero: a caller that never sees `control_app` used should not learn the
       // field exists.
       ...(hostControlDecisions.length === 0 ? {} : { hostControl: hostControlDecisions }),
@@ -1390,7 +1391,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
                 resolution: "app-intent",
                 taskId: null,
                 messageIds: [appended.messageId],
-                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                timeline: buildTimeline(services, { conversationId }),
                 ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }),
               }),
             );
@@ -1417,7 +1418,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
                 resolution: "app-intent",
                 taskId: null,
                 messageIds: [appended.messageId],
-                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                timeline: buildTimeline(services, { conversationId }),
                 appIntent: askedIntent,
               }),
             );
@@ -1513,7 +1514,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       deciding.catch((cause: unknown) => {
         process.stderr.write(`approval ${approvalId}: an approved widget action did not finish (${cause instanceof Error ? cause.message : String(cause)})\n`);
       });
-      return json(200, { decision, perform: first.value, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+      return json(200, { decision, perform: first.value, timeline: buildTimeline(services, { conversationId }) });
     }
     const decided = first.value;
     if (!decided.ok) return fail(409, decided.code, decided.message);
@@ -1521,7 +1522,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return json(200, {
       decision,
       ...(decided.outcome === undefined ? {} : { outcome: decided.outcome }),
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
@@ -1562,7 +1563,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return json(200, {
       ok: true,
       note: answered.note,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
@@ -1572,7 +1573,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "a cancellation needs the question it drops");
     const cancelled = cancelQuestion(interactionDepsFor(services, conversationId), questionId);
     if (!cancelled) return fail(404, "RESOURCE_NOT_FOUND", "that question is not waiting in this conversation");
-    return json(200, { ok: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    return json(200, { ok: true, timeline: buildTimeline(services, { conversationId }) });
   }
 
   /*
@@ -1591,7 +1592,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return json(200, {
       ok: true,
       questionId: asked.questionId,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
@@ -1627,7 +1628,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         question: resolution.question,
         options: resolution.status === "clarify" ? resolution.options : [],
         messageId: message.messageId,
-        timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+        timeline: buildTimeline(services, { conversationId }),
       });
     }
 
@@ -1674,17 +1675,17 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       sessionId: session.sessionId,
       sessionFile: session.sessionFile ?? null,
       messageId: message.messageId,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 
   // /conversations/:id/timeline
   if (segments.length === 3 && segments[2] === "timeline" && request.method === "GET") {
-    const after = Number.parseInt(request.query.after ?? "0", 10);
-    if (!Number.isFinite(after) || after < 0) {
-      return fail(400, "INVALID_SCHEMA", "the `after` cursor must be a non-negative integer");
-    }
-    return json(200, buildTimeline(services, { conversationId, afterSequence: after }));
+    // A bare read is still `after=0`, the page existing readers ask for; the page reopening a conversation shows is
+    // `window=latest`, and scrolling back asks with `before`.
+    const asked = parseTimelinePageQuery(request.query);
+    if (!asked.ok) return fail(400, "INVALID_SCHEMA", asked.message);
+    return json(200, buildTimeline(services, { conversationId, page: asked.page, limit: asked.limit }));
   }
 
   // /conversations/:id/widgets/:instanceId/actions
@@ -1984,7 +1985,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       const status = result.code === "WIDGET_INSTANCE_UNKNOWN" ? 404 : 409;
       return fail(status, result.code, result.message);
     }
-    return json(201, { pinId: result.pinId, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    return json(201, { pinId: result.pinId, timeline: buildTimeline(services, { conversationId }) });
   }
 
   // /conversations/:id/pins/:pinId
@@ -1997,7 +1998,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that pin is not on this conversation");
     // Unpinning is a presentation change. Note data and running jobs are untouched, which
     // is why nothing here cancels a task.
-    return json(200, { removed: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    return json(200, { removed: true, timeline: buildTimeline(services, { conversationId }) });
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
@@ -2489,7 +2490,7 @@ async function streamUserMessage(
         resolution: outcome.resolution,
         taskId: outcome.taskId ?? null,
         messageIds: outcome.messages.map((message) => message.messageId),
-        timeline: buildTimeline(services, { conversationId: input.conversationId, afterSequence: 0 }),
+        timeline: buildTimeline(services, { conversationId: input.conversationId }),
       }),
     );
   } catch (cause) {

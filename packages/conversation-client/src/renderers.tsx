@@ -202,6 +202,7 @@ import { playbackOwner, pressStillCurrent } from "./playback-owner.ts";
 import type { ObjectUrls } from "./use-object-urls.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
+import { useSurfaceViewState } from "./surface-view-state.tsx";
 import {
   formatTableTotal,
   nextTableSort,
@@ -998,7 +999,7 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
   const initialBody = typeof state?.body === "string" ? state.body : String(props.body ?? "");
   const serverRevision = typeof state?.revision === "number" ? state.revision : 0;
 
-  const [draft, setDraft] = useState(initialBody);
+  const [draft, setDraft] = useSurfaceViewState("note.draft", initialBody);
   const [revision, setRevision] = useState(serverRevision);
   const [conflict, setConflict] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -3457,7 +3458,7 @@ function StandaloneField({
     const described = fieldFromProps(props);
     return described !== undefined && checkField(described).length === 0 ? described : undefined;
   }, [props]);
-  const [value, setValue] = useState<unknown>(() =>
+  const [value, setValue] = useSurfaceViewState<unknown>("field.value", () =>
     state !== undefined && "value" in state ? state.value : (props.value ?? (field === undefined ? undefined : emptyValueOf(field))),
   );
   const [touched, setTouched] = useState(false);
@@ -3514,7 +3515,7 @@ function SearchBox({ props, state, onAction, onStateChange }: RendererProps): Re
   const input = useRef<HTMLInputElement | null>(null);
   const label = String(props.label ?? t("widgets.search.label"));
   const placeholder = typeof props.placeholder === "string" && props.placeholder !== "" ? props.placeholder : t("widgets.table.searchPlaceholder");
-  const [text, setText] = useState(() => (typeof state?.query === "string" ? state.query : textOf(props.query)));
+  const [text, setText] = useSurfaceViewState("search.text", () => (typeof state?.query === "string" ? state.query : textOf(props.query)));
   const sent = useRef(text);
   // The latest callbacks, read when the query settles: a parent redrawing mid-pause must not restart the wait.
   const report = useRef({ onAction, onStateChange });

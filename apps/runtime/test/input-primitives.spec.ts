@@ -205,7 +205,7 @@ describe("placing a form", () => {
       required: ["topic", "agree"],
       properties: { topic: { type: "string", maxLength: 40 }, agree: { type: "boolean", enum: [true] } },
     });
-    const actions = buildTimeline(services, { conversationId, afterSequence: 0 }).instances.find(
+    const actions = buildTimeline(services, { conversationId }).instances.find(
       (entry) => entry.instanceId === instanceId,
     )?.actions;
     expect(actions?.[0]?.inputKeys).toEqual(["topic", "span", "minutes", "people", "agree"]);
@@ -296,7 +296,7 @@ describe("sending a form", () => {
 describe("a list and its item action", () => {
   it("accepts only an id the list holds, and says which item the person acted on", async () => {
     const instanceId = await place(LIST.id, TASKS);
-    const actions = buildTimeline(services, { conversationId, afterSequence: 0 }).instances.find(
+    const actions = buildTimeline(services, { conversationId }).instances.find(
       (entry) => entry.instanceId === instanceId,
     )?.actions;
     expect(actions?.[0]).toMatchObject({ label: "Nhờ Clark", inputKeys: ["itemId"] });
@@ -393,7 +393,7 @@ describe("a list whose own words are longer than a snapshot keeps", () => {
     // Twenty titles at their longest make about 4040 characters of text; nothing the model wrote is too long.
     const items = Array.from({ length: 20 }, (_, index) => ({ id: `i${String(index)}`, title: `${"t".repeat(197)}${String(index).padStart(3, "0")}` }));
     const instanceId = await place(LIST.id, { items });
-    const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId });
     const text = timeline.snapshots.find((snapshot) => snapshot.instanceId === instanceId)?.textAlternative ?? "";
     expect(text.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
     expect(text.startsWith(`${items[0]?.title ?? ""}; ${items[1]?.title ?? ""}`)).toBe(true);
