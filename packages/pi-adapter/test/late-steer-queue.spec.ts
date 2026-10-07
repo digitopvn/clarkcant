@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RealPiAdapter, type RealPiAdapterOptions } from "../src/index.ts";
 
@@ -50,6 +50,8 @@ interface QueuedMessage {
 interface Session {
   /** The session's own follow-up, as the person's follow-up is queued: with a text copy kept by the session. */
   followUp: (text: string) => Promise<void>;
+  /** The session's own steer, which takes pictures as well; the adapter's steer takes text only. */
+  steer: (text: string, images?: { type: "image"; data: string; mimeType: string }[]) => Promise<void>;
   agent: {
     streamFunction: unknown;
     steeringMode: string;
@@ -238,20 +240,79 @@ describe("late steers sent again after a turn", () => {
     await adapter.dispose(sessionId);
   }, 60_000);
 
-  it("drop a queued message it cannot start a run with, and say so, so a drain loop still finishes", async () => {
+  it("skip a queued message it cannot start a run with, say so, and start the run on the next one in the same call", async () => {
+    const { adapter, sessionId, harness, session } = await answeredSession();
+    const before = harness.sent.length;
+    const warnings = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+
+    try {
+      session.agent.steer({ role: "user", content: [], timestamp: Date.now() });
+      session.agent.steer(extensionMessage("extension note after it"));
+
+      // One call, as the runtime's drain loop makes: it stops at the first failure, so the rest must go now.
+      await adapter.continueQueued(sessionId);
+
+      expect(timesSent(harness, before, "extension note after it")).toBe(1);
+      expect(session.agent.hasQueuedMessages()).toBe(false);
+      expect(warnings).toHaveBeenCalledWith(expect.stringMatching(/dropped 1 queued message\(s\) with nothing to send \(user\)/));
+    } finally {
+      warnings.mockRestore();
+    }
+    await adapter.dispose(sessionId);
+  }, 60_000);
+
+  it("fail, naming what it dropped, only when nothing sendable is left, with the queue empty", async () => {
     const { adapter, sessionId, harness, session } = await answeredSession();
     const before = harness.sent.length;
 
     session.agent.steer({ role: "user", content: [], timestamp: Date.now() });
-    session.agent.steer(extensionMessage("extension note after it"));
+    session.agent.followUp({ role: "user", content: "", timestamp: Date.now() });
 
-    await expect(adapter.continueQueued(sessionId)).rejects.toThrow(/queued user message with nothing to send.*dropped/);
-    // Only the message that could not start a run is gone; the next call sends the rest.
-    expect(session.agent.peekQueuedMessages()).toEqual([expect.objectContaining({ customType: "reminder" })]);
+    await expect(adapter.continueQueued(sessionId)).rejects.toThrow(/dropped 2 queued message\(s\).*nothing sendable was left/);
+    expect(session.agent.hasQueuedMessages()).toBe(false);
     expect(harness.sent.length).toBe(before);
+    await adapter.dispose(sessionId);
+  }, 60_000);
+});
+
+/** A one-pixel PNG: a picture the SDK's image normalisation accepts. */
+const PIXEL = {
+  type: "image" as const,
+  data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  mimeType: "image/png",
+};
+
+/** How many pictures reached the model across the requests after `from`. */
+function picturesSent(harness: Harness, from: number): number {
+  return harness.sent.slice(from).reduce((count, request) => count + request.split('"type":"image"').length - 1, 0);
+}
+
+describe("late steers with pictures sent again after a turn", () => {
+  it("keep the picture a steer carried", async () => {
+    const { adapter, sessionId, harness, session } = await answeredSession();
+    const before = harness.sent.length;
+
+    await session.steer("look at this screenshot", [PIXEL]);
 
     await adapter.continueQueued(sessionId);
-    expect(timesSent(harness, before, "extension note after it")).toBe(1);
+
+    expect(timesSent(harness, before, "look at this screenshot")).toBe(1);
+    expect(picturesSent(harness, before)).toBe(1);
+    const request = harness.sent[requestOf(harness, before, "look at this screenshot")] ?? "";
+    expect(request).toContain('"type":"image"');
+    expect(session.agent.hasQueuedMessages()).toBe(false);
+    await adapter.dispose(sessionId);
+  }, 60_000);
+
+  it("send a steer that is only a picture as that picture, not as an empty sentence", async () => {
+    const { adapter, sessionId, harness, session } = await answeredSession();
+    const before = harness.sent.length;
+
+    await session.steer("", [PIXEL]);
+
+    await adapter.continueQueued(sessionId);
+
+    expect(picturesSent(harness, before)).toBe(1);
     expect(session.agent.hasQueuedMessages()).toBe(false);
     await adapter.dispose(sessionId);
   }, 60_000);

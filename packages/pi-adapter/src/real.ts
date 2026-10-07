@@ -82,6 +82,13 @@ function queuedUserParts(message: SdkQueuedMessage): { text: string; images: Sdk
   };
 }
 
+/** Whether a queued message can start a run: an extension's message, or a person's message with text or a picture. */
+function canStartRun(message: SdkQueuedMessage): boolean {
+  if (message.role === "custom") return true;
+  const parts = queuedUserParts(message);
+  return parts !== undefined && (parts.text !== "" || parts.images.length > 0);
+}
+
 /**
  * Convert one of our tool definitions into the SDK's shape.
  *
@@ -1053,8 +1060,10 @@ export class RealPiAdapter implements PiAdapter {
    * Pi takes any queued message — in the default one-at-a-time mode, one steer per model call. Each message is sent
    * once: from the head only, or from the queue only.
    *
-   * Every call takes the head off the queue. A head this adapter cannot start a run with is dropped and reported as an
-   * error, so a caller draining the queue in a loop always finishes.
+   * Every call takes at least the head off the queue. A head this adapter cannot start a run with — neither an
+   * extension's message nor a person's message with text or a picture — is dropped with a process warning, and the run
+   * starts on the next message instead, so the rest is still answered in the same call. Only when nothing sendable is
+   * left does the call fail, naming what it dropped; a caller draining the queue in a loop always finishes.
    */
   async continueQueued(sessionId: string): Promise<void> {
     const entry = this.#require(sessionId);
@@ -1064,9 +1073,21 @@ export class RealPiAdapter implements PiAdapter {
     // The session's own text copies of the person's messages; the agent's messages carry the same text and pictures.
     session.clearQueue();
 
-    const headQueue = queued.steering.length > 0 ? queued.steering : queued.followUp;
-    const head = headQueue[0];
-    if (head === undefined) return;
+    const dropped: string[] = [];
+    let headQueue = queued.steering.length > 0 ? queued.steering : queued.followUp;
+    let head = headQueue[0];
+    while (head !== undefined && !canStartRun(head)) {
+      dropped.push(head.role);
+      headQueue.shift();
+      headQueue = queued.steering.length > 0 ? queued.steering : queued.followUp;
+      head = headQueue[0];
+    }
+    const droppedNote = `worker ${sessionId} dropped ${dropped.length} queued message(s) with nothing to send (${dropped.join(", ")})`;
+    if (head === undefined) {
+      if (dropped.length > 0) throw new Error(`${droppedNote}, and nothing sendable was left in its queue`);
+      return;
+    }
+    if (dropped.length > 0) process.emitWarning(`${droppedNote}; the run starts on the next queued message`);
     let headLength = 1;
     if (head.role === "user") {
       while (headQueue[headLength]?.role === "user") headLength += 1;
@@ -1086,11 +1107,6 @@ export class RealPiAdapter implements PiAdapter {
     });
     const text = parts.map((part) => part.text).filter((sentence) => sentence !== "").join("\n\n");
     const images = parts.flatMap((part) => part.images);
-    if (text === "" && images.length === 0) {
-      throw new Error(
-        `worker ${sessionId} held a queued ${head.role} message with nothing to send; it was dropped so the queue can drain`,
-      );
-    }
     await this.#bounded(sessionId, () =>
       session.prompt(text, { expandPromptTemplates: false, ...(images.length === 0 ? {} : { images }) }),
     );
