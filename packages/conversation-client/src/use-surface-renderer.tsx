@@ -37,6 +37,7 @@ import { type SurfaceBlockRef } from "./blocks.tsx";
 import { type ArtifactFileHost, type MapTileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { createStateOnlyWriter, type StateOnlyWriter } from "./state-only-writes.ts";
 import { tableExportRequestFrom } from "./table-model.ts";
+import { pageForInstance } from "./timeline-window.ts";
 import { desktopDialogLabels } from "./artifact-messages.ts";
 import { downloadBlob, saveForPerson } from "./download.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
@@ -297,6 +298,9 @@ export function useSurfaceRenderer({
    * later one waited was not applied yet, so the timeline is read back rather than trusted; and the node checked the view
    * against the rows it holds now, which may not be the rows this page was given, so those are read again too.
    */
+  /** The held timeline, read when a refusal asks for one widget's view again; a ref so that read keeps one identity. */
+  const timelineNow = useRef(timeline);
+  timelineNow.current = timeline;
   const refuseView = useCallback(
     (conversation: string, instanceId: string, datasetRef: string | undefined, cause: unknown, refused: MessageKey): void => {
       const code = cause instanceof GatewayError ? cause.code : undefined;
@@ -306,8 +310,10 @@ export function useSurfaceRenderer({
           : (bindingUnavailableMessage(t, code) ?? t(refused));
       setViewRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
       if (datasetRef !== undefined) refreshDataset(datasetRef);
+      // The widget's own message is read again, which may be far above the newest page.
+      const { page, limit } = pageForInstance(timelineNow.current, instanceId);
       void client
-        .timeline(conversation)
+        .timelinePage(conversation, page, limit)
         .then(applyTimeline)
         .catch(() => undefined);
     },
