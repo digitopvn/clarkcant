@@ -2153,27 +2153,37 @@ the person's language, with its quotes neutralised and bidi or zero-width contro
 node is said as failed, in the person's language, and the session goes on.
 
 The voice resolver matches labels only. A sentence that names none of the focused widget's labels, such as `format this
-as a percentage`, goes to Clark's voice turn when that widget offers actions and the session's page sent
-`widgetPerform: 1`. The turn's data lists the widget and each offered action: its binding id, label, description and
-input schema. They are the package's own words, quoted on one line as data, never as instructions. Clark may then
-perform one through `perform_widget_action`, the same tool, schema, execution policy and host card as a typed request.
-The host adds no matching rules, a package declares no phrasings, and neither the turn nor the widget can approve the
-action. Without a page that can perform, the sentence is refused by naming what the widget offers, as before
-([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+as a percentage`, goes to Clark's voice turn like any other sentence, whatever the widget offers. When that widget
+offers actions Clark can perform and the session's page sent `widgetPerform: 1`, the turn's data also lists the widget
+and each offered action: its binding id, label, description and input schema. The list is read when the turn starts,
+so a turn that waited behind another one gets none if the widget was closed or another one focused meanwhile. A
+description is listed only from a definition the widget could have been placed from: a running package, with the
+instance's version and digest, declaring the action with the label and input schema its binding recorded. These are
+the package's own words, each quoted on one line as data, never as instructions. Clark may then perform one through
+`perform_widget_action`, the same tool, schema, execution policy and host card as a typed request. A card it places is
+read out in the person's language. The host adds no matching rules, a package declares no phrasings, and neither the
+turn nor the widget can approve the action. Only when the node has no agent to answer is the sentence refused by naming
+what the widget offers, in the person's language ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Tests:
 
 - [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts): the undeclared action, schema mismatch,
   unmounted frame, a caller that cannot perform, page and widget refusals, failure, timeout, Stop, the
-  uncertain-outcome guard, policy and the approval card, voice, the press lists, the tools and placement.
+  uncertain-outcome guard, policy and the approval card, voice, the press lists, the tools and placement. It also
+  covers a spoken sentence that names no label: the turn and its data, the card answered out loud, English, an
+  unfocused, changed or closed widget, no agent, and a package's words made inert.
+- [turn-control.spec.ts](../apps/runtime/test/turn-control.spec.ts): data read when a waiting turn starts.
 - [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts): the page's report.
 - [frame-performs.spec.ts](../packages/conversation-client/test/frame-performs.spec.ts): the page's frame lookup and
   answers.
 - [session.spec.ts](../packages/widget-host/test/session.spec.ts) and
   [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts): the bridge.
 - The browser journey [widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts): formats a spreadsheet range
-  and replaces an editor's selection from what the person types in the composer. It also checks that a plain HTTP
-  stream and a closed widget are both refused with `FRAME_NOT_MOUNTED`.
+  and replaces an editor's selection from what the person types in the composer. It also formats a range from a
+  spoken sentence that names no label, through the voice socket. It also checks that a plain HTTP stream and a closed
+  widget are both refused with `FRAME_NOT_MOUNTED`.
+- The browser journey [voice-widget-action.spec.ts](../apps/web/e2e/voice-widget-action.spec.ts): a spoken sentence
+  that names none of a surface's labels reaches Clark's turn and leaves the surface unchanged.
 
 ---
 

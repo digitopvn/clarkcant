@@ -20,13 +20,16 @@
  *
  * A sentence that matches no offered label is not matched loosely here. The narrow table below exists only for the
  * phrasings a person actually uses for the actions that exist today (a period change in a calendar surface); anything
- * outside it is unresolved, and being refused is a complete answer. The one exception is decided by the voice session,
- * not here: when the focused widget offers actions Clark can perform, an unresolved sentence goes to the agent's turn
- * with those actions as data, and the agent can perform one only through the typed `perform_widget_action` path.
+ * outside it is unresolved here. What happens to it is decided by the voice session, not here: with an agent wired, an
+ * unresolved sentence goes to the agent's turn like any other — with the focused widget's offered actions as data when
+ * it has actions Clark can perform, which the agent can perform only through the typed `perform_widget_action` path —
+ * and without one, the refusal below is the answer.
  */
 
 import { type SemanticView } from "@clarkcant/contracts";
 import { normaliseIntentText } from "@clarkcant/core";
+
+import type { SpeechLocale } from "./application/action-speech.ts";
 
 /**
  * How a person might say a label, and what the words mean by it.
@@ -68,7 +71,8 @@ export interface VoiceWidgetAction {
 
 export type VoiceWidgetActionResolution =
   | { ok: true; action: VoiceWidgetAction }
-  | { ok: false; say: string };
+  /** `focused` says whether a widget was focused at all: the session hands an unmatched sentence on either way. */
+  | { ok: false; say: string; focused: boolean };
 
 /**
  * Two different refusals, kept different on purpose. "This widget offers nothing" and "I did not understand
@@ -76,14 +80,23 @@ export type VoiceWidgetActionResolution =
  * sentence made them indistinguishable in a transcript - which is exactly what happened when this was built:
  * the parity journey failed and the single shared sentence could not say which branch had refused it.
  */
-const NO_ACTION_SAY = (offered: readonly string[]): string =>
-  `Tôi chưa rõ bạn muốn làm gì với widget đang mở. Nó đang có: ${offered.join(", ")}.`;
+const NO_ACTION_SAY: Record<SpeechLocale, (offered: readonly string[]) => string> = {
+  vi: (offered) => `Tôi chưa rõ bạn muốn làm gì với widget đang mở. Nó đang có: ${offered.join(", ")}.`,
+  en: (offered) => `I'm not sure what you want to do with the open widget. It offers: ${offered.join(", ")}.`,
+};
 
 /** The widget is open and has nothing to offer, so no sentence could have matched. */
-const NO_OFFERED_ACTION_SAY = "Widget đang mở không có hành động nào để tôi làm.";
+const NO_OFFERED_ACTION_SAY: Record<SpeechLocale, string> = {
+  vi: "Widget đang mở không có hành động nào để tôi làm.",
+  en: "The open widget has no action for me to do.",
+};
 
-export const NO_FOCUSED_SURFACE_SAY =
-  "Hiện không có widget nào đang mở, nên tôi chưa có hành động nào để làm.";
+const NO_FOCUSED_SURFACE: Record<SpeechLocale, string> = {
+  vi: "Hiện không có widget nào đang mở, nên tôi chưa có hành động nào để làm.",
+  en: "No widget is open right now, so I have no action to do.",
+};
+
+export const NO_FOCUSED_SURFACE_SAY = NO_FOCUSED_SURFACE.vi;
 
 /**
  * Match a sentence to one of the actions this instance offers.
@@ -95,13 +108,16 @@ export const NO_FOCUSED_SURFACE_SAY =
 export function resolveVoiceWidgetAction(input: {
   utterance: string;
   focused: SemanticView | undefined;
+  /** The language a refusal is said in. Vietnamese when absent. */
+  locale?: SpeechLocale;
 }): VoiceWidgetActionResolution {
   const focused = input.focused;
-  if (focused === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
-  if (focused.availableActions.length === 0) return { ok: false, say: NO_OFFERED_ACTION_SAY };
+  const locale = input.locale ?? "vi";
+  if (focused === undefined) return { ok: false, say: NO_FOCUSED_SURFACE[locale], focused: false };
+  if (focused.availableActions.length === 0) return { ok: false, say: NO_OFFERED_ACTION_SAY[locale], focused: true };
 
   const said = normaliseIntentText(input.utterance);
-  if (said === "") return { ok: false, say: offeredSay(focused) };
+  if (said === "") return { ok: false, say: offeredSay(focused, locale), focused: true };
 
   const offered = [...focused.availableActions].sort((a, b) => b.label.length - a.label.length);
   for (const candidate of offered) {
@@ -119,7 +135,7 @@ export function resolveVoiceWidgetAction(input: {
     }
   }
 
-  return { ok: false, say: offeredSay(focused) };
+  return { ok: false, say: offeredSay(focused, locale), focused: true };
 }
 
 /**
@@ -129,8 +145,8 @@ export function resolveVoiceWidgetAction(input: {
  * carries the offered labels in its own output, which is how the labels a view really publishes were read
  * here rather than assumed from the composition template.
  */
-function offeredSay(focused: SemanticView): string {
-  return NO_ACTION_SAY(focused.availableActions.map((action) => action.label));
+function offeredSay(focused: SemanticView, locale: SpeechLocale): string {
+  return NO_ACTION_SAY[locale](focused.availableActions.map((action) => action.label));
 }
 
 /**

@@ -192,10 +192,12 @@ test("under Ask, Clark's perform waits on the host's card: refused, nothing chan
 });
 
 /**
- * The same request said out loud while the sheet is focused, in words that name none of its labels ("Định dạng vùng
- * đang chọn"). The voice session hands the sentence to Clark's turn with the sheet's offered actions as data; the turn
- * performs through `perform_widget_action`, and the page's voice socket hands the request to the frame. The provider is
- * the voice fixture (`CC_VOICE_FIXTURE=1`); the socket, the policy and the frame are real.
+ * The same request said out loud while the sheet is focused: "format this as a percentage", which names none of the
+ * sheet's labels (its action's label is "Định dạng vùng đang chọn"). The voice session hands the sentence to Clark's
+ * turn with the sheet's offered actions as data; the fixture model takes the binding id from that data — a spoken turn
+ * without it performs nothing — and performs through `perform_widget_action`, and the page's voice socket hands the
+ * request to the frame. The provider is the voice fixture (`CC_VOICE_FIXTURE=1`); the socket, the policy and the frame
+ * are real.
  */
 test("a range is formatted when the person says so out loud without naming the action's label", async ({ page, request }) => {
   test.setTimeout(180_000);

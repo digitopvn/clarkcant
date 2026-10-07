@@ -330,9 +330,10 @@ type SpokenSentenceInput = Parameters<NonNullable<VoiceGatewayOptions["answer"]>
  * answer needs. The words that come back are what the voice session reads aloud, which is why the
  * live model is told not to answer anything itself: this is the only answer in the room.
  *
- * A sentence handed over because it named none of the focused widget's offered actions carries them
- * (`widgetContext`): they go in the turn's data, as the package's own words, and the host's note says
- * how they may be used — through `perform_widget_action`, the typed path, and nothing else.
+ * A sentence said with a widget focused that named none of its labels may carry that widget's offered
+ * actions (`widgetContext`), read when the turn starts: they go in the turn's data, as the package's own
+ * words, and the host's note says how they may be used — through `perform_widget_action`, the typed path,
+ * and nothing else.
  */
 export async function answerSpokenSentence(
   services: NodeServices,
@@ -350,8 +351,9 @@ export async function answerSpokenSentence(
     at: spokenAt as never,
     // Spoken turns are answered briefly: the session has to read the answer out loud.
     note: widgetContext === undefined ? VOICE_ANSWER_NOTE : `${VOICE_ANSWER_NOTE} ${FOCUSED_WIDGET_NOTE}`,
-    // The focused widget's offered actions are the package's words, so they travel as data, never in the note.
-    ...(widgetContext === undefined ? {} : { data: widgetContext }),
+    // The focused widget's offered actions are the package's words, so they travel as data, never in the note; read
+    // when the turn starts, after any turn it waited behind, and left out if that widget is no longer focused by then.
+    ...(widgetContext === undefined ? {} : { dataAtStart: widgetContext }),
     // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
     // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
     channel: "voice",
