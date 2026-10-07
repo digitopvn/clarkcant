@@ -2272,7 +2272,8 @@ export async function createModelTurn(options: {
   }
 
   /** One message's turn; see `answer`, which holds the conversation's stop scope around it. */
-  const answerHeld = async (input: ModelTurnInput): Promise<ModelTurnReply> => {
+  const answerHeld = async (received: ModelTurnInput): Promise<ModelTurnReply> => {
+    let input = received;
     if (!availability.available) {
       throw new Error(
         `this node is configured for ${describe()} but that model is not reachable: ${availability.reason ?? "no reason given"}`,
@@ -2307,7 +2308,11 @@ export async function createModelTurn(options: {
      * without them; a spoken one is answered as speech, not folded into a typed reply.
      */
     const steerable =
-      (input.note ?? "") === "" && (input.data ?? "") === "" && input.attached !== true && input.channel !== "voice";
+      (input.note ?? "") === "" &&
+      (input.data ?? "") === "" &&
+      input.dataAtStart === undefined &&
+      input.attached !== true &&
+      input.channel !== "voice";
     let claimed = await claimTurn(input.conversationId, input.principal, input.origin, stop);
     /*
      * A turn is already running. A second prompt on a session that is answering is refused by Pi, and it would make
@@ -2332,6 +2337,16 @@ export async function createModelTurn(options: {
       if ((await Promise.race([ended, untilAborted(stop, ended)])) === "stopped") return stoppedBeforeStart();
       claimed = await claimTurn(input.conversationId, input.principal, input.origin, stop);
     }
+    // Read now that this turn holds the conversation: what it describes may have changed while it waited. A hook that
+    // throws gives no data rather than an error here, before the run's `finally`, that would keep the conversation busy.
+    const atStart = ((): string => {
+      try {
+        return input.dataAtStart?.()?.trim() ?? "";
+      } catch {
+        return "";
+      }
+    })();
+    if (atStart !== "") input = { ...input, data: [input.data?.trim() ?? "", atStart].filter((part) => part !== "").join("\n\n") };
     const turn = claimed.turn;
     const preparedResolve = claimed.prepared;
     const endRun = claimed.endRun;
