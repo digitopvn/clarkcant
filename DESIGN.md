@@ -472,6 +472,15 @@ Three or more consecutive working steps (reasoning, tool calls and the checks un
 
 The thinking state ends as soon as the first content/tool event appears.
 
+A long conversation stays one continuous conversation:
+
+- it opens on its newest messages; older history is read as the reader nears the top, with no button to press, and is put in front without moving the row being read;
+- only the rows around the screen are in the document; the focused row, a row whose player is playing, the row of the embedded frame (a video, a map) last used, the rows a selection spans and the newest row always stay;
+- a surface scrolled away and back keeps the view a person left it in for the session (an open fold, a draft, a search), never secrets typed into a credential card;
+- while the reader is more than a screen above the bottom and something new arrives there, a "Jump to latest" button floats over the foot of the transcript; it is never permanent chrome and goes away at the bottom;
+- a failed read of older history says so in place, keeps everything on screen and offers to try again;
+- the browser's find-in-page sees only the rows in the document, which is every row of a conversation up to 60 messages. Searching further back is not shipped yet and is not done by keeping thousands of rows in the document.
+
 ### 6.6 Undo
 
 A reversible action should create an ephemeral Undo affordance in the timeline/status:
@@ -1256,6 +1265,12 @@ Use segmented controls, toggles and swatches:
     display is still attached, and at the default size otherwise.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: opens a subpanel.
+- Version & what's new: the installed Clark version and channel, and the release notes that came with the build,
+  read offline (`GET /changelog`). It is the same list `/changelog` and "what's new?" draw as a card in the conversation:
+  releases newest first, entries grouped Breaking, Features, Fixes, Other. A build run from source also says which
+  commit its notes reach and that the checkout may hold later changes. There is no update button, update status or channel
+  choice until an update service exists. When the notes cannot be read, the section says so in one sentence and keeps
+  the rest of Settings usable.
 
 Don't show contrast debugging to consumers; put it in the Developer section.
 

@@ -200,12 +200,19 @@ describe("the window strip's pin, mode and close", () => {
     const scope = scopeWith({
       status: async () => ({ ok: true, window: { mode: "expanded", alwaysOnTop: true, fullScreen: true } }),
     });
-    expect(await readShellWindow(scope)).toEqual({ mode: "expanded", alwaysOnTop: true, fullScreen: true });
+    expect(await readShellWindow(scope)).toEqual({ mode: "expanded", alwaysOnTop: true, fullScreen: true, pinnable: true });
   });
 
   it("a mode the strip has no control for reads as a normal window", async () => {
     const scope = scopeWith({ status: async () => ({ ok: true, window: { mode: "orb", alwaysOnTop: false } }) });
-    expect(await readShellWindow(scope)).toEqual({ mode: "normal", alwaysOnTop: false, fullScreen: false });
+    expect(await readShellWindow(scope)).toEqual({ mode: "normal", alwaysOnTop: false, fullScreen: false, pinnable: true });
+  });
+
+  it("a shell that cannot keep the window on top says so, so the strip can drop the pin", async () => {
+    const scope = scopeWith({
+      status: async () => ({ ok: true, window: { mode: "normal", alwaysOnTop: false, fullScreen: false, pinnable: false } }),
+    });
+    expect(await readShellWindow(scope)).toEqual({ mode: "normal", alwaysOnTop: false, fullScreen: false, pinnable: false });
   });
 
   it("a shell that does not describe its window leaves the strip on its defaults", async () => {

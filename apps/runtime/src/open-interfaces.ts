@@ -1,4 +1,4 @@
-import { MAP_TILE_KEY_OFFLINE_REASONS, PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
+import { MAP_TILE_KEY_OFFLINE_REASONS, PERSON_ONLY_REFUSAL, TIMELINE_PAGE_DEFAULT_LIMIT, TIMELINE_PAGE_MAX_LIMIT } from "@clarkcant/contracts";
 
 /**
  * The node's open interfaces, described in the formats other tools already read.
@@ -169,6 +169,21 @@ export function openApiDocument(): Record<string, unknown> {
         get: { summary: "This document", security: [], responses: { "200": ok("OpenAPI 3.1") } },
       },
       "/node": { get: { summary: "The node and its configured model", responses: { "200": ok("Node"), ...refusals } } },
+      "/changelog": {
+        get: {
+          summary: "What this version of Clark changed, from the release notes embedded with the build",
+          description:
+            "The installed version and channel, and the canonical release records newest first (bounded; offline). " +
+            "since keeps only the releases after a version such as 1.4. Read-only: no update status or channel choice.",
+          parameters: [{ name: "since", in: "query", required: false, schema: { type: "string", maxLength: 40 } }],
+          responses: {
+            ...refusals,
+            "200": ok("ChangelogView: { installed, since?, notesCover?, releases, source }"),
+            "400": refusal("INVALID_SCHEMA: since is not a version"),
+            "503": refusal("CHANGELOG_UNAVAILABLE: the build carries no readable release notes"),
+          },
+        },
+      },
       "/conversations": {
         get: { summary: "List conversations", responses: { "200": ok("Conversations"), ...refusals } },
         post: {
@@ -235,8 +250,27 @@ export function openApiDocument(): Record<string, unknown> {
       "/conversations/{conversationId}/timeline": {
         get: {
           summary: "Read a conversation",
-          parameters: [conversationId, { name: "after", in: "query", required: false, schema: { type: "integer", minimum: 0 } }],
-          responses: { "200": ok("Timeline: { conversationId, cursor, messages, pins, instances, snapshots }"), ...refusals },
+          description:
+            "One page of the conversation's messages, oldest first, chosen by message sequence. At most one of " +
+            "`after`, `before` and `window=latest` may be given; none is `after=0`. `window=latest` is the newest " +
+            "page, `before=N` the page just older than sequence N, `after=N` the page just newer than N. `window` " +
+            "says which part of the conversation the page is: every message with fromSequence <= sequence <= " +
+            "toSequence, `sequences` in the order of `messages`, and whether older or newer messages exist. The " +
+            "event `cursor` is a different number and is not a page cursor.",
+          parameters: [
+            conversationId,
+            { name: "after", in: "query", required: false, schema: { type: "integer", minimum: 0 } },
+            { name: "before", in: "query", required: false, schema: { type: "integer", minimum: 1 } },
+            { name: "window", in: "query", required: false, schema: { type: "string", enum: ["latest"] } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: TIMELINE_PAGE_MAX_LIMIT, default: TIMELINE_PAGE_DEFAULT_LIMIT } },
+          ],
+          responses: {
+            "200": ok(
+              "Timeline: { conversationId, cursor, messages, pins, instances, snapshots, metadata, activeTaskIds, " +
+                "window: { version: 1, fromSequence, toSequence, hasOlder, hasNewer, sequences } }",
+            ),
+            ...refusals,
+          },
         },
       },
       "/conversations/{conversationId}/questions/{questionId}/answer": {

@@ -1,0 +1,20 @@
+# The release tooling is its own pnpm project, outside the app workspace (the root pnpm-workspace.yaml does not list
+# tools/*). semantic-release brings npm, the GitHub plugin and their trees; none of that may reach the app's lockfile,
+# its install or its build. This file makes the directory its own workspace root, so `pnpm install` here reads only
+# these settings and this directory's lockfile.
+
+packages: []
+
+# The same supply-chain policy as the app workspace (see the root pnpm-workspace.yaml for the reasons).
+minimumReleaseAge: 1440
+blockExoticSubdeps: true
+verifyStoreIntegrity: true
+dangerouslyAllowAllBuilds: false
+strictDepBuilds: false
+saveExact: true
+strictPeerDependencies: false
+
+# semantic-release loads its plugins and the Conventional Commits preset by name, from the plugin's own directory.
+# pnpm's isolated layout hides a package that is not the plugin's own dependency, so the preset could not be found;
+# a flat node_modules is the layout these plugins are written for. Only this tool project uses it.
+nodeLinker: hoisted
