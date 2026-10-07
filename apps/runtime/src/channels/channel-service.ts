@@ -30,9 +30,14 @@ export interface ChannelService {
   /** A delivery from a connection's ingress: verified, recorded once, and routed soon after. */
   receive(connectionRef: string, delivery: ChannelDelivery): Promise<ChannelIntakeResult>;
   kick(): void;
-  /** Resolves once nothing is waiting or running; for tests and an orderly stop. */
+  /** Resolves once nothing is waiting or running; for tests. */
   idle(timeoutMs?: number): Promise<void>;
-  stop(): void;
+  /**
+   * Stop taking work: no pass starts after this, a pass already scheduled is cancelled, and no new turn is started.
+   * Resolves once the pass and the turns already running have finished, or after `timeoutMs` — `true` when everything
+   * finished — so a node that is closing can keep its database open for them, and not wait forever on one.
+   */
+  stop(timeoutMs?: number): Promise<boolean>;
 }
 
 export type ChannelServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "automation">;
@@ -53,6 +58,7 @@ export function startChannelService(
   let passing: Promise<void> | undefined;
   let again = false;
   let wake: NodeJS.Timeout | undefined;
+  let scheduled: NodeJS.Immediate | undefined;
 
   recoverChannelWork(services, now);
 
@@ -134,6 +140,7 @@ export function startChannelService(
   };
 
   const pass = (): void => {
+    if (stopped) return;
     routePendingChannelInputs(routing);
     dropOverflow();
     const { due, nextDueMs } = queuedBursts();
@@ -158,6 +165,7 @@ export function startChannelService(
   };
 
   const runPass = (): Promise<void> => {
+    if (stopped) return passing ?? Promise.resolve();
     if (passing !== undefined) {
       again = true;
       return passing;
@@ -197,8 +205,11 @@ export function startChannelService(
       return result;
     },
     kick() {
-      if (stopped) return;
-      setImmediate(() => void runPass());
+      if (stopped || scheduled !== undefined) return;
+      scheduled = setImmediate(() => {
+        scheduled = undefined;
+        void runPass();
+      });
     },
     async idle(timeoutMs = 10_000) {
       const deadline = Date.now() + timeoutMs;
@@ -211,10 +222,23 @@ export function startChannelService(
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
     },
-    stop() {
+    async stop(timeoutMs = 2_000) {
       stopped = true;
       clearInterval(timer);
       if (wake !== undefined) clearTimeout(wake);
+      if (scheduled !== undefined) clearImmediate(scheduled);
+      scheduled = undefined;
+      const running = Promise.all([passing ?? Promise.resolve(), ...inflight]).then(() => true);
+      let bound: NodeJS.Timeout | undefined;
+      const late = new Promise<boolean>((resolve) => {
+        bound = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+        bound.unref();
+      });
+      try {
+        return await Promise.race([running, late]);
+      } finally {
+        clearTimeout(bound);
+      }
     },
   };
   return service;

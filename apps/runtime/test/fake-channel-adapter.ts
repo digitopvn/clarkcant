@@ -40,8 +40,12 @@ export interface FakeSend {
 export interface FakeChannelAdapter extends ChannelAdapter {
   readonly sends: FakeSend[];
   readonly typing: (address: ChannelAddress) => Promise<void>;
-  /** How the next sends end: answered (the default), refused, or never answered. */
-  sendMode: "sent" | "not-sent" | "throw";
+  /** How the next sends end: answered (the default), refused, failed without an answer, or never settled at all. */
+  sendMode: "sent" | "not-sent" | "throw" | "hang";
+  /** Called after each send the provider answered, so a test can change what the next one does. */
+  afterSend?: () => void;
+  /** The longest text one message may carry, read on every call to `capabilities`. */
+  maxTextLength?: number;
 }
 
 export const FAKE_PROVIDER = "fake-chat";
@@ -55,7 +59,7 @@ export function fakeDelivery(messages: readonly FakeChannelMessage[], signature 
   };
 }
 
-export function createFakeChannelAdapter(options: { maxTextLength?: number } = {}): FakeChannelAdapter {
+export function createFakeChannelAdapter(): FakeChannelAdapter {
   const sends: FakeSend[] = [];
   let next = 0;
   const adapter: FakeChannelAdapter = {
@@ -63,7 +67,13 @@ export function createFakeChannelAdapter(options: { maxTextLength?: number } = {
     ingressModes: ["webhook"],
     sends,
     sendMode: "sent",
-    capabilities: () => ({ text: true, replies: true, threads: true, typing: true, ...(options.maxTextLength === undefined ? {} : { maxTextLength: options.maxTextLength }) }),
+    capabilities: () => ({
+      text: true,
+      replies: true,
+      threads: true,
+      typing: true,
+      ...(adapter.maxTextLength === undefined ? {} : { maxTextLength: adapter.maxTextLength }),
+    }),
     verify(delivery) {
       return delivery.headers[FAKE_SIGNATURE_HEADER] === "ok" ? { ok: true } : { ok: false, reason: "the signature does not match" };
     },
@@ -88,10 +98,15 @@ export function createFakeChannelAdapter(options: { maxTextLength?: number } = {
         sends.push({ address, content, idempotencyKey: sendOptions.idempotencyKey });
         throw new Error("the connection dropped before the provider answered");
       }
+      if (adapter.sendMode === "hang") {
+        sends.push({ address, content, idempotencyKey: sendOptions.idempotencyKey });
+        return await new Promise<ChannelSendOutcome>(() => undefined);
+      }
       if (adapter.sendMode === "not-sent") return { status: "not-sent", reason: "the provider refused the chat" };
       next += 1;
       const externalMessageId = `out-${String(next)}`;
       sends.push({ address, content, idempotencyKey: sendOptions.idempotencyKey, externalMessageId });
+      adapter.afterSend?.();
       return { status: "sent", externalMessageId };
     },
     typing: async () => undefined,

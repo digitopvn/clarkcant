@@ -19,6 +19,7 @@ import {
   getEffect,
   getChannelInput,
   latestMessages,
+  putExternalConnection,
 } from "@clarkcant/storage";
 
 import { createChannelAdapterRegistry } from "../src/channels/channel-adapter-registry.ts";
@@ -106,8 +107,8 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  channels.stop();
+afterEach(async () => {
+  await channels.stop();
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -121,7 +122,11 @@ describe("a direct message on a bound channel", () => {
     expect(turns).toHaveLength(1);
     expect(turns[0]?.text).toBe("chào Clark");
     // Told where it came from, by name, with no provider id in what the model reads.
-    expect(turns[0]?.data).toMatch(/direct chat \(fake-chat\) from Lan/);
+    expect(turns[0]?.data).toMatch(/direct chat \(fake-chat\)/);
+    expect(turns[0]?.data).toMatch(/sender's display name: "Lan"/);
+    // Lan is not the owner, so the turn is a participant's, and the model is told so by the host.
+    expect(turns[0]?.data).toMatch(/NOT the owner/);
+    expect(turns[0]?.channelAuthority).toMatchObject({ standing: "participant", grants: [] });
     expect(JSON.stringify(turns[0])).not.toMatch(/dm-lan|u-lan|m-1|conn_/);
 
     const [user, reply] = transcript();
@@ -190,8 +195,26 @@ describe("a bound group", () => {
     await deliver({ id: "g-2", space: "group-1", from: "u-lan", name: "Lan", text: "@clark mấy giờ họp?", mentionsBot: true });
     await channels.idle();
     expect(turns).toHaveLength(1);
-    expect(turns[0]?.data).toMatch(/Minh: mai họp lúc 9 giờ nhé/);
+    expect(turns[0]?.data).toContain('"Minh": "mai họp lúc 9 giờ nhé"');
     expect(adapter.sends).toHaveLength(1);
+
+    // Handed to one turn only: the next turn there is not given the same talk again.
+    expect(channelInputsInState(services.runtime.db, ["context"])).toHaveLength(0);
+    await deliver({ id: "g-3", space: "group-1", from: "u-lan", name: "Lan", text: "@clark còn gì nữa không?", mentionsBot: true });
+    await channels.idle();
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.data).not.toMatch(/mai họp/);
+  });
+
+  it("does not hand a turn talk from hours before it", async () => {
+    bind({ space: "group-1", kind: "group" });
+    await deliver({ id: "g-1", space: "group-1", from: "u-minh", name: "Minh", text: "chuyện hôm qua" });
+    await channels.idle();
+    advance(7 * 60 * 60_000);
+    await deliver({ id: "g-2", space: "group-1", from: "u-lan", name: "Lan", text: "@clark chào", mentionsBot: true });
+    await channels.idle();
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.data).not.toMatch(/chuyện hôm qua/);
   });
 
   it("answers a reply to Clark's message, and links it to the message it answers", async () => {
@@ -272,10 +295,37 @@ describe("a reply that cannot be promised", () => {
     const reply = transcript().find((message) => message.role === "assistant");
     expect(channelDeliveryReceiptsForMessage(services.runtime.db, reply?.messageId ?? "")).toMatchObject([{ state: "unknown" }]);
 
+    // The ledger holds it as unknown, so the conversation may say the inbox asks about it.
+    expect(textOf(transcript().at(-1) as MessageRecord)).toMatch(/hộp thư hỏi bạn/);
+
     adapter.sendMode = "sent";
     channels.kick();
     await channels.idle();
     expect(adapter.sends).toHaveLength(1);
+  });
+
+  it("names a revoked connection as the cause, not the owner's settings", async () => {
+    bind({ space: "dm-lan", kind: "direct" });
+    answer = async (input) => {
+      putExternalConnection(services.runtime.db, { ...connection, state: "revoked", updatedAt: now() });
+      return `Đã nhận: ${input.text}`;
+    };
+    await deliver({ id: "m-1", space: "dm-lan", kind: "direct", from: "u-lan", text: "còn đó không?" });
+    await channels.idle();
+    expect(adapter.sends).toHaveLength(0);
+    const said = textOf(transcript().at(-1) as MessageRecord);
+    expect(said).toMatch(/đã bị thu hồi/);
+    expect(said).not.toMatch(/Cài đặt/);
+  });
+
+  it("names the provider's refusal as the cause", async () => {
+    bind({ space: "dm-lan", kind: "direct" });
+    adapter.sendMode = "not-sent";
+    await deliver({ id: "m-1", space: "dm-lan", kind: "direct", from: "u-lan", text: "gửi nhé" });
+    await channels.idle();
+    const said = textOf(transcript().at(-1) as MessageRecord);
+    expect(said).toMatch(/fake-chat từ chối câu trả lời này: the provider refused the chat/);
+    expect(said).not.toMatch(/Cài đặt/);
   });
 
   it("is held when the owner asked to be asked about communication, and the conversation says why", async () => {
@@ -295,7 +345,7 @@ describe("a reply that cannot be promised", () => {
     expect(adapter.sends).toHaveLength(0);
     const reply = transcript().find((message) => message.role === "assistant");
     expect(channelDeliveryReceiptsForMessage(services.runtime.db, reply?.messageId ?? "")).toMatchObject([{ state: "held" }]);
-    expect(textOf(transcript().at(-1) as MessageRecord)).toMatch(/fake-chat/);
+    expect(textOf(transcript().at(-1) as MessageRecord)).toMatch(/fake-chat vì chính sách của bạn.*Cài đặt → Điều khiển/);
   });
 });
 
@@ -317,7 +367,7 @@ describe("a node that stops while it answers", () => {
     await running;
     const [input] = channelInputsInState(services.runtime.db, ["started"]);
     expect(input).toBeDefined();
-    channels.stop();
+    void channels.stop(0);
     services.runtime.close();
 
     answer = async (turn) => `Đã nhận: ${turn.text}`;
@@ -331,5 +381,35 @@ describe("a node that stops while it answers", () => {
     expect(adapter.sends).toHaveLength(0);
     expect(transcript().filter((each) => each.role === "user")).toHaveLength(1);
     expect(textOf(transcript().at(-1) as MessageRecord)).toMatch(/fake-chat/);
+    expect(textOf(transcript().at(-1) as MessageRecord)).not.toMatch(/một phần/);
+  });
+
+  it("says part of the reply had gone out when the node stopped between its pieces", async () => {
+    bind({ space: "dm-lan", kind: "direct" });
+    adapter.maxTextLength = 20;
+    answer = async () => `${"a".repeat(18)}\n${"b".repeat(18)}`;
+    let firstSent: () => void = () => undefined;
+    const sentOnce = new Promise<void>((resolve) => {
+      firstSent = resolve;
+    });
+    adapter.afterSend = () => {
+      adapter.sendMode = "hang";
+      firstSent();
+    };
+    const message = { id: "m-1", space: "dm-lan", kind: "direct", from: "u-lan", text: "dài nhé" } as const;
+    await deliver(message);
+    channels.kick();
+    await sentOnce;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(adapter.sends).toHaveLength(2);
+    void channels.stop(0);
+    services.runtime.close();
+
+    adapter.sendMode = "sent";
+    delete adapter.afterSend;
+    boot();
+    await channels.idle();
+    expect(adapter.sends).toHaveLength(2);
+    expect(textOf(transcript().at(-1) as MessageRecord)).toMatch(/một phần câu trả lời đã tới đó/);
   });
 });

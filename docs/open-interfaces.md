@@ -205,9 +205,21 @@ The origin stays with the work it started:
 back only that choice; it answers `undone: false` when the last policy write did not change it.
 
 A `channel` turn is different from the machine surfaces: its sender is someone on an external channel, not a holder of
-this node's token. Reads and local writes decide as the person's own turn does, but a risky effect it asks for is asked
-of the owner in every mode, unless a standing grant on that channel covers the category; a deny rule or a prohibition
-still wins. Such a user message also carries `authorPrincipalId` (the principal the channel's sender maps to, so the
+this node's token, and what the turn may do depends on who that is. The node decides it from the principal the
+sender's account maps to, never from a display name or anything the message says:
+
+- **Owner.** The owner's own account, or any external account linked to the owner's principal, acts as the owner: the
+  turn gets the owner's context and is decided by the one execution policy like any other turn, with no extra prompt.
+- **Participant.** Anyone else. The turn gets none of the owner's memory, personal or project instructions, screen
+  context or the machine's context files, and runs on a model session of its own (a session that served the owner is
+  never reused for it). The host tells the model the sender is not the owner. Conversation and the reply to the same
+  thread stay autonomous; any other tool call runs only when a standing grant on the binding covers that tool
+  (`grantRefs`, each `tool:<name>`) or the owner approved that exact call. Otherwise the call is held, nothing runs,
+  and the owner is asked on an approval card in the conversation; approving it carries on as the participant's turn and
+  lets that one call through once. Deciding an approval is never opened to a participant.
+
+The default binding audience admits everyone in the bound space; the rules above are what keep that safe. Such a user
+message also carries `authorPrincipalId` (the principal the channel's sender maps to, so the
 transcript can tell several speakers apart) and, when it answers a message of this conversation, `inReplyToMessageId`.
 Both are optional, set only by the node, and absent on every other message. No provider ships in this build and no
 HTTP route accepts channel deliveries yet; the substrate is described in

@@ -338,14 +338,18 @@ export function updateChannelInput(
   );
 }
 
-/** The newest context-only inputs of a binding, oldest first. */
-export function channelContextJournal(db: Database, bindingId: string, limit: number): ChannelInputRecord[] {
+/**
+ * The newest context-only inputs of a binding, oldest first. `since`, when given, leaves out anything received before
+ * it: talk from hours ago is not what a new message is about.
+ */
+export function channelContextJournal(db: Database, bindingId: string, limit: number, since?: Instant): ChannelInputRecord[] {
   if (limit <= 0) return [];
   return allRows<InputRow>(
     db,
-    `SELECT * FROM channel_inputs WHERE binding_id = ? AND state = 'context'
+    `SELECT * FROM channel_inputs WHERE binding_id = ? AND state = 'context' AND received_at >= ?
       ORDER BY received_at DESC, signal_id DESC LIMIT ?`,
     bindingId,
+    since ?? "",
     limit,
   )
     .map(inputFromRow)
@@ -425,6 +429,17 @@ export function channelDeliveryReceiptsForMessage(db: Database, messageId: strin
     db,
     "SELECT document FROM channel_delivery_receipts WHERE message_id = ? ORDER BY created_at",
     messageId,
+  ).map((row) => parseJson<ChannelDeliveryReceipt>(row.document, "channel_delivery_receipts.document"));
+}
+
+/** Receipts of a conversation written at or after `since`, oldest first: what one turn's replies became. */
+export function channelDeliveryReceiptsSince(db: Database, conversationId: string, since: Instant, limit = 200): ChannelDeliveryReceipt[] {
+  return allRows<{ document: string }>(
+    db,
+    "SELECT document FROM channel_delivery_receipts WHERE conversation_id = ? AND created_at >= ? ORDER BY created_at LIMIT ?",
+    conversationId,
+    since,
+    limit,
   ).map((row) => parseJson<ChannelDeliveryReceipt>(row.document, "channel_delivery_receipts.document"));
 }
 

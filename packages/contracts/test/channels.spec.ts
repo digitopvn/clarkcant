@@ -95,6 +95,13 @@ describe("a binding", () => {
     expect(channelBindingSchema.safeParse({ ...binding, connectionRef: "abc" }).success).toBe(false);
   });
 
+  it("accepts a standing grant only as tool:<name>, so a typo is refused rather than granting nothing", () => {
+    expect(channelBindingSchema.safeParse({ ...binding, grantRefs: ["tool:run_command"] }).success).toBe(true);
+    expect(channelBindingSchema.safeParse({ ...binding, grantRefs: ["run_command"] }).success).toBe(false);
+    expect(channelBindingSchema.safeParse({ ...binding, grantRefs: ["tool:Run Command"] }).success).toBe(false);
+    expect(channelBindingSchema.safeParse({ ...binding, grantRefs: ["tool:*"] }).success).toBe(false);
+  });
+
   it("bounds the burst window and the queue", () => {
     expect(channelBindingSchema.safeParse({ ...binding, attentionPolicy: { burstWindowMs: 120_000 } }).success).toBe(false);
     expect(channelBindingSchema.safeParse({ ...binding, attentionPolicy: { maxQueuedPerThread: 0 } }).success).toBe(false);

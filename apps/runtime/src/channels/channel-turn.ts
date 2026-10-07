@@ -6,7 +6,7 @@ import {
   type Instant,
   type MessageRecord,
 } from "@clarkcant/contracts";
-import { channelTurnData, coalescedTurnText, handleUserMessage } from "@clarkcant/core";
+import { type ChannelTurnAuthority, channelStanding, channelTurnData, coalescedTurnText, handleUserMessage } from "@clarkcant/core";
 import {
   type ChannelInputRecord,
   channelContextJournal,
@@ -28,8 +28,11 @@ import { channelEventOf } from "./channel-routing.ts";
  * One Clark turn for what someone said on a channel.
  *
  * The same turn a message typed into the page gets — `handleUserMessage`, the same model, tools and policy — with
- * three things only the host knows: who wrote it (`authorPrincipalId`), that it came from a channel (`origin`), and a
- * few lines of data saying where and what was said around it. Several lines one person sent in a burst are one
+ * what only the host knows: who wrote it (`authorPrincipalId`), that it came from a channel (`origin`), whether the
+ * sender is the owner (`ChannelTurnAuthority`: the owner's principal, directly or through a linked account, and never a
+ * display name), and a few lines of data saying where and what was said around it. A sender who is not the owner gets a
+ * participant's turn: none of the owner's context, and nothing beyond the conversation without a grant or the owner's
+ * approval. Several lines one person sent in a burst are one
  * message and one turn. The reply route is recorded before the turn runs, and every reply the turn writes is carried
  * back along it (`deliverChannelReply`); the turn never sees a provider id.
  *
@@ -49,6 +52,9 @@ export interface QueuedBurst {
   events: readonly ChannelEvent[];
   actorPrincipalId: string;
 }
+
+/** How far back context-only talk is still handed to a turn; older talk is not what a new message is about. */
+const CONTEXT_MAX_AGE_MS = 6 * 60 * 60_000;
 
 export async function runChannelTurn(deps: ChannelTurnDeps, burst: QueuedBurst): Promise<void> {
   const { services } = deps;
@@ -72,10 +78,14 @@ export async function runChannelTurn(deps: ChannelTurnDeps, burst: QueuedBurst):
       : findExternalMessageLink(db, { ...where, externalMessageId: last.replyToExternalMessageId });
   const senderName = (actorId: string, fallback: string | undefined): string | undefined =>
     getExternalIdentity(db, binding.connectionRef, actorId)?.displayName ?? fallback;
-  const context = channelContextJournal(db, binding.bindingId, binding.attentionPolicy.contextJournalLimit).flatMap((entry) => {
+  const since = new Date(Date.parse(startedAt) - CONTEXT_MAX_AGE_MS).toISOString() as Instant;
+  const journal = channelContextJournal(db, binding.bindingId, binding.attentionPolicy.contextJournalLimit, since);
+  const context = journal.flatMap((entry) => {
     const event = channelEventOf(db, entry.signalId);
     return event === undefined ? [] : [{ senderName: senderName(event.actor.externalActorId, event.actor.displayName), text: event.content.text }];
   });
+  const standing = channelStanding(burst.actorPrincipalId, services.runtime.identity.ownerPrincipalId);
+  const authority: ChannelTurnAuthority = { standing, bindingId: binding.bindingId, grants: binding.grantRefs };
   const address = {
     connectionRef: binding.connectionRef,
     externalSpaceId: last.space.externalSpaceId,
@@ -99,6 +109,7 @@ export async function runChannelTurn(deps: ChannelTurnDeps, burst: QueuedBurst):
       text: coalescedTurnText(burst.events),
       at: deps.now(),
       origin: "channel",
+      channelAuthority: authority,
       authorPrincipalId: burst.actorPrincipalId,
       ...(answered === undefined ? {} : { inReplyToMessageId: answered.messageId }),
       // Always present, which also keeps the message from being steered into another thread's running turn: its reply
@@ -106,6 +117,7 @@ export async function runChannelTurn(deps: ChannelTurnDeps, burst: QueuedBurst):
       data: channelTurnData({
         provider: binding.provider,
         spaceKind: binding.spaceKind,
+        standing,
         senderName: senderName(first.actor.externalActorId, first.actor.displayName),
         context,
       }),
@@ -126,6 +138,10 @@ export async function runChannelTurn(deps: ChannelTurnDeps, burst: QueuedBurst):
             });
           }
           updateChannelInput(db, lead.signalId, { state: "started", at: deps.now(), messageId: message.messageId });
+          // Context is handed to one turn: once this message is accepted, the talk it carried is not handed again.
+          for (const entry of journal) {
+            updateChannelInput(db, entry.signalId, { state: "context-expired", at: deps.now(), reason: "given to a turn" });
+          }
         });
       },
     });

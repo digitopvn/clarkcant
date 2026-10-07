@@ -209,9 +209,23 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 chỉ đặt lại đúng lựa chọn đó; nó trả về `undone: false` khi lần ghi chính sách gần nhất không đổi lựa chọn này.
 
 Lượt `channel` khác với các bề mặt máy: người gửi là một người trên kênh bên ngoài, không phải người giữ token của node
-này. Việc đọc và ghi cục bộ được quyết định như lượt của chính người dùng, nhưng một tác động rủi ro mà lượt đó yêu cầu
-luôn được hỏi chủ sở hữu ở mọi chế độ, trừ khi một quyền thường trực trên kênh đó bao gồm loại tác động ấy; quy tắc từ
-chối hoặc lệnh cấm vẫn thắng. Tin nhắn người dùng như vậy còn mang `authorPrincipalId` (principal mà người gửi trên kênh
+này, và việc lượt đó được làm gì tùy vào người đó là ai. Node quyết định điều này từ principal mà tài khoản của người gửi
+được ánh xạ tới, không bao giờ từ tên hiển thị hay nội dung tin nhắn:
+
+- **Chủ sở hữu.** Tài khoản của chính chủ sở hữu, hoặc bất kỳ tài khoản bên ngoài nào được liên kết với principal của chủ
+  sở hữu, hành động như chủ sở hữu: lượt đó có ngữ cảnh của chủ sở hữu và được quyết định bởi chính sách thực thi duy
+  nhất như mọi lượt khác, không hỏi thêm.
+- **Người tham gia.** Bất kỳ ai khác. Lượt đó không nhận bộ nhớ, chỉ dẫn cá nhân hay chỉ dẫn dự án, ngữ cảnh màn hình
+  hay các tệp ngữ cảnh trên máy của chủ sở hữu, và chạy trên một phiên model riêng (phiên đã phục vụ chủ sở hữu không bao
+  giờ được dùng lại cho nó). Host nói với model rằng người gửi không phải chủ sở hữu. Trò chuyện và trả lời trong cùng
+  luồng vẫn tự chủ; mọi lời gọi công cụ khác chỉ chạy khi một quyền thường trực trên binding bao gồm công cụ đó
+  (`grantRefs`, mỗi mục dạng `tool:<tên>`) hoặc chủ sở hữu đã duyệt đúng lời gọi đó. Nếu không, lời gọi bị giữ lại,
+  không có gì chạy, và chủ sở hữu được hỏi bằng một thẻ duyệt trong cuộc trò chuyện; duyệt thì lượt tiếp tục dưới tư
+  cách người tham gia và cho đúng lời gọi đó chạy một lần. Việc quyết định một yêu cầu duyệt không bao giờ được mở cho
+  người tham gia.
+
+Đối tượng mặc định của binding nhận mọi người trong không gian đã gắn; các quy tắc trên là thứ giữ cho điều đó an toàn.
+Tin nhắn người dùng như vậy còn mang `authorPrincipalId` (principal mà người gửi trên kênh
 được ánh xạ tới, để bản ghi phân biệt được nhiều người nói) và, khi nó trả lời một tin nhắn của cuộc trò chuyện này,
 `inReplyToMessageId`. Cả hai đều không bắt buộc, chỉ node đặt, và không có trên mọi tin nhắn khác. Bản build này chưa
 kèm nhà cung cấp kênh nào và chưa có route HTTP nào nhận dữ liệu từ kênh; phần nền được mô tả trong

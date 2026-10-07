@@ -54,9 +54,18 @@ import {
   type WorkerSessionHandle,
 } from "@clarkcant/pi-adapter";
 
-import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
+import {
+  type ChannelTurnAuthority,
+  type ModelSegment,
+  type ModelTurnEvent,
+  type ModelTurnInput,
+  type ModelTurnReply,
+  type TurnMetrics,
+  channelToolStanding,
+} from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { channelToolWords } from "./channels/channel-tool-gate.ts";
 import { hostText } from "./host-text.ts";
 import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
 import {
@@ -282,6 +291,23 @@ export interface ModelTurn {
   dispose: () => Promise<void>;
 }
 
+/** Whose context a session was made for (`Turn.sessionAudience`). */
+type SessionAudience = "owner" | "participant";
+
+/**
+ * What a participant's tool call the binding's grants do not cover becomes (`ChannelTurnAuthority`): run, when it is the
+ * exact call the owner approved, or held — a sentence for the model and, when the owner could be asked, the card that
+ * asks them. Supplied by the composition root, which owns the approvals table.
+ */
+export type ChannelToolGate = (call: {
+  conversationId: string;
+  authority: ChannelTurnAuthority;
+  tool: string;
+  label: string;
+  params: Record<string, unknown>;
+  language: "vi" | "en";
+}) => { kind: "run" } | { kind: "held"; text: string; hostCard?: Record<string, unknown> };
+
 interface Turn {
   sessionId: string;
   /** Text deltas since the last block, not yet turned into a segment. */
@@ -316,6 +342,17 @@ interface Turn {
    * the person.
    */
   origin: TurnOrigin | undefined;
+  /**
+   * For a turn an external channel started, the sender's standing (`ChannelTurnAuthority`), on the same lifecycle as
+   * `origin`. A participant's tool calls are gated by it at call time (`withActivity`).
+   */
+  channelAuthority: ChannelTurnAuthority | undefined;
+  /**
+   * Whose context the session behind this turn was made for. A session made for the owner holds what the owner's turns
+   * were given — memory, instructions, the machine's context files — so a participant's turn never runs on it, and the
+   * reverse: a session is rebuilt at the turn boundary when the audience changes.
+   */
+  sessionAudience: SessionAudience;
   /** Numbers the tool calls this turn made, so a start and an end can name the same widget. */
   toolSequence: number;
   unsubscribe: () => void;
@@ -427,7 +464,7 @@ interface Turn {
    * Replace the session with a fresh one, at a turn boundary: the new one is briefed by the recap like any fresh
    * session, and the old one is let go. The transcript is not touched.
    */
-  rebuild: () => Promise<boolean>;
+  rebuild: (audience?: SessionAudience) => Promise<boolean>;
   /** What the current session's model was not given for its data class, and which of it the person has been told. */
   withheld: SessionWithheld;
 }
@@ -730,6 +767,7 @@ function withActivity(
   tool: ToolDefinition,
   rowLanguage: () => "vi" | "en",
   afterCall?: (name: string, params: Record<string, unknown>) => string,
+  gate?: ChannelToolGate,
 ): ToolDefinition {
   return {
     ...tool,
@@ -761,7 +799,9 @@ function withActivity(
       });
 
       try {
-        const answer = await tool.execute(params);
+        // A participant's call beyond the conversation is decided before it runs: only what the owner opened runs.
+        const held = channelHold(turn, tool.name, label, params, rowLanguage(), gate);
+        const answer = held ?? (await tool.execute(params));
         turn.onEvent?.({ type: "tool-end", toolCallId, status: "done", result: answer.text });
         // A card the host built during the call goes in before the call's own receipt: it is the thing the
         // user has to act on, and the receipt is the record that it was asked.
@@ -772,7 +812,8 @@ function withActivity(
           turn.segments.push({ kind: "host-card", block });
         }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
-        const extra = afterCall?.(tool.name, params) ?? "";
+        // A participant's turn is never handed the owner's project instructions, which is what `afterCall` adds.
+        const extra = held !== undefined || turn.channelAuthority?.standing === "participant" ? "" : (afterCall?.(tool.name, params) ?? "");
         return extra === "" ? answer : { ...answer, text: `${answer.text}\n\n${extra}` };
       } catch (cause) {
         // Returned rather than re-thrown, which is what `show_view` already does by hand: the model
@@ -785,6 +826,31 @@ function withActivity(
       }
     },
   };
+}
+
+/**
+ * What a call becomes in a participant's turn when it may not simply run, or undefined to run it.
+ *
+ * Owner-only tools never run for a participant. Anything else the binding's grants do not cover goes to the gate, which
+ * lets the one call the owner approved through and holds the rest with a card for the owner. With no gate the call is
+ * held without one: a node that cannot ask the owner does not run it on the sender's word.
+ */
+function channelHold(
+  turn: Turn,
+  tool: string,
+  label: string,
+  params: Record<string, unknown>,
+  language: "vi" | "en",
+  gate: ChannelToolGate | undefined,
+): Awaited<ReturnType<ToolDefinition["execute"]>> | undefined {
+  const authority = turn.channelAuthority;
+  const standing = channelToolStanding(authority, tool);
+  if (standing === "run" || authority === undefined) return undefined;
+  if (standing === "owner-only") return { text: channelToolWords.ownerOnly(tool) };
+  const decided = gate?.({ conversationId: turn.conversationId, authority, tool, label, params, language });
+  if (decided === undefined) return { text: channelToolWords.heldNoGate(tool) };
+  if (decided.kind === "run") return undefined;
+  return decided.hostCard === undefined ? { text: decided.text } : { text: decided.text, hostCard: decided.hostCard };
 }
 
 /** The path a call touched, when one of its arguments is one. */
@@ -1116,6 +1182,11 @@ export async function createModelTurn(options: {
     mode: Exclude<SessionPolicyMode, "off">;
     ask?: (telemetry: SessionTelemetry) => Promise<boolean | undefined>;
   };
+  /**
+   * What a channel participant's tool call that no grant covers becomes (`ChannelToolGate`). Absent holds every such
+   * call without asking anyone: it never runs on the sender's word.
+   */
+  channelToolGate?: ChannelToolGate;
 }): Promise<ModelTurn | undefined> {
   /*
    * What this node runs: the choice somebody made, else what the environment names.
@@ -1657,6 +1728,8 @@ export async function createModelTurn(options: {
       onEvent: undefined,
       channel: "chat",
       origin: undefined,
+      channelAuthority: undefined,
+      sessionAudience: "owner",
       toolSequence: 0,
       unsubscribe: () => {},
       abort: new AbortController(),
@@ -1719,7 +1792,7 @@ export async function createModelTurn(options: {
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
-    ].map((tool) => withActivity(turn, tool, rowLanguage, afterCall));
+    ].map((tool) => withActivity(turn, tool, rowLanguage, afterCall, options.channelToolGate));
     // Recorded on the turn once a session holds these tools: a handoff that fails leaves the previous generation's.
     const registeredTools = customTools.map((tool) => tool.name);
 
@@ -1733,6 +1806,7 @@ export async function createModelTurn(options: {
      */
     const briefFor = (
       model: { provider: string; id: string } | undefined,
+      audience: SessionAudience,
     ): { brief: WorkerBrief; withheld: SessionWithheld } => {
       /*
        * What the SDK loads from the machine into this session's prompt is held to the ceiling of the model this session
@@ -1744,6 +1818,10 @@ export async function createModelTurn(options: {
       // Read when a file is checked, not when the session is created: a session moved to another model in place is
       // held to that model's ceiling from then on, for a skill read again as much as for a reload.
       const contextGuard: ContextGuard = (item) => {
+        // A session made for someone who is not the owner is given none of what the machine holds for the owner — its
+        // context files, its SYSTEM.md, its skills and prompt templates. Not recorded as withheld: nothing was refused
+        // for its data class, and the owner is not the one this session talks to.
+        if (audience === "participant") return false;
         // A model's ceiling can be widened between two reads, so what this read lets in counts towards what the
         // session may hold.
         const allowed = ceilingOf(withheld.runs).allowed;
@@ -1830,8 +1908,9 @@ export async function createModelTurn(options: {
      * instructions, every tool and the screen as if for the first time. What the conversation's work touched is kept,
      * because it describes the work rather than the session.
      */
-    const adopt = (sessionId: string, withheld: SessionWithheld): void => {
+    const adopt = (sessionId: string, withheld: SessionWithheld, audience: SessionAudience): void => {
       const previous = turn.sessionId;
+      turn.sessionAudience = audience;
       // What the new session's model was not given, said on its own replies.
       turn.withheld = withheld;
       turn.unsubscribe();
@@ -1856,9 +1935,9 @@ export async function createModelTurn(options: {
     };
 
     // Taken on by a handoff as well, so a later rebuild creates the session with this generation's tools.
-    const rebuild = async (): Promise<boolean> => {
+    const rebuild = async (audience: SessionAudience = turn.sessionAudience): Promise<boolean> => {
       const model = chosenModel();
-      const { brief, withheld } = briefFor(model);
+      const { brief, withheld } = briefFor(model, audience);
       const handle = await adapter.createWorkerSession(brief);
       // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
       // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
@@ -1866,7 +1945,7 @@ export async function createModelTurn(options: {
         void disposeSession(handle.sessionId).catch(() => undefined);
         return false;
       }
-      adopt(handle.sessionId, withheld);
+      adopt(handle.sessionId, withheld, audience);
       // The model the new session runs, so a change made meanwhile is not mistaken for one still to make.
       generationModels.set(conversationId, modelKey(model));
       generationThinking.set(conversationId, chosenThinking() ?? "");
@@ -1959,7 +2038,7 @@ export async function createModelTurn(options: {
         if (moved) return existing;
       }
       let successor: WorkerSessionHandle;
-      const next = briefFor(preferred);
+      const next = briefFor(preferred, turn.sessionAudience);
       try {
         ({ successor } = await adapter.handoff(existing.sessionId, next.brief));
       } catch (cause) {
@@ -1986,7 +2065,7 @@ export async function createModelTurn(options: {
         void disposeSession(successor.sessionId).catch(() => undefined);
         return await turnFor(conversationId, principal, setup);
       }
-      adopt(successor.sessionId, next.withheld);
+      adopt(successor.sessionId, next.withheld, turn.sessionAudience);
       turn.registeredTools = registeredTools;
       turn.rebuild = rebuild;
       generationModels.set(conversationId, modelKey(preferred));
@@ -1998,7 +2077,7 @@ export async function createModelTurn(options: {
     turn.rebuild = rebuild;
     evictIdleTurns(Date.now());
     let handle: WorkerSessionHandle;
-    const first = briefFor(chosen);
+    const first = briefFor(chosen, turn.sessionAudience);
     try {
       handle = await adapter.createWorkerSession(first.brief);
     } catch (cause) {
@@ -2273,6 +2352,7 @@ export async function createModelTurn(options: {
       turn.onEvent = input.onEvent;
       turn.channel = input.channel ?? "chat";
       turn.origin = input.origin;
+      turn.channelAuthority = input.channelAuthority;
       turn.toolSequence = 0;
       turn.abort = new AbortController();
       turn.stopped = false;
@@ -2284,6 +2364,23 @@ export async function createModelTurn(options: {
       // failure of the policy is reuse, which is what the session would have done without it. The claim never hands
       // over a running turn, so the policy always sees one that is not.
       const policy = await applySessionPolicy(turn, input.text, false).catch(() => undefined);
+      /*
+       * A session holds whatever its earlier turns were given, so whose turn this is decides which session answers it.
+       * A participant's turn never runs on a session made for the owner: it gets one made for a participant, and a
+       * participant's turn that cannot get one does not run. The owner's next turn gets a session of the owner's again.
+       */
+      const participant = turn.channelAuthority?.standing === "participant";
+      const audience: SessionAudience = participant ? "participant" : "owner";
+      if (turn.sessionAudience !== audience) {
+        const rebuilt = await turn.rebuild(audience).catch(() => false);
+        if (!rebuilt && participant) {
+          throw new Error(
+            language() === "vi"
+              ? "Không mở được phiên riêng cho người gửi không phải chủ node này, nên tin nhắn chưa được gửi tới model."
+              : "Could not open a separate session for a sender who is not this node's owner, so the message was not sent to a model.",
+          );
+        }
+      }
       // Once, on the first turn this session answers: the second turn already has the first in its context,
       // and repeating the brief each time would push the conversation out with its own summary. Cleared only once the
       // prompt that carries it is sent, so a preparation that fails leaves the recap for the next turn.
@@ -2313,15 +2410,21 @@ export async function createModelTurn(options: {
               });
         // Side by side rather than one after another, so a turn waits for the slowest of them and not their sum.
         [recap, memoryPart, referencePart] = await Promise.all([
-          fresh ? recapFor(options, input.conversationId, input.text, allowed) : Promise.resolve({ text: "", earlier: "" }),
+          // A participant's session starts without the conversation's history: the recap is the owner's thread, not theirs.
+          fresh && !participant
+            ? recapFor(options, input.conversationId, input.text, allowed)
+            : Promise.resolve({ text: "", earlier: "" }),
           // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
           // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
           // Given the turn's text, so what is remembered about this subject comes first; a brief that cannot be read is
           // a less informed turn, not a failed one.
-          Promise.resolve(options.memoryBrief?.(input.conversationId, input.text, allowed))
-            .catch(() => "")
-            .then((part) => part ?? ""),
-          options.references === undefined
+          // What is remembered is the owner's, and never part of a participant's turn.
+          participant
+            ? Promise.resolve("")
+            : Promise.resolve(options.memoryBrief?.(input.conversationId, input.text, allowed))
+                .catch(() => "")
+                .then((part) => part ?? ""),
+          options.references === undefined || participant
             ? Promise.resolve("")
             : options.references.briefFor(
                 input.conversationId,
@@ -2368,7 +2471,7 @@ export async function createModelTurn(options: {
       // "this turn carries no extra instruction".
       // The session's instruction code, said once in the host's own guidance before any block can carry it: on the first
       // turn the session is prompted, and only while conditional instructions are on.
-      const statesNonce = options.instructions !== undefined && !turn.nonceStated;
+      const statesNonce = options.instructions !== undefined && !turn.nonceStated && !participant;
       const note = withRecap(
         [recap.text, statesNonce ? instructionsNonceNote(turn.instructionNonce) : ""].filter((part) => part !== "").join("\n\n"),
         input.note,
@@ -2379,7 +2482,8 @@ export async function createModelTurn(options: {
       const seenBefore = [...turn.uiSeen];
       // Project guidance whose condition holds goes with the brief, after the person's words and labelled with its
       // source: a pinned one every turn, an unpinned one the first time this session hears it.
-      const instructionPart = stateInstructions(turn, input.conversationId, false);
+      // The owner's project guidance, which a participant's turn is not given.
+      const instructionPart = participant ? "" : stateInstructions(turn, input.conversationId, false);
       const brief = [referencePart, attachmentPart, memoryPart, instructionPart].filter((part) => part !== "").join("\n\n");
       if (policy !== undefined && options.sessionPolicy !== undefined) {
         try {
@@ -2396,7 +2500,8 @@ export async function createModelTurn(options: {
       turn.lastBrief = brief;
       // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.
       const data = [input.data ?? "", recap.earlier].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
-      const ui = uiNoteFor(turn, input.conversationId);
+      // What the owner's screen shows is the owner's.
+      const ui = participant ? "" : uiNoteFor(turn, input.conversationId);
 
       /*
        * The send boundary, on everything this prompt carries: the person's words, the host's guidance with the recap,
@@ -2406,7 +2511,8 @@ export async function createModelTurn(options: {
        * model that refused, and one that would answer only after a send is not a reason to send.
        */
       // The person's own instructions go in the session's system prompt, so they are part of this send too.
-      const personalRead = personalFor(runsOn(), allowed);
+      // The owner's own instructions are for the owner's turns; a participant's send carries none.
+      const personalRead: ReturnType<typeof personalFor> = participant ? { text: undefined } : personalFor(runsOn(), allowed);
       const personal = personalRead.text;
       // Left out of this send for its class: the person hears it once in this session, by name and class only.
       if (personalRead.withheld !== undefined) {

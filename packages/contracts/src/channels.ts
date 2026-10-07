@@ -211,6 +211,20 @@ export type ChannelAttentionPolicy = z.infer<typeof channelAttentionPolicySchema
 export const DEFAULT_CHANNEL_ATTENTION_POLICY: ChannelAttentionPolicy = channelAttentionPolicySchema.parse({});
 
 /**
+ * A standing grant on a binding: what a sender who is not the owner may have Clark do without asking the owner first.
+ *
+ * `tool:<name>` lets one host tool run for anyone the binding admits (the tool still applies its own policy). Anything
+ * a grant does not cover is held and escalated to the owner, never run on the sender's word. The grammar is closed so a
+ * typo is refused when the binding is written instead of silently granting nothing.
+ */
+export const channelGrantRefSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^tool:[a-z][a-z0-9_]{0,63}$/, "a channel grant is tool:<tool name>");
+export type ChannelGrantRef = z.infer<typeof channelGrantRefSchema>;
+
+/**
  * One space (or thread) on a connection, joined to a Clark conversation.
  *
  * It answers who sent a message, from where, which conversation it belongs to, what standing authority exists
@@ -229,8 +243,8 @@ export const channelBindingSchema = z.strictObject({
   conversationId: z.string().min(1).max(128),
   audiencePolicy: channelAudiencePolicySchema,
   attentionPolicy: channelAttentionPolicySchema,
-  /** Standing grants that apply to work asked for here, by id. */
-  grantRefs: z.array(z.string().min(1).max(128)).max(16),
+  /** Standing grants for senders here who are not the owner (`channelGrantRefSchema`). The owner needs none. */
+  grantRefs: z.array(channelGrantRefSchema).max(16),
   state: z.enum(["active", "paused"]),
   createdAt: instantSchema,
   updatedAt: instantSchema,

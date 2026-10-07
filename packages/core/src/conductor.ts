@@ -35,6 +35,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type CapabilitySummary, type RegistryDeps, listCapabilitySummaries } from "./capability-registry.ts";
+import type { ChannelTurnAuthority } from "./channel-authority.ts";
 import { conductorText } from "./conductor-text.ts";
 import { settleReconciledTask } from "./effect-reconciliation.ts";
 import type { TaskSettleReason } from "./task-settle-reason.ts";
@@ -283,6 +284,8 @@ export interface ModelTurnInput {
   channel?: "voice" | "chat";
   /** See `UserMessageInput.origin`, which this carries through unchanged. */
   origin?: TurnOrigin;
+  /** See `UserMessageInput.channelAuthority`, which this carries through unchanged. */
+  channelAuthority?: ChannelTurnAuthority;
   /**
    * The message carries attachments or references. Its turn reads them for its own prompt, so it is never joined to a
    * turn that is already running: it waits for that turn to end and is answered with what it carries.
@@ -465,6 +468,13 @@ export interface UserMessageInput {
   authorPrincipalId?: string;
   /** The message in this conversation this one answers (`MessageRecord.inReplyToMessageId`). Set only by the host. */
   inReplyToMessageId?: string;
+  /**
+   * For a turn an external channel started: the sender's standing and what the binding grants (`ChannelTurnAuthority`).
+   * Set only by the host's channel intake and the continuation after an owner approved a participant's call. A
+   * participant's message is always answered by the model turn, which enforces the standing: it never reaches an
+   * installed task runner or a host composer, which would act as the owner.
+   */
+  channelAuthority?: ChannelTurnAuthority;
   /**
    * Told the stored user message as soon as it is appended, before the turn runs: for a caller that links it to
    * something outside — a channel's provider message — so the link exists even when the turn fails or is stopped.
@@ -739,7 +749,8 @@ export async function handleUserMessage(
 
   // A host composer gets the first look, and only when one is configured. In production there is
   // none, so nothing about the ordering below changes.
-  if (deps.composeFromIntent !== undefined) {
+  const participant = input.channelAuthority?.standing === "participant";
+  if (deps.composeFromIntent !== undefined && !participant) {
     // The id is allocated once and used for the message that is appended. Allocating a second one
     // inside `appendAssistant` would leave the snapshot the composer captured — which records the
     // message it belongs to — pointing at a message id nothing ever stores, and history would then
@@ -777,7 +788,7 @@ export async function handleUserMessage(
   // A package service's capabilities are left to the model's tools: without this, installing one package with a service
   // would turn every message into a "task" handed to whichever of its capabilities sorted first.
   const usable = listCapabilitySummaries(deps, { usableOnly: true, taskRunnersOnly: true });
-  const executionNode = await chooseExecutionNode(deps, input.text, usable);
+  const executionNode = participant ? undefined : await chooseExecutionNode(deps, input.text, usable);
 
   // A scripted recipe is only considered when nothing installed can answer, so an
   // installed integration is never shadowed by a demo.
@@ -974,6 +985,7 @@ async function runModelTurn(
       ...(input.data === undefined ? {} : { data: input.data }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...(input.channelAuthority === undefined ? {} : { channelAuthority: input.channelAuthority }),
       ...((input.attachmentRefs?.length ?? 0) > 0 || (input.referenceBlocks?.length ?? 0) > 0 ? { attached: true as const } : {}),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.

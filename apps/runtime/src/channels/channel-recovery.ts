@@ -1,6 +1,7 @@
 import type { Instant } from "@clarkcant/contracts";
 import {
   channelDeliveryReceiptsInState,
+  channelDeliveryReceiptsSince,
   channelInputsInState,
   getChannelBinding,
   getExternalConnection,
@@ -13,8 +14,8 @@ import { appendHostReply } from "../routes/conversations.ts";
 import type { NodeServices } from "../services.ts";
 
 /**
- * What a previous process left. A message whose turn had started is interrupted, said once in its conversation, and
- * never answered again; a reply that was handed off without an answer is unknown (the effect ledger's own recovery
+ * What a previous process left. A message whose turn had started is interrupted, said once in its conversation — with
+ * whether part of its reply had already gone out — and never answered again; a reply that was handed off without an answer is unknown (the effect ledger's own recovery
  * turns its effect unknown and asks the person), and one never handed off did not happen.
  */
 export function recoverChannelWork(services: Pick<NodeServices, "runtime" | "conductor" | "search">, now: () => Instant): void {
@@ -25,9 +26,14 @@ export function recoverChannelWork(services: Pick<NodeServices, "runtime" | "con
       const binding = input.bindingId === undefined ? undefined : getChannelBinding(db, input.bindingId);
       if (binding === undefined) continue;
       const provider = getExternalConnection(db, binding.connectionRef)?.provider ?? binding.provider;
+      // Whether part of the reply had already reached the channel: a receipt the binding wrote as sent since the turn
+      // started. Read before the pending receipts below are settled, which only ever turns them unknown or failed.
+      const partlySent = channelDeliveryReceiptsSince(db, binding.conversationId, input.updatedAt).some(
+        (receipt) => receipt.bindingId === binding.bindingId && receipt.state === "sent",
+      );
       appendHostReply(services, {
         conversationId: binding.conversationId,
-        text: ownerHostText(services.runtime).channels.interrupted(provider),
+        text: ownerHostText(services.runtime).channels.interrupted(provider, partlySent),
         at: now(),
       });
     }

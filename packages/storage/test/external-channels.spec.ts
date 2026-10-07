@@ -145,6 +145,8 @@ describe("channel records", () => {
     }
     expect(trimChannelContextJournal(db, "chb_space", 2, at(6))).toBe(1);
     expect(channelContextJournal(db, "chb_space", 10).map((input) => input.signalId)).toEqual(ids.slice(1));
+    // An age bound leaves out what was said before it.
+    expect(channelContextJournal(db, "chb_space", 10, at(3)).map((input) => input.signalId)).toEqual(ids.slice(2));
     expect(channelInputsInState(db, ["context-expired"]).map((input) => input.signalId)).toEqual([ids[0]]);
   });
 

@@ -47,13 +47,12 @@ function decide(config: ExecutionPolicyConfig, category: EffectCategory, origin:
   });
 }
 
-describe("with the default policy, every origin on this node decides as the person does", () => {
+describe("with the default policy, every origin decides as the person does", () => {
   it("answers the same for every mode, category and origin", () => {
     for (const mode of MODES) {
       for (const category of CATEGORIES) {
         const person = decide(policy({ mode }), category, "person");
-        // An external channel's sender is not someone at this node; their turns are decided below.
-        for (const origin of TURN_ORIGINS.filter((each) => each !== "channel")) {
+        for (const origin of TURN_ORIGINS) {
           expect(decide(policy({ mode }), category, origin), `${mode} ${category} ${origin}`).toEqual(person);
         }
         // An interactive turn with no recorded origin is the person's too.
@@ -134,44 +133,5 @@ describe("a task carries its turn's origin to the policy", () => {
     expect(turnOriginOfIntent({ kind: "persistent", allowedCategories: [] } as unknown as IntentOrigin)).toBe("automation");
     expect(turnOriginOfIntent({ kind: "delegated", allowedCategories: [] } as unknown as IntentOrigin)).toBe("peer");
     expect(turnOriginOfIntent(undefined)).toBeUndefined();
-  });
-});
-
-describe("a turn a message on an external channel started", () => {
-  function channel(config: ExecutionPolicyConfig, category: EffectCategory, granted?: readonly EffectCategory[]) {
-    return decideExecution({
-      policy: config,
-      action: { kind: "effect", category, operationDigest: DIGEST },
-      intent: { kind: "interactive", origin: "channel", ...(granted === undefined ? {} : { channelAllowedCategories: granted }) },
-    });
-  }
-
-  it("asks the owner before a risky effect no grant on the channel covers, in every mode", () => {
-    for (const mode of MODES) {
-      for (const category of RISKY) {
-        const decision = channel(policy({ mode }), category);
-        expect(decision.kind, `${mode} ${category}`).toBe("ask");
-        expect(JSON.stringify(decision)).toMatch(/external channel/);
-      }
-    }
-  });
-
-  it("is not refused for who sent it: reads and local work decide as the person's own turn", () => {
-    for (const mode of MODES) {
-      for (const category of ["read", "local-write"] as const) {
-        expect(channel(policy({ mode }), category)).toEqual(decide(policy({ mode }), category, "person"));
-      }
-    }
-  });
-
-  it("runs a risky effect a standing grant on the channel covers as the mode would", () => {
-    expect(channel(policy({ mode: "autonomous" }), "external-write", ["external-write"]).kind).toBe("execute");
-    expect(channel(policy({ mode: "autonomous" }), "financial", ["external-write"]).kind).toBe("ask");
-  });
-
-  it("never loosens a deny or a prohibition, granted or not", () => {
-    const denied = policy({ mode: "autonomous", rules: [{ effectCategory: "communication", decision: "deny" }] });
-    expect(channel(denied, "communication", ["communication"]).kind).toBe("deny");
-    expect(channel(policy({ mode: "autonomous", prohibition: "all" }), "external-write", ["external-write"]).kind).toBe("deny");
   });
 });

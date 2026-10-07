@@ -12,6 +12,7 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../attachments.ts";
+import { createChannelToolGate } from "../channels/channel-tool-gate.ts";
 import { referenceBrief, referencedWork, referencesForLastUserMessage, referencesForMessage } from "../composer-references.ts";
 import {
   type ConditionalInstructions,
@@ -447,6 +448,16 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
      * never calls a model, it only marks the widget as touched.
      */
     uiContext: (conversationId) => conversationUiContext(deps.services().conductor, conversationId),
+    // A channel participant's call no grant covers is held and the owner asked on an approval card, never run on the
+    // sender's word (`ChannelTurnAuthority`).
+    channelToolGate: createChannelToolGate({
+      coordination: () => ({
+        db: deps.services().runtime.db,
+        nodeId: deps.services().runtime.identity.nodeId,
+        now: () => instantSchema.parse(new Date().toISOString()),
+        newId: (prefix) => deps.services().conductor.newId(prefix),
+      }),
+    }),
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
     // The Session Manager's read-only reports, including the project finder. Built by a function a

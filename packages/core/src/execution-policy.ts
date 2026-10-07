@@ -90,15 +90,7 @@ export interface EffectAction {
  * only when the person opted into `machineTurns: "ask"`. Absent is the person.
  */
 export type ExecutionIntent =
-  | {
-      kind: "interactive";
-      origin?: TurnOrigin;
-      /**
-       * For a turn an external channel started (`origin: "channel"`): the risky categories a standing grant on that
-       * channel gives the sender. Absent is none, so a risky effect such a turn asks for is asked about.
-       */
-      channelAllowedCategories?: readonly EffectCategory[];
-    }
+  | { kind: "interactive"; origin?: TurnOrigin }
   | { kind: "delegated"; allowedCategories: readonly EffectCategory[] }
   | { kind: "persistent"; allowedCategories: readonly EffectCategory[] }
   | { kind: "system" };
@@ -328,27 +320,6 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
       action,
       `${machineOriginWords(question.intent.origin)} asked for a ${action.category} effect`,
       "the person asks to be asked before a program on a machine surface causes a risky effect",
-    );
-  }
-
-  /*
-   * A turn a message on an external channel started.
-   *
-   * Not a refusal of whoever sent it — reads and local work go on under the mode like any turn, and Clark's reply to
-   * that message is the binding's to send (`decideChannelReply`). But the provider's account is not the person at this
-   * node, so a risky effect it asks for, outside what a standing grant on that channel gives, is the owner's to decide,
-   * in every mode, the way a peer's work outside its allowance is.
-   */
-  if (
-    question.intent.kind === "interactive" &&
-    question.intent.origin === "channel" &&
-    RISKY_CATEGORIES.has(action.category) &&
-    !(question.intent.channelAllowedCategories ?? []).includes(action.category)
-  ) {
-    return askFor(
-      action,
-      `a message on an external channel asked for a ${action.category} effect no standing grant there covers`,
-      "a risky effect a channel message asks for is the owner's to decide unless a grant on that channel covers it",
     );
   }
 

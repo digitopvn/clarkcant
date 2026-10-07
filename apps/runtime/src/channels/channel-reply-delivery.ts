@@ -16,7 +16,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type OpenedActionEffect, effectOperationDigest, openActionEffect, settleActionEffect } from "../application/action-effects.ts";
-import { ownerHostText } from "../host-text.ts";
+import { type ChannelNotSentCause, ownerHostText } from "../host-text.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import type { NodeServices } from "../services.ts";
 import type { ChannelAdapterRegistry } from "./channel-adapter-registry.ts";
@@ -32,9 +32,11 @@ import type { ChannelAdapterRegistry } from "./channel-adapter-registry.ts";
  *      owner refused or asked to be asked about communication;
  *   3. an audit entry, and the effect written as handed off before the adapter is called (`openActionEffect`);
  *   4. settled on what the adapter answered: sent, not sent, or — on anything it cannot promise — unknown. An unknown
- *      send is never retried; the effect ledger asks the person whether it arrived, the same as any other.
+ *      send is never retried; the effect ledger asks the person whether it arrived, the same as any other — and when
+ *      the ledger could not record it, the conversation says so instead of promising a question that will not come.
  *
- * A reply the policy holds or refuses stays in the conversation, and the conversation says why.
+ * A reply that is not sent stays in the conversation, and the conversation names what stopped it: the connection, the
+ * missing connector, the owner's policy, the provider, or the ledger.
  */
 
 export interface ChannelReplyDeps {
@@ -102,9 +104,16 @@ export async function deliverChannelReply(
     };
 
     if (connection === undefined || adapter === undefined || connection.state === "revoked") {
-      const reason = connection === undefined ? "the channel connection is gone" : adapter === undefined ? `this node has no ${provider} adapter` : "the channel connection was revoked";
+      const cause: ChannelNotSentCause =
+        connection === undefined ? { kind: "connection-gone" } : connection.state === "revoked" ? { kind: "revoked" } : { kind: "no-adapter" };
+      const reason =
+        cause.kind === "connection-gone"
+          ? "the channel connection is gone"
+          : cause.kind === "revoked"
+            ? "the channel connection was revoked"
+            : `this node has no ${provider} adapter`;
       settle({ state: "failed", reason });
-      appendHostReply(services, { conversationId: input.message.conversationId, text: words.replyNotSent(provider, reason), at: deps.now() });
+      appendHostReply(services, { conversationId: input.message.conversationId, text: words.replyNotSent(provider, cause), at: deps.now() });
       break;
     }
 
@@ -120,7 +129,7 @@ export async function deliverChannelReply(
       settle({ state: decision.kind === "ask" ? "held" : "refused", reason: decision.reason });
       appendHostReply(services, {
         conversationId: input.message.conversationId,
-        text: words.replyNotSent(provider, decision.reason),
+        text: words.replyNotSent(provider, { kind: "policy", reason: decision.reason }),
         at: deps.now(),
       });
       break;
@@ -150,8 +159,9 @@ export async function deliverChannelReply(
         effectCategory: "communication",
       });
     } catch (cause) {
-      // A send the ledger cannot hold is not made.
+      // A send the ledger cannot hold is not made, and the conversation says so.
       settle({ state: "failed", reason: `the effect ledger could not record it: ${cause instanceof Error ? cause.message : String(cause)}`.slice(0, 1000) });
+      appendHostReply(services, { conversationId: input.message.conversationId, text: words.replyNotSent(provider, { kind: "ledger" }), at: deps.now() });
       break;
     }
     updateChannelDeliveryReceipt(db, { ...claimed.receipt, effectId: opened.effect.effectId, updatedAt: deps.now() });
@@ -186,15 +196,16 @@ export async function deliverChannelReply(
       settle({ state: "failed", effectId: opened.effect.effectId, reason: outcome.reason.slice(0, 1000) });
       appendHostReply(services, {
         conversationId: input.message.conversationId,
-        text: words.replyNotSent(provider, outcome.reason.slice(0, 300)),
+        text: words.replyNotSent(provider, { kind: "provider", reason: outcome.reason.slice(0, 300) }),
         at: deps.now(),
       });
       break;
     }
     const reason = `no answer from ${provider}: ${failure ?? "the adapter returned nothing"}`.slice(0, 1000);
-    settleActionEffect(services, opened, { kind: "no-answer", stopped: false, reason });
+    // Whether the ledger holds it as unknown decides what the person is told: only a recorded one is asked about.
+    const { recorded } = settleActionEffect(services, opened, { kind: "no-answer", stopped: false, reason });
     settle({ state: "unknown", effectId: opened.effect.effectId, reason });
-    appendHostReply(services, { conversationId: input.message.conversationId, text: words.replyUnknown(provider), at: deps.now() });
+    appendHostReply(services, { conversationId: input.message.conversationId, text: words.replyUnknown(provider, recorded), at: deps.now() });
     break;
   }
   return receipts;
