@@ -23,6 +23,8 @@
  * by a settings row with nothing behind it (see `docs/research/adr-002-gemini-tts-flash.md`).
  */
 
+import type { SpeechSynthesisAdapter } from "./recognition.ts";
+
 /** Highest-fidelity model: 130 languages, voice design and replication. */
 export const GEMINI_TTS_FLASH_MODEL = "gemini-3.8-flash-tts";
 
@@ -143,6 +145,36 @@ export class GeminiTtsClient {
       throw new Error("Gemini TTS response contained no audio content block");
     }
     return { audio: decodeBase64(found.data), mimeType: found.mimeType };
+  }
+}
+
+/**
+ * `GeminiTtsClient` behind the provider-neutral synthesis seam.
+ *
+ * A thin translation: the seam asks for the credential at call time, the client takes it per request, and nothing is
+ * kept in between. The model is fixed at construction so one adapter always speaks with the same model.
+ */
+export class GeminiTtsSynthesisAdapter implements SpeechSynthesisAdapter {
+  readonly provider = "gemini-tts";
+  readonly #client: GeminiTtsClient;
+  readonly #model: string;
+
+  constructor(options: GeminiTtsOptions & { model?: string } = {}) {
+    this.#client = new GeminiTtsClient(options);
+    this.#model = options.model ?? DEFAULT_TTS_MODEL;
+  }
+
+  async synthesize(input: {
+    text: string;
+    voice?: string;
+    tokenProvider: () => Promise<string>;
+  }): Promise<{ audio: Uint8Array; mimeType: string }> {
+    const apiKey = await input.tokenProvider();
+    return this.#client.synthesize(apiKey, {
+      text: input.text,
+      model: this.#model,
+      ...(input.voice === undefined ? {} : { voice: input.voice }),
+    });
   }
 }
 
