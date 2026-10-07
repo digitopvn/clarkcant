@@ -11,6 +11,8 @@ There is no longer a "desktop app with a helper, and later we move the helper to
 
 The core does not try to turn the whole network into one computer with a shared filesystem and database. Each node has its own identity, permissions, credentials and resources. Seamlessness lives in communication, delegation and presentation; not in hiding every difference or copying secrets around automatically.
 
+Where this goes next — replaceable agent runtimes, capability discovery, one consent before reach expands, standing work and self-improvement — is described as **target architecture, not shipped** in [adaptive-substrate.md](adaptive-substrate.md). This document keeps describing what runs now.
+
 ## 2. Overview diagram
 
 ```mermaid
