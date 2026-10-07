@@ -45,8 +45,9 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      ngừng, và một con trỏ đánh dấu recognizer đã gửi tới đâu: một bản final dời con trỏ khi các từ của nó, đúng thứ
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
-     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, chỉ câu live mới nhất được trả lời. Mọi quy tắc đều ưu
-     tiên trả lời một số từ hai lần hơn là làm mất chúng.
+     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
+     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mọi quy
+     tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;

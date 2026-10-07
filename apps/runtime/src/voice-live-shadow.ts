@@ -20,8 +20,9 @@
  * - a final whose live reading has not arrived waits only for the live sentence in progress and the next one, and only
  *   for a few seconds, so it cannot match an unrelated sentence later;
  * - when a final never found its live reading, or matched only after passing over a live sentence it did not match,
- *   the alignment is unclear: only the newest live sentence is answered, whole, since it is the one the recognizer was
- *   in the middle of, and an older one may already have been answered under a different reading.
+ *   the alignment is unclear: every live sentence after the last one a final fully covered is answered, whole and in
+ *   order, since the live session may have cut the sentence the recognizer was in the middle of into several
+ *   utterances; a sentence already delivered whole is not answered again.
  */
 
 const MAX_SENTENCES = 16;
@@ -136,7 +137,7 @@ export class LiveShadow {
       remainders.push({ ordinal: sentence.ordinal, text });
     }
     const unclear = this.#unclear || this.#pending.length > 0;
-    const answer = unclear ? this.#newestWhole() : remainders.map((remainder) => remainder.text).join(" ");
+    const answer = (unclear ? this.#uncoveredWhole() : remainders.map((remainder) => remainder.text)).join(" ");
     this.#sentences = [];
     this.#pending = [];
     this.#cursor = { ordinal: this.#nextOrdinal, offset: 0 };
@@ -145,19 +146,25 @@ export class LiveShadow {
   }
 
   /**
-   * The newest live sentence from its start, when the cursor cannot be trusted.
+   * Every live sentence after the last fully covered one, each from its start, when the cursor cannot be trusted.
    *
-   * The cursor may stand partway into it on the strength of a match that belonged to an earlier sentence, so the
-   * whole sentence is answered rather than its tail. Nothing is answered if the live session is still catching up with
-   * a final already delivered.
+   * The live session may cut the sentence in progress into several utterances, so all of them are answered, in order,
+   * not only the newest. The cursor may stand partway into the first of them on the strength of a match that belonged
+   * to an earlier sentence, so that one is answered whole rather than its tail. A sentence the cursor stands at the end
+   * of was delivered whole and is not answered again, and neither is one the live session is still reading for a final
+   * already delivered.
    */
-  #newestWhole(): string {
-    const newest = this.#sentences.at(-1);
-    if (newest === undefined || newest.ordinal < this.#cursor.ordinal) return "";
-    const text = newest.text.trim();
-    const heard = words(text).map((word) => word.text);
-    if (heard.length === 0 || this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) return "";
-    return text;
+  #uncoveredWhole(): string[] {
+    const answered: string[] = [];
+    for (const sentence of this.#sentences) {
+      if (sentence.ordinal < this.#cursor.ordinal) continue;
+      if (sentence.ordinal === this.#cursor.ordinal && words(sentence.text, this.#cursor.offset).length === 0) continue;
+      const text = sentence.text.trim();
+      const heard = words(text).map((word) => word.text);
+      if (heard.length === 0 || this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) continue;
+      answered.push(text);
+    }
+    return answered;
   }
 
   /** Move the cursor past the live reading of `said`, if one starts at or after it. */

@@ -47,8 +47,9 @@ them before they mean anything.
      marks how far the recognizer delivered: a final moves it when its words are, in order and within a few characters,
      the beginning of what the live reading holds next, so a final may cover only the first part of a live utterance.
      Finals shorter than three words never move it, and a final whose live reading does not arrive soon expires. When the
-     alignment is unclear, only the newest live sentence is answered. Every rule prefers answering words twice to losing
-     them.
+     alignment is unclear, every live sentence after the last fully covered one is answered, whole and in order, so a
+     sentence the live session split into two utterances is not lost. Every rule prefers answering words twice to
+     losing them.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;

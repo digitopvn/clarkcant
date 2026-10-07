@@ -45,7 +45,8 @@ describe("the live reading kept while a recognizer is the source", () => {
     shadow.delivered("cái này là gì vậy");
     shadow.hear({ utteranceId: "s:u1", text: "mở settings giúp tui", isFinal: true });
     shadow.hear({ utteranceId: "s:u2", text: "cái này là gì vậy", isFinal: false });
-    expect(shadow.take()).toBe("cái này là gì vậy");
+    // Neither live sentence was covered, so both are answered: the first was never delivered either.
+    expect(shadow.take()).toBe("mở settings giúp tui cái này là gì vậy");
   });
 
   it("covers a live reading that arrives after the recognizer delivered it", () => {
@@ -80,6 +81,30 @@ describe("the live reading kept while a recognizer is the source", () => {
     shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nhé bạn", isFinal: false });
     shadow.delivered("chạy lại test đi nha");
     expect(shadow.take()).toBe("chạy lại test đi nhé bạn");
+  });
+
+  it("answers every part of a sentence the live session split in two when the alignment is unclear", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.delivered("mở file voice session giúp tui");
+    // A final whose live reading never arrives leaves the alignment unclear.
+    shadow.delivered("hôm nay trời đẹp quá");
+    advance(6000);
+    // The live session cuts the sentence in progress into two utterances, and the recognizer fails.
+    shadow.hear({ utteranceId: "s:u2", text: "rồi chạy test", isFinal: false });
+    shadow.hear({ utteranceId: "s:u3", text: " cho voice session nhé", isFinal: false });
+    expect(shadow.take()).toBe("rồi chạy test cho voice session nhé");
+  });
+
+  it("does not answer again a sentence fully delivered before the unclear stretch", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    // Matched only after passing over the first sentence, so the alignment is unclear, but this one is fully covered.
+    shadow.delivered("chạy lại test đi nha");
+    shadow.hear({ utteranceId: "s:u3", text: "rồi mở file", isFinal: false });
+    shadow.hear({ utteranceId: "s:u4", text: "voice session", isFinal: false });
+    expect(shadow.take()).toBe("rồi mở file voice session");
   });
 
   it("answers again a sentence too short to tell apart, rather than risk losing it", () => {
