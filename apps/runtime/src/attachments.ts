@@ -13,8 +13,8 @@ import {
   deleteAttachmentsForConversation,
   getAttachment,
   inTransaction,
+  latestMessages,
   messageById,
-  messagesSince,
 } from "@clarkcant/storage";
 
 import { blobsDir, readBlob, removeBlob } from "./blobs.ts";
@@ -141,15 +141,16 @@ export function resolveAttachmentRefs(input: {
  * timeline renders these blocks and the prompt inlines these blocks, so a conversation reopened at any
  * later date attaches exactly what its own message says it attached.
  *
- * The window matches the history reader's — the last few messages rather than the whole thread — because
+ * The window matches the history reader's — the newest few messages rather than the whole thread — because
  * the message being answered is by definition among them, and a second policy for "how far back to look"
- * would be a second thing to keep right.
+ * would be a second thing to keep right. Newest, not first: in a conversation longer than the window, the
+ * first few messages end with an old user message, and its files are not the ones this turn was sent with.
  */
 export function attachmentRefsForLastUserMessage(input: {
   db: Database;
   conversationId: string;
 }): AttachmentRef[] {
-  const records = messagesSince(input.db, input.conversationId, 0, 40);
+  const records = latestMessages(input.db, input.conversationId, 40);
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
     if (record === undefined || record.role !== "user") continue;
