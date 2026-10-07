@@ -354,6 +354,22 @@ describe("words that run together into a longer term than a form starting the sa
       expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
     });
 
+    // A cue inside a span works the same way: "code" makes "web app" read as `webapp`, so the "web" it absorbed cannot
+    // in turn support "code review" becoming `codeReview`.
+    it("does not rewrite code review on the web that webapp absorbed after the cue in code review turned it", () => {
+      const session = buildRecognitionContext({ tools: ["web"], packages: ["webapp"], symbols: ["codeReview"] }, { glossary: false });
+      const result = normalizeTranscript("the code review of the web app", session);
+      expect(result.text).toBe("the code review of the webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+
+    it("does not join type script on the web that webapp absorbed after the cue in type script turned it", () => {
+      const session = buildRecognitionContext({ tools: ["web"], packages: ["webapp"] });
+      const result = normalizeTranscript("type script web app", session);
+      expect(result.text).toBe("type script webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+
     it("keeps S3 when the only support for lowering it is the web that webapp absorbed", () => {
       const session = buildRecognitionContext({ tools: ["s3", "web"], packages: ["webapp"] }, { glossary: false });
       const result = normalizeTranscript("S3 is on the web app", session);

@@ -133,7 +133,7 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   });
   // Words a run-together term absorbed, kept apart, since they support fewer spans: see `supported`.
   const absorbed: number[] = [];
-  const addEvidence = (hit: Hit, into: number[]): boolean => {
+  const addEvidence = (hit: Hit, into: number[]): void => {
     const unique = distinctTerms(hit.candidates);
     const source = text.slice(tokens[hit.from]!.start, tokens[hit.to - 1]!.end);
     // Only a term heard in its own spelling, case aside, is evidence: a corrected span supporting another correction
@@ -147,7 +147,7 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
       unique.some((candidate) => source === candidate.text || isDistinctive(candidate))
     ) {
       for (let at = hit.from; at < hit.to; at += 1) into.push(at);
-      return true;
+      return;
     }
     // Words that ran together into a longer term are evidence still, exactly as they would have been on their own:
     // "web" heard exactly says the sentence is about code whether or not "web app" goes on to read as `webapp`. Only
@@ -156,18 +156,18 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
       addEvidence(hit.passedOver, absorbed);
       for (const inner of hitsBetween(tokens, text, hit.passedOver.to, hit.to, lexicon)) addEvidence(inner, absorbed);
     }
-    return false;
   };
-  const evidence = new Set(hits.filter((hit) => addEvidence(hit, anchors)));
+  for (const hit of hits) addEvidence(hit, anchors);
   const outside = (at: number, hit: Hit): boolean => at < hit.from || at >= hit.to;
-  // Absorbed words support only a span whose change no run-together span can rest on. One that absorbed words too would
-  // take its own with it ("the web app and the web app" would vouch for itself), and so would a term that is evidence
-  // while rewritten: "Follow-up" heard for the tool follow-up would turn "web app" into `webapp`, then lower itself on
-  // the "web" that rewrite took away.
+  // Absorbed words support only a span whose change no run-together span can rest on: one that absorbed no words and
+  // holds no evidence of its own. One that absorbed words too would take its own with it ("the web app and the web app"
+  // would vouch for itself). One holding evidence already supports every run-together span outside it, so their absorbed
+  // words are rewritten away: "Follow-up" heard for the tool follow-up, or the cue "code" in "code review" for
+  // `codeReview`, would turn "web app" into `webapp`, then be rewritten itself on the "web" that change took away.
   const supported = (hit: Hit): boolean =>
     codeSwitched ||
     anchors.some((at) => outside(at, hit)) ||
-    (hit.passedOver === undefined && !evidence.has(hit) && absorbed.some((at) => outside(at, hit)));
+    (hit.passedOver === undefined && anchors.every((at) => outside(at, hit)) && absorbed.some((at) => outside(at, hit)));
 
   const result: NormalizationResult = { text, changes: [], abstained: [], technical: [] };
   const replacements: Array<{ start: number; end: number; to: string }> = [];
