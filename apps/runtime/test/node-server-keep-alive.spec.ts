@@ -1,6 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { request as httpRequest } from "node:http";
-import { type AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,9 +9,10 @@ import { NODE_KEEP_ALIVE_TIMEOUT_MS, createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
- * The node keeps idle connections long enough that a client which ignores the `Keep-Alive` hint does not reuse a
- * socket the node is closing. Proving the race itself needs an idle gap on the 6 s boundary and many samples, so this
- * checks what the node advertises and configures on the server it actually boots.
+ * The node keeps an idle connection open long enough that a client which ignores the `Keep-Alive` hint can reuse it
+ * after a pause. With Node's default the node closes it about 6 s after the last response, and a client sending just
+ * then gets `ECONNRESET`. One raw socket makes this deterministic: it cannot reconnect behind the test's back, so a
+ * second answer after a 7 s pause exists only if the node kept the connection.
  */
 
 let dir: string;
@@ -37,25 +37,36 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("the node's idle connections", () => {
-  it("are kept well past the pause a client leaves between calls", () => {
-    expect(NODE_KEEP_ALIVE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
-    expect(server.keepAliveTimeout).toBe(NODE_KEEP_ALIVE_TIMEOUT_MS);
-    expect(server.headersTimeout).toBeGreaterThan(server.keepAliveTimeout);
-  });
+const HEALTH = "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n";
 
-  it("advertise that lifetime to clients that keep the connection", async () => {
-    const header = await new Promise<string | undefined>((resolve, reject) => {
-      const req = httpRequest({ host: "127.0.0.1", port, path: "/health", headers: { connection: "keep-alive" } }, (res) => {
-        res.resume();
-        res.on("end", () => {
-          const value = res.headers["keep-alive"];
-          resolve(Array.isArray(value) ? value.join(",") : value);
-        });
-      });
-      req.on("error", reject);
-      req.end();
+describe("the node's idle connections", () => {
+  it("answer a second request on the same connection after a 7 s pause", async () => {
+    const socket = connect(port, "127.0.0.1");
+    let received = "";
+    let closed = false;
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      received += chunk;
     });
-    expect(header).toBe(`timeout=${NODE_KEEP_ALIVE_TIMEOUT_MS / 1000}`);
-  });
+    socket.on("close", () => {
+      closed = true;
+    });
+    socket.on("error", () => undefined);
+    const answers = (): number => received.split("HTTP/1.1 200").length - 1;
+    const until = async (done: () => boolean, ms: number): Promise<void> => {
+      const end = Date.now() + ms;
+      while (!done() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 20));
+    };
+
+    socket.write(HEALTH);
+    await until(() => answers() === 1, 5_000);
+    expect(received).toContain(`Keep-Alive: timeout=${NODE_KEEP_ALIVE_TIMEOUT_MS / 1000}`);
+
+    await new Promise((resolve) => setTimeout(resolve, 7_000));
+    expect(closed).toBe(false);
+    socket.write(HEALTH);
+    await until(() => answers() === 2, 5_000);
+    expect(answers()).toBe(2);
+    socket.destroy();
+  }, 20_000);
 });
