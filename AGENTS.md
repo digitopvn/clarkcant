@@ -316,6 +316,35 @@ Do not treat an invariant checker as evidence for things it does not verify.
   Prefer body files for complex content and read important created artifacts back
   after mutation.
 
+### Issue status labels and ownership
+
+Keep each issue's assignee and status label current, so parallel work does not
+collide.
+
+- Before starting, read the assignee, status label, claim comments and linked
+  PRs. If someone else owns the issue or an open PR addresses it, coordinate
+  instead of starting parallel work.
+- When starting, assign the GitHub account doing the work and post a claim
+  comment naming the branch (and the agent session or worktree). Agents often
+  share one account, so the claim comment is what identifies the owner.
+- Replace the status label rather than adding another; an issue carries one:
+
+| Label | Meaning |
+| --- | --- |
+| `in progress` | being implemented |
+| `blocked` | cannot continue; a comment names the blocking issue or external gate |
+| `in review` | implementation finished; isolated review before the PR opens |
+| `done` | PR opened; final-head attestation, CI and merge pending |
+| `shipped` | the issue's full scope is merged into `main` |
+
+- `external-gate` is not a status; keep it beside the status when part of the
+  work needs credentials, hardware or a second host.
+- Use a closing keyword only when the PR delivers the issue's full scope. A
+  partial merge returns the issue to `in progress` (or `blocked`) with a comment
+  saying what landed and what remains; epics stay `in progress` while child
+  issues carry their own status. After an auto-merge, the next contributor who
+  touches the issue sets `shipped`.
+
 ## Documentation and language
 
 Internal and official documentation are bilingual unless explicitly exempted:
@@ -324,6 +353,10 @@ diacritics.
 
 `docs/conformance-traceability.md` remains English-only because it is the
 canonical checked status ledger.
+
+`AGENTS.md` (with `CLAUDE.md`, which includes it) and `REVIEW.md` are
+English-only: they are the operating rules agents load into context, and a
+second copy would double the surface that can drift.
 
 Do not document target behavior as already shipped.
 

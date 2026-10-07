@@ -20,13 +20,23 @@
     },
     {
       "path": "README.md",
-      "bytes": 7591,
-      "sha256": "a0140015631604ca3e634e9b7c21101b74256293a79698b167ef83a6c91a8dcc"
+      "bytes": 7891,
+      "sha256": "3eacee70e2552c1db5c607fe220386c14cc33fefe70bfd9c682331072accde9b"
     },
     {
       "path": "README.vi.md",
-      "bytes": 8329,
-      "sha256": "3cc22d962c27025183372917da377407257ef6305ff4a1a3c8c11d27058bda01"
+      "bytes": 8682,
+      "sha256": "1ea94eb9f1d2a36e3a5fb66cdd2638dbfe88cc5eec1105473e7a25b62f41f6ca"
+    },
+    {
+      "path": "adaptive-substrate.md",
+      "bytes": 15098,
+      "sha256": "027ca5dd4220fd77bcbd8834c567696e12906e3734f235f87238634ab78a738d"
+    },
+    {
+      "path": "adaptive-substrate.vi.md",
+      "bytes": 18402,
+      "sha256": "ddfde663f06b420b5878c417ac13534966af1769c2e6b9df4b2057fbc5a0876d"
     },
     {
       "path": "browser-computer-use.md",
@@ -130,13 +140,13 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 139598,
-      "sha256": "155689b726df7f5533bc99d2913067f3a5ae3e3db921a7b699764a947486b70e"
+      "bytes": 139897,
+      "sha256": "6609a23fbae552ec7a067f8709bede63ae33d9b3a3ca16b657017b759841da36"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 162278,
-      "sha256": "e242b59e6e073d859b2637a7cec6dd90ec280ebbf7cfa144e3cce080489c8ef9"
+      "bytes": 162662,
+      "sha256": "a8036bf20e228c6d158eca71b8ea6b2dcf3fd929aff919e7455ef1fd96d7fbf0"
     },
     {
       "path": "widget-development.md",
