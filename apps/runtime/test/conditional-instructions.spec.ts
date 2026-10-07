@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
@@ -11,6 +11,7 @@ import {
   INSTRUCTION_LIMITS,
   GLOB_LIMITS,
   INSTRUCTIONS_HEADER,
+  type ActiveInstruction,
   type InstructionTouch,
   compileGlob,
   conditionalInstructionsFromEnv,
@@ -19,6 +20,7 @@ import {
   instructionSection,
   instructionsHeader,
   operationOfCommand,
+  realFolderPath,
   rememberTouch,
   taskInstructions,
   touchOfToolCall,
@@ -372,11 +374,27 @@ describe("a root granted in another case than the path touched", () => {
       writeFileSync(join(upper, ".clarkcant", "instructions", "only-b.md"), "chỉ cho src/b.ts của dự án có quy tắc này", "utf8");
       const reader = createConditionalInstructions({ roots: () => [root], platform, realpath: (path) => resolve(path) });
       const active = reader.active({ touched: [write(join(upper, "src", "a.ts")), write(join(lower, "src", "b.ts"))], role: "foreground", skills: [] });
-      // Foo's rule is about Foo's src/b.ts, which nothing touched. On a host whose own disk folds case, foo reads the
-      // same file as its own rules; either way it is stated as foo's, never as Foo's.
-      expect(active.every((entry) => entry.source.startsWith("foo/") && entry.id === `${lower}#only-b`)).toBe(true);
+      // Foo's rule is about Foo's src/b.ts, which nothing touched: on a case-sensitive disk foo has no rules, so nothing
+      // is stated. On a host whose own disk folds case, foo is Foo on disk, and its rule is stated once, as foo's.
+      const hostFoldsCase = existsSync(join(root, "FOO"));
+      expect(active.map((entry) => ({ id: entry.id, source: entry.source }))).toEqual(
+        hostFoldsCase ? [{ id: `${lower}#only-b`, source: "foo/.clarkcant/instructions/only-b.md" }] : [],
+      );
     });
   }
+
+  it("falls back to the portable real path where the operating system's own fails", () => {
+    const failing = (): string => {
+      throw Object.assign(new Error("EISDIR: illegal operation on a directory, realpath"), { code: "EISDIR" });
+    };
+    expect(realFolderPath(root, failing)).toBe(realpathSync(root));
+    expect(realFolderPath(root, () => "as the system spells it")).toBe("as the system spells it");
+    // A project on such a volume still gets its instructions.
+    storageRules();
+    const reader = createConditionalInstructions({ roots: () => [root], realpath: (path) => realFolderPath(path, failing) });
+    const file = join(project, "packages", "storage", "migrations", "0002.sql");
+    expect(reader.active({ touched: [write(file)], role: "foreground", skills: [] }).map((entry) => entry.text)).toEqual([MIGRATIONS]);
+  });
 
   it("compares a root and a path by the platform's case rule, folder by folder, leaving grant checks as they were", () => {
     const base = resolve(root);
@@ -612,6 +630,23 @@ describe("what is stated", () => {
       const blocks = section.text.split("\n").slice(1).join("\n");
       expect(blocks.match(/<\/?project-instruction/g)).toEqual(["<project-instruction", "</project-instruction"]);
     }
+  });
+
+  it("finds tags in linear time, even after a long run of white space, and does not defuse what cannot fit", () => {
+    // A `<`, a run of spaces and then neither `/` nor the name: a pattern that could split the run would backtrack over
+    // it once per split.
+    const spaced = `<${" ".repeat(5_800)}x`;
+    const entry = (index: number): ActiveInstruction => ({ id: `p#s${String(index)}`, source: "p/.clarkcant/instructions/s.md", text: spaced, pin: true });
+    const started = performance.now();
+    for (let call = 0; call < 100; call += 1) {
+      const section = instructionSection({ active: [entry(0)], stated: new Set(), nonce: "n1" });
+      expect(section.text).toContain(spaced);
+    }
+    // About 100 × 17M backtracking steps for a pattern that splits the run; a few milliseconds for one that does not.
+    expect(performance.now() - started).toBeLessThan(500);
+    // Of many such snippets only the first fits the turn's characters; it is stated exactly as written, the rest wait.
+    const many = instructionSection({ active: Array.from({ length: 256 }, (_, index) => entry(index)), stated: new Set(), nonce: "n1" });
+    expect(many.stated).toEqual(["p#s0"]);
   });
 
   it("defuses a tag in a project folder's name, which the source attribute carries", () => {

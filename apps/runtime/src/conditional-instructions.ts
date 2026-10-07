@@ -352,6 +352,23 @@ export interface ConditionalInstructions {
 }
 
 /**
+ * A folder's real path as the volume spells it. The operating system's own answer first, which gives the stored case on
+ * Windows and macOS; where that fails (some RAM disks, virtual and network drives on Windows), Node's portable one,
+ * which still resolves links but may keep the case as typed.
+ */
+export function realFolderPath(
+  path: string,
+  native: (path: string) => string = realpathSync.native,
+  portable: (path: string) => string = realpathSync,
+): string {
+  try {
+    return native(path);
+  } catch {
+    return portable(path);
+  }
+}
+
+/**
  * Conditional instructions read from the projects inside the node's approved roots.
  *
  * Files are read when asked and kept while their modification time and size are unchanged, so an edit applies to the
@@ -370,15 +387,14 @@ export function createConditionalInstructions(deps: {
   platform?: NodeJS.Platform;
   /**
    * A folder's real path: links resolved, and spelled the way the volume stores it, so two spellings of one folder give
-   * one answer and two folders give two. The file system's own (`realpathSync.native`) unless a test stands in for
-   * another platform's.
+   * one answer and two folders give two. `realFolderPath` unless a test stands in for another platform's.
    */
   realpath?: (path: string) => string;
   /** Told the matching steps each newly checked path spent: what the budget bounds, for a reader that wants to see it. */
   onMatched?: (input: { steps: number }) => void;
 }): ConditionalInstructions {
   const caseless = caselessPaths(deps.platform);
-  const realpath = deps.realpath ?? realpathSync.native;
+  const realpath = deps.realpath ?? ((path: string): string => realFolderPath(path));
   /** A lookup by spelling only: which root to walk under, and where the walk stops. Never what is read. */
   const within = (root: string, path: string): boolean => isWithinRootCased(root, path, caseless);
   const files = new Map<string, { stamp: string; value: unknown }>();
@@ -669,7 +685,7 @@ function defused(text: string): string {
   }
   let result = "";
   let copied = 0;
-  for (const match of comparable.matchAll(/<\s*(\/?)\s*project-instruction/g)) {
+  for (const match of comparable.matchAll(/<\s*(?:(\/)\s*)?project-instruction/g)) {
     const from = starts[match.index] ?? 0;
     // A match that starts inside a span already rewritten cannot happen: a `<` is never part of `project-instruction`.
     const to = ends[match.index + match[0].length - 1] ?? from;
@@ -680,13 +696,12 @@ function defused(text: string): string {
 }
 
 /**
- * A snippet's `source` as an attribute value: its tags defused, and every character that is or reads as `"`, `<` or
- * `>` (a fullwidth `＂`, a `‹`) replaced with `_`, so a project folder's name cannot end the attribute or the tag.
+ * A snippet's `source` as an attribute value: its tags defused, then only letters, digits, space, `.`, `_`, `/` and `-`
+ * kept and anything else replaced with `_`, so a project folder's name cannot end the attribute or the tag with a quote
+ * or a bracket, or with anything that reads as one.
  */
 function attributeValue(source: string): string {
-  return [...defused(source)]
-    .map((char) => (/["<>]/.test(char.normalize("NFKD")) || LOOKALIKES.get(char) === "<" ? "_" : char))
-    .join("");
+  return defused(source).replace(/[^\p{L}\p{N} ._/-]/gu, "_");
 }
 
 /**
@@ -720,6 +735,8 @@ export function instructionSection(input: {
       withheld += 1;
       continue;
     }
+    // A snippet that cannot fit is not defused at all: what is left unstated costs nothing on every later turn.
+    if (entry.text.length > remaining) continue;
     const part = `<project-instruction nonce="${nonce}" source="${attributeValue(entry.source)}">\n${defused(entry.text)}\n</project-instruction nonce="${nonce}">`;
     if (part.length > remaining) continue;
     remaining -= part.length;
