@@ -11,7 +11,8 @@
  *
  * - a PR that changes only Markdown under `docs/` and `plans/` passes with no attestation. That is narrower than the
  *   prose allowlist that lets CI skip runtime tests: `AGENTS.md`, `DESIGN.md`, `README.md` and `REVIEW.md` are the
- *   rules agents and reviewers work by, so a change to them is reviewed like code;
+ *   rules agents and reviewers work by, so a change to them (or to the `.vi.md` pair of `DESIGN.md` or `README.md`)
+ *   is reviewed like code;
  * - otherwise only markers in comments by accounts with write access count — anyone else's comment, edited or not,
  *   is ignored;
  * - the newest counted marker (by comment creation time) decides: `ready` for the exact current head passes,

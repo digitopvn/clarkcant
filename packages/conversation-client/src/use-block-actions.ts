@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CommandCardAction, ProviderSignInView } from "@clarkcant/contracts";
+import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -9,6 +9,7 @@ import type {
   BlockActions,
   CommandActionState,
   ControlSessionActionState,
+  FeedbackCardState,
   PackageInstallState,
   QuestionOutcome,
   TaskStopState,
@@ -54,6 +55,17 @@ export function installRefusalState(
     return { status: "stale", message: t("shell.package.filesChangedSinceListing"), staleContentDigest: contentDigest };
   }
   return { status: "refused", message: error instanceof Error ? error.message : t("shell.package.installFailed") };
+}
+
+/**
+ * The report a feedback press for these words should act on, when an earlier press already has one: the preview's, or
+ * that of a press that did not get through — which the node may already have sent, so preparing a second report for
+ * the same words could file it twice. Different words are a different report.
+ */
+export function feedbackReportToReuse(previous: FeedbackCardState | undefined, requestKey: string): string | undefined {
+  if (previous?.status === "prepared" && previous.requestKey === requestKey) return previous.draft.reportId;
+  if (previous?.status === "failed" && previous.reportId !== undefined && previous.requestKey === requestKey) return previous.reportId;
+  return undefined;
 }
 
 /**
@@ -510,6 +522,84 @@ export function useBlockActions({
     [client, followSignIn, setError],
   );
 
+  /**
+   * The Feedback Composer and its results, keyed by card id. Preview prepares the report and keeps the draft beside the
+   * words it was made from; Create issue publishes that draft when the words are unchanged, and prepares again when they
+   * are not. The outcome is the node's: a result card in the timeline, never a state this hook invents.
+   */
+  const [feedback, setFeedback] = useState<Record<string, FeedbackCardState>>({});
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  const settleFeedback = useCallback(
+    (cardId: string, state: FeedbackCardState) => setFeedback((current) => ({ ...current, [cardId]: state })),
+    [],
+  );
+  const failFeedback = useCallback(
+    (cardId: string, error: unknown) =>
+      settleFeedback(cardId, { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
+    [settleFeedback, t],
+  );
+
+  const previewFeedback = useCallback(
+    ({ cardId, request }: { cardId: string; request: FeedbackRequestInput }) => {
+      settleFeedback(cardId, { status: "preparing" });
+      void client.prepareFeedback(request, conversationId).then(
+        (prepared) => settleFeedback(cardId, { status: "prepared", requestKey: JSON.stringify(request), ...prepared }),
+        (error: unknown) => failFeedback(cardId, error),
+      );
+    },
+    [client, conversationId, failFeedback, settleFeedback],
+  );
+
+  const createFeedback = useCallback(
+    ({ cardId, request, reportId, intent = "send" }: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: FeedbackPublishIntent }) => {
+      if (conversationId === undefined) return;
+      const previous = feedbackRef.current[cardId];
+      const requestKey = request === undefined ? undefined : JSON.stringify(request);
+      settleFeedback(cardId, { status: "publishing", intent });
+      // The report this press is about. A press that did not get through keeps its report, so pressing again for the
+      // same words acts on that one — which the node may already have sent — and never prepares a second.
+      let acting: string | undefined = reportId;
+      const reportOf = async (): Promise<string> => {
+        if (reportId !== undefined) return reportId;
+        if (request === undefined || requestKey === undefined) throw new Error(t("commandCard.failed"));
+        return feedbackReportToReuse(previous, requestKey) ?? (await client.prepareFeedback(request, conversationId)).draft.reportId;
+      };
+      void reportOf()
+        .then((id) => {
+          acting = id;
+          return client.publishFeedback(id, conversationId, { intent, answers: cardId });
+        })
+        .then(
+          (result) => {
+            applyTimeline(result.timeline);
+            settleFeedback(cardId, { status: "done", publication: result.publication });
+          },
+          (error: unknown) =>
+            settleFeedback(cardId, {
+              status: "failed",
+              message: error instanceof Error ? error.message : t("commandCard.failed"),
+              ...(acting === undefined ? {} : { reportId: acting }),
+              ...(requestKey === undefined ? {} : { requestKey }),
+            }),
+        );
+    },
+    [applyTimeline, client, conversationId, settleFeedback, t],
+  );
+
+  /** Feedback cards a later result card answers: read from the transcript, which is never rewritten. */
+  const answeredFeedbackCards = useMemo(() => {
+    const answered = new Set<string>();
+    for (const message of timeline?.messages ?? []) {
+      for (const block of message.blocks) {
+        if (block.type !== "feedback-card") continue;
+        const answers = (block as { answers?: unknown }).answers;
+        if (typeof answers === "string") answered.add(answers);
+      }
+    }
+    return [...answered];
+  }, [timeline]);
+
   return useMemo<BlockActions>(
     () => ({
       onApprovalDecide: decideApproval,
@@ -558,8 +648,16 @@ export function useBlockActions({
       signIns,
       onSignInAnswer: answerSignIn,
       onSignInCancel: cancelSignIn,
+      ...(conversationId === undefined ? {} : { onFeedbackPreview: previewFeedback, onFeedbackCreate: createFeedback }),
+      feedback,
+      answeredFeedbackCards,
     }),
     [
+      answeredFeedbackCards,
+      conversationId,
+      createFeedback,
+      feedback,
+      previewFeedback,
       answerSignIn,
       cancelSignIn,
       commandAction,

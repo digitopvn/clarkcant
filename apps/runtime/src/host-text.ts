@@ -345,6 +345,7 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   read_context: "Read the context found",
   read_inbox: "Read the inbox",
   remember: "Remember something",
+  report_feedback: "Report a bug or request a feature",
   request_secret: "Ask the host for a secret",
   run_command: "Run a command",
   search_directory: "Search the package directory",

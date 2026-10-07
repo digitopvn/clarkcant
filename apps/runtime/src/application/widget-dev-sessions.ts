@@ -35,6 +35,7 @@ import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
 import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
 import {
+  WIDGET_DEV_DIRECTORY_SOURCE,
   WIDGET_DEV_SNAPSHOTS_MAX,
   WIDGET_DEV_STORE_MAX,
   readDevSessions,
@@ -518,15 +519,17 @@ export function createWidgetDevSessions(
             const approval = approvalState(consentApproval);
             return approval !== undefined && approval.decision === "granted" && approval.operationDigest === scope ? consentApproval : undefined;
           })();
+    // The session installs its own listing, so it names the dev source: a listing another source owns is never taken.
+    const sourceId = WIDGET_DEV_DIRECTORY_SOURCE.id;
     const approved: ApprovedInstall | undefined =
-      granted === undefined ? undefined : { approvalId: granted, digest: scope, localDigest: latest.generation.digest };
+      granted === undefined ? undefined : { approvalId: granted, digest: scope, localDigest: latest.generation.digest, sourceId };
     const intent = intentOf(stored);
 
     let outcome: Awaited<ReturnType<typeof installPackage>>;
     try {
       outcome = await installPackage(
         packageInstallDepsOf(services()),
-        { packageId: latest.listing.packageId, version: latest.listing.version, contentDigest: latest.generation.digest },
+        { packageId: latest.listing.packageId, version: latest.listing.version, contentDigest: latest.generation.digest, sourceId },
         { consentScope: scope, ...(approved === undefined ? {} : { approved }), ...(intent === undefined ? {} : { intent }) },
       );
     } catch (cause) {

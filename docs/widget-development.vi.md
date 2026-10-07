@@ -2883,7 +2883,9 @@ Dev host mô phỏng một node. Để xem widget trên chính node, hãy nhờ 
 hẹn giờ"), hoặc gọi `POST /widget-dev/sessions` với tư cách chủ máy
 ([giao diện mở](open-interfaces.vi.md#phiên-phát-triển-widget)). Node theo dõi thư mục bằng cùng build engine mà dev host
 dùng: mỗi thay đổi đọc được thành một gói trở thành một generation bất biến mang tên theo digest các tệp của nó, được sao
-chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Không có gì
+chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Các listing
+đó mang nguồn riêng, `widget-dev`, được ghi lên generation đã cài, nên bấm Cài trên một dòng marketplace liệt kê cùng id
+và version sẽ bị từ chối thay vì cài các tệp của phiên. Không có gì
 đi qua npm, Marketplace hay một directory index, và không có gì được phát hành. Thư mục `node_modules` ở gốc bị loại khỏi
 mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
 

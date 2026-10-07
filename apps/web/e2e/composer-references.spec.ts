@@ -172,7 +172,8 @@ test("the pointer chooses a row and opens a folder, and removing a chip takes it
   await expect(page.locator('[data-reference-chip="demo-app/docs"]')).toBeVisible();
   await expect(composer(page)).toBeFocused();
 
-  await page.keyboard.type("và /");
+  // A bare slash fills the capped list with host commands first, so the skill is narrowed to by name.
+  await page.keyboard.type("và /rel");
   await option(page, "release-notes").click();
   await expect(composer(page)).toHaveValue("@demo-app/docs và /release-notes ");
   await expect(page.locator("[data-reference-chip]")).toHaveCount(2);

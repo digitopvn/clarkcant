@@ -89,6 +89,7 @@ describe("evaluateAttestations", () => {
     ["a code path", ["docs/guide.md", "tools/x.mjs"]],
     ["REVIEW.md, which is policy rather than prose", ["REVIEW.md"]],
     ["AGENTS.md, the rules every agent works by", ["docs/guide.md", "AGENTS.md"]],
+    ["the Vietnamese pairs of the root README and DESIGN", ["README.vi.md", "DESIGN.vi.md"]],
     ["the docs manifest, which is not prose", ["docs/manifest.json"]],
     ["an unavailable file list", null],
     ["an empty file list", []],

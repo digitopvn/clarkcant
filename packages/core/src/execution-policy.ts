@@ -585,6 +585,8 @@ export function recordEffectExecution(
     action?: BrowserPress;
     /** Who asked for the turn that caused it, when a turn did. */
     origin?: TurnOrigin;
+    /** Who let it run: the policy, unless the person's own press on a host card was the decision. */
+    approvedBy?: "policy" | "person";
   },
 ): number {
   return appendEvent(deps.db, {
@@ -602,7 +604,7 @@ export function recordEffectExecution(
       ...(input.action === undefined ? {} : { action: input.action }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       because: input.decision.reason,
-      approvedBy: "policy",
+      approvedBy: input.approvedBy ?? "policy",
     },
     occurredAt: deps.now(),
   });

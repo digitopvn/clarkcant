@@ -51,7 +51,7 @@ The key belongs in the runtime's environment or its local, gitignored `.env`. It
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
 referenced from code. The TypeSafe key can also be typed into the settings card. When both hold one,
 the key saved in the card wins, the rule every provider credential follows; the environment's key is
-used when the card holds none. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value. The Cloudflare token is read from
+used when the card holds none. Saving or removing the key in the card takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value. The Cloudflare token is read from
 the environment only: there is no settings card for it, and a secret stored for another purpose is
 never used as the decision provider's credential.
 
@@ -232,7 +232,9 @@ selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
 
-The second form appears only when Cloudflare is selected.
+The second form appears only when Cloudflare is selected. The line describes the node at start-up: a
+TypeSafe key saved or removed in the settings card later changes what the selector does without changing
+that line.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one
