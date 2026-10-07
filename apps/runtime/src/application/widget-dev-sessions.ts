@@ -162,6 +162,8 @@ export function createWidgetDevSessions(
     watch?: boolean;
     /** How often a session waiting on an answer looks for it. */
     answerPollMs?: number;
+    /** How long a folder may keep failing to be looked at before its session stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
+    rootUnreadableMs?: number;
   } = {},
 ): WidgetDevSessions {
   const live = new Map<string, LiveSession>();
@@ -669,8 +671,9 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * Whether a live session's folder has gone (deleted, renamed, or replaced by another folder at the same path while it
-   * was watched); when it has, the session is stopped as `folder-gone` before anything is built or installed from it. A
+   * Whether a live session's folder has gone (deleted, renamed, or no longer a folder; another folder made at the same
+   * path is watched in its place by the engine); when it has, the session is stopped as `folder-gone` before anything is
+   * built or installed from it. A
    * platform watcher does not always report this (Windows reports nothing), so the check is made before each build is
    * followed, not only on a watcher error. The session's engine answers, since it knows which folder it watches; a folder
    * that could not be looked at this time (a busy or locked folder on Windows) is not taken as gone.
@@ -706,6 +709,7 @@ export function createWidgetDevSessions(
         root: stored.root,
         cacheRoot: cacheRoot(),
         watch: options.watch !== false,
+        ...(options.rootUnreadableMs === undefined ? {} : { rootUnreadableMs: options.rootUnreadableMs }),
         generationsBefore: before,
         allowedIsolations: WIDGET_DEV_ALLOWED_ISOLATIONS,
         baseline: () => live.get(sessionId)?.baseline,
@@ -720,7 +724,7 @@ export function createWidgetDevSessions(
           });
         },
         onWatchError: (error) => {
-          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}\n`);
+          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}; what it ran keeps running\n`);
           // Said as it is: a session whose folder is no longer watched is stopped, not live.
           void serial(sessionId, async () => {
             if (live.get(sessionId) === session) markStopped(sessionId, "watch-failed");

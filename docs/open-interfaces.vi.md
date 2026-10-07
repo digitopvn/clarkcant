@@ -925,13 +925,20 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 **Khi việc theo dõi dừng.** Một phiên mà thư mục không còn theo dõi được sẽ được đánh dấu là đã dừng, kèm lý do, thay vì
 vẫn hiện là đang chạy:
 
-- `watch-failed`: bộ theo dõi bị lỗi.
-- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, hoặc bị xoá rồi một thư mục mới được tạo lại ở cùng đường dẫn, mà bộ
-  theo dõi không còn nghe thấy (node so sánh device và file id của thư mục với những giá trị lúc bắt đầu theo dõi). Node
-  kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được
-  theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục tạm thời không xem được vì lý do khác, chẳng hạn
-  phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra
-  lại. Lý do này cũng dùng khi thư mục không còn sau một lần khởi động lại.
+- `watch-failed`: bộ theo dõi bị lỗi, hoặc thư mục không xem được liên tục trong 30 giây vì một lý do khác "không tìm
+  thấy" (xem bên dưới). Nhật ký của node ghi rõ lỗi, ví dụ `EPERM`.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, hoặc đường dẫn không còn là một thư mục. Node kiểm tra thư mục ít nhất
+  mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được theo dõi bị xoá. Chỉ lỗi
+  "không tìm thấy" mới được tính: một thư mục không xem được vì lý do khác, chẳng hạn phần mềm diệt virus hoặc trình lập
+  chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra lại, tối đa 30 giây lỗi liên tục; sau
+  đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng khi thư mục không còn sau một lần khởi động lại.
+
+Một thư mục vẫn còn đó nhưng mang định danh khác không làm phiên dừng. Node so sánh device và file id của thư mục với
+những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
+`rm -rf out && build`), hoặc hệ thống tệp đã cấp cho nó một id mới (một số ổ FUSE và ổ mạng làm vậy). Node theo dõi thư
+mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu.
+
+Trong mọi trường hợp, generation đang chạy vẫn tiếp tục chạy.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
 - `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
   phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.

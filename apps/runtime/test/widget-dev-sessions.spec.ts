@@ -671,17 +671,34 @@ describe("a widget dev session", () => {
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
   });
 
-  it("stops a watched session as folder-gone when its folder is deleted and made again before anything looks", async () => {
+  it("keeps a watched session live, and builds the new folder, when its folder is deleted and made again before anything looks", async () => {
     services.widgetDev?.close();
     services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    // In one turn of the event loop: the path names a folder again, but not the one being watched.
+    // In one turn of the event loop, as `rm -rf out && build`: the path names a folder again, but not the one watched.
     rmSync(root, { recursive: true, force: true, maxRetries: 5 });
     writePackage("<!doctype html><p>a new folder</p>\n");
+    const rebuilt = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+
+    // The new folder is the one watched: a save in it builds and runs.
+    writePackage("<!doctype html><p>saved in the new folder</p>\n");
+    const saved = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 3);
+    expect(saved).toMatchObject({ status: "live", activation: { state: "active", generation: 3 } });
+  });
+
+  it("stops a watched session as watch-failed when its folder cannot be looked at for the time bound, and keeps what runs", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20, rootUnreadableMs: 300 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    statFailure.path = resolve(root);
+    // Bounded: the node looks at the folder once a second, so the bound is passed on the second look at the latest.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
-    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "watch-failed", activation: { state: "active", generation: 1 } });
   });
 
   it("keeps a watched session live through a folder it cannot look at for a moment", async () => {

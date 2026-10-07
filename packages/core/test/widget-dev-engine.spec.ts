@@ -18,6 +18,8 @@ import {
 
 /** A folder whose `stat` fails with this code, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined, code: "EPERM" }));
+/** A folder whose file id reads as another one, as a FUSE mount without stable inode numbers reports a folder still there. */
+const statNewId = vi.hoisted(() => ({ path: undefined as string | undefined }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -25,7 +27,11 @@ vi.mock("node:fs", async (importOriginal) => {
     if (statFailure.path !== undefined && resolve(String(path)) === statFailure.path) {
       throw Object.assign(new Error(`${statFailure.code}: operation not permitted, stat '${String(path)}'`), { code: statFailure.code });
     }
-    return actual.statSync(path, options);
+    const stat = actual.statSync(path, options);
+    if (statNewId.path !== undefined && resolve(String(path)) === statNewId.path && stat !== undefined && typeof stat.ino === "bigint") {
+      stat.ino += 1n;
+    }
+    return stat;
   }) as typeof actual.statSync;
   return { ...actual, statSync, default: { ...actual, statSync } };
 });
@@ -94,6 +100,7 @@ function engineFor(root: string, cacheRoot?: string): DevEngine {
 
 afterEach(() => {
   statFailure.path = undefined;
+  statNewId.path = undefined;
   vi.useRealTimers();
   for (const engine of engines.splice(0)) engine.close();
   for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -313,22 +320,127 @@ describe("the dev engine", () => {
     expect(gone).toBe(1);
   });
 
-  it("notices a watched folder deleted and made again before it looks, which the watcher no longer hears", async () => {
+  it("watches a folder deleted and made again before it looks, and builds it, though the old watcher hears nothing", async () => {
     const root = tempDir("dev-engine-");
     writePackage(root, "<p>one</p>");
     let gone = 0;
-    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onRootGone: () => (gone += 1) });
+    const failures: Error[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 50,
+      onRootGone: () => (gone += 1),
+      onWatchError: (error) => failures.push(error),
+    });
     engines.push(engine);
     await engine.ready;
 
-    // In one turn of the event loop: no existence check runs between the delete and the new folder.
+    // In one turn of the event loop: no existence check runs between the delete and the new folder, as `rm -rf out && build`.
     rmSync(root, { recursive: true, force: true, maxRetries: 5 });
     writePackage(root, "<p>new folder</p>");
+    const waitFor = async (generation: number): Promise<void> => {
+      const deadline = Date.now() + 5_000;
+      while (engine.latest()?.generation.generation !== generation && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+      expect(engine.latest()?.generation.generation).toBe(generation);
+    };
+    await waitFor(2);
+    expect(gone).toBe(0);
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
+    expect(engine.rootGone()).toBe(false);
+
+    // The new folder is the one watched now: a save in it builds.
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved in the new folder</p>");
+    await waitFor(3);
+    expect(gone).toBe(0);
+  });
+
+  it("watches a folder that is still there under a new file id again, and builds it, rather than stopping", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const built: string[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      onRootGone: () => (gone += 1),
+      onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`),
+    });
+    engines.push(engine);
+    await engine.ready;
+    // Past the catch-up build, so the only build that follows is the one the new id asks for.
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 200));
+    built.length = 0;
+
+    statNewId.path = engine.root;
     const deadline = Date.now() + 5_000;
-    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
-    expect(gone).toBe(1);
+    while (built.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(built).toEqual(["change:unchanged"]);
+    expect(gone).toBe(0);
+    expect(engine.watching()).toBe(true);
+    expect(engine.rootGone()).toBe(false);
+
+    // Watched again once: the new id is the folder's id now, and a save still builds.
+    await new Promise((done) => setTimeout(done, 150));
+    expect(built).toEqual(["change:unchanged"]);
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved</p>");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+  });
+
+  it("stops watching, and says why, a folder it has not been able to look at for the time bound", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const failures: Error[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      rootUnreadableMs: 300,
+      onRootGone: () => (gone += 1),
+      onWatchError: (error) => failures.push(error),
+    });
+    engines.push(engine);
+    await engine.ready;
+
+    statFailure.path = engine.root;
+    statFailure.code = "EPERM";
+    const started = Date.now();
+    const deadline = started + 5_000;
+    while (failures.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    expect(failures).toHaveLength(1);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    expect(failures[0]?.message).toContain("could not be looked at");
+    expect(failures[0]?.message).toContain("EPERM");
     expect(engine.watching()).toBe(false);
-    expect(engine.rootGone()).toBe(true);
+    expect(gone).toBe(0);
+    // Told once: the check stops with the watch.
+    await new Promise((done) => setTimeout(done, 150));
+    expect(failures).toHaveLength(1);
+  });
+
+  it("starts the time bound again after the folder could be looked at", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const failures: Error[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 20, rootUnreadableMs: 300, onWatchError: (error) => failures.push(error) });
+    engines.push(engine);
+    await engine.ready;
+
+    for (let round = 0; round < 3; round += 1) {
+      statFailure.path = engine.root;
+      await new Promise((done) => setTimeout(done, 200));
+      statFailure.path = undefined;
+      await new Promise((done) => setTimeout(done, 80));
+    }
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
   });
 
   it("keeps watching through a folder it cannot look at for a moment, rather than taking it as gone", async () => {

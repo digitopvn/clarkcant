@@ -920,13 +920,20 @@ node starts with no sessions; the file is never overwritten.
 **When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
 reading as live:
 
-- `watch-failed`: the watcher failed.
-- `folder-gone`: the folder was deleted or renamed, or it was deleted and a new folder was made at the same path, which
-  the watcher no longer hears (the node compares the folder's device and file id with the ones it started watching).
-  The node checks for the folder at least once a second and before each build, because Windows reports nothing when a
-  watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an
-  antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again. The same reason
-  applies when the folder is missing after a restart.
+- `watch-failed`: the watcher failed, or the folder could not be looked at for 30 seconds in a row for a reason other
+  than "not found" (see below). The node's log names the error, for example `EPERM`.
+- `folder-gone`: the folder was deleted or renamed, or the path no longer names a folder. The node checks for the folder
+  at least once a second and before each build, because Windows reports nothing when a watched folder is deleted. Only
+  "not found" counts: a folder that cannot be looked at for another reason, such as an antivirus or indexer holding it
+  (`EPERM`, `EBUSY`), keeps the session live and is checked again, for up to 30 seconds of continuous failures; after
+  that the session stops as `watch-failed`. The same reason applies when the folder is missing after a restart.
+
+A folder that is still there with another identity does not stop the session. The node compares the folder's device and
+file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
+`rm -rf out && build`), or the filesystem gave it a new id (some FUSE mounts and network drives do). The node watches
+the folder now at that path and builds it, as it builds a saved change.
+
+In every case, the generation that runs keeps running.
 - `capacity`: the node is already watching eight folders as it resumes.
 - `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
   whose folder is outside the widget workspace.
