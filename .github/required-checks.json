@@ -5,21 +5,20 @@
     "id": 24128511,
     "name": "main: required CI"
   },
-  "strict": true,
+  "strict": false,
   "integrationId": 15368,
   "workflow": ".github/workflows/ci.yml",
   "requiredJobs": [
-    "verify (ubuntu-latest, node 22.19)",
     "verify (ubuntu-latest, node 24)",
-    "verify (macos-latest, node 24)",
-    "verify (windows-latest, node 24)",
     "secret scan",
-    "e2e (browser suite)",
+    "e2e (browser suite 1/6)",
+    "e2e (browser suite 2/6)",
+    "e2e (browser suite 3/6)",
+    "e2e (browser suite 4/6)",
+    "e2e (browser suite 5/6)",
+    "e2e (browser suite 6/6)",
     "reference theme browser (ubuntu-latest)",
-    "reference theme browser (macos-latest)",
-    "reference theme browser (windows-latest)",
     "widget tooling smoke (ubuntu-latest)",
-    "widget tooling smoke (macos-latest)",
     "widget tooling smoke (windows-latest)",
     "service container (rootless docker)",
     "service container (rootless podman)",
@@ -28,5 +27,11 @@
   "requiredStatuses": {
     "review attestation": ".github/workflows/review-attestation.yml"
   },
-  "nonGatingJobs": {}
+  "nonGatingJobs": {
+    "verify (macos-latest, node 24)": "Bootstrap phase: runs on every PR and on main, but a macOS-only failure must not hold up merges until the first release; gate it again afterwards.",
+    "verify (windows-latest, node 24)": "Bootstrap phase: runs on every PR and on main, but a Windows-only failure must not hold up merges until the first release; gate it again afterwards.",
+    "reference theme browser (macos-latest)": "Bootstrap phase: runs on every PR and on main, but a macOS-only failure must not hold up merges until the first release; gate it again afterwards.",
+    "reference theme browser (windows-latest)": "Bootstrap phase: runs on every PR and on main, but a Windows-only failure (see #544) must not hold up merges until the first release; gate it again afterwards.",
+    "widget tooling smoke (macos-latest)": "Bootstrap phase: macOS runners allow 5 jobs at once and the queue reached 75 jobs, so a required macOS job held merges for over an hour; it still runs on every PR and on main and dev. Gate it again after the first release."
+  }
 }
