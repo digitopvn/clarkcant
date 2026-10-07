@@ -70,6 +70,20 @@ describe("project instructions contract", () => {
     expect(rulesRead({ version: 1, rules: [{ when: { path: "*".repeat(17) }, include: ["a"] }, RULE] })).toHaveLength(1);
   });
 
+  it("bounds the path glob characters of a whole file, leaving out the rule that would go over, in file order", () => {
+    // Ten globs of 195 characters: two such rules fit in the file's 4,000, a third does not, a short one still does.
+    const long = (letter: string): string => `src/${letter.repeat(191)}`;
+    const wide = { when: { path: Array.from({ length: 10 }, (_, index) => long(String.fromCharCode(97 + index))) }, include: ["a"] };
+    expect(PROJECT_INSTRUCTION_LIMITS.globCharsPerFile).toBe(4_000);
+    const file = { version: 1, rules: [wide, wide, wide, RULE] };
+    // The third wide rule would take the file over; the small rule after it still fits.
+    expect(rulesRead(file)).toEqual([wide, wide, RULE]);
+    expect(projectInstructionsProblems(file)).toEqual([
+      `rules[2].when.path: takes the file's path globs over ${String(PROJECT_INSTRUCTION_LIMITS.globCharsPerFile)} characters in all; a node leaves this rule out`,
+    ]);
+    expect(projectInstructionsFileSchema.safeParse({ version: 1, rules: [wide, wide, RULE] }).success).toBe(true);
+  });
+
   it("says what is wrong with a file, one line each", () => {
     expect(projectInstructionsProblems({ version: 1, rules: [RULE] })).toEqual([]);
     expect(projectInstructionsProblems({ rules: [RULE] })).toEqual([

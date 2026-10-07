@@ -32,6 +32,11 @@ export const PROJECT_INSTRUCTION_LIMITS = {
   globWildcards: 16,
   /** Folders in one path glob, after a run of `**` counts as one. */
   globSegments: 32,
+  /**
+   * Characters of all path globs in one file together. Matching costs at most glob characters × path characters for each
+   * path checked, so this bounds the work per path whatever the file says; a reader leaves out a rule that would go over.
+   */
+  globCharsPerFile: 4_000,
 } as const;
 
 export const INSTRUCTION_OPERATIONS = ["read", "write", "command", "test", "deploy"] as const;
@@ -72,6 +77,16 @@ export function instructionGlobProblem(glob: string): string | undefined {
   }
   return undefined;
 }
+
+/** The characters a rule's path globs count towards `PROJECT_INSTRUCTION_LIMITS.globCharsPerFile`. */
+export function instructionRuleGlobChars(rule: { when?: { path?: string | readonly string[] | undefined } }): number {
+  const path = rule.when?.path;
+  if (path === undefined) return 0;
+  return (typeof path === "string" ? [path] : path).reduce((total, glob) => total + normalInstructionGlob(glob).length, 0);
+}
+
+const globCharsPerFileProblem = (): string =>
+  `takes the file's path globs over ${String(PROJECT_INSTRUCTION_LIMITS.globCharsPerFile)} characters in all; a node leaves this rule out`;
 
 /**
  * One value or a list of 1 to `valuesPerCondition` of them. The union's own error would only say "Invalid input", so the
@@ -146,11 +161,24 @@ export type ProjectInstructionRule = z.infer<typeof projectInstructionRuleSchema
 const schemaReference = z.string().max(2_000).optional();
 
 /** The file as it is written or created now: `version` is required and every rule must be valid. */
-export const projectInstructionsFileSchema = z.strictObject({
-  $schema: schemaReference,
-  version: z.literal(PROJECT_INSTRUCTIONS_VERSION, { error: `must be the number ${String(PROJECT_INSTRUCTIONS_VERSION)}` }),
-  rules: z.array(projectInstructionRuleSchema).max(PROJECT_INSTRUCTION_LIMITS.rules),
-});
+export const projectInstructionsFileSchema = z
+  .strictObject({
+    $schema: schemaReference,
+    version: z.literal(PROJECT_INSTRUCTIONS_VERSION, { error: `must be the number ${String(PROJECT_INSTRUCTIONS_VERSION)}` }),
+    rules: z.array(projectInstructionRuleSchema).max(PROJECT_INSTRUCTION_LIMITS.rules),
+  })
+  .superRefine((file, context) => {
+    let total = 0;
+    for (const [index, rule] of file.rules.entries()) {
+      const chars = instructionRuleGlobChars(rule);
+      // The same count a reader keeps: a rule that goes over is left out and the next one is measured without it.
+      if (total + chars > PROJECT_INSTRUCTION_LIMITS.globCharsPerFile) {
+        context.addIssue({ code: "custom", path: ["rules", index, "when", "path"], message: globCharsPerFileProblem() });
+        continue;
+      }
+      total += chars;
+    }
+  });
 export type ProjectInstructionsFile = z.infer<typeof projectInstructionsFileSchema>;
 
 /**
@@ -219,7 +247,8 @@ export type ProjectInstructionsRead =
 /**
  * The file as a reader uses it, or why it cannot be used: a `version` this build does not know, or not an object of
  * this shape. A file with no `version` is version 1. A rule that does not parse is left out on its own and the rest
- * still apply; only the first `PROJECT_INSTRUCTION_LIMITS.rules` entries are read.
+ * still apply; only the first `PROJECT_INSTRUCTION_LIMITS.rules` entries are read, and a rule whose path globs would take
+ * the file over `PROJECT_INSTRUCTION_LIMITS.globCharsPerFile` is left out too, in file order.
  */
 export function readProjectInstructions(value: unknown): ProjectInstructionsRead {
   const version = unknownVersion(value);
@@ -227,9 +256,14 @@ export function readProjectInstructions(value: unknown): ProjectInstructionsRead
   const file = readableFileSchema.safeParse(value);
   if (!file.success) return { ok: false, reason: "shape" };
   const rules: ProjectInstructionRule[] = [];
+  let globChars = 0;
   for (const entry of file.data.rules.slice(0, PROJECT_INSTRUCTION_LIMITS.rules)) {
     const rule = projectInstructionRuleSchema.safeParse(entry);
-    if (rule.success) rules.push(rule.data);
+    if (!rule.success) continue;
+    const chars = instructionRuleGlobChars(rule.data);
+    if (globChars + chars > PROJECT_INSTRUCTION_LIMITS.globCharsPerFile) continue;
+    globChars += chars;
+    rules.push(rule.data);
   }
   return { ok: true, version: PROJECT_INSTRUCTIONS_VERSION, rules };
 }
