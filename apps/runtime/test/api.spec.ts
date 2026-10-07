@@ -17,7 +17,7 @@ import {
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { commandDigest } from "../src/run-command.ts";
-import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 
 /**
  * Conversation API.
@@ -294,6 +294,126 @@ describe("J1 over the API", async () => {
     expect(
       (await request("GET", `/conversations/${conversationId}/timeline`, { query: { after: "abc" } })).status,
     ).toBe(400);
+  });
+
+  describe("a conversation longer than one timeline page", () => {
+    type Page = {
+      messages: { messageId: string }[];
+      window: { version: number; fromSequence: number; toSequence: number; hasOlder: boolean; hasNewer: boolean; sequences: number[] };
+    };
+    /** `count` stored messages, written the way the conductor writes them, oldest first. */
+    function seed(count: number): void {
+      const { db } = services.runtime;
+      db.exec("BEGIN");
+      for (let index = 1; index <= count; index += 1) {
+        appendMessage(
+          db,
+          {
+            messageId: `msg_seed_${String(index)}`,
+            conversationId,
+            role: index % 2 === 0 ? "assistant" : "user",
+            blocks: [{ type: "text", format: "plain", content: `message ${String(index)}`, streaming: false }],
+            authorNodeId: services.runtime.identity.nodeId,
+            createdAt: AT,
+            delivery: "accepted",
+          } as never,
+          nextMessageSequence(db, conversationId),
+        );
+      }
+      db.exec("COMMIT");
+    }
+    const read = async (query: Record<string, string>): Promise<Page> => {
+      const response = await request("GET", `/conversations/${conversationId}/timeline`, { query });
+      expect(response.status).toBe(200);
+      return response.body as Page;
+    };
+
+    it("reopens on the newest page, and pages back to the first message with no duplicate and no gap", async () => {
+      conversationId = await createConversation();
+      seed(2_100);
+
+      const latest = await read({ window: "latest" });
+      expect(latest.messages).toHaveLength(200);
+      expect(latest.messages.at(-1)?.messageId).toBe("msg_seed_2100");
+      expect(latest.window).toMatchObject({ version: 1, fromSequence: 1_901, toSequence: 2_100, hasOlder: true, hasNewer: false });
+
+      const ids = latest.messages.map((message) => message.messageId);
+      let page = latest;
+      while (page.window.hasOlder) {
+        const cursor = page.window.fromSequence;
+        page = await read({ before: String(cursor), limit: "500" });
+        expect(page.window.toSequence).toBe(cursor - 1);
+        ids.unshift(...page.messages.map((message) => message.messageId));
+      }
+      expect(ids).toHaveLength(2_100);
+      expect(new Set(ids).size).toBe(2_100);
+      expect(ids[0]).toBe("msg_seed_1");
+      expect(page.window.fromSequence).toBe(0);
+    });
+
+    it("answers a bare read with the page it always did, now saying which part of the conversation it is", async () => {
+      conversationId = await createConversation();
+      seed(250);
+      const bare = await read({});
+      expect(bare.messages).toHaveLength(200);
+      expect(bare.messages[0]?.messageId).toBe("msg_seed_1");
+      expect(bare.window).toMatchObject({ fromSequence: 1, toSequence: 200, hasOlder: false, hasNewer: true });
+      const next = await read({ after: String(bare.window.toSequence) });
+      expect(next.messages.map((message) => message.messageId)).toEqual(
+        Array.from({ length: 50 }, (_, index) => `msg_seed_${String(201 + index)}`),
+      );
+      expect(next.window).toMatchObject({ hasOlder: true, hasNewer: false });
+    });
+
+    it("answers a send with the newest page, so the new turn is never cut off behind old history", async () => {
+      conversationId = await createConversation();
+      seed(260);
+      const sent = await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ", demo: true } });
+      expect(sent.status).toBeLessThan(300);
+      const timeline = (sent.body as { timeline: Page & { instances: unknown[] } }).timeline;
+      expect(timeline.window.hasNewer).toBe(false);
+      expect(timeline.window.hasOlder).toBe(true);
+      expect(timeline.messages.map((message) => message.messageId)).not.toContain("msg_seed_1");
+      // The turn just sent and its answer are the newest messages on the page, with the widget the answer drew.
+      expect(timeline.window.sequences.at(-1)).toBeGreaterThan(260);
+      expect(timeline.instances.length).toBeGreaterThan(0);
+    });
+
+    it("carries a widget far up the conversation on the newest page when it is pinned or was just acted on", async () => {
+      conversationId = await createConversation();
+      await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ", demo: true } });
+      const instanceId = ((await read({ window: "latest" })) as Page & { instances: { instanceId: string }[] }).instances[0]!.instanceId;
+      seed(300);
+
+      const ids = (page: { instances: { instanceId: string }[] }): string[] => page.instances.map((instance) => instance.instanceId);
+      expect(ids(buildTimeline(services, { conversationId }))).not.toContain(instanceId);
+      // A widget action's answer names the instance it acted on, which is drawn far above the newest page.
+      expect(ids(buildTimeline(services, { conversationId, instanceIds: [instanceId] }))).toContain(instanceId);
+
+      const pinned = await request("POST", `/conversations/${conversationId}/pins`, { body: { instanceId } });
+      expect(pinned.status).toBe(201);
+      expect(ids((pinned.body as { timeline: { instances: { instanceId: string }[] } }).timeline)).toContain(instanceId);
+      expect(ids((await read({ window: "latest" })) as Page & { instances: { instanceId: string }[] })).toContain(instanceId);
+    });
+
+    it("refuses a page asked for in two ways, or sized outside its bounds", async () => {
+      conversationId = await createConversation();
+      for (const query of [
+        { after: "1", before: "5" },
+        { window: "latest", before: "5" },
+        { window: "oldest" },
+        { before: "0" },
+        { before: "-3" },
+        { after: "1e3" },
+        { limit: "0" },
+        { limit: "501" },
+        { limit: "ten" },
+      ]) {
+        const response = await request("GET", `/conversations/${conversationId}/timeline`, { query });
+        expect(response.status, JSON.stringify(query)).toBe(400);
+        expect((response.body as { code: string }).code).toBe("INVALID_SCHEMA");
+      }
+    });
   });
 
   it("accepts a raw command envelope and reports it as an acknowledgement, not an outcome", async () => {

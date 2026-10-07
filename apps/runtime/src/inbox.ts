@@ -7,7 +7,7 @@ import {
   type Notice,
   type WaitingItem,
 } from "@clarkcant/contracts";
-import { directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
+import { readDirectory, type DirectoryIndexState } from "@clarkcant/core";
 import {
   allRows,
   countUnreadNotifications,
@@ -254,7 +254,7 @@ export function readInbox(services: InboxServices, now: Instant, limit = 50): In
   const context = { nodeId: services.runtime.identity.nodeId, now };
   // Read once per inbox read, and only when an update notice needs it.
   let index: DirectoryIndexState | undefined;
-  const directory = (): DirectoryIndexState => (index ??= readDirectoryIndex(directoryIndexPath(process.env)));
+  const directory = (): DirectoryIndexState => (index ??= readDirectory({ env: process.env, dataDir: services.runtime.dataDir }));
   const withActions = (notice: Notice): Notice => {
     const isPackageUpdate = notice.category === "update" && notice.subject?.kind === "package";
     const reachChange = isPackageUpdate ? noticeReachChange(services.runtime, notice, directory()) : undefined;
