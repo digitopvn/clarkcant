@@ -24,4 +24,9 @@ describe("detaching an isolated widget", () => {
   it("is not offered before the surface has been read", () => {
     expect(canShowDetached(undefined)).toBe(false);
   });
+
+  it("is not offered for a kind the detached window does not know how to draw", () => {
+    const unknown = { kind: "something-new" } as unknown as LiveWidgetResponse;
+    expect(canShowDetached(unknown)).toBe(false);
+  });
 });

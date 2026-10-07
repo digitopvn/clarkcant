@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test } from "@playwright/test";
 import { compileAppearance } from "@clarkcant/design-tokens";
 
@@ -68,6 +71,73 @@ async function stubBridge(page: import("@playwright/test").Page, answer: unknown
     };
   }, answer);
 }
+
+/**
+ * The conversation half: which open widgets offer Detach at all.
+ *
+ * The desktop preload is stood in for with a `detachWidget` that only records, in the top window only, so the control's
+ * gating is what is checked. Each widget is opened expanded and waited on until this surface holds its lease, because
+ * the button is never offered before that, and an absent button before then would prove nothing.
+ */
+const NODE_PORT = process.env.CC_E2E_NODE_PORT;
+const GATEWAY = `http://127.0.0.1:${NODE_PORT ?? ""}`;
+
+function token(): string {
+  const parsed = JSON.parse(readFileSync(join(process.cwd(), ".data", "e2e", "identity.json"), "utf8")) as { localToken?: unknown };
+  if (typeof parsed.localToken !== "string" || parsed.localToken === "") throw new Error("no local token");
+  return parsed.localToken;
+}
+
+async function openConversationWithDetachBridge(page: import("@playwright/test").Page): Promise<void> {
+  if (NODE_PORT === undefined || NODE_PORT === "") {
+    throw new Error("CC_E2E_NODE_PORT is not set, so this suite does not know which node it is testing; run it through playwright.config.ts");
+  }
+  await page.addInitScript(() => {
+    if (window.top !== window) return;
+    const requests: unknown[] = [];
+    (window as unknown as { __detachRequests: unknown[] }).__detachRequests = requests;
+    (window as unknown as { clarkcant: unknown }).clarkcant = {
+      detachWidget: async (input: unknown) => {
+        requests.push(input);
+        return { ok: false, refused: "recorded only" };
+      },
+    };
+  });
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+}
+
+async function say(page: import("@playwright/test").Page, text: string): Promise<void> {
+  const composer = page.locator("[data-composer='true']");
+  await composer.waitFor();
+  await composer.fill(text);
+  await composer.press("Enter");
+}
+
+test("a composed widget open in the conversation offers Detach", async ({ page }) => {
+  await openConversationWithDetachBridge(page);
+  await say(page, "cho tui xem tổng quan công việc tuần này");
+  await expect(page.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
+  await page.locator("[data-open-live]").first().click();
+  const live = page.locator("[data-pin-live]").first();
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 30_000 });
+  await expect(live.locator("[data-detach-widget='true']")).toBeVisible();
+});
+
+test("a widget in its own frame open in the conversation does not offer Detach", async ({ page }) => {
+  await openConversationWithDetachBridge(page);
+  await say(page, "mở trình soạn thảo văn bản");
+  const open = page.locator("[data-open-live]").last();
+  await expect(open).toBeVisible({ timeout: 20_000 });
+  await open.click();
+  const live = page.locator("[data-pin-live]").last();
+  await expect(live.locator("[data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 20_000 });
+  // The head is drawn (its Close is there), so a missing Detach is the gate, not a missing head.
+  await expect(live.locator("[data-close-live]")).toBeVisible();
+  await expect(live.locator("[data-detach-widget]")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __detachRequests: unknown[] }).__detachRequests)).toEqual([]);
+});
 
 test("the detached composition draws the host revision and follows a checked appearance relay in place", async ({ page }) => {
   const initial = compileAppearance({ scheme: "dark" });
