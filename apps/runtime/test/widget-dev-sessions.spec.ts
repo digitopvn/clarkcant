@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
@@ -16,6 +16,7 @@ import {
 import {
   DIRECTORY_FEED_FORMAT,
   EXECUTION_POLICY_PREFERENCE_KEY,
+  OFFICIAL_MARKETPLACE_FEED_URL,
   customFeedId,
   listInstalledPackages,
   refreshDirectory,
@@ -704,14 +705,27 @@ describe("the directory a widget dev session lists its builds in", () => {
       newId: (prefix: string) => `${prefix}_x`,
     }).find((installed) => installed.packageId === PACKAGE)?.directorySource;
 
+  /** Every address the node fetched that is not this machine's loopback; none of them is reached. */
+  let offLoopback: string[];
+
   beforeEach(() => {
     // The node's defaults: no index file, no feed of the person's own, and the official Marketplace on.
     setEnv("CC_DIRECTORY_INDEX");
     setEnv("CC_DIRECTORY_MARKETPLACES");
     setEnv("CC_OFFICIAL_MARKETPLACE");
+    // A test run never reaches the live Marketplace: it answers as an unavailable one, and only loopback feeds are real.
+    offLoopback = [];
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (new URL(url).origin.startsWith("http://127.0.0.1")) return realFetch(input, init);
+      offLoopback.push(url);
+      return Promise.resolve(new Response("unavailable in tests", { status: 503 }));
+    });
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const [name, value] of Object.entries(restoreEnv)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -737,6 +751,8 @@ describe("the directory a widget dev session lists its builds in", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.activation).toMatchObject({ state: "refused", code: "DIRECTORY_UNREADABLE" });
     expect(started.running).toBeUndefined();
+    // The install looked for the listing in the Marketplace too, so the Marketplace was on.
+    expect(offLoopback.some((url) => url.startsWith(OFFICIAL_MARKETPLACE_FEED_URL))).toBe(true);
   });
 
   it("names its own source, so an install from a row naming a marketplace never takes the session's build", async () => {
@@ -750,6 +766,7 @@ describe("the directory a widget dev session lists its builds in", () => {
 
     // Fetched now, the marketplace lists the same id and version; the person presses Install on its card.
     await refreshDirectory({ env: process.env, dataDir: join(dir, "node") });
+    expect(offLoopback.some((url) => url.startsWith(OFFICIAL_MARKETPLACE_FEED_URL))).toBe(true);
     const pressed = await call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION, sourceId: customFeedId(feedUrl) });
     expect(pressed.status).toBe(409);
     expect(pressed.body).toMatchObject({ code: "DIRECTORY_SOURCE_CHANGED" });
