@@ -133,6 +133,55 @@ log driver for the running service and expects `none`. Podman machine reaches th
 Record in the PR or in this section: the operating system and its version, the engine and its version, and the verbose
 test output. A failure is a finding for its own change. Do not adjust the test to fit the machine.
 
+## Linux windows: X11, native Wayland and Hyprland
+
+The window modes (normal, expanded, compact, orb), the pin, focus, minimize and full screen go through one semantic
+controller in the desktop shell (`apps/desktop/src/window-controller.mjs`). The shell picks its backend from the desktop
+session (`apps/desktop/src/window-session.mjs`) and reports the choice in `desktop:getStatus` as `window.backend`,
+`window.session` and `window.backendReason`. Every window answer also lists the parts it asked the window system for
+(`applied`) and the parts this session cannot honour (`unsupported`), so the client never shows geometry or a pin that
+did not happen.
+
+What each Linux session gets today:
+
+- **X11, and XWayland** (a Wayland session started with `--ozone-platform=x11`): the same Electron geometry as macOS and
+  Windows. The app sets the window's size and position and keeps it on top. CI runs the desktop smoke under Xvfb, so
+  this is the only Linux path with automated coverage. Under XWayland the compositor may still override placement or
+  stacking; that has not been measured.
+- **Native Wayland**, Electron's default since version 38 when the session is Wayland: the compositor decides where
+  windows go, and no standard protocol lets an app keep its window above others. The shell asks only for the size. Every
+  mode answer lists `position` as unsupported. A pin request is refused with that reason, and the window chrome hides
+  the pin button. A tiling compositor may also ignore the size of a tiled window; the answer reports the size the window
+  actually has.
+- **Hyprland**: there is an adapter (`apps/desktop/src/hyprland-window-controller.mjs`) that maps the modes to Hyprland
+  dispatchers over its request socket. Compact and orb float the window at their size, the orb also pins it (shown on
+  every workspace), and expanded maximizes it. Pin floats the window and pins it. Minimize is refused, because Hyprland
+  has no minimized state. **The adapter is unverified: it has unit tests against a stand-in socket, and nobody has run
+  it on a real Hyprland or Omarchy session yet.** It is therefore off by default. It runs only when asked for with
+  `--window-backend hyprland` or `CLARKCANT_WINDOW_BACKEND=hyprland`, and only when `HYPRLAND_INSTANCE_SIGNATURE`
+  names a running Hyprland. The first IPC failure hands the window back to Electron geometry (with the native Wayland
+  limits above) for the rest of the session, and later answers carry `degradedFrom`.
+
+**Missing condition: a Linux machine running Hyprland (for example Omarchy) with a real display.** To check the adapter
+there:
+
+```bash
+corepack enable
+pnpm install
+# 1. The shell smoke on the default backend. Expected: exit 0 and "failed": []; under native Wayland the pin check is
+#    "a pin this desktop cannot honour is refused".
+pnpm --filter @clarkcant/app-desktop run smoke
+# 2. A real window under the Hyprland backend; stderr says if it ever gives up on Hyprland.
+CLARKCANT_WINDOW_BACKEND=hyprland pnpm dev:desktop
+# 3. Use the window strip's compact, pin and full-screen buttons. For the orb and expanded modes, open the developer
+#    tools (Ctrl+Shift+I) and run: await window.clarkcant.setWindowMode("orb"), then "expanded" and "normal".
+#    After each step, in a second terminal, read what Hyprland reports for the window:
+hyprctl clients -j | jq '.[] | select(.title == "clarkcant") | {floating, pinned, fullscreen, at, size}'
+```
+
+Record in the PR or in this section: the Hyprland version (`hyprctl version`), the Electron version, the smoke's JSON,
+and for each mode the `hyprctl clients` entry. A mismatch is a finding for its own change.
+
 ## Why there is no skipped test
 
 A `skip` test on this machine would make the test suite say "green" while the thing it was meant to check has never

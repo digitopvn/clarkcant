@@ -133,6 +133,54 @@ engine ghi cho service đang chạy và yêu cầu nó là `none`. Podman machin
 Ghi lại vào PR hoặc vào mục này: hệ điều hành và phiên bản của nó, engine và phiên bản của engine, cùng output verbose
 của bộ test. Một lỗi là một finding cho change riêng của nó. Đừng chỉnh test cho vừa máy.
 
+## Cửa sổ trên Linux: X11, Wayland gốc và Hyprland
+
+Các chế độ cửa sổ (normal, expanded, compact, orb), ghim, focus, thu nhỏ và toàn màn hình đều đi qua một bộ điều khiển
+ngữ nghĩa trong desktop shell (`apps/desktop/src/window-controller.mjs`). Shell chọn backend theo phiên desktop
+(`apps/desktop/src/window-session.mjs`) và báo lựa chọn đó trong `desktop:getStatus` qua `window.backend`,
+`window.session` và `window.backendReason`. Mỗi câu trả lời về cửa sổ còn liệt kê những phần đã yêu cầu hệ thống cửa
+sổ làm (`applied`) và những phần phiên này không làm được (`unsupported`), nên client không bao giờ hiển thị kích thước,
+vị trí hay ghim chưa hề xảy ra.
+
+Mỗi loại phiên Linux hiện được gì:
+
+- **X11 và XWayland** (một phiên Wayland chạy với `--ozone-platform=x11`): cùng hình học Electron như macOS và
+  Windows. Ứng dụng đặt kích thước, vị trí cửa sổ và giữ nó luôn ở trên. CI chạy smoke desktop dưới Xvfb, nên đây là
+  đường Linux duy nhất có kiểm thử tự động. Dưới XWayland, compositor vẫn có thể ghi đè vị trí hoặc thứ tự xếp chồng;
+  điều đó chưa được đo.
+- **Wayland gốc**, mặc định của Electron từ bản 38 khi phiên là Wayland: compositor quyết định cửa sổ nằm ở đâu, và
+  không có giao thức chuẩn nào cho ứng dụng giữ cửa sổ của mình trên các cửa sổ khác. Shell chỉ yêu cầu kích thước. Mọi
+  câu trả lời về chế độ đều ghi `position` là không hỗ trợ. Yêu cầu ghim bị từ chối kèm lý do đó, và thanh điều khiển
+  cửa sổ ẩn nút ghim. Một compositor xếp lát (tiling) cũng có thể bỏ qua kích thước của cửa sổ đang xếp lát; câu trả lời
+  báo kích thước cửa sổ thực sự có.
+- **Hyprland**: có một adapter (`apps/desktop/src/hyprland-window-controller.mjs`) ánh xạ các chế độ sang dispatcher
+  của Hyprland qua socket yêu cầu của nó. Compact và orb cho cửa sổ nổi (floating) ở kích thước của chúng, orb còn ghim
+  cửa sổ (hiện trên mọi workspace), và expanded phóng to tối đa. Ghim cho cửa sổ nổi rồi ghim. Thu nhỏ bị từ chối, vì
+  Hyprland không có trạng thái thu nhỏ. **Adapter này chưa được kiểm chứng: nó có unit test với một socket giả, và chưa
+  ai chạy nó trên một phiên Hyprland hay Omarchy thật.** Vì vậy nó tắt theo mặc định. Nó chỉ chạy khi được yêu cầu bằng
+  `--window-backend hyprland` hoặc `CLARKCANT_WINDOW_BACKEND=hyprland`, và chỉ khi `HYPRLAND_INSTANCE_SIGNATURE` chỉ
+  tới một Hyprland đang chạy. Lỗi IPC đầu tiên trả cửa sổ về cho hình học Electron (với các giới hạn Wayland gốc ở trên)
+  trong suốt phần còn lại của phiên, và các câu trả lời sau đó mang `degradedFrom`.
+
+**Điều kiện còn thiếu: một máy Linux chạy Hyprland (ví dụ Omarchy) có màn hình thật.** Để kiểm adapter ở đó:
+
+```bash
+corepack enable
+pnpm install
+# 1. Smoke của shell trên backend mặc định. Mong đợi: exit 0 và "failed": []; dưới Wayland gốc, mục kiểm tra ghim là
+#    "a pin this desktop cannot honour is refused".
+pnpm --filter @clarkcant/app-desktop run smoke
+# 2. Một cửa sổ thật dưới backend Hyprland; stderr sẽ nói nếu nó bỏ Hyprland giữa chừng.
+CLARKCANT_WINDOW_BACKEND=hyprland pnpm dev:desktop
+# 3. Dùng các nút compact, ghim và toàn màn hình trên dải điều khiển cửa sổ. Với chế độ orb và expanded, mở công cụ
+#    nhà phát triển (Ctrl+Shift+I) rồi chạy: await window.clarkcant.setWindowMode("orb"), sau đó "expanded" và "normal".
+#    Sau mỗi bước, ở terminal thứ hai, đọc xem Hyprland báo gì về cửa sổ:
+hyprctl clients -j | jq '.[] | select(.title == "clarkcant") | {floating, pinned, fullscreen, at, size}'
+```
+
+Ghi vào PR hoặc vào mục này: phiên bản Hyprland (`hyprctl version`), phiên bản Electron, JSON của smoke, và với mỗi chế
+độ là mục tương ứng trong `hyprctl clients`. Một chỗ không khớp là một phát hiện cho thay đổi riêng của nó.
+
 ## Vì sao không có test bị skip
 
 Một test `skip` trên máy này sẽ khiến bộ kiểm tra nói "xanh" trong khi thứ nó định kiểm chưa từng chạy. Thứ đúng

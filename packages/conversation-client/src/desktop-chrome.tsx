@@ -33,6 +33,8 @@ export function DesktopChrome(): ReactElement | null {
   const closable = useMemo(() => hasCloseControl(), []);
   const [mode, setMode] = useState<WindowMode>("normal");
   const [pinned, setPinned] = useState(false);
+  // Until the shell says otherwise; under native Wayland it says the window cannot be kept on top, and the pin goes.
+  const [pinnable, setPinnable] = useState(true);
   const [fullScreen, setFullScreen] = useState(false);
   // What the shell last refused, so a refusal is visible rather than silent.
   const [problem, setProblem] = useState<string | undefined>(undefined);
@@ -48,6 +50,7 @@ export function DesktopChrome(): ReactElement | null {
       if (cancelled || current === undefined) return;
       setMode(current.mode);
       setPinned(current.alwaysOnTop);
+      setPinnable(current.pinnable);
       setFullScreen(current.fullScreen);
     });
     const unsubscribe = controls ? subscribeWindowState((state) => setFullScreen(state.fullScreen)) : () => {};
@@ -101,18 +104,21 @@ export function DesktopChrome(): ReactElement | null {
         </span>
       )}
       <div className="cc-desktop-controls">
-        <button
-          type="button"
-          className="cc-desktop-button"
-          data-desktop-pin="true"
-          data-pinned={pinned ? "true" : "false"}
-          aria-pressed={pinned}
-          aria-label={t("shell.desktop.pinAria")}
-          title={t("shell.desktop.pinTitle")}
-          onClick={() => ask({ type: "set-always-on-top", value: !pinned })}
-        >
-          <ChromeIcon name="pin" />
-        </button>
+        {/* No pin where the desktop cannot keep a window on top: a toggle that can only be refused is a fake control. */}
+        {pinnable && (
+          <button
+            type="button"
+            className="cc-desktop-button"
+            data-desktop-pin="true"
+            data-pinned={pinned ? "true" : "false"}
+            aria-pressed={pinned}
+            aria-label={t("shell.desktop.pinAria")}
+            title={t("shell.desktop.pinTitle")}
+            onClick={() => ask({ type: "set-always-on-top", value: !pinned })}
+          >
+            <ChromeIcon name="pin" />
+          </button>
+        )}
         {/* One place for the voice bar: shrink into it, or grow back out of it. */}
         {compact ? (
           <button
