@@ -180,11 +180,13 @@ The origin stays with the work it started:
 - On both `/messages` and `/messages/stream`, `attachmentIds` is checked before anything else acts on the message. A
   file that is not available, or an `attachmentIds` that is not a list of ids, is refused with
   `400 ATTACHMENT_NOT_AVAILABLE` on every path: a slash command, a typed app command, or on `/messages` a message sent
-  while a turn is answering, whose running turn is left as it was. A message that carries attachments is never
-  answered by the host as a slash command, since those answers, and the background run `/background` starts, carry
-  only words: it is stored with its files and answered as a turn, with its text as typed. A typed app command (such as
-  "open settings" or "stop") is about the app, not a file, so it is answered by the host as a command even when the
-  message carries attachments, and those attachments are not attached to any message.
+  while a turn is answering, whose running turn is left as it was. A host command, slash (`/new`, `/thinking`) or typed
+  (such as "open settings" or "stop"), is about the app, not a file, so it is answered by the host even when the
+  message carries attachments, and those attachments are not attached to any message. The one exception is
+  `/background` with attachments: its request may be about them and a background run carries only words, so the
+  message is stored with its files and answered as a turn, with its text as typed. A sentence shaped like a command
+  that names none is answered "not understood" without attachments; with attachments it is stored with them and
+  answered as a turn.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A

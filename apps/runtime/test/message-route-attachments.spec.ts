@@ -195,7 +195,7 @@ describe("a message's files on the plain route while a turn is answering", () =>
   it.each(["plain", "streaming"] as const)(
     "stops the running turn at once for a typed stop sent with files on the %s route",
     async (route) => {
-      const { send, sendStreamed, upload, first, open } = await start("steer");
+      const { adapter, send, sendStreamed, upload, storedFiles, first, open } = await start("steer");
       const file = await upload();
       const body = { text: "dừng lại", attachmentIds: [file] };
       let ended = false;
@@ -215,6 +215,9 @@ describe("a message's files on the plain route while a turn is answering", () =>
       expect(sent.status).toBe(200);
       const decision = route === "plain" ? sent.body : (sent as { done?: unknown }).done;
       expect(decision).toMatchObject({ appIntent: { kind: "intent", intent: { kind: "turn.stop" } } });
+      // No turn follows the stop, and the files are attached to no message.
+      expect(adapter.allPrompts().some((prompt) => prompt.includes("dừng lại"))).toBe(false);
+      expect(storedFiles()).toEqual([]);
     },
   );
 
@@ -246,12 +249,34 @@ describe("a message with files whose words the host would answer", () => {
   });
 
   it("answers a typed app command sent with files as the host command it is", async () => {
-    const { adapter, upload, send } = await node(["không dùng tới"]);
+    const { adapter, upload, send, storedFiles } = await node(["không dùng tới"]);
     const file = await upload();
     const sent = await send({ text: "mở settings", attachmentIds: [file] });
     expect(sent.status).toBe(200);
     expect(sent.body).toMatchObject({ accepted: true, appIntent: { kind: "intent", intent: { kind: "settings.open" } } });
     expect(adapter.allPrompts()).toEqual([]);
+    expect(storedFiles()).toEqual([]);
+  });
+
+  it("answers a slash command other than /background sent with files as the host command it is", async () => {
+    const { adapter, upload, send, storedFiles } = await node(["không dùng tới"]);
+    const file = await upload();
+    const sent = await send({ text: "/thinking", attachmentIds: [file] });
+    expect(sent.status).toBe(200);
+    expect(sent.body).toMatchObject({ accepted: true, messageId: expect.any(String) });
+    expect(sent.body).not.toHaveProperty("resolution");
+    expect(adapter.allPrompts()).toEqual([]);
+    expect(storedFiles()).toEqual([]);
+  });
+
+  it("answers a command-shaped sentence the host cannot place, sent with files, as a turn that reads them", async () => {
+    const { adapter, upload, send, storedFiles } = await node(["đã đọc tệp"]);
+    const file = await upload();
+    const sent = await send({ text: "chuyển sang tiếng Anh", attachmentIds: [file] });
+    expect(sent.status).toBe(200);
+    expect(sent.body).toMatchObject({ resolution: "model" });
+    expect(storedFiles()).toEqual([file]);
+    expect(adapter.allPrompts().join("\n")).toContain(FILE_TEXT);
   });
 
   it("refuses a slash command or app command naming a file that is not available", async () => {
@@ -278,11 +303,39 @@ describe("a message with files on the streaming route the composer uses", () => 
   });
 
   it("answers a typed app command sent with files as the host command it is", async () => {
-    const { adapter, upload, sendStreamed } = await node(["không dùng tới"]);
+    const { adapter, upload, sendStreamed, storedFiles } = await node(["không dùng tới"]);
     const file = await upload();
     const sent = await sendStreamed({ text: "mở settings", attachmentIds: [file] });
     expect(sent.status).toBe(200);
     expect(sent.done).toMatchObject({ resolution: "app-intent", appIntent: { kind: "intent", intent: { kind: "settings.open" } } });
+    expect(adapter.allPrompts()).toEqual([]);
+    expect(storedFiles()).toEqual([]);
+  });
+
+  it("answers a slash command other than /background sent with files as the host command it is", async () => {
+    const { adapter, upload, sendStreamed, storedFiles } = await node(["không dùng tới"]);
+    const file = await upload();
+    const sent = await sendStreamed({ text: "/thinking", attachmentIds: [file] });
+    expect(sent.status).toBe(200);
+    expect(sent.done).toMatchObject({ resolution: "app-intent", messageIds: [expect.any(String)] });
+    expect(adapter.allPrompts()).toEqual([]);
+    expect(storedFiles()).toEqual([]);
+  });
+
+  it("answers a command-shaped sentence the host cannot place, sent with files, as a turn that reads them", async () => {
+    const { adapter, upload, sendStreamed, storedFiles } = await node(["đã đọc tệp"]);
+    const file = await upload();
+    const sent = await sendStreamed({ text: "chuyển sang tiếng Anh", attachmentIds: [file] });
+    expect(sent.status).toBe(200);
+    expect(sent.done).toMatchObject({ resolution: "model" });
+    expect(storedFiles()).toEqual([file]);
+    expect(adapter.allPrompts().join("\n")).toContain(FILE_TEXT);
+  });
+
+  it("still answers a command-shaped sentence the host cannot place, without files, as not understood", async () => {
+    const { adapter, sendStreamed } = await node(["không dùng tới"]);
+    const sent = await sendStreamed({ text: "chuyển sang tiếng Anh" });
+    expect(sent.done).toMatchObject({ resolution: "app-intent", appIntent: { kind: "refused" } });
     expect(adapter.allPrompts()).toEqual([]);
   });
 

@@ -184,11 +184,13 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 - Trên cả `/messages` và `/messages/stream`, `attachmentIds` được kiểm tra trước mọi thứ khác xử lý tin nhắn. Một tệp
   không còn dùng được, hoặc một `attachmentIds` không phải danh sách id, bị từ chối với `400 ATTACHMENT_NOT_AVAILABLE`
   trên mọi đường đi: lệnh gạch chéo (slash command), lệnh ứng dụng gõ bằng chữ, hay trên `/messages` một tin nhắn gửi
-  trong lúc có lượt đang trả lời, khi đó lượt đang chạy được giữ nguyên. Một tin nhắn có tệp đính kèm không bao giờ
-  được host trả lời như một lệnh gạch chéo, vì những câu trả lời đó, cùng việc chạy nền mà `/background` khởi động,
-  chỉ mang theo chữ: tin nhắn được lưu cùng tệp của nó và được trả lời thành một lượt, với đúng phần chữ đã gõ. Một
-  lệnh ứng dụng gõ bằng chữ (như "mở cài đặt" hay "dừng lại") nói về ứng dụng chứ không về tệp, nên vẫn được host trả
-  lời như một lệnh kể cả khi tin nhắn có tệp đính kèm, và các tệp đó không được gắn vào tin nhắn nào.
+  trong lúc có lượt đang trả lời, khi đó lượt đang chạy được giữ nguyên. Một lệnh của host, dù là lệnh gạch chéo
+  (`/new`, `/thinking`) hay lệnh gõ bằng chữ (như "mở cài đặt" hay "dừng lại"), nói về ứng dụng chứ không về tệp, nên
+  vẫn được host trả lời kể cả khi tin nhắn có tệp đính kèm, và các tệp đó không được gắn vào tin nhắn nào. Ngoại lệ duy
+  nhất là `/background` có tệp đính kèm: yêu cầu của nó có thể nói về các tệp đó và việc chạy nền chỉ mang theo chữ,
+  nên tin nhắn được lưu cùng tệp của nó và được trả lời thành một lượt, với đúng phần chữ đã gõ. Một câu trông giống
+  lệnh nhưng không khớp lệnh nào sẽ được trả lời là "không hiểu" khi không có tệp đính kèm; khi có tệp đính kèm, nó
+  được lưu cùng các tệp đó và được trả lời thành một lượt.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
   đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
   không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có

@@ -1081,10 +1081,13 @@ function answerTypedIntent(
  * Shared by both message routes, which differ only in how they say the answer. The files are read first, so a file
  * that is not available refuses the message on every path.
  *
- * A slash command with files is not the host's: `/background` and the other commands carry only words, so the files
- * would be dropped without a word, and the message is stored with its files and answered as a turn instead. A typed
- * app command stays the host's whatever the composer still holds: "mở settings" or "dừng lại" is about the app, never
- * about a file, and Stop above all must not wait behind a turn.
+ * A host command, slash or typed, stays the host's whatever the composer still holds: `/new`, "mở settings" or
+ * "dừng lại" is about the app, never about a file, and Stop above all must not wait behind a turn. The one exception is
+ * `/background` with files: its request may be about them, and the background run carries only words, so the message
+ * is stored with its files and answered as a turn instead.
+ *
+ * A sentence shaped like a command that names none is not about the app. Without files it is answered "not
+ * understood"; with files it is about them, so it is stored with them and answered as a turn too.
  */
 async function readSentMessage(
   services: ConversationServices,
@@ -1108,14 +1111,17 @@ async function readSentMessage(
 
   // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
   const slash = parseSlashCommand(text);
-  if (slash !== undefined && !attachedFiles) {
+  if (slash !== undefined && slash.command === "background" && attachedFiles) {
+    return { kind: "message", attachmentRefs: attachments.refs };
+  }
+  if (slash !== undefined) {
     const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
     const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
     return { kind: "slash", answer, messageId: appended.messageId };
   }
 
   const asked = typedAppIntent(services, conversationId, text, at);
-  if (asked.kind !== "none") {
+  if (asked.kind !== "none" && !(asked.kind === "refused" && attachedFiles)) {
     const said = answerTypedIntent(services, conversationId, asked);
     const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
     return { kind: "intent", asked, said, messageId: appended.messageId };
@@ -1408,7 +1414,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * A typed command to the application, on the route the composer actually uses, and the files the message carries.
      *
      * The same reading as the non-streaming route (`readSentMessage`): the files first, then a slash command or a typed
-     * intent the host answers, for a message without files. The difference is only where the decision travels, because
+     * intent the host answers, whatever files are attached, except `/background` with files and a sentence the host
+     * could not place that carries files, which both become a turn. The difference is only where the decision travels, because
      * this answer is a stream. A command is not a turn, so nothing is sent to the model: its sentence is a delta so a
      * client that renders replies renders this one too, and the `done` frame carries the record and the timeline the
      * other routes would have returned, plus the decision when the page has something to do.
