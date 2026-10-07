@@ -213,28 +213,36 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   return result;
 }
 
-/** The longest known form starting at `index`, or a near match when no form starts there. */
+/**
+ * The longest exact match starting at `index`: a known form, or words that run together into a term. A near match is
+ * tried only when neither starts there.
+ */
 function matchAt(
   tokens: readonly Token[],
   text: string,
   index: number,
   lexicon: Lexicon,
 ): { from: number; to: number; candidates: Form[]; near: boolean } | undefined {
-  const longest = Math.min(lexicon.longest, tokens.length - index);
-  for (let length = longest; length >= 1; length -= 1) {
+  let form: { from: number; to: number; candidates: Form[]; near: boolean } | undefined;
+  for (let length = Math.min(lexicon.longest, tokens.length - index); length >= 1 && form === undefined; length -= 1) {
     if (!joinedBySeparators(tokens, text, index, length)) continue;
     const key = tokens.slice(index, index + length).map((token) => token.lower).join(" ");
     const forms = lexicon.forms.get(key);
-    if (forms !== undefined) return { from: index, to: index + length, candidates: forms, near: false };
+    if (forms !== undefined) form = { from: index, to: index + length, candidates: forms, near: false };
   }
   for (let length = Math.min(3, tokens.length - index); length >= 1; length -= 1) {
+    // A form at least as long as the words left to try wins: the longer exact match is the one the person said.
+    if (form !== undefined && length <= form.to - index) return form;
     if (!joinedBySeparators(tokens, text, index, length)) continue;
     const compact = tokens.slice(index, index + length).map((token) => token.lower).join("");
-    // Words that run together into the term exactly ("clark cant web" for clarkcant-web) are a spacing variant.
+    // Words that run together into the term exactly ("clark cant web" for clarkcant-web) are a spacing variant, and
+    // one word longer than a form that starts the same way ("clark cant" for ClarkCant) is the longer term.
     const joined = length > 1 ? lexicon.compacts.filter((entry) => entry.compact === compact && entry.term.kind !== "command") : [];
     if (joined.length > 0) {
       return { from: index, to: index + length, candidates: joined.map((entry) => ({ term: entry.term, rule: "spacing" })), near: false };
     }
+    // A near match is a guess, and never outranks an exact form, however short.
+    if (form !== undefined) continue;
     if (compact.length < NEAR_MATCH_MIN_LENGTH - 1) continue;
     // Something already written as code was written on purpose; a slip is a spoken word, not an identifier.
     if (IDENTIFIER_SHAPED.test(text.slice(tokens[index]!.start, tokens[index + length - 1]!.end))) continue;
@@ -244,7 +252,7 @@ function matchAt(
       return { from: index, to: index + length, candidates: near.map((entry) => ({ term: entry.term, rule: "near-match" })), near: true };
     }
   }
-  return undefined;
+  return form;
 }
 
 function joinedBySeparators(tokens: readonly Token[], text: string, index: number, length: number): boolean {

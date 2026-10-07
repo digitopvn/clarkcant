@@ -55,7 +55,10 @@ export interface FeedbackGithubClient {
   createIssue(input: { title: string; body: string; labels: readonly string[] }): Promise<{ number: number; url: string }>;
   createComment(issueNumber: number, body: string): Promise<{ id: number; url: string }>;
   getComment(id: number): Promise<GithubComment | undefined>;
-  /** The login the token belongs to, or `undefined` when there is no token to ask about. */
+  /**
+   * The login the token belongs to, or `undefined` when there is no token to ask about. A token GitHub will not name an
+   * owner for (an App installation token answers `GET /user` with 403) throws a `refused` `FeedbackGithubError`.
+   */
   viewerLogin(): Promise<string | undefined>;
   /**
    * The issue updated since `since` whose body carries `marker`, among those `creator` opened when given. `undefined`
@@ -291,7 +294,9 @@ export function createGithubRestClient(options: {
     },
     async viewerLogin() {
       if (options.token === undefined) return undefined;
-      const { value } = await call("GET", "/user");
+      const { status, value } = await call("GET", "/user");
+      // A token GitHub will not name an owner for (an App installation token, say) is refused here, not unanswered.
+      if (status === 404) throw new FeedbackGithubError("refused", "GitHub would not say whose token this is (404)", { status, retryable: false });
       const login = (value as { login?: unknown } | undefined)?.login;
       if (typeof login !== "string" || login === "") throw new FeedbackGithubError("no-answer", "GitHub did not say whose token this is");
       return login;

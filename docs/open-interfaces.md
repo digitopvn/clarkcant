@@ -294,11 +294,16 @@ offers Check again (`intent: "check"`), which only looks for the marker and neve
 is `409 NOTHING_SENT`. Once GitHub's own list shows the marker absent at least two minutes after the attempt (the
 attempt's time, not the last check's), the report becomes `failed` with `retryable`, and its card offers Send again,
 which files it for the first time. Nothing is sent while GitHub cannot be checked. The marker is looked for among the
-issues the token's owner opened (`creator`, from `GET /user`), at most three pages of 100. When that list still runs
+issues opened by the account the write was sent as (`creator`: the `GET /user` login recorded on the node when it was
+sent, so a `github_token` replaced since does not hide it), at most three pages of 100. Without a recorded login the
+token's current owner is asked; a token GitHub will not name an owner for (an App installation token) is scanned
+without the filter. The login is kept on the node and is shown back to its owner only in the inconclusive search link
+below. When that list still runs
 past the scan, or the ledger no longer holds the attempt, checking cannot settle it: the report is `unknown` with
 `inconclusive: { since, searchUrl, manualUrl }`, and its card says "Clark can't tell whether GitHub kept this report,
-and checking again won't change that." Instead of Check again it links the issues the person opened since the attempt
-and the prefilled new-issue page, warns that filing again may create a duplicate, and offers Send anyway
+and checking again won't change that." Instead of Check again it links the issues opened since the attempt by the
+account the report was sent as (`author:<login>` in `searchUrl`, or `author:@me` when no login was recorded) and the
+prefilled new-issue page, warns that filing again may create a duplicate, and offers Send anyway
 (`intent: "send-anyway"`, accepted only for such a report, otherwise `409 NOT_INCONCLUSIVE`), which may file it twice.
 The node never sends one again on its own. When the node starts, every report
 left `publishing` or `unknown` is checked the same way, and a settled outcome is written into its conversation as a
@@ -489,11 +494,13 @@ anything is stored. What passes is kept on the user message as a `reference` blo
 project-relative path; a skill's instructions are included in that turn. A reference is a pointer, not a permission:
 reading, running or changing anything it names still goes through the node's usual checks.
 
-`GET /composer/suggestions` is what fills the picker: skills after `/`; projects, services, conversations (by title, or
-by the start of the first message when the title is the clients' placeholder) and background work after `@`; one
-directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix, then substring, then by kind
-(projects, services, conversations, work), recently used first, with diacritics optional when typing. With nothing
-typed after `@`, each kind gets its share of the rows. A row that cannot be chosen says why in `disabledReason`. A
+`GET /composer/suggestions` is what fills the picker: the node's slash commands, then skills, after `/`; projects,
+services, conversations (by title, or by the start of the first message when the title is the clients' placeholder) and
+background work after `@`; one directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix,
+then substring, then by kind (commands, skills; or projects, services, conversations, work), recently used first, with
+diacritics optional when typing. With nothing typed after `/` or `@`, each kind gets its share of the rows, and a share
+one kind cannot fill goes to the others, so a bare `/` always lists skills however many commands there are. A row that
+cannot be chosen says why in `disabledReason`. A
 service is labelled with the id its package gave it and carries only its state (running, failed, not running), never
 what it was started with or why it failed; its `serviceKey` also names the package generation running it, so an update
 makes an earlier reference stale.

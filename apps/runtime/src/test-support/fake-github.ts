@@ -35,7 +35,10 @@ export type FakeGithubOperation =
   | "findComment"
   | "activity";
 
-/** The login the fake's token belongs to: every issue it files, and every seeded one unless told otherwise, is theirs. */
+/**
+ * The login the fake's token belongs to until a test hands it to someone else (`viewer`): every issue it files is the
+ * current viewer's, and every seeded one is this login's unless told otherwise.
+ */
 export const FAKE_GITHUB_VIEWER = "clark-reporter";
 
 export interface FakeGithubFault {
@@ -43,6 +46,8 @@ export interface FakeGithubFault {
   status?: number;
   /** For a write that fails with no answer: whether GitHub kept it anyway. */
   applied?: boolean;
+  /** For a refusal: whether asking again later can help, as a rate limit's can. */
+  retryable?: boolean;
   /** How many calls the fault applies to; once by default. */
   times?: number;
 }
@@ -55,6 +60,8 @@ export interface FakeGithub extends FeedbackGithub {
   calls: Array<{ operation: FakeGithubOperation; detail?: string }>;
   /** Whether a writer is available: `false` behaves like a node with no `github_token`. */
   writable: boolean;
+  /** The login the token belongs to now; changing it is the stored token changing hands. */
+  viewer: string;
   /** While true, every marker scan reads a list longer than the bounded scan, as a busy repository's does. */
   overlongLists: boolean;
   fail(operation: FakeGithubOperation, fault: FakeGithubFault): void;
@@ -82,6 +89,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
   const raise = (found: FakeGithubFault): never => {
     throw new FeedbackGithubError(found.kind, `fake GitHub: scripted ${found.kind}${found.status === undefined ? "" : ` (${String(found.status)})`}`, {
       ...(found.status === undefined ? {} : { status: found.status }),
+      ...(found.retryable === undefined ? {} : { retryable: found.retryable }),
     });
   };
   const view = (issue: GithubIssue): GithubIssue => ({
@@ -135,7 +143,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
           isPullRequest: false,
           comments: [],
           createdAt: now(),
-          author: FAKE_GITHUB_VIEWER,
+          author: fake.viewer,
           activity: { openPullRequests: [] },
         };
         issues.set(issue.number, issue);
@@ -174,7 +182,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
       calls.push({ operation: "viewer" });
       const found = fault("viewer");
       if (found !== undefined) raise(found);
-      return FAKE_GITHUB_VIEWER;
+      return fake.viewer;
     },
     async findIssueWithMarker(marker, since, creator) {
       calls.push({ operation: "findIssue", detail: creator === undefined ? marker : `${marker} by ${creator}` });
@@ -210,6 +218,7 @@ export function createFakeGithub(options: { repository?: string; writable?: bool
     issues,
     calls,
     writable: options.writable ?? true,
+    viewer: FAKE_GITHUB_VIEWER,
     overlongLists: false,
     reader: () => client,
     withWriter(use) {
