@@ -437,6 +437,27 @@ describe("the audit is the record autonomy would otherwise not leave", () => {
       description: "git status",
     });
   });
+
+  it("records the person as the one who let it run when their own press was the decision", () => {
+    const decision = { kind: "execute" as const, reason: "the person pressed on the host's card", audit: true };
+
+    let counter = 0;
+    recordEffectExecution(
+      { db, nodeId: "node_1", newId: (prefix) => `${prefix}_${++counter}`, now: () => "2026-09-16T06:00:00.000Z" as never },
+      {
+        principalId: "prin_owner",
+        mode: "ask",
+        decision,
+        category: "external-write",
+        operationDigest: DIGEST,
+        description: "file a report",
+        approvedBy: "person",
+      },
+    );
+
+    const [row] = allRows<{ document: string }>(db, "SELECT document FROM events");
+    expect(JSON.parse(row?.document ?? "{}")).toMatchObject({ approvedBy: "person", because: "the person pressed on the host's card" });
+  });
 });
 
 /**

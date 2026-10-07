@@ -366,6 +366,7 @@ describe("the picker", () => {
     // Commands first, then skills, up to the picker's eight rows: a bare slash shows the commands and the first skill,
     // and typing reaches the rest.
     expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"].slice(0, COMPOSER_SUGGESTIONS_MAX));
+    expect(referenceRows(body.suggestions).every((row) => row.ref.kind === "skill")).toBe(true);
     // A command row writes the command, not a reference.
     expect(body.suggestions[0]).toMatchObject({ kind: "command", command: "new", trigger: "/" });
     expect(body.suggestions[0]).not.toHaveProperty("ref");

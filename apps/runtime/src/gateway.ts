@@ -38,6 +38,7 @@ import { handleWidgetDevRoutes } from "./routes/widget-dev-sessions.ts";
 import { handleComposerRoutes } from "./routes/composer.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleEffectRoutes } from "./routes/effects.ts";
+import { handleFeedbackRoutes } from "./routes/feedback.ts";
 import { handleSignalRoutes } from "./routes/signals.ts";
 import { handleGithubSignalRoute } from "./routes/github-signals.ts";
 import { handleWebhookSignalRoute } from "./routes/webhook-signals.ts";
@@ -320,6 +321,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   // What the person saw of an effect whose outcome was unknown. Person-only: see `isPersonOnlyRoute`.
   const effectResponse = handleEffectRoutes({ services, request, segments, at });
   if (effectResponse !== undefined) return effectResponse;
+
+  // Product reports from the host's Feedback Composer. Publishing is person-only: see `isPersonOnlyRoute`.
+  const feedbackResponse = await handleFeedbackRoutes({ services, request, segments, at });
+  if (feedbackResponse !== undefined) return feedbackResponse;
 
   // What the composer offers after / or @. Read only; a reference is checked again when the message is sent.
   const composerResponse = await handleComposerRoutes({ services, request, segments });
