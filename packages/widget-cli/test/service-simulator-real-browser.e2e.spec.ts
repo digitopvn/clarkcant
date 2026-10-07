@@ -45,7 +45,8 @@ afterEach(async () => {
 describe("service simulator in Chromium", () => {
   it("delivers loading, readiness, offline refusal, fixture results, malformed refusal, and restart recovery", async () => {
     const packageRoot = `${process.cwd()}/apps/web/e2e/fixtures/notes-service`;
-    host = await startDevHost({ root: packageRoot, port: 0, watchFiles: false });
+    // The restart is held until the test has seen it: a slow machine may not draw two seconds of loading at all.
+    host = await startDevHost({ root: packageRoot, port: 0, watchFiles: false, serviceRestart: "held" });
     browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
     const page = await browser.newPage();
     const requests: string[] = [];
@@ -131,6 +132,7 @@ describe("service simulator in Chromium", () => {
     await eventually(async () => (await page.locator('[data-dev-status="loading"]').count()) === 5, "restart loading state");
     await eventually(async () => await add.isDisabled(), "restart disables the add binding");
     await eventually(async () => await list.isDisabled(), "restart disables the list binding");
+    expect(host.finishServiceRestart()).toBe(true);
     await eventually(async () => !(await list.isDisabled()), "restart recovery");
     expect(await page.locator('[data-dev-status="ready"]').count()).toBe(5);
 
