@@ -1,11 +1,47 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type * as fs from "node:fs";
+import type * as fsPromises from "node:fs/promises";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { WorkerBriefEnvelope } from "@clarkcant/app-worker";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { runWorkerProcess, workerEnvironment } from "../src/worker-process.ts";
+import { holdDirectory, type DirectoryHold } from "./hold-directory.ts";
+
+/**
+ * Seen as the runtime makes a temporary directory (`created`) and as it starts to remove one, in either form, before
+ * the removal itself runs (`removing`). A test uses them to hold the worker's directory past the worker's exit, as a
+ * worker that was just stopped holds it on Windows.
+ */
+const watched = vi.hoisted(() => ({
+  created: undefined as ((path: string) => void) | undefined,
+  removing: undefined as ((path: string) => void) | undefined,
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  const mkdtempSync = ((prefix: string, options?: fs.EncodingOption) => {
+    const made = actual.mkdtempSync(prefix, options);
+    watched.created?.(String(made));
+    return made;
+  }) as typeof actual.mkdtempSync;
+  const rmSync = ((path: fs.PathLike, options?: fs.RmOptions) => {
+    watched.removing?.(String(path));
+    actual.rmSync(path, options);
+  }) as typeof actual.rmSync;
+  return { ...actual, mkdtempSync, rmSync, default: { ...actual, mkdtempSync, rmSync } };
+});
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>();
+  const rm = (async (path: fs.PathLike, options?: fs.RmOptions) => {
+    watched.removing?.(String(path));
+    await actual.rm(path, options);
+  }) as typeof actual.rm;
+  return { ...actual, rm, default: { ...actual, rm } };
+});
 
 /**
  * Dispatching a worker as a process.
@@ -91,6 +127,39 @@ describe("the runtime starts a worker of its own", () => {
     await expect(
       runWorkerProcess({ nodeId: "node_test", brief: brief(), adapter: "real", credential: "sk-unused-in-this-test" }),
     ).rejects.toThrow(/no model was given to this worker/);
+  });
+
+  it("removes its run directory even when the directory is still held for a moment after the worker exits", async () => {
+    // On Windows a directory that is someone's working directory cannot be removed until they let go; elsewhere the
+    // hold changes nothing. The hold starts with the directory and ends 300 ms after its removal starts, so only a
+    // removal that really retries finds the directory free.
+    let directory: string | undefined;
+    let hold: DirectoryHold | undefined;
+    let heldAtRemoval = false;
+    let released: Promise<void> | undefined;
+    watched.created = (path) => {
+      if (directory !== undefined || !basename(path).startsWith("clarkcant-worker-run-")) return;
+      directory = path;
+      hold = holdDirectory(path);
+    };
+    watched.removing = (path) => {
+      if (path !== directory || hold === undefined || released !== undefined) return;
+      heldAtRemoval = hold.holding();
+      const holding = hold;
+      released = new Promise<void>((resolve) => setTimeout(resolve, 300)).then(() => holding.release());
+    };
+    try {
+      const result = await runWorkerProcess({ nodeId: "node_test", brief: brief() });
+      expect(result.record.runId).toBe("run_1");
+      // The hold was in place when the removal started; otherwise this test would prove nothing.
+      expect(heldAtRemoval).toBe(true);
+      expect(existsSync(directory ?? "")).toBe(false);
+    } finally {
+      watched.created = undefined;
+      watched.removing = undefined;
+      await (released ?? hold?.release());
+      if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("starts a real-model worker without any provider key in its environment, whatever this process holds", () => {
