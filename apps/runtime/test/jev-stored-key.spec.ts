@@ -14,10 +14,14 @@ describe("the decider's key", () => {
     expect(jevConfigFromEnv({}, () => "stored-key").apiKey).toBe("stored-key");
   });
 
-  it("lets a deliberately set environment variable win", () => {
-    // An operator who put a key in the environment meant it, and a value typed into a card later should not quietly
-    // replace it.
-    expect(jevConfigFromEnv({ TYPESAFE_API_KEY: "env-key" }, () => "stored-key").apiKey).toBe("env-key");
+  it("uses the key saved in the interface over one in the environment", () => {
+    // The person saved this key here, after whatever the environment was started with, and the card says it is in use;
+    // every provider credential takes the saved key first.
+    expect(jevConfigFromEnv({ TYPESAFE_API_KEY: "env-key" }, () => "stored-key").apiKey).toBe("stored-key");
+  });
+
+  it("falls back to the environment when nothing is saved", () => {
+    expect(jevConfigFromEnv({ TYPESAFE_API_KEY: "env-key" }, () => undefined).apiKey).toBe("env-key");
   });
 
   it("enables the provider, because a key with no local-only flag means it may be used", () => {

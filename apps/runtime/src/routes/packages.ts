@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { PERSON_ONLY_REFUSAL, nowInstant } from "@clarkcant/contracts";
-import { readDirectory,
+import {
   INSTALL_VERIFICATION,
   activeGeneration,
   installedWidgets,
@@ -29,6 +29,7 @@ import { installedConnection, installedManifest, installedReach, packageResource
 import type { PackageConnectionBroker } from "../package-connections.ts";
 import { resourceProfilePolicy, type ServiceHost } from "../service-host.ts";
 import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
+import { readNodeDirectory } from "../application/widget-dev-store.ts";
 
 /**
  * The package family: what is installed, the widget definitions a directory lists, installing one, and
@@ -76,7 +77,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
   if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
     const deps = { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId };
     const policy = resourceProfilePolicy({ db: runtime.db, principalId: runtime.identity.ownerPrincipalId, now: nowInstant });
-    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
+    const index = readNodeDirectory(runtime.dataDir);
     return json(200, {
       /*
        * Each with the resource profile it asked for and what this node granted, so package details show the bounds the
@@ -154,7 +155,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       now: nowInstant,
       newId: services.conductor.newId,
     });
-    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
+    const index = readNodeDirectory(runtime.dataDir);
 
     return json(200, {
       packages: installed.map((entry) => {
@@ -414,7 +415,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
   ) {
     const packageId = segments[1] ?? "";
     const version = segments[2] ?? "";
-    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
+    const index = readNodeDirectory(runtime.dataDir);
     if (index.kind !== "configured") {
       return fail(
         409,

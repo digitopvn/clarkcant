@@ -1,14 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
-import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 
 import type { ViteDevServer } from "vite";
 import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
 import { browserRuntime, sendPrebundledRuntime } from "./package-assets.ts";
 
-import type { BrowserTokenDeclaration, ResourceRequest } from "@clarkcant/contracts";
-import { readPackage } from "@clarkcant/core";
+import type { BrowserTokenDeclaration, ResourceRequest, WidgetDevBuild } from "@clarkcant/contracts";
+import { readPackage, startDevEngine, type DevEngine } from "@clarkcant/core";
 import { widgetToHostSchema } from "@clarkcant/widget-sdk";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
 import {
@@ -71,6 +71,12 @@ export interface DevHostOptions {
   /** 0 asks the operating system for a free port, which is what a test wants. */
   port?: number;
   watchFiles?: boolean;
+  /**
+   * How a simulated service restart ends. By default its services report ready again two seconds later. `"held"`
+   * keeps them loading until `finishServiceRestart()` is called, so a test can watch the restart on a machine too
+   * slow to draw it inside two seconds.
+   */
+  serviceRestart?: "timed" | "held";
 }
 
 export interface DevHost {
@@ -81,12 +87,22 @@ export interface DevHost {
   apply: (action: DevShellAction) => DevShellState;
   /** Reload notifications sent so far, so a test can prove the watcher fired without a browser. */
   reloads: () => number;
+  /**
+   * The latest build of the package folder (`startDevEngine`, the engine a conversation's dev session runs on), or
+   * `undefined` for a catalog widget. A failed build sends no reload: the frame keeps the last version that read as a
+   * package, and the shell says so.
+   */
+  build: () => WidgetDevBuild | undefined;
+  /** Read the folder again now, as a change would, and say what the build did. `undefined` for a catalog widget. */
+  rebuild: () => Promise<WidgetDevBuild | undefined>;
   /** What the simulated `artifacts@1` did — picks, creates, finalizes, exports, attaches — by name and size only. */
   artifactEvents: () => readonly DevArtifactEvent[];
   /** What the simulated `jobs@1` did — starts, steps, endings, cancels — by job id and status. */
   jobEvents: () => readonly DevJobEvent[];
   /** What the simulated `tokens@1` did — issues and refusals — by provider and code, never by value. */
   tokenEvents: () => readonly DevTokenEvent[];
+  /** Ends a simulated service restart now, as its timer would. False when no restart is in progress. */
+  finishServiceRestart: () => boolean;
   close: () => Promise<void>;
 }
 
@@ -271,6 +287,29 @@ window.addEventListener("load", () => void audit());
 /* Reload on change, so an author sees the edit rather than having to remember to refresh. */
 const events = new EventSource("/dev/events");
 events.addEventListener("reload", () => location.reload());
+
+/*
+ * A build that failed leaves the frame on the last version that read as a package. Said beside the frame, in the
+ * shell's own chrome, so old code is never mistaken for the files as they are now.
+ */
+function showBuild(build) {
+  let status = document.querySelector("[data-dev-build]");
+  if (build === null || build === undefined || build.ok) {
+    status?.remove();
+    return;
+  }
+  if (status === null) {
+    status = document.createElement("section");
+    status.setAttribute("data-dev-build", "");
+    status.setAttribute("role", "status");
+    status.style.whiteSpace = "pre-line";
+    document.querySelector("main")?.prepend(status);
+  }
+  const lines = build.diagnostics.map((item) => (item.path === undefined ? "" : item.path + ": ") + item.message);
+  status.textContent = "Bản dựng mới lỗi — đang hiện bản dựng thành công gần nhất.\\n" + lines.join("\\n");
+}
+events.addEventListener("build", (event) => showBuild(JSON.parse(event.data)));
+void fetch("/dev/api/build").then((response) => response.json()).then((body) => showBuild(body.build)).catch(() => undefined);
 
 /* The frame speaks the bridge; a dev host shows what it said rather than silently accepting it. */
 window.addEventListener("message", (event) => {
@@ -678,6 +717,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     return grant.status === "degraded" ? grant.reason : undefined;
   };
   let reloadCount = 0;
+  let engine: DevEngine | undefined;
   /*
    * One lease store per dev host process, over the same claimLiveOwner/releaseLiveOwner the runtime calls
    * (dev-lease.ts). A dev host shows one widget instance, so one store, closed with the server.
@@ -686,6 +726,16 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   // Typed as the response itself rather than a structural lookalike: a cast here would be a comment about
   // Node's types instead of a fact about this code.
   const clients = new Set<ServerResponse>();
+  let restarting = false;
+  const finishServiceRestart = (): boolean => {
+    if (!restarting) return false;
+    if (restartTimer !== undefined) clearTimeout(restartTimer);
+    restartTimer = undefined;
+    restarting = false;
+    state = { ...state, serviceReadiness: Object.fromEntries(source.serviceCapabilities.map((ref) => [ref, readinessForStatus("ready")])) };
+    for (const client of clients) client.write("event: reload\ndata: {}\n\n");
+    return true;
+  };
 
   const getVite = async (): Promise<ViteDevServer> => {
     if (vite !== undefined) return vite;
@@ -725,6 +775,12 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       response.write(": connected\n\n");
       clients.add(response);
       request.on("close", () => clients.delete(response));
+      return;
+    }
+
+    if (path === "/dev/api/build") {
+      response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ build: engine?.lastBuild() ?? null, generation: engine?.latest()?.generation ?? null }));
       return;
     }
 
@@ -962,11 +1018,9 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
           state = applyShellAction(state, action, { fixtures, capabilities, serviceCapabilities: source.serviceCapabilities, files });
           if (action.kind === "service-restart") {
             if (restartTimer !== undefined) clearTimeout(restartTimer);
-            restartTimer = setTimeout(() => {
-              state = { ...state, serviceReadiness: Object.fromEntries(source.serviceCapabilities.map((ref) => [ref, readinessForStatus("ready")])) };
-              restartTimer = undefined;
-              for (const client of clients) client.write("event: reload\ndata: {}\n\n");
-            }, 2_000);
+            restartTimer = undefined;
+            restarting = true;
+            if (options.serviceRestart !== "held") restartTimer = setTimeout(finishServiceRestart, 2_000);
           }
         } catch {
           // A malformed action leaves the state alone and is reported, rather than resetting the shell.
@@ -1249,18 +1303,27 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     }
   });
 
-  let watcher: FSWatcher | undefined;
-  if (root !== undefined && options.watchFiles !== false) {
-    try {
-      watcher = watch(root, { recursive: true }, () => {
-        reloadCount += 1;
-        for (const client of clients) client.write("event: reload\ndata: {}\n\n");
-      });
-    } catch {
-      // A platform without recursive watching still gets a working host; it just needs a manual refresh, and the
-      // shell is not told a reload happened because none did.
-      watcher = undefined;
-    }
+  /*
+   * The same engine a conversation's dev session runs on: every change is read as a package, and only one that reads
+   * as a new generation reloads the shell. A change that does not read is a failed build the shell shows beside the
+   * frame, which keeps the last version that worked rather than loading files that cannot run. A platform without
+   * recursive watching still gets a working host; it needs a manual refresh, and the shell is not told a reload happened.
+   */
+  if (root !== undefined) {
+    engine = startDevEngine({
+      root,
+      watch: options.watchFiles !== false,
+      onBuild: (event) => {
+        if (event.kind === "unchanged") return;
+        if (event.kind === "generation") {
+          reloadCount += 1;
+          for (const client of clients) client.write("event: reload\ndata: {}\n\n");
+          return;
+        }
+        for (const client of clients) client.write(`event: build\ndata: ${JSON.stringify(event.build)}\n\n`);
+      },
+    });
+    await engine.ready;
   }
 
   const port = await new Promise<number>((resolvePort) => {
@@ -1279,11 +1342,14 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       return state;
     },
     reloads: () => reloadCount,
+    build: () => engine?.lastBuild(),
+    rebuild: async () => (engine === undefined ? undefined : (await engine.rebuild("rebuild")).build),
     artifactEvents: () => artifacts.events(),
     jobEvents: () => jobs.events(),
     tokenEvents: () => tokens.events(),
+    finishServiceRestart,
     close: async () => {
-      watcher?.close();
+      engine?.close();
       if (restartTimer !== undefined) clearTimeout(restartTimer);
       for (const client of clients) client.end();
       clients.clear();

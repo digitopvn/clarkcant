@@ -132,6 +132,28 @@ describe("guarded mode asks where the category or a rule requires it", () => {
   });
 });
 
+describe("an effect Clark proposed on its own", () => {
+  const proposed: ExecutionIntent = { kind: "proposed", origin: "person" };
+
+  it("is asked about in guarded mode even where the category stays on this machine", () => {
+    expect(outcome("guarded", "local-write", { intent: proposed })).toBe("ask");
+    expect(outcome("guarded", "local-write", { intent: { kind: "proposed" } })).toBe("ask");
+    // The same effect the person asked for by name is performed.
+    expect(outcome("guarded", "local-write", { intent: { kind: "interactive" } })).toBe("execute");
+  });
+
+  it("is performed in guarded mode when a rule allows the category", () => {
+    const rules: ExecutionRule[] = [{ effectCategory: "local-write", decision: "execute" }];
+    expect(outcome("guarded", "local-write", { intent: proposed, rules })).toBe("execute");
+  });
+
+  it("is asked about in ask mode, and before a risky category in autonomous mode", () => {
+    expect(outcome("ask", "local-write", { intent: proposed })).toBe("ask");
+    for (const category of RISKY) expect(outcome("autonomous", category, { intent: proposed }), category).toBe("ask");
+    expect(outcome("autonomous", "local-write", { intent: proposed })).toBe("execute");
+  });
+});
+
 describe("autonomous mode executes the user's own instruction", () => {
   it("performs everything that stays on this machine", () => {
     for (const category of ["read", "local-write"] as const) {
