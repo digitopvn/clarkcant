@@ -139,10 +139,16 @@ English with Vietnamese context, including twelve negative entries that must com
 terms. Its recognizer outputs are simulated: they are typical live-transcription errors written by hand, not
 recordings. No canonical reference is changed by the normaliser.
 
-| Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| raw | 22.8% | 3.8% | 77.1% | 26.2% | - | - | - |
-| normalized | 3.7% | 0.8% | 16.2% | 77.4% | 64 | 1 | 0 |
+| Stage | WER | CER | Technical Term Error Rate | Exact (strict) | Exact (audio-tolerant) | Changes | Abstained | Regressions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| raw | 22.8% | 3.8% | 77.1% | 26.2% | 42.9% | - | - | - |
+| normalized | 3.7% | 0.8% | 16.2% | 77.4% | 84.5% | 64 | 1 | 0 |
+
+Strict exact compares whole utterances after collapsing whitespace. Audio-tolerant exact also ignores case anywhere in
+the utterance and trailing `. , ! ? ; : …`; punctuation inside the utterance still counts. Because it folds case
+everywhere, it also forgives identifier casing (`useeffect` for `useEffect`), which the case-sensitive Technical Term
+Error Rate still counts. The real recognizers measured in #468 capitalise the first word and close the sentence, so
+strict exact was 0% for each of them even where every word was right.
 
 Commands and versions are never worse after normalisation (commands go from 9/14 to 11/14, versions stay 2/2); symbols
 go from 1/21 to 18/21, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
@@ -158,8 +164,14 @@ go from 1/21 to 18/21, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The resi
 - the ambiguous `voiceSession` / `voice_session` span abstains.
 
 The same command with `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` recognizes real recordings
-and scores them beside the corpus, reporting finalization latency. That run needs `GEMINI_API_KEY`, and stops with an
-"external gate" message without one. It also reports every utterance whose recognized text holds a session term the
+and scores them beside the corpus, reporting finalization latency. Repeat `--recognizer` to run several recognizers
+over the same recordings and score them side by side in one table, each as `<id>-audio`. That run needs
+`GEMINI_API_KEY`, and stops with an "external gate" message without one. `--transcripts` also prints every utterance's
+transcript per recognizer, raw and normalized, beside the reference, and marks which exact measure each one meets.
+The conventional separator works:
+`corepack pnpm --filter @clarkcant/voice-adapters bench:transcription -- --transcripts`.
+
+The audio run also reports, for each recognizer, every utterance whose recognized text holds a session term the
 person did not say ("vocabulary term heard but not said", in any casing), and exits with status 3 when there is one.
 The check does not say what put the term there: the bias, or an ordinary mishearing of a term never sent (`git stash`
 heard as `git status`). The corpus marks three entries `vocabulary-bias` (a

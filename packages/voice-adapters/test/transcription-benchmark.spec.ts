@@ -5,10 +5,18 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { transcribeVocabulary } from "../src/gemini-transcribe.ts";
-import { pcmFromWav } from "../src/transcription-benchmark-cli.ts";
+import { parseBenchArgs, pcmFromWav, runAudioRecognizers } from "../src/transcription-benchmark-cli.ts";
 import { normalizeTranscript } from "../src/transcript-normalizer.ts";
-import { benchmarkRecognizer, corpusContext, formatBenchmarkReport, parseCorpus, recognizersIn, unstableReferences } from "../src/transcription-benchmark.ts";
-import { characterErrorRate, editDistance, scoreTranscripts, termPreserved, wordErrorRate } from "../src/transcription-metrics.ts";
+import {
+  benchmarkRecognizer,
+  corpusContext,
+  formatBenchmarkReport,
+  formatTranscripts,
+  parseCorpus,
+  recognizersIn,
+  unstableReferences,
+} from "../src/transcription-benchmark.ts";
+import { audioExact, characterErrorRate, editDistance, scoreTranscripts, termPreserved, wordErrorRate } from "../src/transcription-metrics.ts";
 
 /**
  * The benchmark: its metrics, its corpus, and the result the normaliser has to keep earning.
@@ -46,6 +54,85 @@ describe("the metrics", () => {
     expect(score.preservation["command"]).toMatchObject({ preserved: 0, total: 1 });
     expect(score.preservation["symbol"]).toMatchObject({ preserved: 1, total: 1 });
     expect(score.exactUtteranceRate).toBe(0.5);
+  });
+
+  it("forgives case anywhere and trailing punctuation on the audio-tolerant measure, but not punctuation inside or other words", () => {
+    expect(audioExact("chạy pnpm test", "Chạy pnpm test.")).toBe(true);
+    expect(audioExact("sửa useEffect nhé", "Sửa useEffect nhé?!")).toBe(true);
+    expect(audioExact("mở voice-session.ts", "Mở voice-session.ts.")).toBe(true);
+    expect(audioExact("git stash", "git stash;:,")).toBe(true);
+    expect(audioExact("chạy pnpm test", "chạy pnpm, test")).toBe(false);
+    expect(audioExact("chạy pnpm test", "chạy npm test")).toBe(false);
+
+    const score = scoreTranscripts([
+      { reference: "chạy pnpm test", hypothesis: "Chạy pnpm test.", terms: [] },
+      { reference: "sửa useEffect", hypothesis: "sửa useEffect", terms: [] },
+      { reference: "git stash", hypothesis: "Git stash, nhé.", terms: [] },
+    ]);
+    expect(score.exactUtteranceRate).toBeCloseTo(1 / 3);
+    expect(score.audioExactUtteranceRate).toBeCloseTo(2 / 3);
+  });
+
+  it("forgives identifier casing on the audio-tolerant measure, while the term error rate still counts it", () => {
+    expect(audioExact("dùng useEffect", "Dùng useeffect.")).toBe(true);
+    const score = scoreTranscripts([{ reference: "dùng useEffect", hypothesis: "Dùng useeffect.", terms: [{ text: "useEffect", kind: "symbol" }] }]);
+    expect(score.audioExactUtteranceRate).toBe(1);
+    expect(score.exactUtteranceRate).toBe(0);
+    expect(score.technicalTermErrorRate).toBe(1);
+    expect(score.preservation["symbol"]).toMatchObject({ preserved: 0, total: 1 });
+  });
+});
+
+describe("the benchmark command line", () => {
+  it("accepts the -- that pnpm forwards before the flags", () => {
+    expect(parseBenchArgs(["--", "--corpus", "x.json"])).toEqual({ corpus: "x.json", recognizers: ["gemini-transcribe-live"], transcripts: false });
+    expect(parseBenchArgs(["--corpus", "x.json"])).toEqual(parseBenchArgs(["--", "--corpus", "x.json"]));
+  });
+
+  it("takes several recognizers for one audio run, in order and once each", () => {
+    expect(parseBenchArgs(["--audio", "m.json", "--recognizer", "gemini-live", "--recognizer", "gemini-transcribe-live", "--recognizer", "gemini-live"]).recognizers).toEqual([
+      "gemini-live",
+      "gemini-transcribe-live",
+    ]);
+    expect(parseBenchArgs(["--audio", "m.json"]).recognizers).toEqual(["gemini-transcribe-live"]);
+  });
+
+  it("prints transcripts only when asked", () => {
+    expect(parseBenchArgs([]).transcripts).toBe(false);
+    expect(parseBenchArgs(["--transcripts"]).transcripts).toBe(true);
+  });
+
+  it("refuses an unknown flag, and a recognizer without audio to run it on", () => {
+    expect(() => parseBenchArgs(["--recogniser", "gemini-live"])).toThrow();
+    expect(() => parseBenchArgs(["--recognizer", "gemini-live"])).toThrow("--audio");
+  });
+
+  it("scores the recognizers that completed when a later one fails, and reports the failed one without a score", async () => {
+    const small = parseCorpus({
+      version: 1,
+      context: {},
+      utterances: [
+        { id: "a", reference: "chạy pnpm test", terms: [], recognizers: {} },
+        { id: "b", reference: "git stash", terms: [], recognizers: {} },
+      ],
+    });
+    const recordings = small.utterances.map((utterance, index) => ({ utterance, pcm: Uint8Array.of(index) }));
+    const lines: string[] = [];
+    const failed = await runAudioRecognizers(
+      ["good", "broken"],
+      recordings,
+      async (id, pcm) => {
+        if (id === "broken" && pcm[0] === 1) throw new Error("socket closed");
+        return { text: small.utterances[pcm[0]!]!.reference, finalizeMs: 10 };
+      },
+      (line) => lines.push(line),
+    );
+
+    expect(failed).toEqual([{ id: "broken", error: "socket closed" }]);
+    expect(recognizersIn(small)).toEqual(["good-audio"]);
+    expect(benchmarkRecognizer(small, "good-audio").raw.exactUtteranceRate).toBe(1);
+    expect(lines.join("")).toContain("good: finalization after end of audio");
+    expect(lines.join("")).toContain("broken: failed after 1 of 2 recordings, not scored: socket closed");
   });
 });
 
@@ -125,6 +212,27 @@ describe("the normaliser on the corpus", () => {
     expect(report).toContain("| simulated-live-baseline | normalized |");
     expect(report).toContain(`Corpus: ${corpus.utterances.length} utterances`);
     expect(report).toContain("Canonical references the normaliser would change: 0.");
+    expect(report).toContain("| Exact (strict) | Exact (audio-tolerant) |");
+  });
+
+  it("lists each utterance's transcripts per recognizer beside the reference, with which exact measure each meets", () => {
+    const small = parseCorpus({
+      version: 1,
+      context: {},
+      utterances: [
+        { id: "a", reference: "chạy pnpm test", terms: [], recognizers: { live: "Chạy pnpm test.", other: "chạy pnpm test" } },
+        { id: "b", reference: "x | y", terms: [], recognizers: { other: "x | z" } },
+      ],
+    });
+    const table = formatTranscripts(small, ["live"]);
+    expect(table).toContain("| a | reference | chạy pnpm test | - |");
+    expect(table).toContain("| a | live (raw) | Chạy pnpm test. | audio-tolerant |");
+    expect(table).toContain("| a | live (normalized) |");
+    expect(table).not.toContain("| b |");
+
+    const both = formatTranscripts(small, ["live", "other"]);
+    expect(both).toContain("| a | other (raw) | chạy pnpm test | strict |");
+    expect(both).toContain("| b | other (raw) | x \\| z | no |");
   });
 });
 
