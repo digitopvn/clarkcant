@@ -70,7 +70,7 @@ describe("placing a kanban board", () => {
     const instance = getInstance(services.conductor, instanceId);
     expect(instance?.actionBindingIds).toHaveLength(4);
     expect(instance?.actionBindingIds.map((id) => getActionBinding(services.conductor, id)?.proposal)).toContainEqual({ kind: "view", operation: BOARD_MOVE_OPERATION, args: {} });
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     expect(timeline.snapshots[0]?.textAlternative).toContain("To do:");
     expect(timeline.snapshots[0]?.textAlternative).toContain("- Build");
   });
