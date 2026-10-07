@@ -5,6 +5,7 @@ import {
   declaredReachMismatch,
   declaredReachOf,
   declaredResourcesMismatch,
+  directorySourceRefSchema,
   entryFitsHost,
   instantSchema,
   nowInstant,
@@ -12,6 +13,7 @@ import {
   riskLaneFor,
   type CapabilityRef,
   type DirectoryEntry,
+  type DirectorySourceRef,
   type EffectCategory,
   type PackageGeneration,
   type Principal,
@@ -39,6 +41,8 @@ import {
   deriveGrantedCapabilities,
   digestOfDirectory,
   directoryProblems,
+  originOf,
+  sourcesUnreadBefore,
   effectCategoryForLane,
   fetchGitArtifact,
   fetchNpmArtifact,
@@ -53,6 +57,7 @@ import {
   snapshotLocalPackage,
   type CoordinationDeps,
   type DirectoryIndexState,
+  type DirectorySourceStatus,
 } from "@clarkcant/core";
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
@@ -76,6 +81,9 @@ import { hostText, ownerLocale } from "../host-text.ts";
 
 /** How long a pending install approval stays good for, and how long the plan it produces may live. */
 const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
+
+/** The longest source name a generation records (`directorySourceRefSchema`). */
+const DIRECTORY_SOURCE_LABEL_MAX = 300;
 
 /** How old this node's copy of a remote directory may be before an install of a listing missing from it fetches again. */
 const MISSING_LISTING_REFRESH_AGE_MS = 60_000;
@@ -134,6 +142,14 @@ export interface PackageInstallRequest {
    */
   contentDigest?: string;
   requestedCapabilityRefs?: string[];
+  /**
+   * The id of the directory source the listing the person pressed Install on was listed by (the `marketplace-results`
+   * card's `sourceId`). Naming it is choosing that source: the install is refused when another source owns the listing
+   * by now, and it is what allows installing from a later source while an earlier one cannot be read, or over a package
+   * installed from a different source. Left out, the install takes only what precedence and the installed package's own
+   * source allow; see `sourceRefusal`.
+   */
+  sourceId?: string;
 }
 
 export type PackageInstallOutcome =
@@ -420,6 +436,70 @@ function localSourceUnreadable(
   };
 }
 
+/** The directory source the active generation of `packageId` was installed from, when it recorded one. */
+function installedDirectorySource(deps: PackageInstallDeps, packageId: string): DirectorySourceRef | undefined {
+  const { runtime } = deps;
+  const generation = activeGeneration(
+    { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: deps.conductor.newId },
+    packageId,
+    runtime.identity.nodeId,
+  );
+  const recorded = directorySourceRefSchema.safeParse(generation?.directorySource);
+  return recorded.success ? recorded.data : undefined;
+}
+
+/**
+ * Whether a direct install of a listing is refused for the source it comes from, and why.
+ *
+ * - The person pressed Install on a row that named a source, and another source owns the listing by now: refused, so
+ *   what is installed is never from a source the person was not shown.
+ * - Without a named source, a listing is installed only from the source the installed package came from, and for a
+ *   package not installed from a recorded source, only when every source earlier than the listing's was read. Otherwise an earlier source that could not be read
+ *   (a catalog behind a VPN, a feed never fetched) or a different publisher of the same id would be filled in silently.
+ *   The refusal names both sources and the way forward: pressing Install on the row, which names its source.
+ */
+export function sourceRefusal(input: {
+  packageId: string;
+  version: string;
+  origin: DirectorySourceRef | undefined;
+  unreadBefore: readonly DirectorySourceStatus[];
+  installedFrom: DirectorySourceRef | undefined;
+  chosenSourceId: string | undefined;
+}): PackageInstallOutcome | undefined {
+  const { packageId, version, origin, unreadBefore, installedFrom, chosenSourceId } = input;
+  const listing = `${packageId}@${version}`;
+  if (chosenSourceId !== undefined) {
+    if (origin === undefined || origin.id === chosenSourceId) return undefined;
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DIRECTORY_SOURCE_CHANGED",
+      message: `${listing} is now listed by ${origin.label}, not by the source this list showed, so nothing was installed. Search again to see where it is listed now.`,
+    };
+  }
+  if (origin === undefined) return undefined;
+  if (installedFrom !== undefined) {
+    // The person chose this package's source when they installed it; that choice holds, and nothing else stands in for it.
+    if (installedFrom.id === origin.id) return undefined;
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DIRECTORY_SOURCE_CHANGED",
+      message: `${packageId} was installed from ${installedFrom.label}, and ${listing} is listed by ${origin.label}, a different source, so nothing was installed. Search and install it from the ${origin.label} listing to switch where it comes from.`,
+    };
+  }
+  const unread = unreadBefore[0];
+  if (unread !== undefined) {
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DIRECTORY_SOURCE_UNREAD",
+      message: `${listing} is listed by ${origin.label}, but ${unread.origin.label} comes first and could not be read (${unread.reason ?? unread.state}), and it may list ${packageId} itself. Nothing was installed. Try again once ${unread.origin.label} answers, or search and install it from the ${origin.label} listing to take it from there.`,
+    };
+  }
+  return undefined;
+}
+
 export async function installPackage(
   deps: PackageInstallDeps,
   request: PackageInstallRequest,
@@ -454,7 +534,11 @@ export async function installPackage(
       ? state.entries.find((candidate) => candidate.packageId === packageId && candidate.version === version)
       : undefined;
   let index = readDirectory(directory);
-  if (listedIn(index) === undefined) {
+  // Also fetched again when an earlier source has nothing to list: one never fetched may list this package itself.
+  const found = listedIn(index);
+  const foundOrigin = found === undefined ? undefined : originOf(index, found);
+  const behindUnread = foundOrigin !== undefined && sourcesUnreadBefore(index, foundOrigin).length > 0;
+  if (found === undefined || behindUnread) {
     await refreshDirectory(directory, { maxAgeMs: MISSING_LISTING_REFRESH_AGE_MS });
     index = readDirectory(directory);
   }
@@ -472,6 +556,23 @@ export async function installPackage(
       code: "NOT_IN_DIRECTORY",
       message: `${packageId}@${version} is not in the directory${problems === undefined ? "" : ` (${problems})`}`,
     };
+  }
+  const origin = originOf(index, entry);
+  /*
+   * Which source a listing comes from is part of what is installed: the same package id in another source is another
+   * publisher's claim. An approved install already pins the artifact the person was asked about by its digest, which
+   * no other source's listing can satisfy with different bytes, so the check is for the direct path.
+   */
+  if (options.approved === undefined) {
+    const refusal = sourceRefusal({
+      packageId,
+      version,
+      origin,
+      unreadBefore: origin === undefined ? [] : sourcesUnreadBefore(index, origin),
+      installedFrom: installedDirectorySource(deps, packageId),
+      chosenSourceId: request.sourceId,
+    });
+    if (refusal !== undefined) return refusal;
   }
 
   /*
@@ -871,6 +972,10 @@ export async function installPackage(
     ...(resolvedEntry.source.kind === "local" ? { widgetIds: declaredWidgetIds(resolvedEntry.source.path) } : {}),
     // Recorded on the generation, so every later read of this package finds the snapshot rather than the path.
     ...(snapshot === undefined ? {} : { snapshotDigest: snapshot.digest }),
+    // Where it came from, so its updates are taken from that source only. A long index path keeps its end, the file name.
+    ...(origin === undefined
+      ? {}
+      : { directorySource: { id: origin.id, kind: origin.kind, label: origin.label.slice(-DIRECTORY_SOURCE_LABEL_MAX) } }),
   });
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };

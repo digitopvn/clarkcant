@@ -704,11 +704,16 @@ trừ khi `CC_OFFICIAL_MARKETPLACE=off`); thứ tự ưu tiên, cách làm mới
 [metadata directory](widget-development.vi.md#18-directory-metadata). Card `marketplace-results` mang
 `origin: { kind, label }` trên mỗi dòng khi card chứa nhiều nguồn (`kind` là `local-file`, `custom-marketplace` hoặc
 `official-marketplace`), và `sources: [{ kind, label, state, fetchedAt?, reason? }]` cho mỗi nguồn chưa trả lời đầy
-đủ (`state` là `stale`, `not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`). `search_directory` nhận thêm
-`packageId` tuỳ chọn và khi đó liệt kê mọi version của gói đó kèm thông tin chi tiết. `POST /packages/install` làm mới
-một nguồn từ xa một lần khi listing không có trong bản sao của node, trả `404 NOT_IN_DIRECTORY` có nêu tên nguồn nào
-chưa trả lời, và `409 DIRECTORY_UNREADABLE` khi không đọc được nguồn nào. Một listing từ marketplace được cài qua đúng
-những bước kiểm tra như listing từ file.
+đủ (`state` là `stale`, `not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`). Mỗi dòng còn mang `sourceId`
+(`local`, `official` hoặc `custom-<hash>`), được nút Cài gửi lại. `search_directory` nhận thêm `packageId` tuỳ chọn và
+khi đó liệt kê mọi version của gói đó kèm thông tin chi tiết. `POST /packages/install` làm mới một nguồn từ xa một lần
+khi listing không có trong bản sao của node, trả `404 NOT_IN_DIRECTORY` có nêu tên nguồn nào chưa trả lời, và
+`409 DIRECTORY_UNREADABLE` khi không đọc được nguồn nào hoặc file index bị hỏng. Route nhận thêm `sourceId` tuỳ chọn:
+nguồn mà người dùng đã chọn khi bấm Cài trên một dòng. Không có nó, route trả `409 DIRECTORY_SOURCE_UNREAD` khi một
+nguồn đứng trước không đọc được, và `409 DIRECTORY_SOURCE_CHANGED` khi gói đang được cài từ một nguồn khác. Có nó,
+route trả `409 DIRECTORY_SOURCE_CHANGED` khi giờ đây một nguồn khác sở hữu listing đó. Node ghi nguồn lên generation
+đã cài (`directorySource`), và thông báo cập nhật chỉ đến từ chính nguồn đó. Một listing từ marketplace được cài qua
+đúng những bước kiểm tra như listing từ file.
 
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ

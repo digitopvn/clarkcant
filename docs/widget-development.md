@@ -3072,6 +3072,26 @@ it was fetched; a failed refresh keeps listing it as `stale`, with the reason. A
 `not-fetched`; one that cannot be reached and has no copy is `unreachable`; an address that answers 404, 405 or 501 is
 `unsupported`; a feed that is not a valid directory is `unreadable` — never an empty list that reads as "nothing found".
 
+Precedence only holds while the earlier sources can be read, so a source that cannot be read never hands its package
+ids to a later one:
+
+- A broken index file (for example, half-saved while you edit it) makes the whole directory `unreadable`, as it was
+  before marketplaces existed. Nothing is searched or installed from a marketplace until the file is fixed, because the
+  file may name any package id.
+- A marketplace or catalog with nothing to list (`not-fetched`, `unreachable`, `unsupported` or `unreadable`, with no
+  earlier copy) leaves the later sources listed, and the search card names it. A listing from a later source installs
+  only when you press Install on its row, which names its source. `POST /packages/install` without that choice answers
+  `409 DIRECTORY_SOURCE_UNREAD` and names both sources.
+- A package records the source it was installed from. The update check offers only that source's newer versions, and
+  the update notice names the source. Installing the same package id from a different source answers
+  `409 DIRECTORY_SOURCE_CHANGED`, unless you press Install on that source's row. A package installed before sources
+  were recorded takes its updates from your index file when the file lists it. Otherwise it takes them from the source
+  that lists it, and only when every earlier source was read.
+
+When no source can be read (for example, only the official Marketplace is on and it does not serve the feed yet), the
+directory is `unreadable`. The reason names each source, says why it failed and says how to set up an index file or a
+catalog.
+
 A feed ([marketplace-directory.ts](../packages/core/src/marketplace-directory.ts)) serves directory entries in the
 shape above, optionally in pages:
 

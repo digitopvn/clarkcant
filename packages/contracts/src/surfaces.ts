@@ -7,14 +7,13 @@ import { commandCardSchema } from "./slash-commands.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
 import {
   DIRECTORY_VERSION_MAX,
-  directorySourceKindSchema,
   directorySourceStateSchema,
   packageSourceSchema,
   riskLaneSchema,
   unreadListingFieldsSchema,
   widgetAppearanceClaimsSchema,
 } from "./directory.ts";
-import { facetKindSchema } from "./install.ts";
+import { directorySourceKindSchema, facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
 import { turnOriginSchema } from "./turn-origin.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
@@ -284,6 +283,13 @@ export const marketplaceResultSchema = z.strictObject({
    * is invisible would present a third party's claim as something this machine knows.
    */
   origin: z.strictObject({ kind: directorySourceKindSchema, label: z.string().min(1).max(300) }).optional(),
+  /**
+   * The id of the source that listed this row (`local`, `official`, `custom-<hash>`), sent back by the Install button.
+   * Pressing Install on a row is choosing that source: the node installs only a listing that same source still owns, and
+   * it is what lets a person install from a later source while an earlier one cannot be read, or switch the source an
+   * installed package comes from. Absent on a card made before sources were named.
+   */
+  sourceId: z.string().min(1).max(120).optional(),
 });
 export type MarketplaceResult = z.infer<typeof marketplaceResultSchema>;
 

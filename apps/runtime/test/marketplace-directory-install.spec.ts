@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { directoryEntrySchema, messageBlockSchema, type DirectoryEntry } from "@clarkcant/contracts";
-import { DIRECTORY_FEED_FORMAT } from "@clarkcant/core";
+import { DIRECTORY_FEED_FORMAT, customFeedId, listInstalledPackages } from "@clarkcant/core";
 import { startFakeNpmRegistry } from "@clarkcant/core/test-support/fake-npm-registry";
 
 import { runCli } from "../../../packages/widget-cli/src/cli.ts";
@@ -69,14 +69,30 @@ async function authorPackage(): Promise<{ entry: DirectoryEntry; tarball: Buffer
   return { entry, tarball: readFileSync(join(root, "dist", artifact.npm.tarball)), authorDigest: artifact.authorDigest };
 }
 
-async function install(entry: Pick<DirectoryEntry, "packageId" | "version">): Promise<GatewayResponse> {
+async function install(entry: Pick<DirectoryEntry, "packageId" | "version">, sourceId?: string): Promise<GatewayResponse> {
   return handleRequest(deps, {
     method: "POST",
     path: "/packages/install",
     query: {},
     headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
-    body: JSON.stringify({ packageId: entry.packageId, version: entry.version }),
+    body: JSON.stringify({ packageId: entry.packageId, version: entry.version, ...(sourceId === undefined ? {} : { sourceId }) }),
   });
+}
+
+/** A feed address on loopback that nothing answers: closed right after it bound. */
+async function deadFeedUrl(): Promise<string> {
+  const feed = await startFeed([]);
+  await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))));
+  return feed.url.replace("/api/v1/directory", "/api/v1/directory?dead");
+}
+
+function installedSource(packageId: string) {
+  return listInstalledPackages({
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => AT as never,
+    newId: (prefix: string) => `${prefix}_x`,
+  }).find((installed) => installed.packageId === packageId)?.directorySource;
 }
 
 beforeEach(() => {
@@ -155,6 +171,76 @@ describe("installing a package a marketplace lists", () => {
   });
 });
 
+describe("which source a package is installed from", () => {
+  it("keeps a broken index file fatal instead of installing a marketplace's listing of the same id", async () => {
+    const { entry } = await authorPackage();
+    const feed = await startFeed([{ ...entry, version: "9.0.0" }]);
+    const indexPath = join(dir, "index.json");
+    writeFileSync(indexPath, "[ {broken");
+    setEnv("CC_DIRECTORY_INDEX", indexPath);
+    setEnv("CC_DIRECTORY_MARKETPLACES", feed.url);
+
+    const response = await install({ packageId: entry.packageId, version: "9.0.0" });
+
+    expect(response.status).toBe(409);
+    expect((response.body as Record<string, unknown>)["code"]).toBe("DIRECTORY_UNREADABLE");
+    expect(installedSource(entry.packageId)).toBeUndefined();
+  });
+
+  it("does not let a later catalog stand in for an earlier one that was never read, unless the person picks its listing", async () => {
+    const { entry, tarball } = await authorPackage();
+    const registry = await startFakeNpmRegistry({ name: "quick-notes", version: entry.version, tarball });
+    try {
+      const first = await deadFeedUrl();
+      const second = await startFeed([entry]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", `${first} ${second.url}`);
+      setEnv("CC_NPM_REGISTRY_URL", registry.url);
+
+      const unchosen = await install(entry);
+      expect(unchosen.status).toBe(409);
+      const refusal = unchosen.body as Record<string, unknown>;
+      expect(refusal["code"]).toBe("DIRECTORY_SOURCE_UNREAD");
+      expect(String(refusal["message"])).toContain("could not be read");
+      expect(installedSource(entry.packageId)).toBeUndefined();
+
+      // A row on a search card names its source; pressing Install there is the person's choice of that source.
+      const wrongRow = await install(entry, customFeedId(first));
+      expect(wrongRow.status).toBe(409);
+      expect((wrongRow.body as Record<string, unknown>)["code"]).toBe("DIRECTORY_SOURCE_CHANGED");
+
+      const chosen = await install(entry, customFeedId(second.url));
+      expect(chosen.status).toBe(200);
+      expect(installedSource(entry.packageId)).toMatchObject({ id: customFeedId(second.url), kind: "custom-marketplace" });
+    } finally {
+      await registry.close();
+    }
+  });
+
+  it("records the source at install, and refuses the same id from another source unless the person picks it", async () => {
+    const { entry, tarball } = await authorPackage();
+    const registry = await startFakeNpmRegistry({ name: "quick-notes", version: entry.version, tarball });
+    try {
+      const mine = await startFeed([entry]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", mine.url);
+      setEnv("CC_NPM_REGISTRY_URL", registry.url);
+      expect((await install(entry)).status).toBe(200);
+      expect(installedSource(entry.packageId)).toMatchObject({ id: customFeedId(mine.url) });
+
+      // Now only another catalog lists the same id.
+      const theirs = await startFeed([entry]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", theirs.url);
+      const crossed = await install(entry);
+      expect(crossed.status).toBe(409);
+      const refusal = crossed.body as Record<string, unknown>;
+      expect(refusal["code"]).toBe("DIRECTORY_SOURCE_CHANGED");
+      expect(String(refusal["message"])).toContain("was installed from 127.0.0.1");
+      expect(installedSource(entry.packageId)).toMatchObject({ id: customFeedId(mine.url) });
+    } finally {
+      await registry.close();
+    }
+  });
+});
+
 describe("searching every configured source", () => {
   it("lists rows from the index file and the marketplace with their origins, and leaves out what cannot run here", async () => {
     const { entry } = await authorPackage();
@@ -180,6 +266,8 @@ describe("searching every configured source", () => {
       ["com.example.mine", "local-file"],
       [entry.packageId, "custom-marketplace"],
     ]);
+    // Each row carries the id of its source, which the Install button sends back.
+    expect(rows.map((row) => row["sourceId"])).toEqual(["local", customFeedId(feed.url)]);
     expect(answer.text).toContain("1 gói bị ẩn");
 
     // Details for one package: every claim of the listing, said as a claim.

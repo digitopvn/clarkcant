@@ -209,8 +209,10 @@ export function createSearchDirectoryTool(input: SearchDirectoryToolInput): Tool
           results: results.map((entry) => {
             // The names of what the listing says that this node does not read, never their values.
             const unreadFields = unreadFieldsOf(state, entry);
-            // Named per row only when several sources share the card; with one, the card's title already names it.
-            const origin = (state.sources?.length ?? 0) > 1 ? originOf(state, entry) : undefined;
+            // Named per row only when several sources share the card; with one, the card's title already names it. The id
+            // is always sent, so Install installs from the source this row came from and no other.
+            const listedBy = originOf(state, entry);
+            const origin = (state.sources?.length ?? 0) > 1 ? listedBy : undefined;
             return {
               packageId: entry.packageId,
               version: entry.version,
@@ -231,6 +233,7 @@ export function createSearchDirectoryTool(input: SearchDirectoryToolInput): Tool
               facets: [...new Set(entry.facets)],
               platforms: [...new Set(entry.platforms)],
               ...(origin === undefined ? {} : { origin: { kind: origin.kind, label: fitTail(origin.label, CARD_DIRECTORY_MAX) } }),
+              ...(listedBy === undefined ? {} : { sourceId: listedBy.id }),
             };
           }),
           ...(notes.length === 0 ? {} : { sources: notes }),

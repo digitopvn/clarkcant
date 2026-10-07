@@ -607,7 +607,7 @@ export interface BlockActions {
    * control is not rendered at all in that case rather than rendered and refused, which is the difference between a
    * disabled button with a reason and a button that looks usable and is not.
    */
-  onInstallPackage?: (input: { packageId: string; version: string; contentDigest?: string }) => void;
+  onInstallPackage?: (input: { packageId: string; version: string; contentDigest?: string; sourceId?: string }) => void;
   /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
   packageInstall?: Record<string, PackageInstallState>;
   /**
@@ -2258,18 +2258,6 @@ function describePackageSource(
   return t("blocks.marketplace.unknownSource");
 }
 
-/**
- * The results of a marketplace search.
- *
- * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
- * path will check, and the lane the isolation implies — and it carries the install control on the row it acts on.
- * The control reports what the install route answered rather than installing anything itself: the digest is verified,
- * policy and consent are decided, and the effect is audited, all in one place. A second entry point here would be
- * the one place where a listing could become an authorisation.
- *
- * The directory is named in the heading. A result whose origin was invisible would present what some index says as
- * something this machine knows.
- */
 type MarketplaceSourceState = "stale" | "not-fetched" | "unreachable" | "unsupported" | "unreadable";
 
 const SOURCE_STATE_KEYS = {
@@ -2305,6 +2293,18 @@ function readOrigin(raw: unknown): { kind: string; label: string } | undefined {
   return typeof origin.kind === "string" && typeof origin.label === "string" ? { kind: origin.kind, label: origin.label } : undefined;
 }
 
+/**
+ * The results of a marketplace search.
+ *
+ * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
+ * path will check, and the lane the isolation implies — and it carries the install control on the row it acts on.
+ * The control reports what the install route answered rather than installing anything itself: the digest is verified,
+ * policy and consent are decided, and the effect is audited, all in one place. A second entry point here would be
+ * the one place where a listing could become an authorisation.
+ *
+ * The directory is named in the heading. A result whose origin was invisible would present what some index says as
+ * something this machine knows.
+ */
 export function MarketplaceResultsBlock({
   block,
   actions,
@@ -2357,6 +2357,7 @@ export function MarketplaceResultsBlock({
               const digest = typeof result.digest === "string" ? result.digest : "";
               // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
               const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
+              const sourceId = typeof result.sourceId === "string" && result.sourceId !== "" ? result.sourceId : undefined;
               const lane = typeof result.riskTier === "string" ? result.riskTier : "";
               const origin = readOrigin(result.origin);
               const attempt = actions?.packageInstall?.[packageId];
@@ -2411,7 +2412,12 @@ export function MarketplaceResultsBlock({
                         disabled={installState?.status === "installing" || stale}
                         {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
                         onClick={() =>
-                          actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
+                          actions.onInstallPackage?.({
+                            packageId,
+                            version,
+                            ...(contentDigest === undefined ? {} : { contentDigest }),
+                            ...(sourceId === undefined ? {} : { sourceId }),
+                          })
                         }
                       >
                         {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}

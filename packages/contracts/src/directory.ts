@@ -51,14 +51,6 @@ export const packageSourceSchema = z.discriminatedUnion("kind", [
 export type PackageSource = z.infer<typeof packageSourceSchema>;
 
 /**
- * The kinds of source a node's directory is composed from: the person's own index file (`CC_DIRECTORY_INDEX`), a
- * marketplace or catalog feed they configured, and the official ClarkCant Marketplace. Every one of them is discovery
- * data, never authority; the kind says where a listing came from, not how far it is trusted.
- */
-export const directorySourceKindSchema = z.enum(["local-file", "official-marketplace", "custom-marketplace"]);
-export type DirectorySourceKind = z.infer<typeof directorySourceKindSchema>;
-
-/**
  * The state of one directory source, named so that "could not be consulted" is never shown as "nothing found":
  * `ready`, `stale` (a remote source listed from its last copy because a refresh failed), `not-fetched`, `unreachable`,
  * `unsupported` (the address serves no ClarkCant directory feed) and `unreadable` (read, and not a valid directory).

@@ -3060,6 +3060,24 @@ mới thất bại vẫn liệt kê bản đó với trạng thái `stale`, kèm
 không kết nối được và không có bản sao là `unreachable`; địa chỉ trả 404, 405 hoặc 501 là `unsupported`; feed không
 phải directory hợp lệ là `unreadable` — không bao giờ là một danh sách rỗng trông như "không tìm thấy gì".
 
+Thứ tự ưu tiên chỉ có nghĩa khi các nguồn đứng trước đọc được, nên một nguồn không đọc được không bao giờ nhường các
+package id của nó cho nguồn sau:
+
+- File index bị hỏng (ví dụ đang lưu dở khi bạn sửa) làm cả directory thành `unreadable`, như trước khi có marketplace.
+  Không tìm hay cài gì từ marketplace cho tới khi file được sửa, vì file có thể nêu bất kỳ package id nào.
+- Một marketplace hoặc catalog không có gì để liệt kê (`not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`,
+  và không có bản sao trước đó) vẫn để các nguồn sau được liệt kê, và card tìm kiếm nêu tên nó. Một listing từ nguồn
+  sau chỉ được cài khi bạn bấm Cài trên chính dòng của nó, dòng đó có nêu nguồn. `POST /packages/install` không kèm lựa
+  chọn đó sẽ trả `409 DIRECTORY_SOURCE_UNREAD` và nêu tên cả hai nguồn.
+- Mỗi gói ghi lại nguồn mà nó được cài từ đó. Lần kiểm tra cập nhật chỉ đề xuất các version mới hơn từ chính nguồn đó,
+  và thông báo cập nhật nêu tên nguồn. Cài cùng package id từ một nguồn khác sẽ trả `409 DIRECTORY_SOURCE_CHANGED`,
+  trừ khi bạn bấm Cài trên dòng của nguồn đó. Gói được cài trước khi nguồn được ghi lại nhận cập nhật từ file index
+  của bạn khi file có liệt kê gói. Nếu không, gói nhận cập nhật từ nguồn đang liệt kê nó, và chỉ khi mọi nguồn đứng
+  trước đều đọc được.
+
+Khi không đọc được nguồn nào (ví dụ chỉ bật Marketplace chính thức và nó chưa phục vụ feed), directory là
+`unreadable`. Lý do nêu tên từng nguồn, vì sao nó lỗi, và cách thiết lập một file index hoặc một catalog.
+
 Một feed ([marketplace-directory.ts](../packages/core/src/marketplace-directory.ts)) phục vụ các mục directory theo
 đúng dạng ở trên, có thể chia trang:
 

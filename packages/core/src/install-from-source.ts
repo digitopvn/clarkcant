@@ -7,6 +7,7 @@ import {
   type CapabilityRef,
   type DependencyLockBinding,
   type DirectoryEntry,
+  type DirectorySourceRef,
   type EffectCategory,
   type FacetKind,
   type InstallPlan,
@@ -85,6 +86,8 @@ export interface InstallFromSourceInput {
    * installs from. Recorded on the generation, so everything that reads the installed package reads that copy.
    */
   snapshotDigest?: string;
+  /** The directory source the listing came from, recorded on the generation; see `PackageGeneration.directorySource`. */
+  directorySource?: DirectorySourceRef;
 }
 
 export type InstallOutcome =
@@ -274,6 +277,7 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
       .map((facet) => facet.facetKind),
     ...(input.widgetIds === undefined ? {} : { widgetIds: input.widgetIds }),
     ...(input.snapshotDigest === undefined ? {} : { snapshotDigest: input.snapshotDigest }),
+    ...(input.directorySource === undefined ? {} : { directorySource: input.directorySource }),
     nativeExtensionChanged: input.isolationPlan.some((facet) => facet.isolation === "trusted-native"),
     skillOrPromptChanged: input.isolationPlan.some((facet) => facet.facetKind === "skills" || facet.facetKind === "prompts"),
   });

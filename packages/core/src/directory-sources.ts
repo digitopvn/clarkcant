@@ -40,6 +40,16 @@ import {
  * **A package id belongs to the first source that lists it.** When a later source lists the same package id, its
  * listings for that id are left out (and counted as `shadowed`), so a marketplace cannot add versions — or an
  * "update" — to a package the person's own index or catalog already names.
+ *
+ * Precedence only holds while the earlier sources can be read, so a source that cannot be read never hands its package
+ * ids to a later one silently:
+ *
+ * - A broken index file is fatal. The whole directory is `unreadable` (as it was before remote sources existed), and
+ *   nothing is listed from a marketplace until the file is fixed, because the file may name any id.
+ * - A remote source with no copy to list (`not-fetched`, `unreachable`, `unsupported`, `unreadable`) leaves the later
+ *   sources listed, with its failure in `sources`. A listing from a later source is then installable only when the
+ *   person chose it from a list that named its source (`sourcesUnreadBefore`, checked by the install path), and an
+ *   update is only ever offered from the source a package was installed from.
  */
 
 export interface DirectoryConfig {
@@ -93,8 +103,9 @@ export function marketplaceDirectory(input: {
   const { origin, feedUrl, cacheDir } = input;
   const problem = feedUrlProblem(feedUrl);
   if (problem !== undefined) {
-    // A misconfigured address is a named state of that source, not a crash and not a silently missing source.
-    const reason = `${feedUrl}: ${problem}`;
+    // A misconfigured address is a named state of that source, not a crash and not a silently missing source. Named by
+    // its label, never the raw address, whose query may carry a token.
+    const reason = `${feedLabel(feedUrl)}: ${problem}`;
     return {
       origin,
       read: () => ({
@@ -153,14 +164,25 @@ export function directoryProviders(config: DirectoryConfig): DirectoryProvider[]
   return providers;
 }
 
-const FAILED_STATES: ReadonlySet<DirectorySourceStatus["state"]> = new Set(["unreachable", "unsupported", "unreadable"]);
+/** The states of a source that has nothing to list: it was never fetched, or could not be read and has no earlier copy. */
+const FAILED_STATES: ReadonlySet<DirectorySourceStatus["state"]> = new Set([
+  "not-fetched",
+  "unreachable",
+  "unsupported",
+  "unreadable",
+]);
+
+/** What a person can do when no source lists anything. */
+const SETUP_HINT =
+  "to list packages, set CC_DIRECTORY_INDEX to a JSON index file or add a marketplace or catalog feed with CC_DIRECTORY_MARKETPLACES";
 
 /**
  * Compose what the sources list into one directory state.
  *
  * - No source configured: `not-configured`, a state rather than an empty list.
  * - Only the index file: exactly what `readDirectoryIndex` answers for it, so a node configured as before behaves as before.
- * - Every source failed: `unreadable`, naming each source and why.
+ * - The index file cannot be read: `unreadable` with the file's own reason, whatever the other sources list.
+ * - Every source failed: `unreadable`, naming each source and why, and how to set a directory up.
  * - Otherwise: `configured`, with the listings of every usable source (by precedence, see above), which source listed
  *   each (`origins`), and every source's own state (`sources`), so a stale or unreachable source is said, not hidden.
  */
@@ -182,6 +204,16 @@ export function composeDirectory(providers: readonly DirectoryProvider[]): Direc
       : only.state.kind === "unreadable"
         ? { ...only.state, sources: [only.status] }
         : only.state;
+  }
+
+  const directory = providers.map((provider) => provider.origin.label).join(" · ");
+  const statuses = reads.map((read) => read.status);
+  const brokenIndex = reads.find((read) => read.status.origin.kind === "local-file" && read.state.kind !== "configured");
+  if (brokenIndex !== undefined) {
+    // The person's own index may name any package id; filling in from a marketplace while it is broken would let another
+    // party's listing stand in for the person's own.
+    const reason = brokenIndex.state.kind === "unreadable" ? brokenIndex.state.reason : (brokenIndex.status.reason ?? "");
+    return { kind: "unreadable", directory, reason, sources: statuses };
   }
 
   const entries: DirectoryEntry[] = [];
@@ -213,9 +245,9 @@ export function composeDirectory(providers: readonly DirectoryProvider[]): Direc
     sources.push({ ...read.status, entryCount: contributed, ...(shadowed === 0 ? {} : { shadowed }) });
   }
 
-  const directory = providers.map((provider) => provider.origin.label).join(" · ");
   if (sources.every((status) => FAILED_STATES.has(status.state))) {
-    return { kind: "unreadable", directory, reason: directoryProblems(sources) ?? "no source could be read", sources };
+    const problems = directoryProblems(sources) ?? "no source could be read";
+    return { kind: "unreadable", directory, reason: `${problems}; ${SETUP_HINT}`, sources };
   }
   return {
     kind: "configured",
@@ -250,6 +282,18 @@ export function originOf(
   entry: Pick<DirectoryEntry, "packageId" | "version" | "digest">,
 ): DirectoryOrigin | undefined {
   return state.kind === "configured" ? state.origins?.get(listingKey(entry)) : undefined;
+}
+
+/**
+ * The sources earlier in precedence than `origin` that have nothing to list right now (never fetched, or failed with no
+ * earlier copy). Any of them may list the same package id, and would own it if it could be read, so a listing from
+ * `origin` is not what precedence would pick: the install path installs it only when the person chose it from a list
+ * that named its source. Empty when `origin` is first, or every earlier source answered.
+ */
+export function sourcesUnreadBefore(state: DirectoryIndexState, origin: DirectoryOrigin): DirectorySourceStatus[] {
+  if (state.kind !== "configured" || state.sources === undefined) return [];
+  const at = state.sources.findIndex((status) => status.origin.id === origin.id);
+  return at <= 0 ? [] : state.sources.slice(0, at).filter((status) => FAILED_STATES.has(status.state));
 }
 
 /**

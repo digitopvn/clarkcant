@@ -23,7 +23,8 @@ export interface NoticeText {
     title: (packageId: string) => string;
     /** A risk lane's wording; a native Pi extension is never worded like an isolated widget. */
     lane: Record<RiskLane, string>;
-    body: (current: string, next: string, source: string, lane: string) => string;
+    /** `from` names the directory source the update is listed by, when known. */
+    body: (current: string, next: string, source: string, lane: string, from?: string) => string;
   };
   peerOutage: {
     title: Record<PeerOutageSituation, string>;
@@ -122,7 +123,8 @@ const VI: NoticeText = {
       service: "service riêng tiến trình",
       "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
     },
-    body: (current, next, source, lane) => `${current} → ${next} · nguồn ${source} · ${lane}`,
+    body: (current, next, source, lane, from) =>
+      `${current} → ${next} · ${from === undefined ? `nguồn ${source}` : `từ ${from} (${source})`} · ${lane}`,
   },
   peerOutage: {
     title: {
@@ -305,7 +307,8 @@ const EN: NoticeText = {
       service: "service in its own process",
       "trusted-native": "native Pi extension — runs in the same process",
     },
-    body: (current, next, source, lane) => `${current} → ${next} · source ${source} · ${lane}`,
+    body: (current, next, source, lane, from) =>
+      `${current} → ${next} · ${from === undefined ? `source ${source}` : `from ${from} (${source})`} · ${lane}`,
   },
   peerOutage: {
     title: {

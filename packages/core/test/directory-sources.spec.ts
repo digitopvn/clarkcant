@@ -18,6 +18,7 @@ import {
   originOf,
   readDirectory,
   refreshDirectory,
+  sourcesUnreadBefore,
 } from "../src/directory-sources.ts";
 import { DIRECTORY_FEED_FORMAT, feedUrlProblem, fetchDirectoryFeed, type FeedFetch } from "../src/marketplace-directory.ts";
 
@@ -81,6 +82,7 @@ function json(value: unknown, init: ResponseInit = {}): Response {
 }
 
 const FEED = "https://catalog.example.com/clark/directory";
+const FEED_B = "https://other.example.com/feed";
 const OFFICIAL = "https://marketplace.clarkcant.cc/api/v1/directory";
 
 describe("which sources are configured", () => {
@@ -143,12 +145,14 @@ describe("the index file alone", () => {
 });
 
 describe("a remote marketplace feed", () => {
-  it("lists nothing and says so before it was ever fetched", () => {
+  it("reads as not listable, not as an empty list, before it was ever fetched", () => {
     const state = composeDirectory([customMarketplaceDirectory(FEED, tempDir())]);
-    expect(state.kind).toBe("configured");
-    if (state.kind !== "configured") return;
-    expect(state.entries).toEqual([]);
+    expect(state.kind).toBe("unreadable");
+    if (state.kind !== "unreadable") return;
     expect(state.sources?.[0]?.state).toBe("not-fetched");
+    // Says how to set a directory up, not only what failed.
+    expect(state.reason).toContain("CC_DIRECTORY_INDEX");
+    expect(state.reason).toContain("CC_DIRECTORY_MARKETPLACES");
   });
 
   it("fetches every page, keeps the copy, and lists it with its origin and fetch time", async () => {
@@ -321,6 +325,10 @@ describe("the bounds of one fetch", () => {
     expect(feedUrlProblem("not a url")).toContain("not a URL");
     const state = composeDirectory([customMarketplaceDirectory("ftp://catalog.example.com/feed", tempDir())]);
     expect(state.kind).toBe("unreadable");
+    // A misconfigured address is named by its host and path, never with a query that may carry a token.
+    const tokened = composeDirectory([customMarketplaceDirectory("http://catalog.example.com/feed?token=s3cret", tempDir())]);
+    expect(tokened.kind === "unreadable" ? tokened.reason : "").toContain("catalog.example.com/feed");
+    expect(JSON.stringify(tokened)).not.toContain("s3cret");
   });
 });
 
@@ -359,5 +367,54 @@ describe("several sources at once", () => {
     if (state.kind !== "configured") return;
     expect(state.entries.map((listed) => listed.packageId)).toEqual(["com.acme.mine"]);
     expect(directoryProblems(state.sources)).toContain("catalog.example.com/clark/directory: could not reach");
+  });
+
+  it("keeps a broken index file fatal rather than filling its package ids from a marketplace", async () => {
+    const dataDir = tempDir();
+    const indexPath = writeIndex(dataDir, [entry({ packageId: "com.acme.mine" })]);
+    const env = { CC_DIRECTORY_INDEX: indexPath, CC_DIRECTORY_MARKETPLACES: FEED, CC_OFFICIAL_MARKETPLACE: "off" };
+    const { fetch } = fakeFetch({ [FEED]: () => json([entry({ packageId: "com.acme.mine", version: "9.0.0", digest: "sha256:evil" })]) });
+    await refreshDirectory({ env, dataDir }, { fetch });
+    expect(readDirectory({ env, dataDir }).kind).toBe("configured");
+
+    // Half-saved while the person edits it.
+    writeFileSync(indexPath, "[ {broken");
+    const state = readDirectory({ env, dataDir });
+    expect(state.kind).toBe("unreadable");
+    if (state.kind !== "unreadable") return;
+    expect(state.reason).toContain("could not read the directory index");
+    expect(state.sources?.map((status) => [status.origin.kind, status.state])).toEqual([
+      ["local-file", "unreadable"],
+      ["custom-marketplace", "ready"],
+    ]);
+  });
+
+  it("names an earlier catalog that was never read as the reason a later source's listing is not precedence's pick", async () => {
+    const dataDir = tempDir();
+    const env = { CC_DIRECTORY_MARKETPLACES: `${FEED} ${FEED_B}`, CC_OFFICIAL_MARKETPLACE: "off" };
+    const { fetch } = fakeFetch({
+      [FEED]: () => Promise.reject(new TypeError("fetch failed")),
+      [FEED_B]: () => json([entry({ packageId: "com.acme.internal", digest: "sha256:other" })]),
+    });
+    await refreshDirectory({ env, dataDir }, { fetch });
+    const state = readDirectory({ env, dataDir });
+    expect(state.kind).toBe("configured");
+    if (state.kind !== "configured") return;
+    const listed = state.entries[0];
+    const origin = listed === undefined ? undefined : originOf(state, listed);
+    expect(origin?.label).toBe("other.example.com/feed");
+    const unread = origin === undefined ? [] : sourcesUnreadBefore(state, origin);
+    expect(unread.map((status) => [status.origin.label, status.state])).toEqual([
+      ["catalog.example.com/clark/directory", "unreachable"],
+    ]);
+    // The first source has nothing earlier than it.
+    expect(sourcesUnreadBefore(state, { id: "nope", kind: "custom-marketplace", label: "x" })).toEqual([]);
+  });
+
+  it("reads a broken index plus a never-fetched marketplace as unreadable, not as ready with nothing", () => {
+    const dataDir = tempDir();
+    const indexPath = writeIndex(dataDir, { not: "an array" });
+    const state = readDirectory({ env: { CC_DIRECTORY_INDEX: indexPath, CC_DIRECTORY_MARKETPLACES: FEED }, dataDir });
+    expect(state.kind).toBe("unreadable");
   });
 });

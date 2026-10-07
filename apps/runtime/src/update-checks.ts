@@ -1,9 +1,12 @@
 import { entryFitsHost, platformForHost, type Instant, type Platform } from "@clarkcant/contracts";
 import {
   HOST_API_VERSION,
+  originOf,
   readDirectory,
   refreshDirectory,
+  sourcesUnreadBefore,
   listInstalledPackages,
+  type DirectoryOrigin,
   type InstallDeps,
   type InstalledPackageView,
 } from "@clarkcant/core";
@@ -43,6 +46,11 @@ import {
  * `git`-sourced entry is compared on its own declared `version` field exactly like an `npm` one (both are ordinary
  * semver on the directory entry), so a publisher that bumps `version` on a new commit is still caught; a publisher
  * that pushes a new commit without bumping `version` is not, and this module does not pretend otherwise.
+ *
+ * An update is only ever offered from the source the package was installed from (`InstalledPackageView.directorySource`):
+ * the same package id listed by another source is another publisher's claim, not a newer version of what is installed.
+ * A package installed before the source was recorded takes its updates from the person's index file when that lists it,
+ * and otherwise from the source that lists it, only when every earlier source was read; the notice names that source.
  */
 
 export const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
@@ -62,6 +70,36 @@ export interface UpdateCandidate {
   hostApi: { min: number; max: number };
   /** The platforms the entry declares it runs on. */
   platforms: readonly Platform[];
+  /** The directory source that lists the entry. */
+  origin?: DirectoryOrigin;
+  /**
+   * True when a source earlier in precedence had nothing to list when the directory was read, so it may list this
+   * package id itself: the entry is offered only to a package installed from its own source.
+   */
+  precededByUnreadSource?: boolean;
+}
+
+/** The longest source name an update notice carries, so the notice stays within its bound. */
+const NOTICE_SOURCE_LABEL_MAX = 120;
+
+/**
+ * Which source an installed package's updates may come from: the one recorded at install; for a package installed
+ * before that, the person's index file when it lists the package. Undefined means no source is pinned.
+ */
+function pinnedSourceId(installed: InstalledPackageView, directory: readonly UpdateCandidate[]): string | undefined {
+  if (installed.directorySource !== undefined) return installed.directorySource.id;
+  return directory.find((entry) => entry.packageId === installed.packageId && entry.origin?.kind === "local-file")?.origin?.id;
+}
+
+/** Whether `candidate` comes from a source an update for `installed` may be offered from. */
+function fromAllowedSource(candidate: UpdateCandidate, pinned: string | undefined): boolean {
+  return pinned === undefined ? candidate.precededByUnreadSource !== true : candidate.origin?.id === pinned;
+}
+
+function noticeSourceLabel(origin: DirectoryOrigin | undefined): { sourceLabel?: string } {
+  if (origin === undefined) return {};
+  const label = origin.label;
+  return { sourceLabel: label.length > NOTICE_SOURCE_LABEL_MAX ? `…${label.slice(-(NOTICE_SOURCE_LABEL_MAX - 1))}` : label };
 }
 
 /**
@@ -184,10 +222,12 @@ export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport 
   if (platform !== undefined) {
     for (const installed of input.installedPackages) {
       const skipped = skippedFor(input.services, "package", installed.packageId);
+      const pinned = pinnedSourceId(installed, input.directory);
       const newest = input.directory
         .filter(
           (entry) =>
             entry.packageId === installed.packageId &&
+            fromAllowedSource(entry, pinned) &&
             isInstallableCandidate(entry, platform) &&
             isNewerVersion(entry.version, installed.version) &&
             !skipped(entry.version),
@@ -204,6 +244,7 @@ export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport 
           currentVersion: installed.version,
           newVersion: newest.version,
           sourceKind: newest.sourceKind,
+          ...noticeSourceLabel(newest.origin),
           lane: newest.lane,
           at: input.now(),
           language: ownerLocale(input.services.runtime),
@@ -252,15 +293,21 @@ export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport 
   const index = readDirectory({ env: deps.env ?? process.env, dataDir: deps.dataDir });
   const directory: UpdateCandidate[] =
     index.kind === "configured"
-      ? index.entries.map((entry) => ({
-          packageId: entry.packageId,
-          version: entry.version,
-          sourceKind: sourceKindOf(entry.source),
-          lane: entry.riskTier,
-          digest: entry.digest,
-          hostApi: entry.hostApi,
-          platforms: entry.platforms,
-        }))
+      ? index.entries.map((entry) => {
+          const origin = originOf(index, entry);
+          return {
+            packageId: entry.packageId,
+            version: entry.version,
+            sourceKind: sourceKindOf(entry.source),
+            lane: entry.riskTier,
+            digest: entry.digest,
+            hostApi: entry.hostApi,
+            platforms: entry.platforms,
+            ...(origin === undefined
+              ? {}
+              : { origin, precededByUnreadSource: sourcesUnreadBefore(index, origin).length > 0 }),
+          };
+        })
       : [];
 
   return checkForUpdates({
