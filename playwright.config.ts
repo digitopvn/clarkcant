@@ -1,7 +1,8 @@
-import { defineConfig, devices } from "@playwright/test";
+import { chromium, defineConfig, devices } from "@playwright/test";
 import { join } from "node:path";
 
 import { ensureLocalTls } from "./apps/runtime/src/test-support/media-fixtures.ts";
+import { chromiumTestArgs } from "./tools/chromium-test-args.ts";
 
 /**
  * End-to-end configuration.
@@ -89,7 +90,9 @@ export default defineConfig({
           // A synthetic microphone and an auto-accepted permission prompt. Without these the voice
           // spec cannot run at all in CI, and a voice feature verified only by hand is a voice
           // feature verified only when someone remembers to.
-          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+          // On Windows, also Playwright's own disabled features plus Chromium's local-port randomization, whose
+          // collisions fail loopback connects with ERR_NO_BUFFER_SPACE (tools/chromium-test-args.ts).
+          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", ...(await chromiumTestArgs(chromium))],
         },
       },
     },

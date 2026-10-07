@@ -103,9 +103,119 @@ describe("normalising a code-switched utterance", () => {
     expect(normalizeTranscript(`sửa ${long}`, CONTEXT).changes.length).toBeLessThanOrEqual(MAX_NORMALIZATION_CHANGES);
   });
 
-  it("raises casing for a known name, and never lowers it", () => {
+  it("raises casing for a known name", () => {
     expect(normalized("dùng Json để lưu")).toBe("dùng JSON để lưu");
-    expect(normalized("dùng PNPM để cài")).toBe("dùng PNPM để cài");
+  });
+});
+
+describe("restoring the case of a code-like term heard exactly", () => {
+  const SESSION = buildRecognitionContext({
+    symbols: ["redactSecrets", "update", "test"],
+    repositories: ["clarkcant"],
+    paths: ["voice-session.ts"],
+  });
+  const restored = (text: string): string => normalizeTranscript(text, SESSION).text;
+
+  it("lowers a symbol, a path and a command written with a recognizer's capitals", () => {
+    expect(restored("RedactSecrets có bắt được GitHub token không")).toBe("redactSecrets có bắt được GitHub token không");
+    expect(restored("chạy PNPM verify trước khi mở pull request")).toBe("chạy pnpm verify trước khi mở pull request");
+    expect(restored("PNPM install rồi chạy test")).toBe("pnpm install rồi chạy test");
+    expect(restored("run PNPM install before the build")).toBe("run pnpm install before the build");
+    expect(restored("Git stash my changes before switching branches")).toBe("git stash my changes before switching branches");
+    expect(restored("mở Voice-Session.ts giúp tôi")).toBe("mở voice-session.ts giúp tôi");
+    expect(restored("dùng TYPESCRIPT cho file này")).toBe("dùng TypeScript cho file này");
+  });
+
+  it("reports the restored case as a casing change of that term", () => {
+    expect(normalizeTranscript("RedactSecrets có bắt được token không", SESSION).changes).toEqual([
+      { from: "RedactSecrets", to: "redactSecrets", rule: "casing", kind: "symbol" },
+    ]);
+  });
+
+  it("never turns npm into pnpm: only case is restored, and a command is never guessed", () => {
+    const pnpmCount = (text: string): number => text.match(/\bpnpm\b/giu)?.length ?? 0;
+    for (const sentence of ["chạy npm install đi", "repo cũ vẫn chạy NPM install", "run npm install then npm verify", "Npm hay PNPM cũng được"]) {
+      expect(pnpmCount(restored(sentence))).toBe(pnpmCount(sentence));
+    }
+    expect(restored("chạy npm install đi")).toBe("chạy npm install đi");
+    expect(restored("repo cũ vẫn chạy NPM install")).toBe("repo cũ vẫn chạy NPM install");
+  });
+
+  it("restores only an exact match, never a near one", () => {
+    // One letter off a code-like term is a different name, whatever its case.
+    for (const sentence of ["RedactSecret có bắt được token không", "dùng PNPMX để cài", "Git stashes my changes"]) {
+      expect(restored(sentence)).toBe(sentence);
+    }
+  });
+
+  it("leaves an ordinary word that starts a sentence alone, even when the vocabulary has it", () => {
+    for (const sentence of [
+      // English prose: a plain symbol, a glossary word and an ordinary word, each starting the sentence.
+      "Update the build script before the release",
+      "Rebase onto main before you merge",
+      "Worktree support landed last week",
+      "Test the build on Windows first",
+      // Vietnamese prose: the same words starting a Vietnamese sentence.
+      "Test này chạy bằng Vitest hay Playwright",
+      "Rebase nhánh này lên main rồi push",
+      // A proper noun matching a plain lowercase vocabulary entry.
+      "ClarkCant có bản cho Windows chưa",
+      // A plain name in capitals for emphasis is not a code-like term.
+      "REACT hay Vue thì nhanh hơn cho script này",
+    ]) {
+      expect(restored(sentence)).toBe(sentence);
+    }
+  });
+
+  it("leaves a plain word in capitals alone outside a command: pnpm on its own is also a word", () => {
+    expect(restored("dùng PNPM để cài")).toBe("dùng PNPM để cài");
+  });
+
+  it("keeps the capital of a skill or extension name that is an ordinary word starting a sentence", () => {
+    // The session's tools include installed skill and extension names, chosen by people and the marketplace.
+    const tools = buildRecognitionContext({ tools: ["test", "review", "weather", "deploy", "tasks", "git"] });
+    for (const sentence of [
+      // English, with cue words ("build", "merge", "server") that make the sentence read as about code.
+      "Test the build on Windows first",
+      "Review this code before the merge",
+      "Weather widget broke the build again",
+      "Deploy the server tonight",
+      "Tasks for today: fix the build",
+      "Git broke the build again",
+      // Vietnamese, where the code-switched sentence itself counts as support.
+      "Test này chạy bằng Vitest hay Playwright",
+      "Review đoạn code này trước khi merge nhé",
+      "Weather hôm nay thế nào",
+      "Deploy server tối nay được không",
+      "Tasks hôm nay gồm những gì",
+    ]) {
+      expect(normalizeTranscript(sentence, tools).text).toBe(sentence);
+    }
+    // A command is still restored in the same session.
+    expect(normalizeTranscript("PNPM verify trước khi merge", tools).text).toBe("pnpm verify trước khi merge");
+  });
+
+  it("lowers a hyphenated or digit skill name only with the evidence a plain word needs", () => {
+    const tools = buildRecognitionContext({ tools: ["follow-up", "check-in", "s3", "daily-notes", "todo.app"] });
+    const heard = (text: string): string => normalizeTranscript(text, tools).text;
+    // English prose with no technical anchor: an ordinary compound or brand keeps the capital it was written with.
+    for (const sentence of ["Follow-up with the team tomorrow", "Check-in at the hotel", "S3 is down", "Daily-notes for today"]) {
+      expect(heard(sentence)).toBe(sentence);
+    }
+    // With a technical anchor (a coding word, or a Vietnamese sentence carrying the name), the name is restored.
+    expect(heard("Daily-notes skill chạy lỗi khi build")).toBe("daily-notes skill chạy lỗi khi build");
+    expect(heard("Daily-notes skill broke the build")).toBe("daily-notes skill broke the build");
+    expect(heard("S3 bucket bị lỗi rồi")).toBe("s3 bucket bị lỗi rồi");
+    // Code punctuation other than a single hyphen is not an ordinary word.
+    expect(heard("Todo.app is open")).toBe("todo.app is open");
+  });
+
+  it("is idempotent once case is restored", () => {
+    for (const sentence of ["RedactSecrets có bắt được GitHub token không", "chạy PNPM verify trước khi push", "Git stash my changes before switching branches"]) {
+      const once = restored(sentence);
+      expect(restored(once)).toBe(once);
+      expect(normalizeTranscript(once, SESSION).changes).toEqual([]);
+    }
   });
 });
 

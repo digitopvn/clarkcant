@@ -53,7 +53,13 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
     case 2:
       // POST /app-intents/confirm, and POST /packages/install: putting a package's code on the machine. Only the app's
       // own install button calls it; the agents list, uninstall and roll back packages but never install one.
-      return (first === "app-intents" && second === "confirm") || (first === "packages" && second === "install");
+      // POST /widget-dev/sessions installs a folder's package the same way, so it is the person's too; a machine surface
+      // that wants one asks Clark, whose `develop_widget` is decided by the execution policy like any install.
+      return (
+        (first === "app-intents" && second === "confirm") ||
+        (first === "packages" && second === "install") ||
+        (first === "widget-dev" && second === "sessions")
+      );
     case 3:
       // POST /peers/:id/confirm, and POST /app-intents/host-control/:controlId: the screen's own report of
       // what it did with an agent's app-control action, which a machine surface must not be able to forge.
@@ -78,6 +84,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // Create issue press. Nothing else files one: a machine surface, or Clark through `report_feedback`, can only
       // prepare a report and show it to the person.
       if (first === "feedback" && second === "reports" && fourth === "publish") return true;
+      // POST /widget-dev/sessions/:id/rebuild and /place: installing the folder's newest build, and placing it. Stopping
+      // a session (DELETE) and reading one stay reachable everywhere.
+      if (first === "widget-dev" && second === "sessions") return fourth === "rebuild" || fourth === "place";
       // POST /packages/approvals/:id/decision: a capability for an installed generation, or an install the policy asked about
       return first === "packages" && second === "approvals" && fourth === "decision";
     case 5:

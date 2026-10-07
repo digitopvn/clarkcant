@@ -81,8 +81,8 @@ export function decisionConfigFromEnv(
    * The key a person typed into the interface, when there is one.
    *
    * Read through a function rather than handed over as a value, because it is read when the selector is built and the
-   * point of storing one is that it works without restarting the node. The environment wins when both exist: an
-   * operator who set it deliberately should not be overridden by a value typed later into a card.
+   * point of storing one is that it works without restarting the node. The typed key wins when both exist
+   * (`provider-credential.ts`): it is the person's most recent statement of which key to use.
    */
   stored?: StoredCredential,
 ): DecisionConfig {

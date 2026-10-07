@@ -78,6 +78,7 @@ import type { BackgroundRunInput } from "./model-turn.ts";
 import { createTerminalRegistry, type TerminalRegistry } from "./terminal-sessions.ts";
 import { createHostControlAcks, type HostControlAcks } from "./host-control-acks.ts";
 import { createWidgetPerformAcks, type WidgetPerformAcks } from "./widget-perform-acks.ts";
+import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
 import { createPiSessionWatcher, defaultPiSessionRoots, type PiSessionWatcher } from "./pi-session-watch.ts";
 import {
   type SessionStoreDeps,
@@ -135,6 +136,11 @@ export interface NodeServices {
   hostControl: HostControlAcks;
   /** The page's reports on actions Clark asked a widget's frame to perform, held per node like hostControl. */
   widgetPerforms: WidgetPerformAcks;
+  /**
+   * Live widget authoring sessions on this node (`/widget-dev/sessions`, `develop_widget`). Assigned after boot, beside
+   * the service host its installs tell; absent on a node that has not started it, which the routes answer as unavailable.
+   */
+  widgetDev?: WidgetDevSessions;
   piSessions: PiSessionWatcher;
   conductor: ConductorDeps;
   /**
