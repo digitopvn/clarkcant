@@ -1707,12 +1707,110 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     /*
+     * External messaging channels: the accounts Clark speaks as on a provider, the provider accounts mapped to Clark
+     * principals, the spaces bound to conversations, provider message ids linked to Clark messages, the channel-input
+     * branch's own record of each message the shared signal intake recorded, and one receipt per outbound operation.
+     * Provider ids live only here, never in a message. An empty `external_thread_id` means the whole space, so the
+     * unique keys hold without NULLs comparing unequal.
+     */
+    version: 44,
+    name: "external_channels",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        CREATE TABLE external_connections (
+          connection_ref       TEXT PRIMARY KEY,
+          principal_id         TEXT NOT NULL,
+          provider             TEXT NOT NULL,
+          provider_account_id  TEXT NOT NULL,
+          state                TEXT NOT NULL CHECK (state IN ('connected', 'degraded', 'revoked')),
+          document             TEXT NOT NULL,
+          created_at           TEXT NOT NULL,
+          updated_at           TEXT NOT NULL,
+          UNIQUE (principal_id, provider, provider_account_id)
+        );
+
+        CREATE TABLE external_identities (
+          connection_ref     TEXT NOT NULL REFERENCES external_connections(connection_ref),
+          external_actor_id  TEXT NOT NULL,
+          principal_id       TEXT NOT NULL,
+          document           TEXT NOT NULL,
+          linked_at          TEXT NOT NULL,
+          PRIMARY KEY (connection_ref, external_actor_id)
+        );
+        CREATE INDEX idx_external_identities_principal ON external_identities(principal_id);
+
+        CREATE TABLE external_channel_bindings (
+          binding_id          TEXT PRIMARY KEY,
+          connection_ref      TEXT NOT NULL REFERENCES external_connections(connection_ref),
+          external_space_id   TEXT NOT NULL,
+          external_thread_id  TEXT NOT NULL DEFAULT '',
+          conversation_id     TEXT NOT NULL,
+          state               TEXT NOT NULL CHECK (state IN ('active', 'paused')),
+          document            TEXT NOT NULL,
+          created_at          TEXT NOT NULL,
+          updated_at          TEXT NOT NULL,
+          UNIQUE (connection_ref, external_space_id, external_thread_id)
+        );
+        CREATE INDEX idx_external_channel_bindings_conversation ON external_channel_bindings(conversation_id);
+
+        CREATE TABLE external_message_links (
+          connection_ref       TEXT NOT NULL,
+          external_space_id    TEXT NOT NULL,
+          external_thread_id   TEXT NOT NULL DEFAULT '',
+          external_message_id  TEXT NOT NULL,
+          direction            TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+          provider             TEXT NOT NULL,
+          conversation_id      TEXT NOT NULL,
+          message_id           TEXT NOT NULL,
+          created_at           TEXT NOT NULL,
+          PRIMARY KEY (connection_ref, external_space_id, external_message_id, direction)
+        );
+        CREATE INDEX idx_external_message_links_message ON external_message_links(message_id);
+        CREATE INDEX idx_external_message_links_thread
+          ON external_message_links(connection_ref, external_space_id, external_thread_id, direction);
+
+        -- What the channel-input branch did with one channel message the shared intake recorded: the event itself
+        -- stays the signal's document, so there is one copy of it and one dedupe.
+        CREATE TABLE channel_inputs (
+          signal_id       TEXT PRIMARY KEY REFERENCES signal_deliveries(signal_id),
+          connection_ref  TEXT NOT NULL,
+          binding_id      TEXT,
+          thread_key      TEXT NOT NULL,
+          state           TEXT NOT NULL CHECK (state IN ('pending', 'queued', 'started', 'answered', 'coalesced',
+                            'context', 'context-expired', 'ignored', 'interrupted', 'dropped', 'failed')),
+          reason          TEXT,
+          lead_signal_id  TEXT,
+          message_id      TEXT,
+          received_at     TEXT NOT NULL,
+          updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX idx_channel_inputs_state ON channel_inputs(state, received_at);
+        CREATE INDEX idx_channel_inputs_binding ON channel_inputs(binding_id, state, received_at);
+
+        CREATE TABLE channel_delivery_receipts (
+          receipt_id       TEXT PRIMARY KEY,
+          idempotency_key  TEXT NOT NULL UNIQUE,
+          connection_ref   TEXT NOT NULL,
+          conversation_id  TEXT NOT NULL,
+          message_id       TEXT,
+          state            TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'failed', 'unknown', 'held', 'refused')),
+          document         TEXT NOT NULL,
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX idx_channel_delivery_receipts_message ON channel_delivery_receipts(message_id);
+      `);
+    },
+  },
+  {
+    /*
      * A bug report or feature request filed from the conversation, kept until GitHub is known to hold it. `draft` is the
      * redacted issue exactly as it will be sent; `publication` is what a publish came to. `effect_id` names the ledger
      * row of the one GitHub write in flight, so a restart finds it and reconciles by the report's marker rather than
      * sending it again.
      */
-    version: 44,
+    version: 45,
     name: "feedback_reports",
     reversible: true,
     up(db) {

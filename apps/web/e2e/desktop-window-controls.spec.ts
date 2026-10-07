@@ -153,6 +153,60 @@ test("a shell that refuses full screen says so and the button does not pretend",
   await expect(fullScreen(page)).toHaveAttribute("aria-pressed", "false");
 });
 
+/**
+ * A bridge whose `status` answer is held until the test releases it, saying whether this desktop can keep the window on
+ * top. Native Wayland says it cannot, and the pin must then never be offered, not even for the moment before the answer.
+ */
+async function installPinBridge(page: Page, pinnable: boolean): Promise<void> {
+  await page.addInitScript((canPin: boolean) => {
+    const scope = window as unknown as Record<string, unknown>;
+    let release: () => void = () => {};
+    const answered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    scope.__releaseStatus = () => release();
+    scope.clarkcant = {
+      setCompactMode: async () => ({ ok: true, mode: "normal", bounds: { x: 0, y: 0, width: 1100, height: 760 }, alwaysOnTop: false }),
+      status: async () => {
+        await answered;
+        return { ok: true, window: { mode: "normal", alwaysOnTop: false, fullScreen: false, pinnable: canPin } };
+      },
+    };
+  }, pinnable);
+}
+
+const pin = (page: Page) => page.locator('[data-desktop-pin="true"]');
+const pinSlot = (page: Page) => page.locator('[data-desktop-pin-pending="true"]');
+
+async function releaseStatus(page: Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { __releaseStatus: () => void }).__releaseStatus());
+}
+
+test("a desktop that cannot keep the window on top never shows a pin, not even before the shell answers", async ({ page }) => {
+  await installPinBridge(page, false);
+  await openApp(page);
+  await expect(page.locator('[data-desktop-chrome="true"]')).toBeVisible();
+
+  // Before the answer: the pin's place is held, invisible and out of the keyboard's reach.
+  await expect(pin(page)).toHaveCount(0);
+  await expect(pinSlot(page)).toHaveCount(1);
+  await expect(pinSlot(page)).toBeHidden();
+  await expect(pinSlot(page)).toHaveAttribute("aria-hidden", "true");
+
+  await releaseStatus(page);
+  await expect(pinSlot(page)).toHaveCount(0);
+  await expect(pin(page)).toHaveCount(0);
+});
+
+test("a desktop that can pin shows the pin once the shell has answered", async ({ page }) => {
+  await installPinBridge(page, true);
+  await openApp(page);
+  await expect(pinSlot(page)).toHaveCount(1);
+  await releaseStatus(page);
+  await expect(pin(page)).toBeVisible();
+  await expect(pinSlot(page)).toHaveCount(0);
+});
+
 /** Script what the fixture voice provider will hear next. */
 async function scriptVoice(request: APIRequestContext, words: string): Promise<void> {
   const response = await request.post(`${GATEWAY}/voice-fixture/words`, {

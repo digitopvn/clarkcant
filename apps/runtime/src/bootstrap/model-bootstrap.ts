@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
-import { directoryIndexPath, readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
+import { readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
 import { keyVariableFor } from "@clarkcant/pi-adapter";
@@ -12,6 +12,7 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../attachments.ts";
+import { createChannelToolGate } from "../channels/channel-tool-gate.ts";
 import { referenceBrief, referencedWork, referencesForLastUserMessage, referencesForMessage } from "../composer-references.ts";
 import {
   type ConditionalInstructions,
@@ -447,6 +448,16 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
      * never calls a model, it only marks the widget as touched.
      */
     uiContext: (conversationId) => conversationUiContext(deps.services().conductor, conversationId),
+    // A channel participant's call no grant covers is held and the owner asked on an approval card, never run on the
+    // sender's word (`ChannelTurnAuthority`).
+    channelToolGate: createChannelToolGate({
+      coordination: () => ({
+        db: deps.services().runtime.db,
+        nodeId: deps.services().runtime.identity.nodeId,
+        now: () => instantSchema.parse(new Date().toISOString()),
+        newId: (prefix) => deps.services().conductor.newId(prefix),
+      }),
+    }),
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
     // The Session Manager's read-only reports, including the project finder. Built by a function a
@@ -524,7 +535,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           conversationId: turn.conversationId,
         },
         // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
-        directory: { indexPath: directoryIndexPath(deps.env), newId: deps.services().conductor.newId },
+        directory: { directory: { env: deps.env, dataDir: deps.dataDir }, newId: deps.services().conductor.newId },
         // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
         // generator: the model supplies what to remember, never who it belongs to.
         memory: { conversationId: turn.conversationId, newId: deps.services().conductor.newId },
@@ -599,6 +610,11 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           conversationId: turn.conversationId,
           channel: turn.channel,
           origin: turn.origin,
+        },
+        // "Clark có gì mới?": the release notes embedded with this build, the same read `/changelog` and Settings make.
+        changelog: {
+          newId: deps.services().conductor.newId,
+          now: () => instantSchema.parse(new Date().toISOString()),
         },
         // "Report this bug" or "I wish Clark could…": the same report service `/report` and the composer use. It
         // prepares and shows; only the person's press on the host's card files it, so no turn origin is needed.

@@ -33,10 +33,12 @@ export function deleteConversationRows(db: Database, id: string, artifactInstanc
     "DELETE FROM persistent_intents WHERE conversation_id = ?",
     "DELETE FROM presentation_bundles WHERE message_id IN (SELECT message_id FROM messages WHERE conversation_id = ?)",
     "DELETE FROM widget_snapshots WHERE message_id IN (SELECT message_id FROM messages WHERE conversation_id = ?)",
+    // A channel bound to this conversation is unbound with it; its messages' provider links and receipts go too.
+    "DELETE FROM channel_inputs WHERE binding_id IN (SELECT binding_id FROM external_channel_bindings WHERE conversation_id = ?)",
   ]) db.prepare(sql).run(id);
   // Saved memories are independent user resources; remove only conversation-scoped memory.
   db.prepare("DELETE FROM memory_records WHERE conversation_id = ? AND scope = 'conversation'").run(id);
-  for (const table of ["tasks", "pins", "messages", "conversation_authority", "surface_compositions", "widget_semantic_state", "session_files", "history_fts", "work_runs", "jobs", "notifications", "peer_allowances", "commands", "feedback_reports"]) {
+  for (const table of ["tasks", "pins", "messages", "conversation_authority", "surface_compositions", "widget_semantic_state", "session_files", "history_fts", "work_runs", "jobs", "notifications", "peer_allowances", "commands", "external_message_links", "channel_delivery_receipts", "external_channel_bindings", "feedback_reports"]) {
     db.prepare(`DELETE FROM ${table} WHERE conversation_id = ?`).run(id);
   }
   // Events are the append-only audit/replication sequence, not the conversation's mutable storage.

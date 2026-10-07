@@ -331,7 +331,8 @@ describe("the picker", () => {
     const all = await suggest("/", "");
     expect(all.status).toBe(200);
     const body = all.body as ComposerSuggestionsResponse;
-    // Every command, then as many skills as the rows leave room for; typing narrows to the rest.
+    // Commands first, then skills, up to the picker's eight rows: a bare slash shows the commands and the first skill,
+    // and typing reaches the rest.
     expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"].slice(0, COMPOSER_SUGGESTIONS_MAX));
     expect(referenceRows(body.suggestions).every((row) => row.ref.kind === "skill")).toBe(true);
     // A command row writes the command, not a reference.

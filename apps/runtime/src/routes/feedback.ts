@@ -121,7 +121,7 @@ export async function handleFeedbackRoutes(deps: FeedbackRouteDeps): Promise<Gat
       publication: described.publication,
       ...(described.eligibility === undefined ? {} : { eligibility: described.eligibility }),
       messageId: appended.messageId,
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      timeline: buildTimeline(services, { conversationId }),
     });
   }
 

@@ -33,4 +33,5 @@ export * from "./task-artifacts.ts";
 export * from "./jobs.ts";
 export * from "./conversation-deletion.ts";
 export * from "./package-connections.ts";
+export * from "./channels.ts";
 export * from "./feedback.ts";

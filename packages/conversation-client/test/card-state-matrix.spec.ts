@@ -91,6 +91,7 @@ const MATRIX: Record<(typeof HOST_OWNED_BLOCK_TYPES)[number], { applicable: read
   "computer-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: the preview permission is never cached, because a cached yes is a claim nobody granted" },
   "terminal-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: a terminal is a live process on the node; once the node forgets it the card says so instead of showing an old screen as current" },
   "command-card": { applicable: ["empty", "read-only", "live", "error"], reason: "loading/cached/offline: a command card is what the node held when the command ran; what a press then did is drawn beside the row, never written into the card" },
+  "changelog-card": { applicable: ["empty", "partial", "read-only"], reason: "loading/live/cached/offline/error: the notes ship inside the build and are read without a network, so the card is what that build recorded; a build with no readable notes answers in words instead of drawing a card" },
   "feedback-card": { applicable: ["empty", "live", "read-only", "error"], reason: "loading/cached/offline: a result is what GitHub was read back holding when the card was written; checking again writes a new card instead of refreshing this one" },
   "marketplace-results": { applicable: ["empty", "error", "read-only", "unavailable"], reason: "live/cached: a result is what a directory said when it was asked, and the card names that directory instead of presenting a listing as current" },
 };

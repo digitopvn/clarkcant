@@ -1,4 +1,4 @@
-import { directoryEntrySchema, riskLaneFor, type RiskLane } from "@clarkcant/contracts";
+import { directoryEntrySchema, directorySourceRefSchema, riskLaneFor, type DirectorySourceRef, type RiskLane } from "@clarkcant/contracts";
 import { allRows, parseJson, oneRow } from "@clarkcant/storage";
 
 import type { InstallDeps } from "./install-lifecycle.ts";
@@ -51,6 +51,11 @@ export interface InstalledPackageView {
    * snapshots.
    */
   snapshotDigest?: string;
+  /**
+   * The directory source the installed listing came from (`PackageGeneration.directorySource`). Updates are offered from
+   * this source only. Absent for a package installed before the source was recorded.
+   */
+  directorySource?: DirectorySourceRef;
 }
 
 /**
@@ -108,7 +113,10 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
       lockDigest?: string;
       lockCoverage?: string;
       snapshotDigest?: string;
+      directorySource?: unknown;
     }>(row.document, "package_generations.document");
+    // Read through its schema: a record this node cannot read names no source, rather than a source it guessed.
+    const directorySource = directorySourceRefSchema.safeParse(generation.directorySource);
 
     return {
       packageId: row.package_id,
@@ -133,6 +141,7 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
             },
       previousVersion: previousPackageVersion(deps, row.package_id),
       ...(generation.snapshotDigest === undefined ? {} : { snapshotDigest: generation.snapshotDigest }),
+      ...(directorySource.success ? { directorySource: directorySource.data } : {}),
     };
   });
 }

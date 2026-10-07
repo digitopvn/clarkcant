@@ -2,17 +2,19 @@ import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
+import { changelogCardSchema } from "./release-notes.ts";
 import { commandCardSchema } from "./slash-commands.ts";
 import { feedbackCardSchema } from "./feedback.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
 import {
   DIRECTORY_VERSION_MAX,
+  directorySourceStateSchema,
   packageSourceSchema,
   riskLaneSchema,
   unreadListingFieldsSchema,
   widgetAppearanceClaimsSchema,
 } from "./directory.ts";
-import { facetKindSchema } from "./install.ts";
+import { directorySourceKindSchema, facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
 import { turnOriginSchema } from "./turn-origin.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
@@ -276,8 +278,35 @@ export const marketplaceResultSchema = z.strictObject({
   unreadFields: unreadListingFieldsSchema.optional(),
   facets: z.array(facetKindSchema).max(10),
   platforms: z.array(platformSchema).max(10),
+  /**
+   * Which configured directory source listed this row: the person's index file, a marketplace they added, or the
+   * official Marketplace. Said on the row because results from several sources share one card; a listing whose origin
+   * is invisible would present a third party's claim as something this machine knows.
+   */
+  origin: z.strictObject({ kind: directorySourceKindSchema, label: z.string().min(1).max(300) }).optional(),
+  /**
+   * The id of the source that listed this row (`local`, `official`, `custom-<hash>`), sent back by the Install button.
+   * Pressing Install on a row is choosing that source: the node installs only a listing that same source still owns, and
+   * it is what lets a person install from a later source while an earlier one cannot be read, or switch the source an
+   * installed package comes from. Absent on a card made before sources were named.
+   */
+  sourceId: z.string().min(1).max(120).optional(),
 });
 export type MarketplaceResult = z.infer<typeof marketplaceResultSchema>;
+
+/**
+ * One directory source that did not fully answer a search, as the card says it: stale (listed from an earlier copy),
+ * not fetched, unreachable, unsupported or unreadable, with the reason. A `ready` source is not listed.
+ */
+export const marketplaceSourceNoteSchema = z.strictObject({
+  kind: directorySourceKindSchema,
+  label: z.string().min(1).max(300),
+  state: directorySourceStateSchema.exclude(["ready"]),
+  /** When the listed copy of a stale source was fetched. */
+  fetchedAt: z.string().min(1).max(40).optional(),
+  reason: z.string().min(1).max(500).optional(),
+});
+export type MarketplaceSourceNote = z.infer<typeof marketplaceSourceNoteSchema>;
 
 /**
  * The results of a marketplace search, as the conversation shows them.
@@ -299,6 +328,8 @@ export const marketplaceResultsBlockSchema = z.strictObject({
   directory: z.string().min(1).max(300),
   results: z.array(marketplaceResultSchema).max(50),
   unavailableReason: z.string().min(1).max(500).optional(),
+  /** The sources that did not fully answer, so a partial answer is not read as the whole directory. */
+  sources: z.array(marketplaceSourceNoteSchema).max(16).optional(),
 });
 export type MarketplaceResultsBlock = z.infer<typeof marketplaceResultsBlockSchema>;
 
@@ -854,6 +885,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   reconnectCardSchema,
   formCardSchema,
   commandCardSchema,
+  changelogCardSchema,
   feedbackCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
@@ -882,6 +914,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "reconnect-card",
   "form-card",
   "command-card",
+  "changelog-card",
   "feedback-card",
   "browser-session-card",
   "computer-session-card",
@@ -969,6 +1002,14 @@ export const messageRecordSchema = z.strictObject({
    * (`HostWrittenMessage`). Set only by the node's own code path, never from a body.
    */
   hostWritten: hostWrittenMessageSchema.optional(),
+  /**
+   * Who wrote a user message, when it was not the conversation's owner on this node: the principal an external
+   * channel's sender maps to, so several people in one group are told apart. Set only by the host's channel intake,
+   * never from a body. Provider ids never appear here; they live in the channel's message links.
+   */
+  authorPrincipalId: z.string().min(1).max(128).optional(),
+  /** The message in this conversation this one answers, when its channel said so. Set only by the host. */
+  inReplyToMessageId: z.string().min(1).max(128).optional(),
 });
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 
