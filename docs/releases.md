@@ -93,13 +93,31 @@ so it works offline. Every way of asking reaches it:
 The view shows the installed version and channel and the canonical notes. It has no Update action, no update status
 and no channel selector, because there is no update service yet.
 
-**Limitation of a build run from source.** The embedded record is written when a release is planned, and the stamp
-is never committed back. A checkout therefore carries the committed baseline record, while its code may be ahead of
-it. For the `source` channel, the card, `/changelog` and the model all name the commit and date the notes reach
-(`notesCover` in the view), and say that the checkout may include later changes that are not listed. While the newest
-record is the baseline, the link reads "Full change history" and opens the commit history up to that commit, because no
-release has been published yet. A source checkout does not compare itself with its own `HEAD`: a Docker image or a copied tree
-has no git history to compare against.
+**A build run from source.** The embedded record is written when a release is planned, and the stamp is never
+committed back, so the committed record stays at the baseline. A checkout catches up from its own git instead:
+`node tools/release/history.mjs --source` rebuilds the records of every published release whose `v<version>` tag is
+reachable from `HEAD`, with the same parser, analyzer and notes generator a release build uses, and writes them to
+`apps/runtime/release-notes.local.json` (git-ignored, so `git pull` never conflicts with it). Onboarding
+(`node tools/setup.mjs`) runs it after installing dependencies, so `git pull` followed by onboarding brings the notes of
+the releases the pull fetched; restart the node to read them.
+
+- The runtime reads the rebuilt record only on the `source` channel, only when it matches its contract, and only when it
+  names the same build version as the committed record. It adds releases; it never changes the installed version. In
+  every other case the committed record is used.
+- Commits after the newest reachable tag are not a release and are not listed. The history follows the beta channel
+  when the newest reachable release is a prerelease.
+- Nothing is rebuilt, and the committed record is used, when the release tooling cannot install, the tree is not a git
+  checkout, or the checkout is shallow (`git clone --depth`) or lacks the baseline tag. The command says which and how
+  to fix it (`git fetch --unshallow --tags`, `git fetch --tags`), and removes an earlier rebuilt record. The installers
+  clone with `--filter=blob:none`, which keeps the history and tags while downloading file contents only for the
+  checked-out tree.
+- A Docker image carries the rebuilt record only if it was written before the image was built: the image has no git
+  history, and Docker onboarding does not install the release tooling on the host.
+
+For the `source` channel, the card, `/changelog` and the model all name the commit and date the notes reach
+(`notesCover` in the view: the newest listed release's last commit), and say that the checkout may include later
+changes that are not listed. While the newest record is the baseline, the link reads "Full change history" and opens
+the commit history up to that commit, because no release has been published yet.
 
 ## The release workflow
 

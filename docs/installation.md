@@ -164,8 +164,11 @@ docker compose up -d --build    # with Docker
 This is the only update path today. Clark has no self-updater and no published releases yet. Versioning, the stable
 and beta channels and the planned signed releases are described in [releases](releases.md). To see what the
 installed version changed, ask Clark "what's new?", type `/changelog`, or open Settings → Experience → Version & what's
-new. A checkout run from source carries the committed baseline notes, so Clark names the commit those notes reach;
-changes after that commit are not listed, and a `git pull` does not add them.
+new. Onboarding rebuilds the notes of every published release this checkout's tags reach, so running it after
+`git pull` brings the notes of the releases the pull fetched (restart the node to read them). Clark names the commit
+the notes reach; changes after the newest release are not listed. A shallow clone (`git clone --depth`) holds no
+release history, so it shows the notes committed with the checkout until `git fetch --unshallow --tags`; the installer
+clones with `--filter=blob:none` to avoid that. Details: [releases](releases.md#the-changelog-in-clark).
 
 ## Troubleshooting
 

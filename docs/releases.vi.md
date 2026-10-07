@@ -92,13 +92,30 @@ dùng được khi không có mạng. Mọi cách hỏi đều tới nó:
 Màn hình này cho thấy phiên bản và kênh đang cài cùng ghi chú chuẩn. Nó không có nút Cập nhật, trạng thái cập nhật hay
 bộ chọn kênh, vì chưa có dịch vụ cập nhật.
 
-**Giới hạn của bản chạy từ mã nguồn.** Bản ghi nhúng được ghi khi một bản phát hành được lên kế hoạch, và phần đóng
-dấu không bao giờ được commit ngược lại. Vì vậy một bản checkout mang bản ghi baseline đã được commit, trong khi mã của
-nó có thể đã mới hơn. Với kênh `source`, thẻ, `/changelog` và model đều nêu commit và ngày mà ghi chú dừng lại
-(`notesCover` trong view), và nói rằng bản checkout có thể có thay đổi mới hơn không được liệt kê. Khi bản ghi mới nhất
-vẫn là baseline, liên kết có nhãn "Toàn bộ lịch sử thay đổi" và mở lịch sử commit tính đến commit đó, vì chưa có bản
-phát hành nào. Bản checkout không tự so với `HEAD` của nó: image Docker hay một cây thư mục được sao chép không có lịch sử git
-để so sánh.
+**Bản chạy từ mã nguồn.** Bản ghi nhúng được ghi khi một bản phát hành được lên kế hoạch, và phần đóng dấu không bao
+giờ được commit ngược lại, nên bản ghi đã commit luôn dừng ở baseline. Thay vào đó, bản checkout tự cập nhật từ git của
+chính nó: `node tools/release/history.mjs --source` dựng lại bản ghi của mọi bản phát hành đã công bố có tag
+`v<version>` với tới được từ `HEAD`, bằng đúng bộ phân tích cú pháp, bộ phân tích commit và bộ sinh ghi chú mà bản build
+phát hành dùng, rồi ghi vào `apps/runtime/release-notes.local.json` (bị git bỏ qua, nên `git pull` không bao giờ xung
+đột với nó). Onboarding (`node tools/setup.mjs`) chạy lệnh này sau khi cài phụ thuộc, nên `git pull` rồi chạy onboarding
+sẽ mang về ghi chú của các bản phát hành mà lần pull đã tải; khởi động lại node để đọc chúng.
+
+- Runtime chỉ đọc bản ghi dựng lại trên kênh `source`, chỉ khi nó đúng hợp đồng, và chỉ khi nó nêu cùng phiên bản build
+  với bản ghi đã commit. Nó thêm các bản phát hành; nó không bao giờ đổi phiên bản đang cài. Mọi trường hợp khác dùng bản
+  ghi đã commit.
+- Các commit sau tag mới nhất với tới được không phải một bản phát hành và không được liệt kê. Lịch sử theo kênh beta khi
+  bản phát hành mới nhất với tới được là bản prerelease.
+- Không có gì được dựng lại, và bản ghi đã commit được dùng, khi công cụ phát hành không cài được, cây thư mục không phải
+  bản checkout git, hoặc bản checkout là bản nông (`git clone --depth`) hay thiếu tag baseline. Lệnh nói rõ trường hợp
+  nào và cách sửa (`git fetch --unshallow --tags`, `git fetch --tags`), và xoá bản ghi dựng lại trước đó. Các trình cài
+  đặt clone với `--filter=blob:none`, giữ lịch sử và tag nhưng chỉ tải nội dung tệp cho cây đang checkout.
+- Image Docker chỉ mang bản ghi dựng lại nếu nó được ghi trước khi dựng image: image không có lịch sử git, và onboarding
+  Docker không cài công cụ phát hành trên máy chủ.
+
+Với kênh `source`, thẻ, `/changelog` và model đều nêu commit và ngày mà ghi chú dừng lại (`notesCover` trong view: commit
+cuối của bản phát hành mới nhất được liệt kê), và nói rằng bản checkout có thể có thay đổi mới hơn không được liệt kê.
+Khi bản ghi mới nhất vẫn là baseline, liên kết có nhãn "Toàn bộ lịch sử thay đổi" và mở lịch sử commit tính đến commit
+đó, vì chưa có bản phát hành nào.
 
 ## Workflow phát hành
 
