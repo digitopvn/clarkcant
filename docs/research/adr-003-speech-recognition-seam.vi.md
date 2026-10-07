@@ -45,8 +45,37 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      ngừng, và một con trỏ đánh dấu recognizer đã gửi tới đâu: một bản final dời con trỏ khi các từ của nó, đúng thứ
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
-     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, chỉ câu live mới nhất được trả lời. Mọi quy tắc đều ưu
-     tiên trả lời một số từ hai lần hơn là làm mất chúng.
+     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
+     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mười sáu
+     bản final hết hạn gần nhất mà chưa có cách đọc live được ghi nhớ, vì cách đọc đó thường chỉ tới sau khi recognizer
+     đã chốt câu kế tiếp; chúng được đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con
+     trỏ. Bản final bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua
+     rồi. Câu live nào bị giữ lại tuân theo một phép đếm, vì mỗi bản final của recognizer chỉ ứng với nhiều nhất một câu
+     live. Một câu live chỉ bị giữ lại khi có một bản final ứng với nó và không ứng với câu bị giữ lại nào khác: câu mà
+     bản final đó khớp, cách đọc muộn của nó, hoặc câu đầu tiên tới lượt nó mà không đọc giống bản final nào. Câu không
+     ứng với bản final nào sẽ được trả lời, và khi một lần khớp đã vượt qua một câu như vậy thì câu được khớp cũng được
+     trả lời, vì một trong hai câu chưa bao giờ được gửi. Cách đọc live tới theo đúng thứ tự các bản final đã được gửi,
+     nên một câu đọc giống một bản final sau, hoặc đã được một bản final sau khớp, sẽ kết thúc lượt của bản final
+     trước. Quy tắc này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời
+     nguyên câu. Có ba trường hợp mất được chấp nhận, mỗi trường hợp là một câu nói lại các từ của một bản final đã gửi
+     trong vòng ba mươi giây quanh nó, vì luồng live không thể phân biệt câu đó với cách đọc của chính bản final ấy:
+     - cách đọc live của bản final không bao giờ tới, và câu đọc giống trọn bản final: câu bị coi là cách đọc muộn ấy.
+       Nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi lại;
+     - cách đọc live của bản final tới nhưng bị đọc sai, đúng lượt và đúng thứ tự, trong khi cách đọc của một bản final
+       trước không bao giờ tới: cách đọc sai bị coi là của bản final trước, và câu bị coi là cách đọc muộn của bản final
+       này. Luồng live giống hệt một luồng mà cách đọc của bản final trước tới nhưng bị đọc sai, còn cách đọc của bản
+       final này tới muộn;
+     - phiên live vẫn đang đọc câu đó khi recognizer hỏng, và cách đọc live của chính bản final đã tới nhưng bị đọc sai
+       hoặc bị tách đôi: phần đã nghe được bị coi là cách đọc của bản final ấy vẫn đang tới.
+
+     Một mô phỏng có seed của các phiên bị hỏng (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) kiểm tra
+     quy tắc này. Mọi câu chưa được gửi đều được trả lại, theo thứ tự. Một câu bị mất chỉ được chấp nhận khi nó nói lại
+     các từ của một bản final khác đã gửi trong vòng ba mươi giây quanh lúc câu được nghe lần đầu, và hoặc cách đọc
+     live của bản final đó hay của một bản final trước nó không bao giờ tới, hoặc câu vẫn đang được đọc khi recognizer
+     hỏng và cách đọc của chính bản final đó đã tới nhưng bị đọc sai hoặc bị tách đôi. Khi không cách đọc live nào chậm
+     hơn bản final của nó quá ba mươi giây, mô phỏng kiểm tra rằng số câu trùng lặp không vượt quá hai lần số cách đọc
+     mơ hồ (đọc sai, bị mất, bị tách đôi, nói lại, hoặc quá ngắn để khớp) cộng một, và rằng các phiên mô phỏng không có
+     cách đọc mơ hồ nào thì không có câu trùng lặp nào.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;
@@ -56,10 +85,25 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      - một glossary lập trình có sẵn, với các lỗi nghe sai đã biết làm alias.
    - Mọi term đi qua `redactSecrets` dùng chung, và bị loại nếu redaction chạm vào nó. Không có bộ pattern secret thứ
      hai nào.
-   - Khi recognizer chuyên dụng được bật, các term - kể cả định danh, path, tên branch và số issue trích từ hội thoại -
-     được gửi tới nó làm vocabulary. Các câu trong hội thoại chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
-   - Adapter của từng provider dịch vocabulary sang field riêng của mình. Gemini chỉ nhận cách viết chuẩn, vì kéo
-     recognizer về phía một lỗi nghe sai đã biết thì đi ngược mục đích.
+   - Khi recognizer chuyên dụng được bật, một phần vocabulary được gửi tới nó (xem bên dưới). Các câu trong hội thoại
+     chỉ dùng để xếp hạng term và không bao giờ rời khỏi node.
+   - Adapter của từng provider dịch vocabulary sang field riêng của mình. Gemini không bao giờ nhận alias, vì kéo
+     recognizer về phía một lỗi nghe sai đã biết thì đi ngược mục đích. Nó nhận cách viết chuẩn, hoặc một họ model
+     suy ra từ cách viết chuẩn (xem bên dưới). Các term giống nhau khi bỏ qua hoa thường chỉ được gửi một lần, theo
+     term có trọng số cao hơn, nên một họ model (`gemini`) có thể thay cho một provider (`Gemini`); quy tắc casing của
+     normaliser khôi phục lại cách viết hoa chuẩn.
+   - Vocabulary của recognizer là một thiên lệch (bias), và bias là một near-match không cần bằng chứng: đo trên audio
+     (issue #573), nó viết một term trong danh sách đè lên một từ khác mà người dùng đã nói. "Jeff" thành `Jev`,
+     "claude opus 3" thành `claude-opus-4`, và `setUser` thành `getUser` (khi không gửi `getUser` thì thành
+     `useState`). Model transcription không nhận chỉ dẫn nào có thể giới hạn điều này, và không trả về phương án thay
+     thế hay confidence, nên sau khi nhận dạng không có cách nào phân biệt một sự thay thế với điều đã được nói. Vì vậy
+     recognizer chỉ nhận những loại mà chính normaliser được phép near-match - từ glossary, provider và model:
+     - id model được gửi dưới dạng họ model khi nói, tức phần trước phần có số đầu tiên (`claude-opus-4` thành
+       `claude-opus`), để giúp cách viết mà không chọn phiên bản. Việc cắt này áp dụng cho mọi term được gửi có chữ
+       số, nên một term glossary hoặc provider có chữ số (hiện chưa có) cũng sẽ bị cắt như vậy;
+     - một từ ngắn không phải từ viết tắt (`Jev`, `Pi`) không được gửi, vì có từ thật và tên người nghe giống nó;
+     - symbol, path, branch, package, tool, lệnh và issue ở lại trên node. Hàng xóm của chúng là những tên thật khác,
+       và normaliser chỉ khôi phục cách viết của chúng từ một dạng nói khớp chính xác.
 4. **Một normaliser tất định, không phải model.**
    - Các quy tắc là casing, khoảng cách, alias và near-match cách một lỗi. Mỗi quy tắc cần bằng chứng: câu có tiếng
      Việt, hoặc có một mốc kỹ thuật nằm ngoài đoạn được sửa.
@@ -81,6 +125,12 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      có thể là một từ thường, nên chỉ bị hạ chữ hoa khi có cùng bằng chứng mà một từ thường cần: "Follow-up with the
      team tomorrow" và "S3 is down" giữ nguyên chữ hoa, còn "Daily-notes skill chạy lỗi khi build" thành
      `daily-notes skill ...`. Một từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
+   - Các term của phiên chỉ khác nhau ở chữ hoa (`UserService` và `userService`, một class và instance của nó) đều
+     được giữ, và một term nghe đúng cách viết chung đó giữ nguyên chữ hoa như đã nghe: đổi chữ hoa sẽ biến tên thật
+     này thành tên thật kia. Các từ nói rời của nó ("user service") được abstain. Khi phiên viết một từ theo một cách và
+     glossary viết theo cách khác, cách viết có trọng số cao hơn được giữ, như trước: một repository `clarkcant` đứng
+     sau một dự án khác vẫn để lại ClarkCant của glossary. Chỉ khi chính phiên viết một từ theo hai cách khác nhau về
+     chữ hoa thì glossary mới không thêm cách viết thứ ba bên cạnh (#590).
    - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
      lệnh ("git re base" được giữ nguyên như đã nghe). Chỉ chữ hoa được khôi phục: `npm` không bao giờ thành `pnpm`, kể
      cả khi vocabulary có pnpm (#574).
@@ -92,7 +142,9 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
    - Một utterance final được chốt trên một hàng đợi có thứ tự và dispatch một lần cho mỗi utterance id, qua cùng
      đường `ask` mà transcript live đi. Vì vậy phê duyệt, câu hỏi, app intent và widget action đều thấy văn bản chuẩn.
    - Một đoạn kỹ thuật mơ hồ hoặc có confidence thấp có thể được nhận dạng lại riêng utterance đó từ bộ đệm audio có
-     giới hạn của chính nó, với context tập trung vào các ứng viên.
+     giới hạn của chính nó, với context tập trung vào các ứng viên. Vocabulary gửi tới recognizer trong lần thử lại
+     theo cùng quy tắc ở trên, nên symbol và path trong số các ứng viên không được gửi: với một định danh, lần thử lại
+     chỉ là một lần nhận dạng lại thông thường.
    - Hai cách đọc được so sánh theo một quy tắc cố định. Bản gốc thắng khi hòa, và cũng thắng khi lần thử lại nghe
      thành một câu khác.
    - Lần thử lại bị giới hạn thời gian, và lần thử lại vượt quá giới hạn sẽ bị hủy, đóng luôn phiên nó đã mở. Không transcript nào được gửi tới Jev; Jev chọn giữa các phương án có giới hạn,
@@ -105,6 +157,13 @@ nếu không có audio và key, nên benchmark harness tồn tại để trả l
 mặc định vẫn là đường đã hoạt động. Normaliser cũng cải thiện đường đó: trên corpus văn bản bên dưới, baseline live
 nhận phần lớn những gì chuẩn hóa có thể mang lại. Một bộ chọn provider trong giao diện sẽ bắt người dùng đưa ra một
 quyết định họ không thể đánh giá, nên không có bộ chọn nào.
+
+Bias của vocabulary là lý do thứ hai. Một recognizer viết một term trong danh sách đè lên điều đã được nói sẽ gửi một
+phiên bản model sai hoặc một symbol sai tới Clark như thể người dùng đã nói vậy, ngay trước lớp mà các bảo đảm của
+normaliser có hiệu lực. Vocabulary đã thu hẹp ở trên loại bỏ các trường hợp đã đo được cho tới nay, nhưng có cái giá:
+những định danh trước đây vocabulary mang theo giờ được nghe mà không có trợ giúp (xem lượt kiểm tra audio bên dưới).
+Recognizer vẫn phải bật chủ động cho tới khi một lượt chạy audio trên giọng nói thật cho thấy cả việc không có sự thay
+thế nào lẫn độ chính xác đáng với sự đánh đổi đó.
 
 ## Bằng chứng
 
@@ -145,6 +204,26 @@ và dừng với thông báo "external gate" nếu không có key. `--transcript
 từng recognizer, cả thô lẫn đã chuẩn hóa, cạnh câu tham chiếu, và đánh dấu mỗi transcript đạt thước đo khớp nào. Dấu
 phân tách quen thuộc dùng được:
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription -- --transcripts`.
+
+Lượt chạy audio cũng báo, cho từng recognizer, mọi utterance mà văn bản nhận dạng chứa một term của phiên mà người dùng
+không nói ("vocabulary term heard but not said", bất kể hoa thường), và thoát với mã 3 khi có ít nhất một utterance
+như vậy. Phép kiểm tra không cho biết điều gì đã đưa term đó vào: bias, hay một lỗi nghe sai thông thường với một term
+chưa từng được gửi (`git stash` bị nghe thành `git status`). Corpus đánh dấu ba mục `vocabulary-bias` (tên một
+người, một phiên bản model khác, một symbol hàng xóm gần), và lượt chạy nêu tên mục nào trong số đó mà manifest chưa có
+bản ghi âm.
+
+**Kiểm tra audio về bias của vocabulary, 2026-10-07.** Giọng nói tổng hợp (Gemini TTS với giọng một lập trình viên
+Việt, không phải bản ghi âm người thật) của ba mục `vocabulary-bias` và sáu mục thông thường, mỗi mục được
+`gemini-3.5-transcribe-live` nhận dạng hai lần với vocabulary của corpus:
+
+| Vocabulary được gửi | Thay thế trên 3 mục bias | Mục thông thường đúng mọi thuật ngữ |
+| --- | --- | --- |
+| mọi term đã xếp hạng (trước #573) | 6 trên 6 lượt | 12 trên 12 lượt |
+| glossary, provider, họ model (hiện tại) | 0 trên 6 lượt | 8 trên 12 lượt |
+
+Với vocabulary đã thu hẹp, `redactSecrets` bị nghe thành "Redux Secrets" và `@clarkcant/voice-adapters` thành
+"@clack/voice adapters" ở cả hai lượt. Cả hai đều là lỗi nghe sai nhìn thấy được, không phải một tên thật khác. Mẫu
+nhỏ (n=2), tổng hợp, và không phải thước đo giọng nói thật.
 
 ## Hệ quả
 

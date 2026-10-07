@@ -1,6 +1,7 @@
 import { CLOUDFLARE_DECISION_MODELS } from "./cloudflare-decision-provider.ts";
 import { validateProviderEndpoint } from "./decision-transport.ts";
 import type { DecisionProvider } from "./decision-provider.ts";
+import { CREDENTIAL_VARIABLES, resolveProviderCredential } from "./provider-credential.ts";
 import { systemOneResponseSchema } from "./system-one-wire.ts";
 
 /**
@@ -22,9 +23,13 @@ function namesCloudflareModel(model: string): boolean {
 export const typesafeDecisionProvider: DecisionProvider = {
   id: "typesafe",
   connection(env, stored) {
-    // The environment wins when both exist: an operator who set it deliberately should not be overridden by a value
-    // typed later into a card.
-    const apiKey = env.TYPESAFE_API_KEY?.trim() || stored?.()?.trim() || undefined;
+    // The key typed into the card wins when both exist, the rule every provider credential follows
+    // (`provider-credential.ts`); the environment is the default for a node whose vault holds none.
+    const apiKey = resolveProviderCredential({
+      stored: stored?.(),
+      env,
+      variables: CREDENTIAL_VARIABLES["typesafe"] ?? [],
+    }).value;
     // The provider-neutral name wins; the Jev-specific one keeps working for configurations written before it.
     const model = env.CLARKCANT_DECISION_MODEL?.trim() || env.CLARKCANT_JEV_MODEL?.trim() || JEV_EXACT_MODEL;
     const endpointCheck = validateProviderEndpoint(env.CLARKCANT_JEV_ENDPOINT?.trim() || JEV_DEFAULT_ENDPOINT);

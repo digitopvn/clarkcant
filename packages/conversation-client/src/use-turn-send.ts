@@ -5,7 +5,7 @@ import { readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
-import { followScrollBehavior, followsBottom } from "./follow-bottom.ts";
+import { followScrollBehavior, followsBottom, stillFollowsBottom } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -51,8 +51,11 @@ export interface TurnSendState {
   restartSession: () => void;
   /** The scroll container, and the reader's own decision to follow the bottom or not. */
   scroller: React.RefObject<HTMLDivElement | null>;
-  /** Whether the reader is at the bottom and following it; the transcript keeps it there when rows change height. */
-  followBottom: React.RefObject<boolean>;
+  /**
+   * Whether the reader is at the bottom and following it, asked at the moment something arrives; the transcript keeps
+   * them there when rows change height.
+   */
+  followsBottomNow: () => boolean;
 }
 
 export interface SendOptions {
@@ -140,6 +143,13 @@ export function useTurnSend({
    * pulls the page back down each time someone scrolls up to read what came before.
    */
   const followBottom = useRef(true);
+  /** Where the view was when the last scroll event was read, so a scroll not yet reported is not overruled. */
+  const reportedTop = useRef(0);
+  const followsBottomNow = useCallback((): boolean => {
+    const node = scroller.current;
+    if (node !== null && !stillFollowsBottom(followBottom.current, reportedTop.current, node.scrollTop)) followBottom.current = false;
+    return followBottom.current;
+  }, []);
   /**
    * Which session the interface is showing.
    *
@@ -151,20 +161,21 @@ export function useTurnSend({
 
   useEffect(() => {
     const node = scroller.current;
-    if (node === null || !followBottom.current) return;
+    if (node === null || !followsBottomNow()) return;
     const metrics = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop, clientHeight: node.clientHeight };
     node.scrollTo({ top: node.scrollHeight, behavior: followScrollBehavior(metrics) });
     // The streamed reply is as much a reason to follow the bottom as a stored message is: without
     // it the answer grows below the fold while the view stays where the question was. It is
     // conditional because that is a reason to follow, not a licence to interrupt someone reading
     // further up.
-  }, [live, pendingUser, timeline]);
+  }, [followsBottomNow, live, pendingUser, timeline]);
 
   /* Reading away from the bottom stops the following; coming back to it starts it again. */
   useEffect(() => {
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
+      reportedTop.current = node.scrollTop;
       followBottom.current = followsBottom({
         scrollHeight: node.scrollHeight,
         scrollTop: node.scrollTop,
@@ -214,6 +225,7 @@ export function useTurnSend({
       setPendingUser({ text: trimmed });
       // Sending is a decision to be at the newest turn, whatever the view was doing before it.
       followBottom.current = true;
+      reportedTop.current = scroller.current?.scrollTop ?? 0;
       setLive([]);
       beginHeroExit();
       const generation = sessionGeneration.current;
@@ -344,5 +356,5 @@ export function useTurnSend({
     }
   }, [busy, client, conversationId, t]);
 
-  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller, followBottom };
+  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
 }

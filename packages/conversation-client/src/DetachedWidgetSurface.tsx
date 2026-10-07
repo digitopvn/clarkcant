@@ -2,7 +2,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 
 import { MiniAppSurface, STATE_EVENT_OPERATION, actionForIntent } from "./mini-app-surface.tsx";
 import { toSurfaceViewFromLive } from "./DesktopSurfaces.tsx";
-import type { LiveWidgetResponse } from "./api.ts";
+import type { IsolatedFrameLiveResponse, LiveWidgetResponse } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { AppearanceSnapshot } from "@clarkcant/contracts";
 import { applyRelayedAppearance } from "./appearance.ts";
@@ -24,7 +24,7 @@ import { applyRelayedAppearance } from "./appearance.ts";
 export interface DetachedBridge {
   bootstrap(): Promise<{
     ok: boolean;
-    bootstrap?: { instanceRef: string; title: string; widgetKind: string; live: LiveWidgetResponse; appearance?: AppearanceSnapshot };
+    bootstrap?: { instanceRef: string; title: string; widgetKind: string; live: LiveWidgetResponse | IsolatedFrameLiveResponse; appearance?: AppearanceSnapshot };
     refused?: string;
   }>;
   intent(input: {
@@ -40,7 +40,7 @@ export interface DetachedBridge {
 export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): ReactElement {
   const t = useT();
   const [loaded, setLoaded] = useState<
-    { instanceRef: string; title: string; live: LiveWidgetResponse } | undefined
+    { instanceRef: string; title: string; live: LiveWidgetResponse | IsolatedFrameLiveResponse } | undefined
   >(undefined);
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(undefined);
@@ -92,7 +92,24 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
     );
   }
 
-  const view = toSurfaceViewFromLive(loaded.live, false);
+  const live = loaded.live;
+  if (live.kind === "isolated-frame") {
+    /*
+     * A widget in its own frame needs the conversation's credential to save state and renew its URL, and this window
+     * has none. The conversation does not offer Detach for one and the host refuses it; this is the answer for any
+     * caller that got past both, said rather than drawn as a frame that cannot save.
+     */
+    return (
+      <main className="cc-card" data-detached-surface="true" data-detached-error="true" data-detached-unsupported="isolated-frame">
+        <h1 className="cc-card-title">{t("widgets.detached.cannotOpen")}</h1>
+        <p className="cc-card-note">{t("widgets.detached.isolatedFrame")}</p>
+        <button type="button" data-detached-release="true" onClick={() => void bridge.release()}>
+          {t("widgets.detached.reattach")}
+        </button>
+      </main>
+    );
+  }
+  const view = toSurfaceViewFromLive(live, false);
   return (
     <main className="cc-detached" data-detached-surface="true" data-detached-instance={loaded.instanceRef}>
       <header className="cc-detached-head">
@@ -115,7 +132,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
         title={loaded.title}
         busy={busy}
         onIntent={(intent) => {
-          const action = actionForIntent(loaded.live.spec.actions, intent);
+          const action = actionForIntent(live.spec.actions, intent);
           if (action === undefined) {
             setNotice(t("widgets.detached.actionDetached"));
             return;
@@ -133,7 +150,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
                 actionBindingId: action.actionBindingId,
                 // The revision the user is looking at: the node refuses a stale one rather than applying it to
                 // something the window never showed.
-                expectedRevision: queue.current.revision ?? loaded.live.revision,
+                expectedRevision: queue.current.revision ?? live.revision,
                 input: intent.input,
               })
               .then((answer) => {

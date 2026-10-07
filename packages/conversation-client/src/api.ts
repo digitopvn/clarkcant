@@ -45,6 +45,12 @@ import {
   type AttachmentRef,
   composerSuggestionsResponseSchema,
   effectReconcileResponseSchema,
+  feedbackPrepareResponseSchema,
+  feedbackPublishResponseSchema,
+  type FeedbackPrepareResponse,
+  type FeedbackPublishResponse,
+  type FeedbackPublishIntent,
+  type FeedbackRequestInput,
   parseSseChunk,
   inboxResponseSchema,
   noticeSchema,
@@ -74,6 +80,9 @@ import {
   type SettingsTab,
   type Suggestion,
   type VoiceCapabilities,
+  type WidgetDevSessionCreate,
+  type WidgetDevSessionView,
+  widgetDevSessionViewSchema,
 } from "@clarkcant/contracts";
 import { JOB_LIST_LIMIT, browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
 import { answerWidgetPerform } from "./frame-performs.ts";
@@ -92,6 +101,16 @@ import {
   connectTerminalSocket,
   terminalSocketUrl,
 } from "./terminal-socket.ts";
+
+/** Where the key in effect for one credential comes from: the key saved in the node, its environment, or neither. */
+export type CredentialSource = "vault" | "environment" | "none";
+
+/** What `GET /readiness` answers. `sources` is absent from a node older than it. Names and sources, never values. */
+export interface NodeReadinessAnswer {
+  model: boolean;
+  credentials: string[];
+  sources?: Partial<Record<string, CredentialSource>>;
+}
 
 /** A press on a page the node recorded in its activity log: what was pressed, and the page's host and path. */
 export interface RecentEffectAction {
@@ -199,6 +218,11 @@ export interface IsolatedFrameLiveResponse {
   stateStatus: FrameStateStatus;
   /** Keys the widget keeps as view state: never sent to the node, never stored. */
   ephemeralStateKeys: readonly string[];
+  /**
+   * The widget dev session whose build this frame runs, when one does: the host shows that session's build status
+   * beside the frame (`widgetDevSession`). The frame is told nothing about it.
+   */
+  development?: { sessionId: string };
 }
 
 export type FrameStateStatus =
@@ -1500,9 +1524,10 @@ export class GatewayClient {
    * What this node has already been told: whether it can run a model, and which credentials it already holds.
    *
    * Names only, never values. The first run reads this to skip questions the machine has already answered, and a client
-   * that asked for a value here would be asking for exactly the thing the asking exists to avoid.
+   * that asked for a value here would be asking for exactly the thing the asking exists to avoid. `sources` says where
+   * each key in effect comes from, so a card can say which one the node uses when both places hold one.
    */
-  readiness(): Promise<{ model: boolean; credentials: string[] }> {
+  readiness(): Promise<NodeReadinessAnswer> {
     return this.#call("GET", "/readiness");
   }
 
@@ -2010,6 +2035,26 @@ export class GatewayClient {
         ...(sourceId === undefined ? {} : { sourceId }),
       }),
     );
+  }
+
+  /** A live widget authoring session: its newest build, what runs, and whether that is the last good build. */
+  async widgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("GET", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
+  }
+
+  /** Start developing the package in a folder on the node, placed in `conversationId` once a build of it runs. */
+  async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("POST", "/widget-dev/sessions", input));
+  }
+
+  /** Build the session's folder now, rather than on its next save. */
+  async rebuildWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("POST", `/widget-dev/sessions/${encodeURIComponent(sessionId)}/rebuild`));
+  }
+
+  /** Stop watching the folder. What runs keeps running where it was placed. */
+  async stopWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("DELETE", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
   }
 
   claimLiveOwner(
@@ -2685,6 +2730,35 @@ export class GatewayClient {
   ): Promise<EffectReconcileResponse> {
     const body = await this.#call<unknown>("POST", `/effects/${encodeURIComponent(effectId)}/reconcile`, { outcome, source });
     return effectReconcileResponseSchema.parse(body);
+  }
+
+  /**
+   * Prepare a product report from the Feedback Composer: the exact title and body that would be filed, and the safe
+   * diagnostics as the person reads them. Nothing is filed.
+   */
+  async prepareFeedback(request: FeedbackRequestInput, conversationId?: string): Promise<FeedbackPrepareResponse> {
+    const body = await this.#call<unknown>("POST", "/feedback/reports", {
+      request,
+      ...(conversationId === undefined ? {} : { conversationId }),
+    });
+    return feedbackPrepareResponseSchema.parse(body);
+  }
+
+  /**
+   * File a prepared report — the person's own Create issue — or find out what an earlier attempt came to. The result
+   * card is written into the conversation and comes back in the timeline.
+   */
+  async publishFeedback(
+    reportId: string,
+    conversationId: string,
+    options: { intent?: FeedbackPublishIntent; answers?: string } = {},
+  ): Promise<FeedbackPublishResponse & { timeline: Timeline }> {
+    const body = await this.#call<{ timeline: Timeline }>("POST", `/feedback/reports/${encodeURIComponent(reportId)}/publish`, {
+      conversationId,
+      ...(options.intent === undefined ? {} : { intent: options.intent }),
+      ...(options.answers === undefined ? {} : { answers: options.answers }),
+    });
+    return { ...feedbackPublishResponseSchema.parse(body), timeline: body.timeline };
   }
 
   /** The same, from the inbox's list of quieted kinds, for a kind with no notice left to act from. */

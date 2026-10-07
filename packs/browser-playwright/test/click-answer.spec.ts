@@ -1,11 +1,12 @@
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect } from "vitest";
 
 import { observationIdSchema, type AutomationAction } from "@clarkcant/contracts";
 
+import { removeTestDirectory, trackedTests } from "../../../tools/test-cleanup.ts";
 import { createDriver, type BrowserDriver, type ObserveResult } from "../src/driver.ts";
 
 /**
@@ -18,6 +19,9 @@ import { createDriver, type BrowserDriver, type ObserveResult } from "../src/dri
  */
 
 const ANSWER_TIMEOUT_MS = 1500;
+
+/** Each browser test already carries its own 60 s budget. */
+const { it, settled } = trackedTests(60_000);
 
 function page(body: string): string {
   return `<!doctype html><html><head><title>Fixture</title></head><body>${body}</body></html>`;
@@ -118,11 +122,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await settled();
   server.closeAllConnections();
   other.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await new Promise<void>((resolve) => other.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 function action(driver: BrowserDriver, observed: ObserveResult, overrides: Partial<AutomationAction>): AutomationAction {

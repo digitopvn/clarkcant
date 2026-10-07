@@ -2,6 +2,8 @@ import {
   type AppIntentDecision,
   type ChangelogCard,
   type CommandCard,
+  type FeedbackCard,
+  type FeedbackKind,
   type Instant,
   type MessageBlock,
   type Principal,
@@ -18,6 +20,7 @@ import { startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { CHANGELOG_FALLBACK_URL, changelogCard, readChangelog } from "./changelog.ts";
+import { composeFeedback, feedbackComposeCard } from "./product-feedback.ts";
 
 /**
  * The host's answers to the composer's slash commands.
@@ -29,11 +32,13 @@ import { CHANGELOG_FALLBACK_URL, changelogCard, readChangelog } from "./changelo
  */
 
 type Locale = "vi" | "en";
-type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth">;
+type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub">;
 
 export interface SlashCommandAnswer {
   text: string;
-  card?: CommandCard | ChangelogCard;
+  card?: CommandCard | FeedbackCard | ChangelogCard;
+  /** Host-owned blocks after the card, such as the approval card a report waits on when the policy asks first. */
+  extraBlocks?: MessageBlock[];
   /** Present when the page has something to do as well, such as `/new` leaving for a fresh conversation. */
   appIntent?: AppIntentDecision;
 }
@@ -46,6 +51,7 @@ const NOTES: Record<SlashCommand, Record<Locale, string>> = {
   thinking: { vi: "Đặt mức suy nghĩ cho lượt sau", en: "Set how hard the next turn thinks" },
   background: { vi: "Chạy một yêu cầu ở chế độ nền", en: "Run a request in the background" },
   changelog: { vi: "Phiên bản này của Clark có gì mới", en: "What this version of Clark changed" },
+  report: { vi: "Báo lỗi hoặc đề xuất tính năng cho ClarkCant", en: "Report a bug or request a feature for ClarkCant" },
 };
 
 /** What the composer's picker says beside a command, in the person's language. */
@@ -57,6 +63,7 @@ export function slashCommandBlocks(answer: SlashCommandAnswer): MessageBlock[] {
   return [
     { type: "text", format: "plain", content: answer.text, streaming: false },
     ...(answer.card === undefined ? [] : [answer.card as MessageBlock]),
+    ...(answer.extraBlocks ?? []),
   ];
 }
 
@@ -183,6 +190,8 @@ export async function answerSlashCommand(
 
     case "changelog":
       return changelogAnswer(services, argument, say, input.at);
+    case "report":
+      return reportAnswer(services, input.conversationId, argument, input.at, say);
   }
 }
 
@@ -222,6 +231,53 @@ function changelogAnswer(services: SlashServices, argument: string, say: Say, at
         ? say(`Bản này không ghi nhận phiên bản nào sau ${view.since}.`, `This build records no release after ${view.since}.`)
         : say(`Đây là những gì thay đổi sau ${view.since}.`, `Here is what changed after ${view.since}.`);
   return { text: `${installed} ${what}`, card: changelogCard(view, { cardId: services.conductor.newId("card"), at: at() }) };
+}
+
+/** The kind a `/report` argument starts with, and the words after it. */
+export function reportArgument(argument: string): { kind?: FeedbackKind; text: string } {
+  const match = /^(bug|lỗi|loi|feature|feat|tính năng|tinh nang)(?=\s|$)\s*/iu.exec(argument.trim());
+  if (match === null) return { text: argument.trim() };
+  const word = (match[1] ?? "").toLowerCase();
+  const kind: FeedbackKind = word === "bug" || word === "lỗi" || word === "loi" ? "bug" : "feature";
+  return { kind, text: argument.trim().slice(match[0].length).trim() };
+}
+
+/**
+ * `/report`: alone, or with only a kind, the Feedback Composer; with a kind and words, the report prepared through the
+ * same service as every other way of reporting and shown as it would be filed. Nothing is sent: the person's Create
+ * issue on that card files it. Words without a kind open the composer with them, so the person picks Bug or Feature
+ * rather than Clark guessing.
+ */
+async function reportAnswer(
+  services: SlashServices,
+  conversationId: string,
+  argument: string,
+  at: () => Instant,
+  say: Say,
+): Promise<SlashCommandAnswer> {
+  const { kind, text } = reportArgument(argument);
+  if (kind === undefined || text === "") {
+    return {
+      text: say(
+        "Kể Clark nghe lỗi bạn gặp hoặc tính năng bạn muốn. Bạn xem trước đúng những gì sẽ được chia sẻ trước khi tạo issue.",
+        "Tell Clark about the bug you hit or the feature you want. You see exactly what will be shared before the issue is created.",
+      ),
+      card: feedbackComposeCard(services, {
+        ...(kind === undefined ? {} : { kind }),
+        ...(text === "" ? {} : { description: text }),
+        source: "slash",
+        at,
+      }),
+    };
+  }
+  const composed = await composeFeedback(services, {
+    request: { kind, description: text.slice(0, 4000), source: "slash", includeDiagnostics: true },
+    conversationId,
+    at,
+  });
+  if (!composed.ok) return { text: composed.text };
+  const [draft, ...rest] = composed.blocks;
+  return { text: composed.text, card: draft as FeedbackCard, extraBlocks: rest };
 }
 
 type Say = (vi: string, en: string) => string;

@@ -23,6 +23,7 @@ import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent, composedImageRefs } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
 import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
+import { WidgetDevStatus } from "./widget-dev-status.tsx";
 import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
@@ -235,6 +236,18 @@ function shellDetachBridge(): ShellDetachBridge | undefined {
    * rather than a broken shape.
    */
   return candidate as unknown as ShellDetachBridge;
+}
+
+/**
+ * Whether this read can be shown in a detached window.
+ *
+ * A composition can: the window draws it and relays each press to the host. A widget in its own frame cannot. Its
+ * frame saves state, publishes what it shows and renews its URL with the conversation's credential, and a detached
+ * window holds no credential by design — so it would open as a frame that cannot save. Detach is not offered for it.
+ * Only a composition is offered, so a kind added later stays in the conversation until the window can draw it.
+ */
+export function canShowDetached(live: LiveWidgetResponse | IsolatedFrameLiveResponse | undefined): boolean {
+  return live?.kind === "composition";
 }
 
 export function PinnedLiveSurface({
@@ -458,7 +471,7 @@ export function PinnedLiveSurface({
    */
   const detach = useCallback(async (): Promise<void> => {
     const bridge = shellDetachBridge();
-    if (bridge === undefined || live === undefined) return;
+    if (bridge === undefined || !canShowDetached(live)) return;
     try {
       await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
     } catch (cause) {
@@ -518,7 +531,7 @@ export function PinnedLiveSurface({
     return typeof unsubscribe === "function" ? unsubscribe : undefined;
   }, [client, conversationId, instanceId, load]);
 
-  const detachAvailable = shellDetachBridge() !== undefined;
+  const detachAvailable = shellDetachBridge() !== undefined && canShowDetached(live);
 
   const head =
     onClose === undefined ? undefined : (
@@ -526,8 +539,9 @@ export function PinnedLiveSurface({
         {/* Named, so the open view says which widget it is rather than starting with a bare Close. */}
         {title !== undefined && <span className="cc-live-title">{title}</span>}
         {/*
-          Offered only to the surface holding the lease, and only where a second window exists to detach into. A
-          button that could not hand the instance over would be a control whose action does not exist.
+          Offered only to the surface holding the lease, only where a second window exists to detach into, and only
+          for a widget that window can run (`canShowDetached`). A button that could not hand the instance over would
+          be a control whose action does not exist.
         */}
         {detachAvailable && ownership === "owner" && (
           <button
@@ -608,6 +622,13 @@ export function PinnedLiveSurface({
         aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
       >
         {head}
+        {/*
+          A widget dev session's build: which one is on screen and why it is not the newest, drawn by the host. A new
+          running build re-reads this surface, which remounts only the frame.
+        */}
+        {live.development !== undefined && (
+          <WidgetDevStatus client={client} sessionId={live.development.sessionId} onRunningChange={() => void load()} />
+        )}
         {playbackAllowed && frame !== null && (
           <button
             type="button"

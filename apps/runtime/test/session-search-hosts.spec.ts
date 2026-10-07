@@ -249,6 +249,25 @@ const FIXTURES = {
     source: "https://github.com/digitopvn/clarkcant/releases",
     updatedAt: AT,
   },
+  "feedback-card": {
+    type: "feedback-card",
+    owner: "host",
+    cardId: "card_report",
+    stage: "result",
+    repository: "digitopvn/clarkcant",
+    kind: "bug",
+    diagnostics: [{ label: "ClarkCant version", value: "0.2.1" }],
+    reportId: "rpt_1",
+    title: "bug: voice stops after the first sentence",
+    publication: {
+      status: "published",
+      reportId: "rpt_1",
+      mode: "created",
+      issue: { number: 901, title: "bug: voice stops after the first sentence", state: "open", url: "https://github.com/digitopvn/clarkcant/issues/901" },
+      confirmedAt: AT,
+    },
+    updatedAt: AT,
+  },
 };
 
 describe("the text of every host card", () => {
@@ -276,6 +295,7 @@ describe("the text of every host card", () => {
     expect(textOfBlock(asBlock(FIXTURES["computer-session-card"]))).toContain("bạn");
     expect(textOfBlock(asBlock(FIXTURES["terminal-session-card"]))).toContain("/home/user/clarkcant");
     expect(textOfBlock(asBlock(FIXTURES["changelog-card"]))).toContain("0.3.0: giữ tin nhắn đang chờ");
+    expect(textOfBlock(asBlock(FIXTURES["feedback-card"]))).toContain("#901");
   });
 
   it("names the answers a question offered, not only the question", () => {

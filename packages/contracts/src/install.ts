@@ -750,16 +750,17 @@ export function previousGenerationSurvives(failedAt: InstallState): boolean {
 
 /**
  * The kinds of source a node's directory is composed from: the person's own index file (`CC_DIRECTORY_INDEX`), a
- * marketplace or catalog feed they configured, and the official ClarkCant Marketplace. Every one of them is discovery
- * data, never authority; the kind says where a listing came from, not how far it is trusted.
+ * marketplace or catalog feed they configured, and the official ClarkCant Marketplace — plus the node's own widget dev
+ * sessions, which list the builds of the folders being developed on it. Every one of them is discovery data, never
+ * authority; the kind says where a listing came from, not how far it is trusted.
  */
-export const directorySourceKindSchema = z.enum(["local-file", "official-marketplace", "custom-marketplace"]);
+export const directorySourceKindSchema = z.enum(["local-file", "official-marketplace", "custom-marketplace", "widget-dev"]);
 export type DirectorySourceKind = z.infer<typeof directorySourceKindSchema>;
 
 /**
- * Which directory source a listing came from: its id on the node (`local`, `official`, or `custom-<hash of the feed
- * address>`, so two feeds never share one), its kind, and the name a person recognises (the index file's path, or the
- * feed's host and path without its query).
+ * Which directory source a listing came from: its id on the node (`local`, `official`, `widget-dev`, or `custom-<hash of
+ * the feed address>`, so two feeds never share one), its kind, and the name a person recognises (the index file's path,
+ * or the feed's host and path without its query).
  */
 export const directorySourceRefSchema = z.strictObject({
   id: z.string().min(1).max(120),
