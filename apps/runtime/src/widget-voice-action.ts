@@ -18,9 +18,11 @@
  *
  * ## Nothing is guessed
  *
- * A sentence that matches no offered label is refused with a sentence, not routed to a model and not matched loosely.
- * The narrow table below exists only for the phrasings a person actually uses for the actions that exist today
- * (a period change in a calendar surface); anything outside it is refused, and being refused is a complete answer.
+ * A sentence that matches no offered label is not matched loosely here. The narrow table below exists only for the
+ * phrasings a person actually uses for the actions that exist today (a period change in a calendar surface); anything
+ * outside it is unresolved, and being refused is a complete answer. The one exception is decided by the voice session,
+ * not here: when the focused widget offers actions Clark can perform, an unresolved sentence goes to the agent's turn
+ * with those actions as data, and the agent can perform one only through the typed `perform_widget_action` path.
  */
 
 import { type SemanticView } from "@clarkcant/contracts";

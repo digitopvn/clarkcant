@@ -191,6 +191,28 @@ test("under Ask, Clark's perform waits on the host's card: refused, nothing chan
   }
 });
 
+/**
+ * The same request said out loud while the sheet is focused, in words that name none of its labels ("Định dạng vùng
+ * đang chọn"). The voice session hands the sentence to Clark's turn with the sheet's offered actions as data; the turn
+ * performs through `perform_widget_action`, and the page's voice socket hands the request to the frame. The provider is
+ * the voice fixture (`CC_VOICE_FIXTURE=1`); the socket, the policy and the frame are real.
+ */
+test("a range is formatted when the person says so out loud without naming the action's label", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  await install(request, SPREADSHEET.packageId, SPREADSHEET.digest);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const frame = await placeAndOpen(page, SPREADSHEET.widgetId, "#root[data-widget-ready='true']");
+  await typeCell(page, frame, "B2", "0.25");
+  await frame.locator(".cell[data-cell='B2']").click();
+  await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("0.25");
+
+  const scripted = await request.post(`${GATEWAY}/voice-fixture/words`, { headers: headers(), data: { words: "format this as a percentage" } });
+  expect(scripted.status()).toBe(200);
+  await page.locator('[data-voice-open="true"]').click();
+  await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("25%", { timeout: 30_000 });
+  await expect(page.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("Done", { timeout: 30_000 });
+});
+
 test("the text selected in the editor is replaced when the person asks in the composer", async ({ page, request }) => {
   test.setTimeout(180_000);
   await install(request, TEXT_EDITOR.packageId, TEXT_EDITOR.digest);

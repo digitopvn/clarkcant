@@ -49,10 +49,12 @@ import {
   type PendingVoiceInteraction,
   VOICE_ANSWER_NOTE,
   VOICE_CREDENTIAL_NAME,
+  type VoiceAnswerResult,
   type VoiceFrameSink,
   type VoiceGatewayOptions,
   attachVoiceGateway,
 } from "../voice-session.ts";
+import { FOCUSED_WIDGET_NOTE, focusedWidgetActionsContext } from "../widget-perform-tool.ts";
 import { NO_FOCUSED_SURFACE_SAY, type VoiceWidgetApproval, type VoiceWidgetRun } from "../widget-voice-action.ts";
 
 /**
@@ -185,101 +187,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     ...(voiceLiveUtterance === undefined ? {} : { voiceLiveUtterance }),
     ...recognitionWiring({ services: deps.services, env: deps.env, credential, fixture: voiceFixture }),
-    /**
-     * What a finished sentence does.
-     *
-     * It becomes a message in the conversation and the agent answers it, with whatever tools the
-     * answer needs. The words that come back are what the voice session reads aloud, which is why the
-     * live model is told not to answer anything itself: this is the only answer in the room.
-     */
-    answer: async ({ conversationId, text, at: spokenAt, onText, onAppIntent, onWidgetPerform }) => {
-      const forwardText = onText === undefined ? undefined : accumulateAnswerText(onText);
-      const outcome = await handleUserMessage(deps.services.conductor, {
-        conversationId: conversationId as never,
-        principal: {
-          principalId: deps.services.runtime.identity.ownerPrincipalId as never,
-          kind: "user",
-          nodeId: deps.services.runtime.identity.nodeId as never,
-        },
-        text,
-        at: spokenAt as never,
-        // Spoken turns are answered briefly: the session has to read the answer out loud.
-        note: VOICE_ANSWER_NOTE,
-        // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
-        // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
-        channel: "voice",
-        // What the person said, heard on their own voice surface: it counts as their words (`MessageRecord.surface`).
-        surface: "voice",
-        // And it is the person who asked.
-        origin: "person",
-        // The voice surface is a caller holding an open stream like any other, so it gets the same
-        // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
-        // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
-        // holds the measurement that made this a function of its own. A `host-control` event — the app-control
-        // tool's decision — is forwarded separately, over the wire frame the browser already knows how to run.
-        ...(forwardText === undefined && onAppIntent === undefined && onWidgetPerform === undefined
-          ? {}
-          : {
-              emit: (event) => {
-                forwardText?.(event);
-                if (event.type === "host-control" && onAppIntent !== undefined) {
-                  // The voice surface reports what it did, like the typed stream's page does.
-                  deps.services.hostControl.expect(event.decision);
-                  onAppIntent(event.decision);
-                }
-                if (event.type === "widget-perform" && onWidgetPerform !== undefined) {
-                  // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back. A
-                  // closed socket sent nothing, so the turn's wait hears "nobody to ask", not an unknown outcome.
-                  deliverToVoiceFrame(deps.services, onWidgetPerform, event.request);
-                }
-              },
-            }),
-      });
-      // Indexed where the messages were just written, for the same reason the typed route does it:
-      // a sentence that was spoken is a message like any other, and search must not disagree with the
-      // conversation about what was said.
-      indexMessages(deps.services.search, { conversationId, messages: outcome.messages, at: spokenAt });
-
-      const reply = outcome.messages
-        .filter((message) => message.role === "assistant")
-        .map((message) => textOfMessage(message))
-        .join("\n\n")
-        .trim();
-      /*
-       * A turn can end with something waiting for an answer: an operation to approve, or a question card. The voice
-       * session asks out loud either way, and needs enough of the card to phrase it — the digest for an approval,
-       * the options for a question — because it sends its answer back through the same function the button does.
-       */
-      let pending: PendingVoiceInteraction | undefined;
-      for (const block of outcome.messages.flatMap((message) => message.blocks)) {
-        if (block.type === "approval-card" && block.decision === "pending") {
-          pending = {
-            kind: "approval",
-            approvalId: block.approvalId,
-            digest: block.operationDigest,
-            description: block.operationDescription,
-          };
-          break;
-        }
-        if (block.type === "question-card" && block.status === "waiting") {
-          pending = {
-            kind: "question",
-            questionId: block.questionId,
-            questionType: block.questionType,
-            prompt: block.prompt,
-            options: block.options.map((option) => ({ id: option.id, label: option.label })),
-            allowOther: block.allowOther,
-            voicePrompt: block.voicePrompt,
-          };
-          break;
-        }
-      }
-      return {
-        reply,
-        recordedMessages: outcome.messages.length,
-        ...(pending === undefined ? {} : { pendingInteraction: pending }),
-      };
-    },
+    /** What a finished sentence does (`answerSpokenSentence`). */
+    answer: (input) => answerSpokenSentence(deps.services, input),
     /** Carry out what the user just said yes or no to, and only while the card still waits (`spokenApprovalWiring`). */
     ...spokenApprovalWiring(deps.services),
     /**
@@ -379,6 +288,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     },
     /** Run a widget action the person asked for out loud (`spokenWidgetAction`). */
     widgetAction: (input) => spokenWidgetAction(deps.services, input),
+    /** The focused widget's offered actions, for a sentence that named none of them (`focusedWidgetActionsContext`). */
+    focusedWidgetContext: ({ conversationId, instanceId }) => focusedWidgetActionsContext(deps.services, conversationId, instanceId),
   });
   /*
    * Published to the settings route, from the same object the voice sessions use.
@@ -408,6 +319,113 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
   );
 
   return { capabilities: () => voice.capabilities(), close: () => voice.close() };
+}
+
+type SpokenSentenceInput = Parameters<NonNullable<VoiceGatewayOptions["answer"]>>[0];
+
+/**
+ * What a finished sentence does.
+ *
+ * It becomes a message in the conversation and the agent answers it, with whatever tools the
+ * answer needs. The words that come back are what the voice session reads aloud, which is why the
+ * live model is told not to answer anything itself: this is the only answer in the room.
+ *
+ * A sentence handed over because it named none of the focused widget's offered actions carries them
+ * (`widgetContext`): they go in the turn's data, as the package's own words, and the host's note says
+ * how they may be used — through `perform_widget_action`, the typed path, and nothing else.
+ */
+export async function answerSpokenSentence(
+  services: NodeServices,
+  { conversationId, text, at: spokenAt, onText, onAppIntent, onWidgetPerform, widgetContext }: SpokenSentenceInput,
+): Promise<VoiceAnswerResult> {
+  const forwardText = onText === undefined ? undefined : accumulateAnswerText(onText);
+  const outcome = await handleUserMessage(services.conductor, {
+    conversationId: conversationId as never,
+    principal: {
+      principalId: services.runtime.identity.ownerPrincipalId as never,
+      kind: "user",
+      nodeId: services.runtime.identity.nodeId as never,
+    },
+    text,
+    at: spokenAt as never,
+    // Spoken turns are answered briefly: the session has to read the answer out loud.
+    note: widgetContext === undefined ? VOICE_ANSWER_NOTE : `${VOICE_ANSWER_NOTE} ${FOCUSED_WIDGET_NOTE}`,
+    // The focused widget's offered actions are the package's words, so they travel as data, never in the note.
+    ...(widgetContext === undefined ? {} : { data: widgetContext }),
+    // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
+    // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
+    channel: "voice",
+    // What the person said, heard on their own voice surface: it counts as their words (`MessageRecord.surface`).
+    surface: "voice",
+    // And it is the person who asked.
+    origin: "person",
+    // The voice surface is a caller holding an open stream like any other, so it gets the same
+    // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
+    // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
+    // holds the measurement that made this a function of its own. A `host-control` event — the app-control
+    // tool's decision — is forwarded separately, over the wire frame the browser already knows how to run.
+    ...(forwardText === undefined && onAppIntent === undefined && onWidgetPerform === undefined
+      ? {}
+      : {
+          emit: (event) => {
+            forwardText?.(event);
+            if (event.type === "host-control" && onAppIntent !== undefined) {
+              // The voice surface reports what it did, like the typed stream's page does.
+              services.hostControl.expect(event.decision);
+              onAppIntent(event.decision);
+            }
+            if (event.type === "widget-perform" && onWidgetPerform !== undefined) {
+              // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back. A
+              // closed socket sent nothing, so the turn's wait hears "nobody to ask", not an unknown outcome.
+              deliverToVoiceFrame(services, onWidgetPerform, event.request);
+            }
+          },
+        }),
+  });
+  // Indexed where the messages were just written, for the same reason the typed route does it:
+  // a sentence that was spoken is a message like any other, and search must not disagree with the
+  // conversation about what was said.
+  indexMessages(services.search, { conversationId, messages: outcome.messages, at: spokenAt });
+
+  const reply = outcome.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => textOfMessage(message))
+    .join("\n\n")
+    .trim();
+  /*
+   * A turn can end with something waiting for an answer: an operation to approve, or a question card. The voice
+   * session asks out loud either way, and needs enough of the card to phrase it — the digest for an approval,
+   * the options for a question — because it sends its answer back through the same function the button does.
+   */
+  let pending: PendingVoiceInteraction | undefined;
+  for (const block of outcome.messages.flatMap((message) => message.blocks)) {
+    if (block.type === "approval-card" && block.decision === "pending") {
+      pending = {
+        kind: "approval",
+        approvalId: block.approvalId,
+        digest: block.operationDigest,
+        description: block.operationDescription,
+      };
+      break;
+    }
+    if (block.type === "question-card" && block.status === "waiting") {
+      pending = {
+        kind: "question",
+        questionId: block.questionId,
+        questionType: block.questionType,
+        prompt: block.prompt,
+        options: block.options.map((option) => ({ id: option.id, label: option.label })),
+        allowOther: block.allowOther,
+        voicePrompt: block.voicePrompt,
+      };
+      break;
+    }
+  }
+  return {
+    reply,
+    recordedMessages: outcome.messages.length,
+    ...(pending === undefined ? {} : { pendingInteraction: pending }),
+  };
 }
 
 type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];

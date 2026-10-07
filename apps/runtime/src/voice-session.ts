@@ -176,6 +176,11 @@ export interface VoiceGatewayOptions {
      * the socket was already closed and nothing went out.
      */
     onWidgetPerform?: VoiceFrameSink;
+    /**
+     * The actions the focused widget offers, as `focusedWidgetContext` rendered them: present only when the sentence
+     * named none of their labels and was handed to this turn instead. Data about the widget, never guidance.
+     */
+    widgetContext?: string;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -259,6 +264,15 @@ export interface VoiceGatewayOptions {
      */
     onWidgetPerform?: VoiceFrameSink;
   }) => Promise<VoiceWidgetRun>;
+  /**
+   * The actions a focused widget offers Clark, rendered as a turn's data, or `undefined` when it offers none.
+   *
+   * Read when a sentence said while a widget is focused names none of its labels. With a rendering, and a page that can
+   * hand a perform to a frame, the sentence goes to the agent's turn with this as its data, and the agent may perform
+   * one of them through `perform_widget_action` — the typed path, under the same execution policy and card. Without
+   * one, the sentence is refused by naming what the widget offers, as before.
+   */
+  focusedWidgetContext?: (input: { conversationId: ConversationId; instanceId: string }) => string | undefined;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   /**
@@ -1141,10 +1155,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        *
        * After the questions that may be waiting, because a sentence said while one is waiting is an answer to it. The
        * action is resolved by the shared resolver: a sentence selects among the actions the focused instance offers,
-       * and the binding id comes from that view rather than from the words. An unmatched sentence is refused when a
-       * widget is open and left to the agent when none is - which is why those two are different sentences rather than
-       * one "I did not understand".
+       * and the binding id comes from that view rather than from the words. An unmatched sentence is left to the agent
+       * when no widget is open. When one is, and it offers actions Clark can perform on a page that can reach its frame,
+       * the sentence goes to the agent too, with those actions as the turn's data: no host heuristic guesses which one
+       * was meant, and the agent can only perform one through the typed tool path. Otherwise it is refused by naming
+       * what the widget offers - which is why those are different sentences rather than one "I did not understand".
        */
+      let widgetContext: string | undefined;
       if (options.widgetAction !== undefined) {
         const resolved = resolveVoiceWidgetAction({ utterance: text, focused: focusedViewNow() });
         if (resolved.ok) {
@@ -1161,9 +1178,15 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           return;
         }
         if (resolved.say !== NO_FOCUSED_SURFACE_SAY) {
-          send({ type: "transcript", role: "assistant", text: resolved.say, final: true });
-          say(resolved.say);
-          return;
+          widgetContext =
+            performsWidgets && answer !== undefined && focusedInstanceId !== undefined
+              ? options.focusedWidgetContext?.({ conversationId: askIn, instanceId: focusedInstanceId })
+              : undefined;
+          if (widgetContext === undefined) {
+            send({ type: "transcript", role: "assistant", text: resolved.say, final: true });
+            say(resolved.say);
+            return;
+          }
         }
       }
 
@@ -1190,6 +1213,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             // Only to a page that said it can hand one to a frame and report back: any other surface is sent none, and
             // the node learns at once that nobody can ask a frame rather than waiting on a report that cannot come.
             ...frameSink(),
+            ...(widgetContext === undefined ? {} : { widgetContext }),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;

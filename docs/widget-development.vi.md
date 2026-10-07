@@ -2146,9 +2146,16 @@ không, lần bấm bị từ chối trước khi có gì được gửi, và ng
 trước khi yêu cầu được gửi đi được ghi là chưa gửi, không phải kết quả chưa rõ. Câu trả lời của widget, sau một lần bấm
 trực tiếp hay sau một lời “đồng ý”, được đọc lên như lời của widget (“Widget báo: …”), trên một dòng, bằng ngôn ngữ của
 người dùng, với dấu ngoặc kép được vô hiệu hóa và các ký tự điều khiển hướng chữ hay ký tự độ rộng bằng không bị loại
-bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục. Bộ phân
-giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như `định dạng chỗ này thành phần trăm`, chưa
-được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục.
+
+Bộ phân giải giọng nói chỉ khớp theo nhãn. Một câu không nói nhãn nào của widget đang mở, như `định dạng chỗ này thành
+phần trăm`, được chuyển cho lượt giọng nói của Clark khi widget đó có hành động được cho phép và trang của phiên đã gửi
+`widgetPerform: 1`. Dữ liệu của lượt đó liệt kê widget và từng hành động được cho phép: binding id, nhãn, mô tả và
+schema input. Đó là lời của chính gói, được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có
+thể thực hiện một hành động qua `perform_widget_action`, cùng công cụ, schema, chính sách thực thi và thẻ của host như
+một yêu cầu gõ chữ. Host không thêm quy tắc khớp nào, gói không khai báo cách nói nào, và cả lượt lẫn widget đều không
+thể tự duyệt hành động. Nếu trang không thực hiện được, câu đó bị từ chối bằng cách nêu những gì widget cho phép, như
+trước đây ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:
 

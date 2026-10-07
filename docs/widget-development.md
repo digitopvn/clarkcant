@@ -2150,9 +2150,16 @@ auth frame. Otherwise the press is refused before anything is sent, and the pers
 whose session closed before the request went out is recorded as not sent, not as an unknown outcome. What the widget
 answers, after a direct press or a spoken yes, is read out as the widget's words ("The widget says: …"), on one line, in
 the person's language, with its quotes neutralised and bidi or zero-width controls removed. A press that fails on the
-node is said as failed, in the person's language, and the session goes on. The voice resolver matches labels, so a
-sentence that implies the arguments without naming the label, such as `format this as a percentage`, is not matched
-yet ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+node is said as failed, in the person's language, and the session goes on.
+
+The voice resolver matches labels only. A sentence that names none of the focused widget's labels, such as `format this
+as a percentage`, goes to Clark's voice turn when that widget offers actions and the session's page sent
+`widgetPerform: 1`. The turn's data lists the widget and each offered action: its binding id, label, description and
+input schema. They are the package's own words, quoted on one line as data, never as instructions. Clark may then
+perform one through `perform_widget_action`, the same tool, schema, execution policy and host card as a typed request.
+The host adds no matching rules, a package declares no phrasings, and neither the turn nor the widget can approve the
+action. Without a page that can perform, the sentence is refused by naming what the widget offers, as before
+([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Tests:
 
