@@ -79,7 +79,10 @@ function writeJsonFile(path, value) {
  * committed tree keeps the version line of its last baseline. Key order in each manifest is kept.
  *
  * @param {string} repoRoot
- * @param {{ version: string, channel: "stable" | "beta" | "source", releases?: unknown[] }} build
+ * Releases and their `source` are replaced together: a record whose source still pointed at the baseline's commits
+ * after a release was added would send readers to the wrong place.
+ *
+ * @param {{ version: string, channel: "stable" | "beta" | "source", releases?: unknown[], source?: string }} build
  */
 export function stampVersion(repoRoot, build) {
   if (!SEMVER.test(build.version)) throw new Error(`${JSON.stringify(build.version)} is not a version`);
@@ -92,6 +95,10 @@ export function stampVersion(repoRoot, build) {
   const notesPath = join(repoRoot, RELEASE_NOTES_PATH);
   const history = readJsonFile(notesPath);
   history.build = { version: build.version, channel: build.channel };
-  if (build.releases !== undefined) history.releases = build.releases;
+  if (build.releases !== undefined) {
+    if (typeof build.source !== "string") throw new Error("stamped releases need the source that matches them");
+    history.source = build.source;
+    history.releases = build.releases;
+  }
   writeJsonFile(notesPath, history);
 }
