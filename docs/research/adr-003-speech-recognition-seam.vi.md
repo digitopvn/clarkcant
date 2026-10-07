@@ -47,11 +47,20 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
      nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
      được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Ngoại
-     lệ là câu live tới muộn cho một bản final đã hết hạn: mười sáu bản final hết hạn gần nhất được ghi nhớ, và một câu
-     live nghe được trong vòng ba mươi giây quanh một bản final đó mà đọc giống nó, hoặc giống phần đầu của nó, theo
-     cùng quy tắc ba từ và lệch vài ký tự, sẽ không được trả lời lại. Mỗi bản final hết hạn chỉ miễn cho tối đa một câu
-     live. Quy tắc này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời
-     nguyên câu. Mọi quy tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng.
+     lệ là câu live tới muộn cho một bản final đã hết hạn: mười sáu bản final hết hạn gần nhất được ghi nhớ và được
+     đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con trỏ, nên mỗi bản final được
+     dùng hết bởi chính cách đọc muộn của nó. Một câu live nghe được trong vòng ba mươi giây quanh bản final, đọc giống
+     trọn bản final đó theo cùng quy tắc ba từ và lệch vài ký tự, là cách đọc ấy và không được trả lời lại; chỉ câu mới
+     nhất, khi phiên live vẫn đang đọc nó, mới được phép đọc giống phần đầu của bản final. Câu live đầu tiên tới lượt
+     bản final mà không đọc giống bản final hết hạn nào được coi là cách đọc sai của nó và dùng hết bản final đó, nên
+     bản final không thể miễn cho một câu sau chỉ nói lại đúng những từ ấy; câu đọc sai đó được trả lời lại. Bản final
+     bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua rồi. Quy tắc
+     này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời nguyên câu. Mọi
+     quy tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng, với một trường hợp mất được chấp nhận: khi
+     cách đọc live của một bản final không bao giờ tới và, trong vòng ba mươi giây và trước mọi câu mới khác, người dùng nói
+     lại đúng ba từ trở lên đó, câu nói lại bị coi là cách đọc muộn và không được trả lời. Không thể phân biệt trường
+     hợp này với transcription live chậm hơn recognizer, và nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi
+     lại.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;

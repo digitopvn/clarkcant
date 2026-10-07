@@ -49,11 +49,19 @@ them before they mean anything.
      Finals shorter than three words never move it, and a final whose live reading does not arrive soon expires. When the
      alignment is unclear, every live sentence after the last fully covered one is answered, whole and in order, so a
      sentence the live session split into two utterances is not lost. The exception is a live sentence that arrives
-     late for a final that already expired: the last sixteen expired finals are remembered, and a live sentence heard
-     within thirty seconds of one that reads as it, or as its beginning, under the same three-word and few-character
-     rule is not answered again. Each expired final excuses one live sentence at most. The rule works on whole
+     late for a final that already expired: the last sixteen expired finals are remembered and matched in the order
+     they were delivered against every live sentence kept, before the cursor too, so each is used up by its own late
+     reading. A live sentence heard within thirty seconds of the final, that reads as the whole of it under the same
+     three-word and few-character rule, is that reading and is not answered again; only the newest sentence, while the
+     live session is still reading it, may read as its beginning. The first live sentence in the final's turn that
+     reads as no expired final is taken as its misread reading and uses the final up, so the final cannot excuse a
+     later sentence that only says the same words again; that misread sentence is answered again. A final that a later
+     final's match passed over is not remembered, because its live reading already went by. The rule works on whole
      sentences, so a live sentence that holds a delivered part and an undelivered part is answered whole. Every rule
-     prefers answering words twice to losing them.
+     prefers answering words twice to losing them, with one accepted loss: when a final's live reading never arrives
+     and, within thirty seconds and before any other new sentence, the person says the same three or more words again, the
+     repeat is taken for the late reading and is not answered. It cannot be told apart from a live transcription that
+     lags the recognizer, and answering it would re-send every sentence of a lagging stretch.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;
