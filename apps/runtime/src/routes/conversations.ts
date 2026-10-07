@@ -59,7 +59,6 @@ import { readDirectory,
   readSnapshotForDisplay,
   readyCapabilities,
   releaseLiveOwner,
-  resolveAppIntent,
   sweepExpiredLiveOwners,
   unpinInstance,
   type UnavailableCapability,
@@ -1080,9 +1079,12 @@ function answerTypedIntent(
  * answers, or a message for a turn with the files it carries.
  *
  * Shared by both message routes, which differ only in how they say the answer. The files are read first, so a file
- * that is not available refuses the message on every path. A message that carries files is never a host command: a
- * host answer, and the background run `/background` starts, carry only words, so the files would be dropped without a
- * word. It is stored with its files and answered as a turn instead.
+ * that is not available refuses the message on every path.
+ *
+ * A slash command with files is not the host's: `/background` and the other commands carry only words, so the files
+ * would be dropped without a word, and the message is stored with its files and answered as a turn instead. A typed
+ * app command stays the host's whatever the composer still holds: "mở settings" or "dừng lại" is about the app, never
+ * about a file, and Stop above all must not wait behind a turn.
  */
 async function readSentMessage(
   services: ConversationServices,
@@ -1102,19 +1104,11 @@ async function readSentMessage(
     ids: input.attachmentIds,
   });
   if (!attachments.ok) return { kind: "refused", message: attachments.message };
-  if (attachments.refs.length > 0) {
-    // Stop is a safety control, so a typed stop still stops the running turn when the message carries files. The
-    // message itself is then stored with its files and answered like any other, so they are not dropped either.
-    const principalId = services.runtime.identity.ownerPrincipalId;
-    const locale = preferredAppIntentLocale({ db: services.runtime.db, now: () => at() as never }, principalId);
-    const meant = resolveAppIntent({ text, locale, mintConfirmationToken: () => "" as never });
-    if (meant.kind === "intent" && meant.intent.kind === "turn.stop") stopTurnOnNode(services, { conversationId, source: "chat" });
-    return { kind: "message", attachmentRefs: attachments.refs };
-  }
+  const attachedFiles = attachments.refs.length > 0;
 
   // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
   const slash = parseSlashCommand(text);
-  if (slash !== undefined) {
+  if (slash !== undefined && !attachedFiles) {
     const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
     const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
     return { kind: "slash", answer, messageId: appended.messageId };
@@ -1126,7 +1120,7 @@ async function readSentMessage(
     const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
     return { kind: "intent", asked, said, messageId: appended.messageId };
   }
-  return { kind: "message", attachmentRefs: [] };
+  return { kind: "message", attachmentRefs: attachments.refs };
 }
 
 export async function handleConversationRoutes(deps: ConversationRouteDeps): Promise<GatewayResponse> {

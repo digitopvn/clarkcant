@@ -181,9 +181,10 @@ The origin stays with the work it started:
   file that is not available, or an `attachmentIds` that is not a list of ids, is refused with
   `400 ATTACHMENT_NOT_AVAILABLE` on every path: a slash command, a typed app command, or on `/messages` a message sent
   while a turn is answering, whose running turn is left as it was. A message that carries attachments is never
-  answered by the host as a slash command or typed app command, since those answers, and the background run
-  `/background` starts, carry only words: it is stored with its files and answered as a turn, with its text as typed.
-  A typed stop that carries attachments still stops the running turn first.
+  answered by the host as a slash command, since those answers, and the background run `/background` starts, carry
+  only words: it is stored with its files and answered as a turn, with its text as typed. A typed app command (such as
+  "open settings" or "stop") is about the app, not a file, so it is answered by the host as a command even when the
+  message carries attachments, and those attachments are not attached to any message.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A
