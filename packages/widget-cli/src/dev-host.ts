@@ -71,6 +71,12 @@ export interface DevHostOptions {
   /** 0 asks the operating system for a free port, which is what a test wants. */
   port?: number;
   watchFiles?: boolean;
+  /**
+   * How a simulated service restart ends. By default its services report ready again two seconds later. `"held"`
+   * keeps them loading until `finishServiceRestart()` is called, so a test can watch the restart on a machine too
+   * slow to draw it inside two seconds.
+   */
+  serviceRestart?: "timed" | "held";
 }
 
 export interface DevHost {
@@ -87,6 +93,8 @@ export interface DevHost {
   jobEvents: () => readonly DevJobEvent[];
   /** What the simulated `tokens@1` did — issues and refusals — by provider and code, never by value. */
   tokenEvents: () => readonly DevTokenEvent[];
+  /** Ends a simulated service restart now, as its timer would. False when no restart is in progress. */
+  finishServiceRestart: () => boolean;
   close: () => Promise<void>;
 }
 
@@ -686,6 +694,16 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   // Typed as the response itself rather than a structural lookalike: a cast here would be a comment about
   // Node's types instead of a fact about this code.
   const clients = new Set<ServerResponse>();
+  let restarting = false;
+  const finishServiceRestart = (): boolean => {
+    if (!restarting) return false;
+    if (restartTimer !== undefined) clearTimeout(restartTimer);
+    restartTimer = undefined;
+    restarting = false;
+    state = { ...state, serviceReadiness: Object.fromEntries(source.serviceCapabilities.map((ref) => [ref, readinessForStatus("ready")])) };
+    for (const client of clients) client.write("event: reload\ndata: {}\n\n");
+    return true;
+  };
 
   const getVite = async (): Promise<ViteDevServer> => {
     if (vite !== undefined) return vite;
@@ -962,11 +980,9 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
           state = applyShellAction(state, action, { fixtures, capabilities, serviceCapabilities: source.serviceCapabilities, files });
           if (action.kind === "service-restart") {
             if (restartTimer !== undefined) clearTimeout(restartTimer);
-            restartTimer = setTimeout(() => {
-              state = { ...state, serviceReadiness: Object.fromEntries(source.serviceCapabilities.map((ref) => [ref, readinessForStatus("ready")])) };
-              restartTimer = undefined;
-              for (const client of clients) client.write("event: reload\ndata: {}\n\n");
-            }, 2_000);
+            restartTimer = undefined;
+            restarting = true;
+            if (options.serviceRestart !== "held") restartTimer = setTimeout(finishServiceRestart, 2_000);
           }
         } catch {
           // A malformed action leaves the state alone and is reported, rather than resetting the shell.
@@ -1282,6 +1298,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     artifactEvents: () => artifacts.events(),
     jobEvents: () => jobs.events(),
     tokenEvents: () => tokens.events(),
+    finishServiceRestart,
     close: async () => {
       watcher?.close();
       if (restartTimer !== undefined) clearTimeout(restartTimer);
