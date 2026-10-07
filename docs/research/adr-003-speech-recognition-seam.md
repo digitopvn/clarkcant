@@ -112,9 +112,11 @@ recordings. No canonical reference is changed by the normaliser.
 | raw | 24.9% | 4.2% | 77.0% | 23.7% | 36.8% | - | - | - |
 | normalized | 4.0% | 0.9% | 16.0% | 76.3% | 82.9% | 61 | 1 | 0 |
 
-Strict exact compares whole utterances after collapsing whitespace. Audio-tolerant exact also ignores case and trailing
-sentence punctuation. A real recognizer capitalises the first word and closes the sentence, so strict exact is 0% for
-real audio even when every word is right.
+Strict exact compares whole utterances after collapsing whitespace. Audio-tolerant exact also ignores case anywhere in
+the utterance and trailing `. , ! ? ; : …`; punctuation inside the utterance still counts. Because it folds case
+everywhere, it also forgives identifier casing (`useeffect` for `useEffect`), which the case-sensitive Technical Term
+Error Rate still counts. The real recognizers measured in #468 capitalise the first word and close the sentence, so
+strict exact was 0% for each of them even where every word was right.
 
 Commands and versions are never worse after normalisation (9/12 and 2/2 both before and after); symbols go from 1/20 to
 17/20, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:

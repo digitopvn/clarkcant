@@ -46,11 +46,14 @@ export interface TranscriptScore {
   /** Utterances whose hypothesis equals the reference after whitespace is collapsed. */
   exactUtteranceRate: number;
   /**
-   * Utterances whose hypothesis equals the reference ignoring case and trailing sentence punctuation as well.
+   * Utterances whose hypothesis equals the reference once whitespace is collapsed, case is folded over the whole
+   * utterance, and trailing `. , ! ? ; : …` are dropped.
    *
    * A real recognizer capitalises the first word and closes the sentence with a full stop, which the strict measure
-   * counts as a miss on every utterance. This measure forgives exactly that and nothing else, so it sits beside the
-   * strict one rather than replacing it.
+   * counts as a miss on every utterance. Case is folded everywhere, not only on the first word, so this measure also
+   * forgives identifier casing (`useeffect` for `useEffect`); the case-sensitive technical term error rate is what
+   * still counts that. Punctuation inside the utterance and every other character must match, so it sits beside the
+   * strict measure rather than replacing it.
    */
   audioExactUtteranceRate: number;
 }
@@ -155,7 +158,7 @@ export function strictExact(reference: string, hypothesis: string): boolean {
   return collapse(reference) === collapse(hypothesis);
 }
 
-/** Equal once whitespace is collapsed, case is folded and sentence punctuation at the end is dropped. */
+/** Equal once whitespace is collapsed, the whole utterance is lower-cased and trailing `. , ! ? ; : …` are dropped. */
 export function audioExact(reference: string, hypothesis: string): boolean {
   const fold = (text: string): string => collapse(text).toLowerCase().replace(/[\s.,!?;:…]+$/u, "");
   return fold(reference) === fold(hypothesis);

@@ -108,9 +108,11 @@ không đổi câu tham chiếu chuẩn nào.
 | thô | 24.9% | 4.2% | 77.0% | 23.7% | 36.8% | - | - | - |
 | đã chuẩn hóa | 4.0% | 0.9% | 16.0% | 76.3% | 82.9% | 61 | 1 | 0 |
 
-Khớp nghiêm ngặt so sánh nguyên câu sau khi gộp khoảng trắng. Khớp dung sai âm thanh còn bỏ qua chữ hoa/thường và dấu
-câu ở cuối câu. Recognizer thật viết hoa chữ đầu và thêm dấu kết câu, nên khớp nghiêm ngặt luôn là 0% với âm thanh thật
-dù mọi từ đều đúng.
+Khớp nghiêm ngặt so sánh nguyên câu sau khi gộp khoảng trắng. Khớp dung sai âm thanh còn bỏ qua chữ hoa/thường ở bất kỳ
+đâu trong câu và các dấu `. , ! ? ; : …` ở cuối câu; dấu câu nằm bên trong câu vẫn được tính. Vì gộp chữ hoa/thường trên
+toàn câu, phép đo này cũng bỏ qua cách viết hoa của định danh (`useeffect` thay cho `useEffect`), điều mà Technical Term
+Error Rate (phân biệt hoa/thường) vẫn tính là lỗi. Các recognizer thật được đo trong #468 viết hoa chữ đầu và thêm dấu
+kết câu, nên khớp nghiêm ngặt của từng recognizer đó là 0% dù mọi từ đều đúng.
 
 Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (9/12 và 2/2 ở cả trước lẫn sau); symbol từ 1/20 lên 17/20, path
 từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:

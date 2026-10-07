@@ -7,6 +7,7 @@ import { GeminiLiveAdapter } from "./gemini-live.ts";
 import { GeminiTranscribeLiveAdapter } from "./gemini-transcribe.ts";
 import {
   type BenchmarkCorpus,
+  type CorpusUtterance,
   benchmarkRecognizer,
   corpusContext,
   formatBenchmarkReport,
@@ -28,12 +29,15 @@ import {
  *     mono WAV of the corpus utterance with that id. Recognizers: `gemini-transcribe-live` (dedicated, with the
  *     corpus vocabulary, and the default) and `gemini-live` (the conversational baseline's input transcription). The
  *     key is read from GEMINI_API_KEY and never printed; without one the run stops and says which gate is missing.
+ *     A recognizer that fails is named with its error and left out of the table, the ones that completed are still
+ *     scored, and the run exits 1.
  *
  *   --transcripts prints every utterance's transcript per recognizer, as heard and normalised, beside the reference.
  *   --corpus <file> scores another corpus. A leading `--` (what `pnpm <script> -- --flag` forwards) is accepted.
  *
- * Every report gives two exact-utterance measures: strict, and audio-tolerant (case and trailing sentence punctuation
- * ignored), because a real recognizer capitalises and punctuates and the strict measure counts that as a miss.
+ * Every report gives two exact-utterance measures: strict, and audio-tolerant (case anywhere in the utterance and
+ * trailing `. , ! ? ; : …` ignored), because a real recognizer capitalises and punctuates and the strict measure counts
+ * that as a miss.
  *
  * Adding Soniox, Deepgram or a local recognizer is an adapter implementing `SpeechRecognitionAdapter` and one entry
  * in `AUDIO_RECOGNIZERS`; nothing in the scorer changes.
@@ -124,6 +128,7 @@ export function parseBenchArgs(argv: readonly string[]): BenchArguments {
 async function main(): Promise<number> {
   const args = parseBenchArgs(process.argv.slice(2));
   const corpus = parseCorpus(JSON.parse(readFileSync(args.corpus ?? DEFAULT_CORPUS, "utf8")));
+  let failed: RecognizerFailure[] = [];
 
   if (args.audio !== undefined) {
     const unknown = args.recognizers.filter((id) => AUDIO_RECOGNIZERS[id] === undefined);
@@ -145,18 +150,7 @@ async function main(): Promise<number> {
       if (utterance === undefined) throw new Error(`manifest names ${entry.id}, which is not in the corpus`);
       return { utterance, pcm: pcmFromWav(readFileSync(resolve(dirname(manifestPath), entry.wav))) };
     });
-    for (const id of args.recognizers) {
-      const recognize = AUDIO_RECOGNIZERS[id]!;
-      const latencies: number[] = [];
-      for (const { utterance, pcm } of recordings) {
-        const heard = await recognize(pcm, apiKey, corpus);
-        utterance.recognizers[`${id}-audio`] = heard.text === "" ? "(nothing recognized)" : heard.text;
-        latencies.push(heard.finalizeMs);
-      }
-      latencies.sort((left, right) => left - right);
-      const quantile = (q: number): string => (latencies.length === 0 ? "-" : `${Math.round(latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))]!)} ms`);
-      process.stdout.write(`${id}: finalization after end of audio: p50 ${quantile(0.5)}, p95 ${quantile(0.95)} over ${latencies.length} recordings.\n`);
-    }
+    failed = await runAudioRecognizers(args.recognizers, recordings, (id, pcm) => AUDIO_RECOGNIZERS[id]!(pcm, apiKey, corpus), (line) => process.stdout.write(line));
     process.stdout.write("\n");
   }
 
@@ -165,7 +159,48 @@ async function main(): Promise<number> {
   const results = recognizers.map((recognizer) => benchmarkRecognizer(corpus, recognizer, context));
   process.stdout.write(`${formatBenchmarkReport(corpus, results)}\n`);
   if (args.transcripts) process.stdout.write(`\n${formatTranscripts(corpus, recognizers, context)}\n`);
-  return 0;
+  for (const failure of failed) process.stderr.write(`${failure.id} failed and is not in the report: ${failure.error}\n`);
+  return failed.length === 0 ? 0 : 1;
+}
+
+export interface RecognizerFailure {
+  id: string;
+  error: string;
+}
+
+/**
+ * Recognize every recording with each recognizer in turn, and record each one's transcripts as `<id>-audio` only once
+ * all of its recordings are done. A recognizer that throws is reported as failed with its error and gets no row, so
+ * no score is invented from part of a run, and the recognizers that completed are still scored.
+ */
+export async function runAudioRecognizers(
+  ids: readonly string[],
+  recordings: ReadonlyArray<{ utterance: CorpusUtterance; pcm: Uint8Array }>,
+  recognize: (id: string, pcm: Uint8Array) => Promise<{ text: string; finalizeMs: number }>,
+  write: (line: string) => void,
+): Promise<RecognizerFailure[]> {
+  const failed: RecognizerFailure[] = [];
+  for (const id of ids) {
+    const heardBy = new Map<CorpusUtterance, string>();
+    const latencies: number[] = [];
+    try {
+      for (const { utterance, pcm } of recordings) {
+        const heard = await recognize(id, pcm);
+        heardBy.set(utterance, heard.text === "" ? "(nothing recognized)" : heard.text);
+        latencies.push(heard.finalizeMs);
+      }
+    } catch (cause) {
+      const error = cause instanceof Error ? cause.message : String(cause);
+      failed.push({ id, error });
+      write(`${id}: failed after ${heardBy.size} of ${recordings.length} recordings, not scored: ${error}\n`);
+      continue;
+    }
+    for (const [utterance, text] of heardBy) utterance.recognizers[`${id}-audio`] = text;
+    latencies.sort((left, right) => left - right);
+    const quantile = (q: number): string => (latencies.length === 0 ? "-" : `${Math.round(latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))]!)} ms`);
+    write(`${id}: finalization after end of audio: p50 ${quantile(0.5)}, p95 ${quantile(0.95)} over ${latencies.length} recordings.\n`);
+  }
+  return failed;
 }
 
 /** Send audio at the speed it was spoken, in 100 ms frames, so a live recognizer sees what a microphone gives it. */
