@@ -426,6 +426,68 @@ describe("the live reading kept while a recognizer is the source", () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 
+  it("does not answer again a short reply a command's match passed over when its short final came first", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    shadow.delivered("ừ");
+    // The match passes over the reply: the short final delivered before it accounts for that sentence.
+    shadow.delivered("chạy lại test đi nha");
+    expect(shadow.take()).toBe("");
+  });
+
+  it("does not answer again a short reply passed over when a waiting command final finds its reading later", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    shadow.delivered("ừ");
+    // Its live reading has not arrived yet, so the command's final waits for the next sentence.
+    shadow.delivered("chạy lại test đi nha");
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    expect(shadow.take()).toBe("");
+  });
+
+  it("does not let a short final account for a short reply heard before a command it was delivered after", () => {
+    const { shadow } = shadowAt();
+    // The command's final waits; the short final after it belongs to a reply said after the command.
+    shadow.delivered("chạy lại test đi nha");
+    shadow.delivered("ừ");
+    shadow.hear({ utteranceId: "s:u1", text: "được", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    // No final accounts for the reply before the command, so it and the matched command are answered.
+    expect(shadow.take()).toBe("được chạy lại test đi nha");
+  });
+
+  it("lets a short final account for one short reply only, and never for a passed-over command", () => {
+    const twoReplies = shadowAt().shadow;
+    twoReplies.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    twoReplies.hear({ utteranceId: "s:u2", text: "được", isFinal: true });
+    twoReplies.hear({ utteranceId: "s:u3", text: "chạy lại test đi nha", isFinal: true });
+    twoReplies.delivered("ừ");
+    twoReplies.delivered("chạy lại test đi nha");
+    // Two replies against one short final: one of them was never delivered.
+    expect(twoReplies.take()).toBe("ừ được chạy lại test đi nha");
+
+    const misread = shadowAt().shadow;
+    misread.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
+    misread.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    misread.delivered("ừ");
+    misread.delivered("chạy lại test đi nha");
+    // A short final is never the reading of a command read too differently to match.
+    expect(misread.take()).toBe("chạy lại tét đi mà chạy lại test đi nha");
+  });
+
+  it("does not let a short final a match already used account for a reply a later match passes over", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    shadow.delivered("ừ");
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    shadow.delivered("chạy lại test đi nha");
+    shadow.hear({ utteranceId: "s:u3", text: "được", isFinal: true });
+    shadow.hear({ utteranceId: "s:u4", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.delivered("mở file voice session giúp tui");
+    expect(shadow.take()).toBe("được mở file voice session giúp tui");
+  });
+
   it("answers again a sentence too short to tell apart, rather than risk losing it", () => {
     const { shadow } = shadowAt();
     shadow.hear({ utteranceId: "s:u1", text: "đồng ý", isFinal: true });

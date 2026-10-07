@@ -15,7 +15,8 @@
  *
  * Every rule leans towards answering words twice over losing them:
  * - a final shorter than three words never moves the cursor, because short common sentences ("cái này không") look
- *   alike whatever was said;
+ *   alike whatever was said. It still accounts for one sentence under three words that the match of a final delivered
+ *   after it passes over, so a short reply ("ừ") before a command is not answered again;
  * - two readings match only when they differ by a few characters, never by a whole word;
  * - a final whose live reading has not arrived waits only for the live sentence in progress and the next one, and only
  *   for a few seconds, so it cannot match an unrelated sentence later;
@@ -87,6 +88,8 @@ interface Sentence {
 
 interface Pending {
   words: string[];
+  /** Its place among every final delivered, short ones too. */
+  sequence: number;
   deliveredMs: number;
   deadlineMs: number;
   /** The last live sentence this final may still be the reading of. */
@@ -99,7 +102,10 @@ interface Unsure {
   matched: number;
   /** The live sentences it passed over on the way, which may be its misread reading. */
   passedOver: number[];
-  /** Waiting finals the match discarded, each of which may own one of the passed-over sentences. */
+  /**
+   * Finals that may each own one of the passed-over sentences: the waiting finals the match discarded, and the short
+   * finals delivered before it, up to the number of short sentences it passed over.
+   */
   explained: number;
 }
 
@@ -127,6 +133,13 @@ export class LiveShadow {
   #unsure: Unsure[] = [];
   /** Finals that left the waiting list without finding their live reading, oldest first. */
   #expired: Pending[] = [];
+  /** Finals delivered so far, short ones too, so a match knows which finals came before it. */
+  #deliveries = 0;
+  /**
+   * The places of short finals delivered since a match last passed them: too short to match, but each is still the
+   * reading of one live sentence, which a later match may pass over.
+   */
+  #short: number[] = [];
 
   constructor(options: { nowMs?: () => number } = {}) {
     this.#nowMs = options.nowMs ?? Date.now;
@@ -169,15 +182,23 @@ export class LiveShadow {
   delivered(text: string): void {
     this.#expire();
     const said = words(text).map((word) => word.text);
-    if (said.length < MIN_MATCH_WORDS) return;
-    if (this.#align(said, Number.POSITIVE_INFINITY, this.#pending.length, this.#nowMs())) {
+    if (said.length === 0) return;
+    const sequence = this.#deliveries;
+    this.#deliveries += 1;
+    if (said.length < MIN_MATCH_WORDS) {
+      // Too short to match, but it still accounts for one short live sentence a later match passes over.
+      this.#short.push(sequence);
+      if (this.#short.length > MAX_SENTENCES) this.#short.shift();
+      return;
+    }
+    if (this.#align(said, Number.POSITIVE_INFINITY, this.#pending.length, this.#nowMs(), sequence)) {
       // Finals arrive in order: those still waiting were passed over, and their live reading is settled.
       this.#pending = [];
       return;
     }
     // Its live reading may be the sentence in progress, or the next one if the live session is that far behind.
     const now = this.#nowMs();
-    this.#pending.push({ words: said, deliveredMs: now, deadlineMs: now + PENDING_MS, lastOrdinal: this.#nextOrdinal });
+    this.#pending.push({ words: said, sequence, deliveredMs: now, deadlineMs: now + PENDING_MS, lastOrdinal: this.#nextOrdinal });
     if (this.#pending.length > MAX_PENDING) {
       this.#forget(this.#pending.splice(0, 1));
       this.#unclear = true;
@@ -208,6 +229,7 @@ export class LiveShadow {
     this.#cursor = { ordinal: this.#nextOrdinal, offset: 0 };
     this.#unclear = false;
     this.#unsure = [];
+    this.#short = [];
     return answer;
   }
 
@@ -344,10 +366,16 @@ export class LiveShadow {
 
   /**
    * Move the cursor past the live reading of `said`, if one starts at or after it. `explained`: the waiting finals this
-   * match discards, whose readings may be among the sentences it passes over. `deliveredMs`: when `said` was delivered.
+   * match discards, whose readings may be among the sentences it passes over. `deliveredMs`: when `said` was delivered,
+   * and `sequence` its place among every final delivered.
+   *
+   * Short finals delivered before `said` are passed with it, since their readings came before its own. Each accounts
+   * for one short sentence the match passed over, and for nothing longer: a short final is the reading of a short
+   * sentence, never of a command read too differently to match.
    */
-  #align(said: readonly string[], lastOrdinal: number, explained: number, deliveredMs: number): boolean {
+  #align(said: readonly string[], lastOrdinal: number, explained: number, deliveredMs: number, sequence: number): boolean {
     const passedOver: number[] = [];
+    let shortPassedOver = 0;
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal || sentence.ordinal > lastOrdinal) continue;
       const from = sentence.ordinal === this.#cursor.ordinal ? this.#cursor.offset : 0;
@@ -355,6 +383,7 @@ export class LiveShadow {
       const covered = coveredWords(said, heard.map((word) => word.text));
       if (covered === 0) {
         if (heard.length > 0) passedOver.push(sentence.ordinal);
+        if (heard.length > 0 && heard.length < MIN_MATCH_WORDS) shortPassedOver += 1;
         continue;
       }
       this.#cursor = { ordinal: sentence.ordinal, offset: heard[covered - 1]!.end };
@@ -363,8 +392,11 @@ export class LiveShadow {
       // Passing over an unmatched live sentence means this final may be that sentence's, read too differently to
       // match, and the one it did match only looks like it: where the cursor now stands is not known for certain.
       this.#unclear = passedOver.length > 0;
+      const shortBefore = this.#short.filter((short) => short < sequence).length;
+      this.#short = this.#short.filter((short) => short > sequence);
+      const accounted = explained + Math.min(shortBefore, shortPassedOver);
       // A match that passes over no more sentences than the finals it discards can never owe one.
-      if (passedOver.length > explained) this.#unsure.push({ matched: sentence.ordinal, passedOver, explained });
+      if (passedOver.length > accounted) this.#unsure.push({ matched: sentence.ordinal, passedOver, explained: accounted });
       return true;
     }
     return false;
@@ -374,7 +406,7 @@ export class LiveShadow {
   #settlePending(): void {
     for (let index = 0; index < this.#pending.length; index += 1) {
       const pending = this.#pending[index]!;
-      if (!this.#align(pending.words, pending.lastOrdinal, index, pending.deliveredMs)) continue;
+      if (!this.#align(pending.words, pending.lastOrdinal, index, pending.deliveredMs, pending.sequence)) continue;
       // Earlier finals were passed over: their live reading went by, too different to match, so it cannot arrive late.
       this.#pending.splice(0, index + 1);
       index = -1;
