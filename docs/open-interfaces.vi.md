@@ -947,7 +947,9 @@ có thể thay đổi.
 
 `POST /mcp` hiện thực transport Streamable HTTP, trả lời bằng JSON (protocol `2025-06-18`, cùng `2025-03-26` và
 `2024-11-05`). `GET /mcp` trả `405`: server không bao giờ chủ động gửi trước. Method: `initialize`, `ping`,
-`tools/list`, `tools/call`; notification nhận `202` không có body.
+`tools/list`, `tools/call`; notification nhận `202` không có body. `initialize` xưng tên server là `clarkcant`, với phiên bản Clark
+làm `serverInfo.version` ([một phiên bản Clark](releases.vi.md#một-phiên-bản-clark)), và khi node kết nối tới service MCP
+của một gói, nó tự giới thiệu theo cùng cách trong `clientInfo`.
 
 | Tool | Tham số | Route được gọi |
 |---|---|---|
