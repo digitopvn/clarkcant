@@ -9,12 +9,14 @@ import {
 import {
   decideApproval,
   devConsentScopeOf,
+  originOf,
   unreadFieldsOf,
   type DirectoryIndexState,
 } from "@clarkcant/core";
 import { allRows, oneRow } from "@clarkcant/storage";
 
 import {
+  approvalSourceRefusal,
   auditInstallApproval,
   findInstallApprovalRequest,
   installPackage,
@@ -94,6 +96,8 @@ export function listPendingInstallApprovals(
     if (!stillListedAsAsked(entry, asked)) return [];
     // A listing by a path on this machine whose files changed since the question is left out the same way.
     if (!localFilesUnchanged(entry, asked.localDigest)) return [];
+    const origin = originOf(index, entry);
+    if (approvalSourceRefusal({ ...asked, origin, askedSourceId: asked.sourceId }) !== undefined) return [];
     // An update says what it changes against the version that runs now; the question itself is the same as any install's.
     const reachChange = reachChangeAgainstInstalled(runtime, entry, index);
     // What the listing says that this node does not read, so the question does not claim to show all of it.
@@ -149,7 +153,8 @@ export type InstallApprovalDecisionOutcome =
  * 2. Approving checks the listing still names that artifact before anything is decided: a package or version that
  *    changed since the ask is refused (`DIGEST_MISMATCH`) and the approval is left as it was, so nothing is installed
  *    on an approval given for other bytes. A listing by a path on this machine is also checked against the content of
- *    its files when the question was asked, refused the same way when they changed.
+ *    its files when the question was asked, refused the same way when they changed. A listing another source owns by
+ *    now is refused (`DIRECTORY_SOURCE_CHANGED`), so the source recorded is the one the person was asked about.
  * 3. The approval is claimed through `decideApproval`, the one decide routine every approval goes through: only a user
  *    principal may decide, an expired one becomes `expired` (`APPROVAL_EXPIRED`) and one already decided is not
  *    decided twice (`APPROVAL_ALREADY_DECIDED`) - which is also what keeps a double press from installing twice.
@@ -198,7 +203,8 @@ export async function decideInstallApproval(
   }
 
   if (input.decision === "granted") {
-    const entry = listedEntry(readNodeDirectory(runtime.dataDir), asked.packageId, asked.version);
+    const index = readNodeDirectory(runtime.dataDir);
+    const entry = listedEntry(index, asked.packageId, asked.version);
     if (!stillListedAsAsked(entry, asked)) {
       audit("refused", { code: "DIGEST_MISMATCH" });
       return {
@@ -211,6 +217,11 @@ export async function decideInstallApproval(
     if (!localFilesUnchanged(entry, asked.localDigest)) {
       audit("refused", { code: "DIGEST_MISMATCH" });
       return { ok: false, status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(asked.packageId, asked.version) };
+    }
+    const sourceChanged = approvalSourceRefusal({ ...asked, origin: originOf(index, entry), askedSourceId: asked.sourceId });
+    if (sourceChanged !== undefined) {
+      audit("refused", { code: sourceChanged.code });
+      return { ok: false, ...sourceChanged };
     }
   }
 
@@ -241,6 +252,7 @@ export async function decideInstallApproval(
         approvalId: input.approvalId,
         digest: askedOperation(asked),
         ...(asked.localDigest === undefined ? {} : { localDigest: asked.localDigest }),
+        ...(asked.sourceId === undefined ? {} : { sourceId: asked.sourceId }),
       },
       ...(asked.consentScope === undefined ? {} : { consentScope: asked.consentScope }),
     },
@@ -264,7 +276,7 @@ export async function decideInstallApproval(
     return { ok: false, status: 409, code: "APPROVAL_REQUIRED", message: installed.message };
   }
   // A digest that changed during the fetch, or a policy that now forbids it, is a refusal; anything else a failure.
-  const refusedCodes = new Set(["DIGEST_MISMATCH", "POLICY_REFUSED", "NOT_IN_DIRECTORY"]);
+  const refusedCodes = new Set(["DIGEST_MISMATCH", "DIRECTORY_SOURCE_CHANGED", "POLICY_REFUSED", "NOT_IN_DIRECTORY"]);
   audit(refusedCodes.has(installed.code) ? "refused" : "failed", { code: installed.code });
   // The approval stays granted - the person did approve - and the install's own refusal is the answer, unchanged.
   return { ok: false, status: installed.status, code: installed.code, message: installed.message };

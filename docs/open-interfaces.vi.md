@@ -39,6 +39,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | Method | Path | Body |
 |---|---|---|
 | GET | `/node` | – |
+| GET | `/changelog?since=` | – — phiên bản Clark này thay đổi gì, đọc từ ghi chú phát hành đi kèm bản build (không cần mạng, chỉ đọc); `since` chỉ giữ các phiên bản sau một phiên bản như `1.4`; bản chạy từ mã nguồn có thêm `notesCover`, commit và ngày mà ghi chú dừng lại; `400` khi giá trị không phải phiên bản, `503 CHANGELOG_UNAVAILABLE` khi bản build không có ghi chú đọc được ([phát hành](releases.vi.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |
@@ -157,6 +158,7 @@ Node cũng ghi lại ai đã bắt đầu mỗi lượt, thành `origin` của t
 | `cli-api` | mọi người giữ token khác: `clarkcant api`, một script, hoặc mọi giá trị khác của header |
 | `automation` | tác vụ của một tự động hoá đã lên lịch hoặc thường trực |
 | `peer` | tác vụ một node khác uỷ cho node này |
+| `channel` | một tin nhắn trên kênh nhắn tin bên ngoài được gắn với cuộc trò chuyện (chỉ dịch vụ kênh của node đặt giá trị này) |
 
 Một trường trong thân như `"origin": "person"` bị bỏ qua, nên một bề mặt máy không thể tự nhận là người dùng. Token là
 ranh giới tin cậy, giống như với `surface`: người giữ token tự gửi header của ô soạn thảo được xem như chính trang.
@@ -205,6 +207,29 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 `execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
 `clarkcant api`. Vì vậy một chương trình giữ token của node có thể đổi cài đặt này. Hoàn tác `execution.machineTurns`
 chỉ đặt lại đúng lựa chọn đó; nó trả về `undone: false` khi lần ghi chính sách gần nhất không đổi lựa chọn này.
+
+Lượt `channel` khác với các bề mặt máy: người gửi là một người trên kênh bên ngoài, không phải người giữ token của node
+này, và việc lượt đó được làm gì tùy vào người đó là ai. Node quyết định điều này từ principal mà tài khoản của người gửi
+được ánh xạ tới, không bao giờ từ tên hiển thị hay nội dung tin nhắn:
+
+- **Chủ sở hữu.** Tài khoản của chính chủ sở hữu, hoặc bất kỳ tài khoản bên ngoài nào được liên kết với principal của chủ
+  sở hữu, hành động như chủ sở hữu: lượt đó có ngữ cảnh của chủ sở hữu và được quyết định bởi chính sách thực thi duy
+  nhất như mọi lượt khác, không hỏi thêm.
+- **Người tham gia.** Bất kỳ ai khác. Lượt đó không nhận bộ nhớ, chỉ dẫn cá nhân hay chỉ dẫn dự án, ngữ cảnh màn hình
+  hay các tệp ngữ cảnh trên máy của chủ sở hữu, và chạy trên một phiên model riêng (phiên đã phục vụ chủ sở hữu không bao
+  giờ được dùng lại cho nó). Host nói với model rằng người gửi không phải chủ sở hữu. Trò chuyện (trả lời trong cùng
+  luồng, một khung xem hay một câu hỏi đặt vào đó) vẫn tự chủ; mọi lời gọi công cụ khác chỉ chạy khi một quyền thường trực trên binding bao gồm công cụ đó
+  (`grantRefs`, mỗi mục dạng `tool:<tên>`) hoặc chủ sở hữu đã duyệt đúng lời gọi đó. Nếu không, lời gọi bị giữ lại,
+  không có gì chạy, và chủ sở hữu được hỏi bằng một thẻ duyệt trong cuộc trò chuyện; duyệt thì lượt tiếp tục dưới tư
+  cách người tham gia và cho đúng lời gọi đó chạy một lần. Việc quyết định một yêu cầu duyệt không bao giờ được mở cho
+  người tham gia.
+
+Đối tượng mặc định của binding nhận mọi người trong không gian đã gắn; các quy tắc trên là thứ giữ cho điều đó an toàn.
+Tin nhắn người dùng như vậy còn mang `authorPrincipalId` (principal mà người gửi trên kênh
+được ánh xạ tới, để bản ghi phân biệt được nhiều người nói) và, khi nó trả lời một tin nhắn của cuộc trò chuyện này,
+`inReplyToMessageId`. Cả hai đều không bắt buộc, chỉ node đặt, và không có trên mọi tin nhắn khác. Bản build này chưa
+kèm nhà cung cấp kênh nào và chưa có route HTTP nào nhận dữ liệu từ kênh; phần nền được mô tả trong
+[system-architecture.vi.md](system-architecture.vi.md) (§7.3, "Kênh nhắn tin bên ngoài").
 
 ### Model nào đã trả lời: ghi chú model
 
@@ -672,6 +697,25 @@ các tệp người dùng đã chọn cho nó. Đính kèm một tệp đã đư
 Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `filename` ASCII và tên thật dưới dạng UTF-8 mã hoá
 phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi cả hai, dấu phần trăm thành `_` trong tên ASCII, và
 một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
+
+**Listing đến từ đâu.** Directory mà một node tìm và cài từ đó được ghép từ các nguồn: file index mà
+`CC_DIRECTORY_INDEX` trỏ tới, từng feed trong `CC_DIRECTORY_MARKETPLACES`, và ClarkCant Marketplace chính thức (bật
+trừ khi `CC_OFFICIAL_MARKETPLACE=off`); thứ tự ưu tiên, cách làm mới và định dạng feed nằm ở
+[metadata directory](widget-development.vi.md#18-directory-metadata). Card `marketplace-results` mang
+`origin: { kind, label }` trên mỗi dòng khi card chứa nhiều nguồn (`kind` là `local-file`, `custom-marketplace` hoặc
+`official-marketplace`), và `sources: [{ kind, label, state, fetchedAt?, reason? }]` cho mỗi nguồn chưa trả lời đầy
+đủ (`state` là `stale`, `not-fetched`, `unreachable`, `unsupported` hoặc `unreadable`). Mỗi dòng còn mang `sourceId`
+(`local`, `official` hoặc `custom-<hash>`), được nút Cài gửi lại. `search_directory` nhận thêm `packageId` tuỳ chọn và
+khi đó liệt kê mọi version của gói đó kèm thông tin chi tiết. `POST /packages/install` làm mới một nguồn từ xa một lần
+khi listing không có trong bản sao của node, trả `404 NOT_IN_DIRECTORY` có nêu tên nguồn nào chưa trả lời, và
+`409 DIRECTORY_UNREADABLE` khi không đọc được nguồn nào hoặc file index bị hỏng. Route nhận thêm `sourceId` tuỳ chọn:
+nguồn mà người dùng đã chọn khi bấm Cài trên một dòng. Không có nó, route trả `409 DIRECTORY_SOURCE_UNREAD` khi một
+nguồn đứng trước không đọc được, và `409 DIRECTORY_SOURCE_CHANGED` khi gói đang được cài từ một nguồn khác. Có nó,
+route trả `409 DIRECTORY_SOURCE_CHANGED` khi giờ đây một nguồn khác sở hữu listing đó. Node ghi nguồn lên generation
+đã cài (`directorySource`), và thông báo cập nhật chỉ đến từ chính nguồn đó; generation được cài trước khi nguồn được
+ghi lại được coi là cài từ file index. Một yêu cầu chấp thuận cài đặt giữ nguồn sở hữu listing lúc người dùng được hỏi,
+và `POST /packages/approvals/{id}/decision` với `granted` trả `409 DIRECTORY_SOURCE_CHANGED` khi lúc đó một nguồn khác
+đã sở hữu listing. Một listing từ marketplace được cài qua đúng những bước kiểm tra như listing từ file.
 
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói từ thư mục (tool quản lý

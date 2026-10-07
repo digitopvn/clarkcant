@@ -250,6 +250,10 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
         ...(typeof parsed.value.contentDigest === "string" && parsed.value.contentDigest !== ""
           ? { contentDigest: parsed.value.contentDigest }
           : {}),
+        // Like the content digest, only ever a reason to refuse or a choice among sources that already list it.
+        ...(typeof parsed.value.sourceId === "string" && parsed.value.sourceId !== "" && parsed.value.sourceId.length <= 120
+          ? { sourceId: parsed.value.sourceId }
+          : {}),
         ...(Array.isArray(parsed.value.requestedCapabilityRefs)
           ? {
               requestedCapabilityRefs: parsed.value.requestedCapabilityRefs.filter(

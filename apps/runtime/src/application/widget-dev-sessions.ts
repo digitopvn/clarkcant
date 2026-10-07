@@ -17,10 +17,9 @@ import {
   activeGeneration,
   cachedLocalSnapshotPath,
   devConsentScopeOf,
-  directoryIndexPath,
   getPreference,
   pinInstance,
-  readDirectoryIndex,
+  readDirectory,
   readPackage,
   startDevEngine,
   type DevEngine,
@@ -463,7 +462,7 @@ export function createWidgetDevSessions(
    */
   const idConflict = (stored: StoredDevSession, latest: DevGenerationRecord): { code: string; message: string } | undefined => {
     const { packageId, version } = latest.listing;
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    const index = readDirectory({ env: process.env, dataDir: dataDir() });
     if (index.kind === "configured" && index.entries.some((entry) => entry.packageId === packageId && entry.version === version)) {
       return {
         code: "PACKAGE_LISTED",

@@ -22,6 +22,7 @@ import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
+import { startChannelService } from "../channels/channel-service.ts";
 import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startArtifactSweep } from "../artifact-broker.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
@@ -364,6 +365,14 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   );
 
   /*
+   * External messaging channels. No provider adapter ships with the node yet, so the registry starts empty; the
+   * service still settles what a previous process left (a turn it was running, a reply it was sending) and routes any
+   * channel message already recorded.
+   */
+  deps.services.channels = startChannelService(deps.services);
+  deps.services.channels.kick();
+
+  /*
    * What carries queued envelopes to paired nodes. A node that has paired with nothing finds nothing to send, and one
    * that queued something before it stopped sends it on the first pass.
    */
@@ -469,6 +478,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     ? undefined
     : startUpdateCheckTimer({
         services: deps.services,
+        dataDir: deps.services.runtime.dataDir,
         installDeps: {
           db: deps.services.runtime.db,
           nodeId: deps.services.runtime.identity.nodeId,
@@ -614,7 +624,9 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   process.stderr.write(
     sessionFixture
       ? "update check: FIXTURE — no periodic job started, no registry is called\n"
-      : "update check: periodic job started — installed packages/widgets against the directory index, the Pi SDK against npm when there is network\n",
+      : // The Pi SDK is not checked: it is pinned and ships with ClarkCant (see update-checks.ts), so the line says so
+        // rather than claiming a registry call the job no longer makes.
+        "update check: periodic job started — installed packages/widgets against the directory index; the Pi SDK ships pinned with ClarkCant and is not checked\n",
   );
 
   return {

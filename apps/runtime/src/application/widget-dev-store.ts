@@ -11,7 +11,7 @@ import {
   widgetDevStopReasonSchema,
   type DirectoryEntry,
 } from "@clarkcant/contracts";
-import { directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
+import { directoryIndexPath, readDirectory, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
 
 /**
  * Where a node keeps its live widget authoring sessions, and the directory view they add to.
@@ -161,15 +161,27 @@ export function devListings(dataDir: string): DirectoryEntry[] {
 }
 
 /**
- * The directory as this node resolves installed packages: the configured index (`CC_DIRECTORY_INDEX`), with the
- * listings of its widget dev sessions in front. With no index configured and no sessions, the answer is the index's own
- * `not-configured`; an index that cannot be read stays unreadable rather than shrinking to the dev listings.
+ * The directory as this node resolves installed packages: every configured source (`readDirectory`), with the listings
+ * of its widget dev sessions in front. With no source configured and no sessions, the answer is the directory's own
+ * `not-configured`. The person's own index file that cannot be read keeps the directory unreadable rather than shrinking
+ * to the dev listings; remote sources that have nothing to list yet (never fetched, unreachable) do not hide a session's
+ * generations, since local development must work without any marketplace.
  */
 export function readNodeDirectory(dataDir: string, env: NodeJS.ProcessEnv = process.env): DirectoryIndexState {
-  const index = readDirectoryIndex(directoryIndexPath(env));
+  const index = readDirectory({ env, dataDir });
   const dev = devListings(dataDir);
-  if (dev.length === 0 || index.kind === "unreadable") return index;
+  if (dev.length === 0) return index;
   if (index.kind === "not-configured") return { kind: "configured", directory: widgetDevStoreDir(dataDir), entries: dev };
+  if (index.kind === "unreadable") {
+    const indexPath = directoryIndexPath(env);
+    if (indexPath !== undefined && readDirectoryIndex(indexPath).kind !== "configured") return index;
+    return {
+      kind: "configured",
+      directory: index.directory,
+      entries: dev,
+      ...(index.sources === undefined ? {} : { sources: index.sources }),
+    };
+  }
   return { ...index, entries: [...dev, ...index.entries] };
 }
 
