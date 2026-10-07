@@ -2185,6 +2185,12 @@ Detach does not reset state/subscriptions/media.
 
 Closing a detached window only moves presentation ownership; it does not delete the instance.
 
+Only composed widgets can be detached today. A widget that runs in its own (isolated) frame stays in the
+conversation: a detached window holds no credential, and that frame needs the conversation's credential to save
+state, publish its semantic view and renew its URL. The conversation does not offer Detach for it, and the desktop
+host refuses its bootstrap. Detaching an isolated frame is tracked in
+[#577](https://github.com/digitopvn/clarkcant/issues/577).
+
 Audio/call/player must not duplicate playback when moving between surfaces.
 
 ---
@@ -3630,8 +3636,8 @@ The editor never discards the file the person picked. Ctrl+S (Cmd+S on macOS) sa
 calls `attachToConversation`.
 
 *Replace original* is offered only in the frame where the file was picked, and only until it is reloaded: the host
-keeps the desktop's handle for the picked file in memory beside that one frame and never persists it. After a reload,
-in a pinned copy or in a detached window, the desktop offers Save As.
+keeps the desktop's handle for the picked file in memory beside that one frame and never persists it. After a reload
+or in a pinned copy, the desktop offers Save As.
 
 **What Clark is shown.** The editor publishes a summary ("Editing notes.txt: 3 lines, with unsaved changes.") and the
 values `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` and `selectedText`. The
