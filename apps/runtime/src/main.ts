@@ -496,7 +496,7 @@ async function main(): Promise<void> {
    * Everything this process started goes first — commands, task workers, shells, background runs — through the same
    * stop a person uses, so a shutdown can never leave behind what a stop would have ended. Background runs are
    * marked interrupted rather than stopped, and say nothing in their conversation: the next boot reports them once,
-   * with what it did about them. Then the sessions, the sockets and the database.
+   * with what it did about them. Then, once the stopped tasks have tidied up, the sessions, the sockets and the database.
    *
    * Bounded, because a shutdown that waits on something that is not listening is a node that will not close: past
    * the grace the process exits anyway, and whatever is left is the next boot's to find in the journal. A second
@@ -552,6 +552,10 @@ async function main(): Promise<void> {
         if (stopped.commands + stopped.tasks + stopped.jobs > 0) {
           await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS + 100));
         }
+        // A stopped task still tidies up after its worker ends (its browser, its lease, its worktrees) and writes as it
+        // does: the database stays open until that is done. The hard stop above still bounds the wait, and leaves what a
+        // run did not finish to the lease sweeper and the next boot.
+        await services.taskDispatch?.drain(SHUTDOWN_GRACE_MS);
         await modelTurn?.dispose();
         // Every browser token still held is withdrawn where its provider allows, rather than left to lapse.
         await services.browserTokens?.close();
