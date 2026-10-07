@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Only the long-lived lines: a PR branch is already checked by `pull_request`, and pushing it too ran every job twice
+  # per commit. With the merge gate not strict, this run is what checks the combined tree after each merge.
   push:
-    branches: ["**"]
+    branches: [main, dev]
   pull_request:
   # A manual run can repeat chosen browser specs, so a test that failed only on
   # the runner can be shown to pass there more than once. Left empty, the
@@ -37,8 +39,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The runtime executes TypeScript directly, so the floor matters.
-        node: ["22.19", "24"]
+        # The Node 22.19 floor is still booted by the e2e, service container and desktop jobs; a second full
+        # unit-test leg on it is left out while the project is bootstrapping.
+        node: ["24"]
         os: [ubuntu-latest]
         include:
           # The first desktop target is macOS, whose temporary directory sits behind a
@@ -222,38 +225,70 @@ jobs:
   # say CI told nobody anything about it. It boots its own node and web server
   # on fixed ports, so it needs nothing
   # from this runner beyond the browser it launches.
+  #
+  # One worker ran the whole suite for about 44 minutes, the longest job by far. Each shard is its own runner with
+  # its own node and data directory, so the suite is split by spec file without sharing any state between shards.
   e2e:
-    name: e2e (browser suite)
+    name: e2e (browser suite ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs everything.
+          fetch-depth: 0
+
+      # A change to prose only (tools/ci-test-scope.mjs) skips the steps below; a diff it cannot read runs them.
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: "22.19"
           cache: pnpm
 
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       - name: Install the browser the suite launches
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm exec playwright install --with-deps chromium
 
       # The inputs reach the shell through the environment, never through the
       # script text, so a manual run cannot inject a command. A repeat turns
       # retries off: a test that needed its retry did not pass that many times.
+      # Chosen specs run whole on the first shard; the other shards have nothing to do.
       - name: Browser suite
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         env:
           E2E_SPECS: ${{ inputs.e2e_specs }}
           E2E_REPEAT: ${{ inputs.e2e_repeat }}
+          E2E_SHARD: ${{ matrix.shard }}
         run: |
           set -f
           args=()
+          if [ -z "$E2E_SPECS" ]; then
+            args+=(--shard="$E2E_SHARD/6")
+          elif [ "$E2E_SHARD" != 1 ]; then
+            echo "Chosen specs run on shard 1"
+            exit 0
+          fi
           if [ -n "$E2E_REPEAT" ]; then
             case "$E2E_REPEAT" in
               *[!0-9]* | 0*) echo "e2e_repeat must be a positive whole number, got '$E2E_REPEAT'" >&2; exit 1 ;;
@@ -271,10 +306,10 @@ jobs:
       # A failure on the runner is otherwise known only by its message: the trace, screenshot and page snapshot of
       # each failed attempt are what show what the page was doing when it failed.
       - name: Keep what a failed browser test saw
-        if: failure()
+        if: (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false') && (failure())
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: e2e-test-results
+          name: e2e-test-results-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
@@ -290,42 +325,62 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs everything.
+          fetch-depth: 0
+
+      # A change to prose only (tools/ci-test-scope.mjs) skips the steps below; a diff it cannot read runs them.
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: "24"
           cache: pnpm
 
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       - name: Widget dev-host module integration
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run test:widget-dev-host
 
       - name: Install Chromium and Linux dependencies
-        if: runner.os == 'Linux'
+        if: (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false') && (runner.os == 'Linux')
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Install Chromium
-        if: runner.os != 'Linux'
+        if: (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false') && (runner.os != 'Linux')
         run: pnpm exec playwright install chromium
 
       - name: Widget service simulator browser journey
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run test:widget-browser
 
       - name: Reference theme preview component journeys
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run test:reference-theme-browser
 
+      # On Linux both specs already run in the e2e shards.
       - name: Reference theme browser journeys
+        if: (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false') && (runner.os != 'Linux')
         run: >-
           pnpm test:e2e apps/web/e2e/reference-theme-composition.spec.ts
           apps/web/e2e/widget-appearance.spec.ts
 
       - name: Keep reference theme visual evidence
-        if: always()
+        if: (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false') && (always())
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: reference-themes-${{ matrix.os }}
@@ -408,22 +463,38 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs everything.
+          fetch-depth: 0
+
+      # A change to prose only (tools/ci-test-scope.mjs) skips the steps below; a diff it cannot read runs them.
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: "22.19"
           cache: pnpm
 
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       # The runner's Docker comes without the rootless extras and its apt sources carry none, so Docker's own static
       # release is used, pinned by version and digest. Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces,
       # which a rootless daemon is made of, so that restriction is lifted for this job only.
       - name: Set up rootless Docker
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         env:
           DOCKER_STATIC: https://download.docker.com/linux/static/stable/x86_64
           DOCKER_VERSION: 29.8.1
@@ -467,12 +538,13 @@ jobs:
           echo "DOCKER_HOST=$DOCKER_HOST" >> "$GITHUB_ENV"
 
       - name: Service container suite on rootless Docker
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         env:
           CC_EXPECT_ROOTLESS_DOCKER: "1"
         run: pnpm exec vitest run apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
 
       - name: The rootless daemon's log
-        if: failure()
+        if: (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false') && (failure())
         run: tail -n 100 "$RUNNER_TEMP/dockerd-rootless.log" || true
 
   # The same suite under rootless Podman, the other engine a node runs services on. Podman ships on the runner and runs
@@ -490,16 +562,31 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs everything.
+          fetch-depth: 0
+
+      # A change to prose only (tools/ci-test-scope.mjs) skips the steps below; a diff it cannot read runs them.
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: "22.19"
           cache: pnpm
 
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       # Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces, which rootless Podman is made of, so that
@@ -507,6 +594,7 @@ jobs:
       # where the person is logged in: Podman puts each container in a systemd scope there, and only a delegated cgroup
       # lets it apply a profile's memory and CPU limits.
       - name: Set up rootless Podman
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo systemctl disable --now docker.service docker.socket
@@ -530,6 +618,7 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
 
       - name: Service container suite on rootless Podman
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         env:
           CC_EXPECT_ROOTLESS_PODMAN: "1"
         # Verbose, so the log names each test that ran on Podman and each one skipped.
@@ -550,16 +639,31 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs everything.
+          fetch-depth: 0
+
+      # A change to prose only (tools/ci-test-scope.mjs) skips the steps below; a diff it cannot read runs them.
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: "22.19"
           cache: pnpm
 
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       # ubuntu 24.04 renamed the ALSA package, and this runner image has moved
@@ -567,6 +671,7 @@ jobs:
       # tried rather than pinning to whichever one this image happens to carry
       # today.
       - name: Install a virtual display and the libraries Electron loads
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: |
           sudo apt-get update
           common="xvfb libgtk-3-0 libnss3 libgbm1"
@@ -582,6 +687,7 @@ jobs:
       # is written down; the alternative is chowning a binary inside
       # node_modules to root, which no test should need.
       - name: Desktop smoke
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: >-
           xvfb-run -a env ELECTRON_DISABLE_SANDBOX=1 pnpm --filter
           @clarkcant/app-desktop run smoke
