@@ -16,7 +16,7 @@
  *   "toolerror" makes the tool report failure through the protocol's isError
  *   "flood"   accepts initialize, then answers tools/list with output that never ends a line
  *   "asks"    a call to the tool "ask" sends the host the requests named in its arguments, and returns what the
- *             host answered, together with what the host advertised it would answer
+ *             host answered, together with what the host advertised it would answer and the clientInfo it gave
  *   "structured" also lists tools that declare an `outputSchema` and other fields of the 2025-06-18 tool shape, and
  *             "forecast" answers with `structuredContent` shaped by its `shape` argument, including hostile shapes
  */
@@ -176,6 +176,8 @@ function textResult(text, isError = false) {
 /** The host's answers to requests this server sent, by request id. */
 const awaiting = new Map();
 let advertised = null;
+/** The clientInfo the host introduced itself with at initialize. */
+let client = null;
 let sent = 0;
 
 /** Send the host the requests a call to "ask" names; answer the call with what came back. */
@@ -192,7 +194,7 @@ function ask(callId, args) {
     return answered;
   });
   void Promise.all(answers).then((settled) => {
-    send({ jsonrpc: "2.0", id: callId, result: textResult(JSON.stringify({ advertised, answers: settled })) });
+    send({ jsonrpc: "2.0", id: callId, result: textResult(JSON.stringify({ advertised, client, answers: settled })) });
   });
 }
 
@@ -212,6 +214,7 @@ function handle(request) {
 
   if (method === "initialize") {
     advertised = params?.capabilities?.experimental ?? null;
+    client = params?.clientInfo ?? null;
     send({
       jsonrpc: "2.0",
       id,

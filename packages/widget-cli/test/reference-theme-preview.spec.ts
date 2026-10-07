@@ -6,6 +6,7 @@ import { expect as browserExpect } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { compileAppearance } from "@clarkcant/design-tokens";
+import { chromiumTestArgs } from "../../../tools/chromium-test-args.ts";
 import { startThemeDevHost, readThemeDevView } from "../src/theme-dev-host.ts";
 
 const names = ["pixel-arcade", "neo-brutalism"] as const;
@@ -14,7 +15,7 @@ const evidence = resolve("plans/reports/evidence/reference-themes", `${process.p
 
 beforeAll(async () => {
   mkdirSync(evidence, { recursive: true });
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
 }, 40_000);
 
 afterAll(async () => {

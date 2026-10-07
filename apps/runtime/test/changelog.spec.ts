@@ -14,6 +14,7 @@ import {
   type ReleaseHistoryRead,
   SOURCE_RELEASE_NOTES_FILE,
   chooseReleaseHistory,
+  clarkVersion,
   commitReachesHead,
   describeChangelog,
   parseReleaseHistory,
@@ -94,6 +95,11 @@ describe("the embedded release notes", () => {
     const wrong = parseReleaseHistory(JSON.stringify({ schemaVersion: 2 }));
     expect(wrong.ok).toBe(false);
     if (!wrong.ok) expect(wrong.reason).toMatch(/contract/);
+  });
+
+  it("give the Clark version peers are told, and say unknown rather than guess when they cannot be read", () => {
+    expect(clarkVersion(fixture)).toBe("1.5.0");
+    expect(clarkVersion(() => ({ ok: false, reason: "gone", missing: true }))).toBe("unknown");
   });
 });
 

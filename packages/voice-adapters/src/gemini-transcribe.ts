@@ -1,6 +1,7 @@
 import {
   type Instant,
   type RecognitionContext,
+  type RecognitionTerm,
   type RecognizedUtterance,
   type SpeechRecognitionCapabilities,
   type VoiceState,
@@ -11,6 +12,7 @@ import {
 import { type LiveSocket, type LiveSocketFactory, globalSocketFactory } from "./gemini-live.ts";
 import { GEMINI_LIVE_ENDPOINT, asRecord, asString, buildAudioMessage, parseFrame } from "./protocol.ts";
 import type { SpeechRecognitionAdapter } from "./recognition.ts";
+import { NEAR_MATCHABLE_KINDS } from "./transcript-normalizer.ts";
 
 /**
  * Dedicated speech-to-text over Gemini's live transcription model.
@@ -91,21 +93,66 @@ export function buildAudioStreamEndMessage(): Record<string, unknown> {
 /**
  * The provider's custom vocabulary, from the canonical context.
  *
- * Canonical spellings only, most relevant first. Aliases stay local: an alias is a known mis-hearing, and biasing a
- * recognizer towards a mis-hearing is the opposite of the point.
+ * Canonical spellings, or a model id's spoken family derived from one, most relevant first. Aliases stay local: an
+ * alias is a known mis-hearing, and biasing a recognizer towards a mis-hearing is the opposite of the point. Terms that
+ * agree up to case are sent once, as the higher-weighted one, so a model family (`gemini`) can stand in for a provider
+ * (`Gemini`); the normaliser's casing rule restores the canonical case on the node.
+ *
+ * The vocabulary is a bias, not a hint the provider weighs against what it heard: measured on audio, it wrote a listed
+ * term over a different word the person said ("Jeff" as `Jev`, "claude opus 3" as `claude-opus-4`, `setUser` as
+ * `getUser`). The transcription model takes no instruction that could say "only when it was said" - the documented
+ * setup has the vocabulary, the language codes and the mode, and nothing else - and it reports no alternatives or
+ * confidence, so nothing after recognition can tell a substitution from what was said. What is sent is therefore
+ * limited to terms with no close real twin; see `vocabularyBias`. Everything else stays on the node, where the
+ * deterministic normaliser uses it only on evidence.
  */
 export function transcribeVocabulary(context: RecognitionContext | undefined, max = GEMINI_TRANSCRIBE_MAX_VOCABULARY): string[] {
   if (context === undefined) return [];
   const seen = new Set<string>();
   const words: string[] = [];
   for (const term of [...context.terms].sort((left, right) => right.weight - left.weight)) {
-    const key = term.text.toLowerCase();
+    const text = vocabularyBias(term);
+    if (text === undefined) continue;
+    const key = text.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    words.push(term.text);
+    words.push(text);
     if (words.length >= max) break;
   }
   return words;
+}
+
+/**
+ * What of a term may bias the recognizer, or nothing.
+ *
+ * A bias is a near-match made without evidence, so it gets only what the normaliser would itself correct on a slip:
+ * glossary words, providers and models (`NEAR_MATCHABLE_KINDS`).
+ *
+ * - Symbols, paths, branches, packages, tools, commands and issues are not sent. Their neighbours are other real names:
+ *   measured on audio, a spoken `setUser` came back as a listed `getUser`, and with `getUser` withheld, as a listed
+ *   `useState`. Their spelling is restored on the node instead, where the normaliser joins an exact spoken form ("use
+ *   effect") and never a near one.
+ * - A number is what a bias changes into another real reference, so a model id is sent as its spoken family before
+ *   the first numbered part (`claude-opus-4` as `claude-opus`), which helps the spelling without choosing a version.
+ *   The rule reads the term, not its kind: a glossary or provider term with a digit (none today) is cut the same way,
+ *   so a hypothetical `utf-8` would go as `utf` and `S3` not at all.
+ * - A short word that is not an acronym (`Jev`, `Pi`) is name-like: real words and names sound like it ("Jeff"), so it
+ *   is not sent. Acronyms are spelled letter by letter and have no such twin.
+ */
+export function vocabularyBias(term: RecognitionTerm): string | undefined {
+  if (!NEAR_MATCHABLE_KINDS.has(term.kind)) return undefined;
+  const text = term.text;
+  if (/\d/u.test(text)) {
+    const family: string[] = [];
+    for (const part of text.split("-")) {
+      if (/\d/u.test(part)) break;
+      family.push(part);
+    }
+    const spoken = family.join("-");
+    return /\p{L}{2}/u.test(spoken) ? spoken : undefined;
+  }
+  if (/^\p{L}{1,3}$/u.test(text) && text !== text.toUpperCase()) return undefined;
+  return text;
 }
 
 export type TranscribeEvent =

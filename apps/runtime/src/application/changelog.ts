@@ -125,6 +125,16 @@ export function readEmbeddedReleaseHistory(): ReleaseHistoryRead {
   return embedded;
 }
 
+/**
+ * The Clark version this build reports to peers, such as MCP clients and servers: the version the embedded release
+ * record names, which the `clark-version-single-source` invariant holds to the root `package.json`. When the record
+ * cannot be read the version is not known, and it is said as "unknown" rather than guessed.
+ */
+export function clarkVersion(load: () => ReleaseHistoryRead = readEmbeddedReleaseHistory): string {
+  const read = load();
+  return read.ok ? read.history.build.version : "unknown";
+}
+
 export type ChangelogAnswer =
   | { ok: true; view: ChangelogView }
   | { ok: false; code: "invalid-version"; message: string }

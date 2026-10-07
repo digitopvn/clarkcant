@@ -1,14 +1,15 @@
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type AutomationAction, observationIdSchema } from "@clarkcant/contracts";
 import { createDriver, type BrowserDriver } from "@clarkcant/browser-playwright";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect } from "vitest";
 
+import { removeTestDirectory, trackedTests } from "../../../tools/test-cleanup.ts";
 import { blobPathForDigest, readBlob } from "../src/blobs.ts";
 import { createNodeServer } from "../src/server.ts";
 import { captureSessionPreview } from "../src/session-preview.ts";
@@ -40,6 +41,13 @@ const PAGE_TWO = `<!doctype html>
   <h1 style="color:#111;font:700 96px system-ui;padding:64px">Phiên browser hai</h1>
   <button>Hoàn tất</button>
 </body></html>`;
+
+/**
+ * Each test starts and stops a Chromium, one of them twice. Closing one takes under 200 ms alone, but up to 12 s while
+ * the full suite runs on a loaded Windows machine, and tests that take under 0.6 s alone took up to 14 s there. The
+ * budget covers two such browsers with room to spare.
+ */
+const { it, settled } = trackedTests(60_000);
 
 let server: Server;
 let origin: string;
@@ -75,6 +83,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await settled();
   await closeServer();
   services.runtime.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -83,8 +92,8 @@ afterAll(async () => {
    * not for every helper process Chromium started beside it, and removing the directory then fails with EPERM. Retry
    * as the other suites that remove a directory a process just let go of do.
    */
-  rmSync(profiles, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(profiles);
+  await removeTestDirectory(dataDir);
 });
 
 /**

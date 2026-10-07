@@ -14,6 +14,7 @@ import {
 } from "@clarkcant/core";
 import { allRows } from "@clarkcant/storage";
 
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { createManagePackageTool } from "../src/manage-package-tool.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -166,11 +167,12 @@ beforeEach(() => {
   process.env["CC_DIRECTORY_INDEX"] = indexPath;
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (previousIndex === undefined) delete process.env["CC_DIRECTORY_INDEX"];
   else process.env["CC_DIRECTORY_INDEX"] = previousIndex;
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true });
+  // The database's files were just closed, and Windows can hold one a moment longer.
+  await removeTestDirectory(dir);
 });
 
 describe("uninstalling and restoring a package", () => {
