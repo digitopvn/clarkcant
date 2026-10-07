@@ -30,9 +30,11 @@
  *   them is its misread reading: it is answered, and it uses the final up so that a later sentence saying the same
  *   words again is answered too. A final passed over by a later match is not remembered: its reading already went by.
  *
- * One loss is accepted: a final whose live reading never arrives, followed within the matching time and before any
- * other sentence by the same words said again. That repeat cannot be told from the late reading of a lagging live
- * transcription, and answering it would answer again every sentence of a lagging stretch.
+ * One loss is accepted: when the live readings of one or more finals never arrive, a sentence that says one of them
+ * again within the matching time is taken for its late reading and is not answered, unless before it the live session
+ * heard one new sentence for each such final, up to and including the one said again. That repeat cannot be told from
+ * the late reading of a lagging live transcription, and answering it would answer again every sentence of a lagging
+ * stretch.
  */
 
 const MAX_SENTENCES = 16;
@@ -56,6 +58,11 @@ const MAX_EXPIRED = MAX_SENTENCES;
  * by a few seconds, a few sentences at worst; half a minute covers that while a sentence said again later is answered.
  */
 const EXPIRED_MATCH_MS = 30_000;
+/**
+ * Letter pairs compared while looking for the late readings of expired finals, so a backlog of long sentences cannot
+ * stall the recognizer's failure: a few tens of milliseconds. Spoken sentences of a few dozen words stay far below it.
+ */
+const MAX_LATE_COMPARISONS = 4_000_000;
 
 interface Sentence {
   ordinal: number;
@@ -96,6 +103,12 @@ export class LiveShadow {
   #pending: Pending[] = [];
   /** A recognizer final never found its live reading, so what lies after the cursor is not known to be undelivered. */
   #unclear = false;
+  /**
+   * The sentence the cursor stands at the end of was delivered whole. Not so when a final that waited for its reading
+   * matched only after passing over another sentence: the one it passed over may be its reading, and the one it matched
+   * the same words said again.
+   */
+  #cursorSure = true;
   /** Finals that left the waiting list without finding their live reading, oldest first. */
   #expired: Pending[] = [];
 
@@ -176,6 +189,7 @@ export class LiveShadow {
     this.#expired = [];
     this.#cursor = { ordinal: this.#nextOrdinal, offset: 0 };
     this.#unclear = false;
+    this.#cursorSure = true;
     return answer;
   }
 
@@ -185,7 +199,8 @@ export class LiveShadow {
    * The live session may cut the sentence in progress into several utterances, so all of them are answered, in order,
    * not only the newest. The cursor may stand partway into the first of them on the strength of a match that belonged
    * to an earlier sentence, so that one is answered whole rather than its tail. A sentence the cursor stands at the end
-   * of was delivered whole and is not answered again, and neither is one the live session is still reading for a final
+   * of was delivered whole and is not answered again, unless the final that waited for it passed over another sentence
+   * on the way, so that one of the two was never delivered; neither is one the live session is still reading for a final
    * already delivered, nor the late live reading of a final that expired waiting for it.
    */
   #uncoveredWhole(): string[] {
@@ -193,7 +208,11 @@ export class LiveShadow {
     const answered: string[] = [];
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal) continue;
-      if (sentence.ordinal === this.#cursor.ordinal && words(sentence.text, this.#cursor.offset).length === 0) continue;
+      const deliveredWhole =
+        this.#cursorSure &&
+        sentence.ordinal === this.#cursor.ordinal &&
+        words(sentence.text, this.#cursor.offset).length === 0;
+      if (deliveredWhole) continue;
       const text = sentence.text.trim();
       const heard = words(text).map((word) => word.text);
       if (heard.length === 0 || this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) continue;
@@ -208,9 +227,10 @@ export class LiveShadow {
    *
    * Live readings arrive in the order the finals were delivered, so the expired finals are matched in that order
    * against every live sentence kept, before the cursor too, so each one is used up by its own reading wherever that
-   * lies. A live sentence a final moved the cursor into belongs to that final. One that reads as another expired final
-   * is left for it. The first one that reads as none of them is taken to be this final's reading, misread: it uses the
-   * final up without being excused, so the final cannot excuse a later sentence that only says the same words again.
+   * lies. A live sentence a final moved the cursor into belongs to that final. One that reads as an earlier expired
+   * final is left for it, and one that reads as a later one ends this final's turn: its reading never arrived. The first
+   * one that reads as none of them is taken to be this final's reading, misread: it uses the final up without being
+   * excused, so the final cannot excuse a later sentence that only says the same words again.
    *
    * A sentence reads as a final when it reads as the whole of it, within the time a late reading can take. The newest
    * sentence, while the live session is still reading it, may read as its beginning. Anything less is answered, since a
@@ -218,15 +238,32 @@ export class LiveShadow {
    */
   #lateReadings(): Set<Sentence> {
     const newest = this.#sentences.at(-1);
+    let budget = MAX_LATE_COMPARISONS;
+    // Spends the comparison budget; past it, a pair counts as not reading alike, which only answers more.
+    const affordable = (said: readonly string[], heard: readonly string[]): boolean => {
+      const cost = comparisons(said, heard);
+      if (cost > budget) return false;
+      budget -= cost;
+      return true;
+    };
     const reads = this.#sentences.map((sentence) => {
       const heard = words(sentence.text).map((word) => word.text);
-      return this.#expired.map(
-        (final) =>
-          Math.abs(sentence.heardMs - final.deliveredMs) <= EXPIRED_MATCH_MS &&
+      const known: boolean[] = [];
+      // Worked out only when asked, since the order of the finals settles most sentences after a few comparisons.
+      return (final: number): boolean => {
+        const expired = this.#expired[final]!;
+        known[final] ??=
+          Math.abs(sentence.heardMs - expired.deliveredMs) <= EXPIRED_MATCH_MS &&
           heard.length > 0 &&
-          (coveredWords(final.words, heard) === heard.length ||
-            (sentence === newest && !sentence.closed && coveredWords(heard, final.words) > 0)),
-      );
+          ((closeInLength(expired.words, heard) &&
+            affordable(expired.words, heard) &&
+            coveredWords(expired.words, heard) === heard.length) ||
+            (sentence === newest &&
+              !sentence.closed &&
+              affordable(heard, expired.words) &&
+              coveredWords(heard, expired.words) > 0));
+        return known[final];
+      };
     });
     const late = new Set<Sentence>();
     let from = 0;
@@ -234,12 +271,14 @@ export class LiveShadow {
       for (let index = from; index < this.#sentences.length; index += 1) {
         if (this.#sentences[index]!.aligned) continue;
         const readsAs = reads[index]!;
-        if (readsAs[final]) {
+        if (readsAs(final)) {
           late.add(this.#sentences[index]!);
           from = index + 1;
           return;
         }
-        if (!readsAs.includes(true)) {
+        // Readings arrive in order: once a later final's reading came, this final's can no longer come.
+        if (this.#expired.some((_, other) => other > final && readsAs(other))) return;
+        if (!this.#expired.some((_, other) => other < final && readsAs(other))) {
           from = index + 1;
           return;
         }
@@ -248,8 +287,8 @@ export class LiveShadow {
     return late;
   }
 
-  /** Move the cursor past the live reading of `said`, if one starts at or after it. */
-  #align(said: readonly string[], lastOrdinal: number): boolean {
+  /** Move the cursor past the live reading of `said`, if one starts at or after it. `waiting`: the final waited for it. */
+  #align(said: readonly string[], lastOrdinal: number, waiting = false): boolean {
     let passedOver = false;
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal || sentence.ordinal > lastOrdinal) continue;
@@ -265,6 +304,7 @@ export class LiveShadow {
       // Passing over an unmatched live sentence means this final may be that sentence's, read too differently to
       // match, and the one it did match only looks like it: where the cursor now stands is not known for certain.
       this.#unclear = passedOver;
+      this.#cursorSure = !(passedOver && waiting);
       return true;
     }
     return false;
@@ -274,7 +314,7 @@ export class LiveShadow {
   #settlePending(): void {
     for (let index = 0; index < this.#pending.length; index += 1) {
       const pending = this.#pending[index]!;
-      if (!this.#align(pending.words, pending.lastOrdinal)) continue;
+      if (!this.#align(pending.words, pending.lastOrdinal, true)) continue;
       // Earlier finals were passed over: their live reading went by, too different to match, so it cannot arrive late.
       this.#pending.splice(0, index + 1);
       index = -1;
@@ -336,6 +376,22 @@ function coveredWords(said: readonly string[], heard: readonly string[]): number
     }
   });
   return bestDistance <= allowed ? best : 0;
+}
+
+/** Whether `heard` is long enough, and short enough, to be a whole reading of `said`. */
+function closeInLength(said: readonly string[], heard: readonly string[]): boolean {
+  const target = Math.min(letterCount(said), MAX_COMPARE_CHARS);
+  return Math.abs(letterCount(heard) - target) <= Math.floor(target * EDITS_PER_CHAR);
+}
+
+/** The most letter pairs `coveredWords(said, heard)` compares. */
+function comparisons(said: readonly string[], heard: readonly string[]): number {
+  const target = Math.min(letterCount(said), MAX_COMPARE_CHARS);
+  return target * Math.min(letterCount(heard), target + Math.floor(target * EDITS_PER_CHAR));
+}
+
+function letterCount(text: readonly string[]): number {
+  return text.reduce((count, word) => count + word.length, 0);
 }
 
 /** Edit distance from `target` to every prefix of `text`: entry j is the distance to `text.slice(0, j)`. */

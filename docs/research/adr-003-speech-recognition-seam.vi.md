@@ -57,8 +57,10 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua rồi. Quy tắc
      này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời nguyên câu. Mọi
      quy tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng, với một trường hợp mất được chấp nhận: khi
-     cách đọc live của một bản final không bao giờ tới và, trong vòng ba mươi giây và trước mọi câu mới khác, người dùng nói
-     lại đúng ba từ trở lên đó, câu nói lại bị coi là cách đọc muộn và không được trả lời. Không thể phân biệt trường
+     cách đọc live của một hoặc nhiều bản final không bao giờ tới và người dùng nói lại đúng ba từ trở lên của một
+     trong các bản final đó trong vòng ba mươi giây, câu nói lại bị coi là cách đọc muộn của bản final ấy và không được
+     trả lời, trừ khi trước đó phiên live đã nghe được một câu mới cho mỗi bản final như vậy, tính tới cả bản final được
+     nói lại. Không thể phân biệt trường
      hợp này với transcription live chậm hơn recognizer, và nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi
      lại.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**

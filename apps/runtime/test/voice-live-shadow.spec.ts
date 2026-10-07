@@ -256,6 +256,73 @@ describe("the live reading kept while a recognizer is the source", () => {
     expect(shadow.take()).toBe("");
   });
 
+  it("accepts losing a sentence said again within 30 s while more finals lack their live reading than new sentences came", () => {
+    const { shadow, advance } = shadowAt();
+    // The same command delivered twice, and neither live reading arrives.
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    advance(6000);
+    // One new sentence uses up only the first of the two finals, so the repeat is taken for the second one's reading.
+    shadow.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "sửa cái hàm đọc cấu hình", isFinal: false });
+    expect(shadow.take()).toBe("ừ");
+  });
+
+  it("answers a sentence said again once a new sentence came for each final whose live reading never arrived", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u1", text: "ừ", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "được", isFinal: true });
+    shadow.hear({ utteranceId: "s:u3", text: "sửa cái hàm đọc cấu hình", isFinal: false });
+    expect(shadow.take()).toBe("ừ được sửa cái hàm đọc cấu hình");
+  });
+
+  for (const gapMs of [1500, 3000, 4500]) {
+    it(`answers a command said again ${gapMs} ms after a misread reading, which its waiting final then matched`, () => {
+      const { shadow, advance } = shadowAt();
+      shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
+      // Too far off to match its misread reading, so the final waits.
+      shadow.delivered("chạy lại test đi nha");
+      advance(gapMs);
+      // The person says it again, the waiting final matches the repeat, and the recognizer fails before delivering it.
+      shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+      expect(shadow.take()).toBe("chạy lại test đi nha");
+    });
+  }
+
+  it("keeps the order of a new sentence and a late reading when an earlier final's reading never arrived", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.delivered("xem log lỗi hôm qua đi");
+    shadow.delivered("mở file voice session giúp tui");
+    advance(6000);
+    // Only the second final's live reading arrives, late; then a new sentence, then the second command said again.
+    shadow.hear({ utteranceId: "s:u1", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "rồi chạy lại test cho nó", isFinal: true });
+    shadow.hear({ utteranceId: "s:u3", text: "mở file voice session giúp tui", isFinal: false });
+    expect(shadow.take()).toBe("rồi chạy lại test cho nó mở file voice session giúp tui");
+  });
+
+  it("stays quick with a full backlog of long finals that never found their live reading", () => {
+    const { shadow, advance } = shadowAt();
+    const syllables = ["chạy", "lại", "test", "mở", "file", "voice", "session", "sửa", "hàm", "đọc", "cấu", "hình", "log"];
+    let seed = 1;
+    const sentence = (): string =>
+      Array.from({ length: 250 }, () => {
+        seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+        return syllables[seed % syllables.length]!;
+      }).join(" ");
+    for (let index = 0; index < 16; index += 1) shadow.delivered(sentence());
+    advance(6000);
+    for (let index = 0; index < 16; index += 1) {
+      shadow.hear({ utteranceId: `s:u${index}`, text: sentence(), isFinal: true });
+    }
+    const started = performance.now();
+    shadow.take();
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it("answers again a sentence too short to tell apart, rather than risk losing it", () => {
     const { shadow } = shadowAt();
     shadow.hear({ utteranceId: "s:u1", text: "đồng ý", isFinal: true });

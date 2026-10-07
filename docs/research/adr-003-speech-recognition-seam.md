@@ -58,10 +58,11 @@ them before they mean anything.
      later sentence that only says the same words again; that misread sentence is answered again. A final that a later
      final's match passed over is not remembered, because its live reading already went by. The rule works on whole
      sentences, so a live sentence that holds a delivered part and an undelivered part is answered whole. Every rule
-     prefers answering words twice to losing them, with one accepted loss: when a final's live reading never arrives
-     and, within thirty seconds and before any other new sentence, the person says the same three or more words again, the
-     repeat is taken for the late reading and is not answered. It cannot be told apart from a live transcription that
-     lags the recognizer, and answering it would re-send every sentence of a lagging stretch.
+     prefers answering words twice to losing them, with one accepted loss: when the live readings of one or more finals
+     never arrive and the person says the same three or more words as one of them again within thirty seconds, the
+     repeat is taken for that final's late reading and is not answered, unless before it the live session heard one new
+     sentence for each such final, up to and including the one said again. It cannot be told apart from a live
+     transcription that lags the recognizer, and answering it would re-send every sentence of a lagging stretch.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;
