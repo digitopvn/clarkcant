@@ -104,12 +104,27 @@ export interface NodeServerOptions {
   handle?: typeof handleRequest;
 }
 
+/**
+ * How long the node keeps an idle connection open between requests.
+ *
+ * Node's default is 5 s, closed about 1 s later. A client that reuses the connection without honouring the
+ * `Keep-Alive: timeout` hint — Node's `http.Agent` without a `timeout`, which Playwright's request client is — can
+ * send its next request just as the node closes the socket, and gets `ECONNRESET` (measured on Windows: 25 of 240
+ * requests after a 6 s idle gap with the default, none at 65 s). 65 s puts that race far beyond the pauses a person or
+ * a script leaves between calls. Shutdown is not delayed: the node closes idle connections when it stops.
+ * `headersTimeout` stays just above it so the header deadline never cuts a kept connection first.
+ */
+export const NODE_KEEP_ALIVE_TIMEOUT_MS = 65_000;
+
 export function createNodeServer(options: NodeServerOptions): Server {
   const warn = options.onWarning ?? ((line: string) => process.stderr.write(`${line}\n`));
 
-  return createServer((request, response) => {
+  const server = createServer((request, response) => {
     handleOne({ ...options, bodyLimitFor: options.bodyLimitFor ?? bodyLimitForPath }, request, response, warn);
   });
+  server.keepAliveTimeout = NODE_KEEP_ALIVE_TIMEOUT_MS;
+  server.headersTimeout = NODE_KEEP_ALIVE_TIMEOUT_MS + 1_000;
+  return server;
 }
 
 function handleOne(
