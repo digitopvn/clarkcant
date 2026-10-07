@@ -1,4 +1,5 @@
 import {
+  type DirectorySourceRef,
   type InstallPlan,
   type InstallState,
   type Instant,
@@ -252,6 +253,8 @@ export function activateGeneration(
     widgetIds?: readonly string[];
     /** For a local install: the digest of the snapshot it runs from; see `PackageGeneration.snapshotDigest`. */
     snapshotDigest?: string;
+    /** The directory source the installed listing came from; see `PackageGeneration.directorySource`. */
+    directorySource?: DirectorySourceRef;
     nativeExtensionChanged: boolean;
     skillOrPromptChanged: boolean;
   },
@@ -286,6 +289,7 @@ export function activateGeneration(
       grantedCapabilities: input.currentPlan.grantedCapabilities,
       ...(input.widgetIds === undefined ? {} : { widgetIds: [...input.widgetIds] }),
       ...(input.snapshotDigest === undefined ? {} : { snapshotDigest: input.snapshotDigest }),
+      ...(input.directorySource === undefined ? {} : { directorySource: { ...input.directorySource } }),
       // Carried from the plan rather than re-derived: what is running and what was consented to are two rows.
       ...(input.currentPlan.lockRef === undefined
         ? {}

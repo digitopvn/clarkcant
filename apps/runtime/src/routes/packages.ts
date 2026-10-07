@@ -2,14 +2,12 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { PERSON_ONLY_REFUSAL, nowInstant } from "@clarkcant/contracts";
-import {
+import { readDirectory,
   INSTALL_VERIFICATION,
   activeGeneration,
-  directoryIndexPath,
   installedWidgets,
   listInstalledPackages,
   listRestorablePackages,
-  readDirectoryIndex,
   readPackage,
   readPackageFile,
   resolveFrameAncestors,
@@ -78,7 +76,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
   if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
     const deps = { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId };
     const policy = resourceProfilePolicy({ db: runtime.db, principalId: runtime.identity.ownerPrincipalId, now: nowInstant });
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
     return json(200, {
       /*
        * Each with the resource profile it asked for and what this node granted, so package details show the bounds the
@@ -156,7 +154,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       now: nowInstant,
       newId: services.conductor.newId,
     });
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
 
     return json(200, {
       packages: installed.map((entry) => {
@@ -250,6 +248,10 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
         // Only ever a reason to refuse: the node digests the files itself and compares, so a forged value installs nothing.
         ...(typeof parsed.value.contentDigest === "string" && parsed.value.contentDigest !== ""
           ? { contentDigest: parsed.value.contentDigest }
+          : {}),
+        // Like the content digest, only ever a reason to refuse or a choice among sources that already list it.
+        ...(typeof parsed.value.sourceId === "string" && parsed.value.sourceId !== "" && parsed.value.sourceId.length <= 120
+          ? { sourceId: parsed.value.sourceId }
           : {}),
         ...(Array.isArray(parsed.value.requestedCapabilityRefs)
           ? {
@@ -412,7 +414,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
   ) {
     const packageId = segments[1] ?? "";
     const version = segments[2] ?? "";
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    const index = readDirectory({ env: process.env, dataDir: runtime.dataDir });
     if (index.kind !== "configured") {
       return fail(
         409,

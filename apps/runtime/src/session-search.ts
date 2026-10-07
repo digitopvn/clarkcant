@@ -462,6 +462,12 @@ export function textOfBlock(block: MessageBlock): string {
     case "command-card":
       // What the command listed, so a search for a conversation's name finds the /sessions answer that offered it.
       return [block.title, ...block.rows.map((row) => row.label)].join(" — ");
+    case "changelog-card":
+      // The versions and what they changed, so "when did the timeline fix land" finds the answer that listed it.
+      return [
+        `Clark ${block.installed.version}`,
+        ...block.releases.map((release) => `${release.version}: ${release.entries.map((entry) => entry.summary).join("; ")}`),
+      ].join(" — ");
     case "browser-session-card":
     case "computer-session-card":
       return `${block.label} — ${block.driver === "user" ? "bạn" : "agent"} đang điều khiển`;

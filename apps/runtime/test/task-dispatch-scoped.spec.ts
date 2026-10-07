@@ -89,7 +89,10 @@ function makeRepo(parent: string, name = "repo"): string {
 
 function testNode(): { runtime: Runtime; conductor: ConductorDeps } {
   const runtime = bootRuntime({ dataDir: tempDir("cc-scoped-node-"), label: "scoped dispatch test node" });
-  cleanup.push(() => runtime.close());
+  // A test may have closed it already, the way a node's shutdown does.
+  cleanup.push(() => {
+    if (runtime.db.isOpen) runtime.close();
+  });
   runtime.db
     .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
     .run(CONVERSATION_ID, runtime.identity.nodeId, AT, AT);
@@ -509,5 +512,94 @@ describe("stopping a task stops the commands its worker started on the host", ()
     release?.(new Error("the worker exited on SIGKILL"));
     await waitUntil(() => settled.length > 0, 5_000);
     expect(settled[0]).toContain("stopped on request");
+  }, 30_000);
+});
+
+describe("a node that closes waits for its tasks to tidy up", () => {
+  /** A repository task whose worker waits until the test lets it end. */
+  function heldRepositoryRun(): {
+    runtime: Runtime;
+    dispatcher: TaskDispatcher;
+    task: TaskRecord;
+    worktreesDir: string;
+    kept: string[];
+    settled: string[];
+    started: () => boolean;
+    finish: () => void;
+  } {
+    const { runtime, conductor } = testNode();
+    const owned = tempDir("cc-scoped-owned-");
+    const repo = makeRepo(owned);
+    const worktreesDir = join(tempDir("cc-scoped-data-"), "worktrees");
+    const task = dispatchedTask(conductor, runtime.identity.nodeId, {
+      origin: AUTOMATION,
+      resources: [{ kind: "repository", path: repo }],
+    });
+    const kept: string[] = [];
+    const settled: string[] = [];
+    let workerStarted = false;
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dispatcher = dispatcherFor({
+      conductor,
+      projectRoots: () => [owned],
+      ownedRoots: () => [owned],
+      worktreesDir: () => worktreesDir,
+      commandDeps: () => commandDeps(owned),
+      onWorktreeKept: (input) => kept.push(input.path),
+      onSettled: (input) => settled.push(input.message),
+      runWorker: async () => {
+        workerStarted = true;
+        await held;
+        return verifiedResult();
+      },
+    });
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: CONTROLLED_CODE_TASK.ref, executionNodeId: runtime.identity.nodeId });
+    return { runtime, dispatcher, task, worktreesDir, kept, settled, started: () => workerStarted, finish: () => release?.() };
+  }
+
+  it("keeps the database open until a run that outlasts the grace has finished", async () => {
+    const run = heldRepositoryRun();
+    await waitUntil(run.started, 10_000);
+
+    // The node's shutdown: refuse new work, stop what runs, wait for the dispatcher, then close the database.
+    run.dispatcher.close();
+    run.dispatcher.stopAll();
+    let openWhenClosed: boolean | undefined;
+    const closed = run.dispatcher.drain(10_000).then((drained) => {
+      openWhenClosed = run.runtime.db.isOpen;
+      run.runtime.close();
+      return drained;
+    });
+
+    // Past any fixed grace, the run is still tidying up, and the database is still under it.
+    expect(await run.dispatcher.drain(200)).toBe(false);
+    expect(run.runtime.db.isOpen).toBe(true);
+    expect(run.dispatcher.holds(run.task.taskId)).toBe(true);
+
+    run.finish();
+    expect(await closed).toBe(true);
+    expect(openWhenClosed).toBe(true);
+    expect(run.settled).toHaveLength(1);
+    expect(run.dispatcher.runningCount()).toBe(0);
+    // Its clean worktree went before the database closed.
+    expect(run.kept).toEqual([]);
+    expect(existsSync(join(run.worktreesDir, run.task.taskId))).toBe(false);
+  }, 30_000);
+
+  it("still takes a run's worktrees away when the database closed under it", async () => {
+    const run = heldRepositoryRun();
+    await waitUntil(run.started, 10_000);
+
+    // Waited on before the database goes, so the run's own failure to report is not left unhandled.
+    const drained = run.dispatcher.drain(10_000);
+    run.runtime.close();
+    run.finish();
+
+    expect(await drained).toBe(true);
+    expect(run.kept).toEqual([]);
+    expect(existsSync(join(run.worktreesDir, run.task.taskId))).toBe(false);
   }, 30_000);
 });

@@ -161,6 +161,12 @@ node tools/setup.mjs            # keeps .env, reinstalls dependencies or rebuild
 docker compose up -d --build    # with Docker
 ```
 
+This is the only update path today. Clark has no self-updater and no published releases yet. Versioning, the stable
+and beta channels and the planned signed releases are described in [releases](releases.md). To see what the
+installed version changed, ask Clark "what's new?", type `/changelog`, or open Settings → Experience → Version & what's
+new. A checkout run from source carries the committed baseline notes, so Clark names the commit those notes reach;
+changes after that commit are not listed, and a `git pull` does not add them.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |

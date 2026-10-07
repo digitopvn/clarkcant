@@ -229,6 +229,26 @@ const FIXTURES = {
     ],
     updatedAt: AT,
   },
+  "changelog-card": {
+    type: "changelog-card",
+    owner: "host",
+    cardId: "card_changes",
+    installed: { version: "0.3.0", channel: "stable" },
+    releases: [
+      {
+        version: "0.3.0",
+        kind: "release",
+        channel: "stable",
+        date: "2026-10-06",
+        previousVersion: "0.2.1",
+        commitRange: { from: "806c39686b2b531a4671f519e7d8072041b2a494", to: "a448d3e4a448d3e4a448d3e4a448d3e4a448d3e4" },
+        entries: [{ kind: "fix", summary: "giữ tin nhắn đang chờ", scope: "runtime", commit: "a448d3e4a448" }],
+        omittedEntries: 0,
+      },
+    ],
+    source: "https://github.com/digitopvn/clarkcant/releases",
+    updatedAt: AT,
+  },
 };
 
 describe("the text of every host card", () => {
@@ -255,6 +275,7 @@ describe("the text of every host card", () => {
     expect(textOfBlock(asBlock(FIXTURES["browser-session-card"]))).toContain("agent");
     expect(textOfBlock(asBlock(FIXTURES["computer-session-card"]))).toContain("bạn");
     expect(textOfBlock(asBlock(FIXTURES["terminal-session-card"]))).toContain("/home/user/clarkcant");
+    expect(textOfBlock(asBlock(FIXTURES["changelog-card"]))).toContain("0.3.0: giữ tin nhắn đang chờ");
   });
 
   it("names the answers a question offered, not only the question", () => {
