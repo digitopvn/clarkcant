@@ -25,7 +25,9 @@ import {
  *     is `{ "entries": [{ "id": "u001", "wav": "u001.wav" }] }`, paths relative to the manifest, each a PCM16 16 kHz
  *     mono WAV of the corpus utterance with that id. Recognizers: `gemini-transcribe-live` (dedicated, with the
  *     corpus vocabulary) and `gemini-live` (the conversational baseline's input transcription). The key is read from
- *     GEMINI_API_KEY and never printed; without one the run stops and says which gate is missing.
+ *     GEMINI_API_KEY and never printed; without one the run stops and says which gate is missing. The run exits 3 when
+ *     a recording came back with a session term the person did not say (see `vocabulary-bias` in the corpus), and
+ *     names the `vocabulary-bias` entries the manifest left unrecorded.
  *
  * Adding Soniox, Deepgram or a local recognizer is an adapter implementing `SpeechRecognitionAdapter` and one entry
  * in `AUDIO_RECOGNIZERS`; nothing in the scorer changes.
@@ -90,8 +92,8 @@ async function main(): Promise<number> {
   });
   const corpus = parseCorpus(JSON.parse(readFileSync(values.corpus ?? DEFAULT_CORPUS, "utf8")));
 
+  const id = values.recognizer ?? "gemini-transcribe-live";
   if (values.audio !== undefined) {
-    const id = values.recognizer ?? "gemini-transcribe-live";
     const recognize = AUDIO_RECOGNIZERS[id];
     if (recognize === undefined) {
       process.stderr.write(`unknown recognizer ${id}; known: ${Object.keys(AUDIO_RECOGNIZERS).join(", ")}\n`);
@@ -122,6 +124,15 @@ async function main(): Promise<number> {
   const context = corpusContext(corpus);
   const results = recognizersIn(corpus).map((recognizer) => benchmarkRecognizer(corpus, recognizer, context));
   process.stdout.write(`${formatBenchmarkReport(corpus, results)}\n`);
+  if (values.audio === undefined) return 0;
+  // The audio run is the regression check for vocabulary bias: a session term written over what was said fails it.
+  const audioResult = results.find((result) => result.recognizer === `${id}-audio`);
+  const uncovered = corpus.utterances.filter((utterance) => utterance.categories.includes("vocabulary-bias") && utterance.recognizers[`${id}-audio`] === undefined);
+  if (uncovered.length > 0) process.stderr.write(`not checked for vocabulary bias, no recording: ${uncovered.map((utterance) => utterance.id).join(", ")}\n`);
+  if (audioResult !== undefined && audioResult.substitutions.length > 0) {
+    process.stderr.write(`vocabulary substitution: ${audioResult.substitutions.join(", ")} heard a session term the person did not say\n`);
+    return 3;
+  }
   return 0;
 }
 

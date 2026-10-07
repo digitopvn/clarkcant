@@ -89,9 +89,9 @@ const MAX_FORM_WORDS = 6;
  * The kinds a one-character slip may be corrected into. Names people say - glossary words, providers, models - have one
  * spelling and no near neighbours that mean something else. Symbols, paths, branches and packages do: `setUser` and
  * `getUser`, `app.ts` and `app.tsx` are one edit apart and are different things, so for them only an exact spoken form
- * counts.
+ * counts. A recognizer biased with a vocabulary near-matches without evidence, so it is given only these kinds.
  */
-const NEAR_MATCHABLE_KINDS: ReadonlySet<RecognitionTerm["kind"]> = new Set(["glossary", "provider", "model"]);
+export const NEAR_MATCHABLE_KINDS: ReadonlySet<RecognitionTerm["kind"]> = new Set(["glossary", "provider", "model"]);
 /** Characters that join a word to the next inside one written token: `gemini-live.tsx`, `@scope/name`, `a/b`. */
 const JOINER = /[._/\\@#:-]/u;
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;

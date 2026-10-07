@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { transcribeVocabulary } from "../src/gemini-transcribe.ts";
 import { pcmFromWav } from "../src/transcription-benchmark-cli.ts";
 import { normalizeTranscript } from "../src/transcript-normalizer.ts";
 import { benchmarkRecognizer, corpusContext, formatBenchmarkReport, parseCorpus, recognizersIn, unstableReferences } from "../src/transcription-benchmark.ts";
@@ -124,6 +125,46 @@ describe("the normaliser on the corpus", () => {
     expect(report).toContain("| simulated-live-baseline | normalized |");
     expect(report).toContain(`Corpus: ${corpus.utterances.length} utterances`);
     expect(report).toContain("Canonical references the normaliser would change: 0.");
+  });
+});
+
+describe("vocabulary bias in an audio run", () => {
+  const biased = corpus.utterances.filter((utterance) => utterance.categories.includes("vocabulary-bias"));
+
+  it("carries a person's name, another model version and a near-neighbour symbol for the audio run to check", () => {
+    expect(biased.map((utterance) => utterance.id)).toEqual(["u069", "u072", "u075"]);
+  });
+
+  it("keeps the listed twin of each one out of what the recognizer is biased with", () => {
+    const sent = transcribeVocabulary(corpusContext(corpus));
+    for (const twin of ["Jev", "claude-opus-4", "getUser"]) expect(sent).not.toContain(twin);
+  });
+
+  it("reports a session term written over what was said, as the recognizer heard it on audio", () => {
+    // What the dedicated recognizer returned for these recordings when it was biased with the full vocabulary.
+    const run = structuredClone(corpus);
+    const heard: Record<string, string> = {
+      u069: "Sửa hàm getUser cho đúng type.",
+      u072: "Hi anh Jev, bên design xem màu này ổn không?",
+      u075: "Đổi sang claude-opus-4 thử xem.",
+    };
+    for (const utterance of run.utterances) {
+      const text = heard[utterance.id];
+      if (text !== undefined) utterance.recognizers["gemini-transcribe-live-audio"] = text;
+    }
+    const result = benchmarkRecognizer(run, "gemini-transcribe-live-audio");
+    expect(result.substitutions).toEqual(["u069", "u072", "u075"]);
+    expect(formatBenchmarkReport(run, [result])).toContain("- gemini-transcribe-live-audio: 3 (u069, u072, u075)");
+
+    for (const utterance of run.utterances) {
+      if (heard[utterance.id] !== undefined) utterance.recognizers["gemini-transcribe-live-audio"] = `${utterance.reference}.`;
+    }
+    expect(benchmarkRecognizer(run, "gemini-transcribe-live-audio").substitutions).toEqual([]);
+  });
+
+  it("counts a destructive command heard as a harmless one, and not a casing slip", () => {
+    // `git stash` heard as `git status`; `zod`, `electron` and `react` heard in lower case are not substitutions.
+    expect(benchmarkRecognizer(corpus, "simulated-live-baseline").substitutions).toEqual(["u003", "u050"]);
   });
 });
 

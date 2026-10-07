@@ -10,6 +10,7 @@ import {
   buildTranscribeSetupMessage,
   parseTranscribeMessage,
   transcribeVocabulary,
+  vocabularyBias,
 } from "../src/gemini-transcribe.ts";
 import { containsCredential } from "../src/protocol.ts";
 
@@ -120,13 +121,55 @@ describe("the transcription setup", () => {
   it("sends canonical spellings only, most relevant first, never an alias, and never more than the bound", () => {
     const words = transcribeVocabulary(CONTEXT);
     expect(words.length).toBeLessThanOrEqual(GEMINI_TRANSCRIBE_MAX_VOCABULARY);
-    expect(words).toContain("useVoiceSession");
-    expect(words).toContain("pnpm");
-    // "pnp m" is a known mis-hearing of pnpm: biasing towards it would be the opposite of the point.
-    expect(words).not.toContain("pnp m");
-    expect(words.indexOf("useVoiceSession")).toBeLessThan(words.indexOf("Electron"));
+    expect(words).toContain("TypeScript");
+    expect(words).toContain("stale closure");
+    // "stale closer" is a known mis-hearing: biasing towards it would be the opposite of the point.
+    expect(words).not.toContain("stale closer");
+    expect(new Set(words.map((word) => word.toLowerCase())).size).toBe(words.length);
     expect(transcribeVocabulary(undefined)).toEqual([]);
     expect(transcribeVocabulary(CONTEXT, 3)).toHaveLength(3);
+  });
+
+  // Measured on audio: with these terms in the vocabulary, "Jeff" came back as Jev, "claude opus 3" as claude-opus-4
+  // and setUser as getUser - and, with getUser withheld, as useState.
+  it("sends no term the recognizer could write over a different word the person said", () => {
+    const context = buildRecognitionContext({
+      symbols: ["getUser", "redactSecrets"],
+      models: ["claude-opus-4", "claude-sonnet-4-5", "gemini-3.5-transcribe-live", "gpt-5", "o3"],
+      issues: ["#468"],
+      branches: ["feat/468-code-switching-transcription"],
+      paths: ["apps/runtime/src/voice-session.ts"],
+      packages: ["@clarkcant/voice-adapters"],
+      tools: ["control_app"],
+      providers: ["Anthropic"],
+    });
+    const words = transcribeVocabulary(context);
+
+    // Names that real words and other names sound like.
+    for (const name of ["Jev", "Pi", "Zod"]) expect(words).not.toContain(name);
+    // A version is the part a bias would change, so a model goes as its family.
+    for (const numbered of ["claude-opus-4", "claude-sonnet-4-5", "gemini-3.5-transcribe-live", "gpt-5", "o3", "#468"]) {
+      expect(words).not.toContain(numbered);
+    }
+    expect(words).toEqual(expect.arrayContaining(["claude-opus", "claude-sonnet", "gpt"]));
+    expect(words.filter((word) => word.toLowerCase() === "gemini")).toHaveLength(1);
+    // Identifiers have real neighbours and stay on the node, where the normaliser restores an exact spoken form.
+    for (const identifier of ["getUser", "redactSecrets", "useEffect", "useState", "feat/468-code-switching-transcription", "apps/runtime/src/voice-session.ts", "@clarkcant/voice-adapters", "control_app", "git stash", "pnpm verify", "ClarkCant"]) {
+      expect(words).not.toContain(identifier);
+    }
+    // Glossary words, providers and acronyms still go.
+    expect(words).toEqual(expect.arrayContaining(["Anthropic", "Gemini", "TypeScript", "Playwright", "stale closure", "pnpm", "MCP", "API"]));
+  });
+
+  it("reads each rule from the term alone, so the same term is treated the same in every session", () => {
+    expect(vocabularyBias({ text: "claude-opus-4", kind: "model", weight: 1 })).toBe("claude-opus");
+    expect(vocabularyBias({ text: "gpt-5", kind: "model", weight: 1 })).toBe("gpt");
+    expect(vocabularyBias({ text: "o3", kind: "model", weight: 1 })).toBeUndefined();
+    expect(vocabularyBias({ text: "Jev", kind: "glossary", weight: 1 })).toBeUndefined();
+    expect(vocabularyBias({ text: "SSE", kind: "glossary", weight: 1 })).toBe("SSE");
+    expect(vocabularyBias({ text: "Playwright", kind: "glossary", weight: 1 })).toBe("Playwright");
+    expect(vocabularyBias({ text: "getUser", kind: "symbol", weight: 1 })).toBeUndefined();
+    expect(vocabularyBias({ text: "#468", kind: "issue", weight: 1 })).toBeUndefined();
   });
 });
 
@@ -158,7 +201,7 @@ describe("a transcription session", () => {
     expect(urls[0]).toContain(`key=${CREDENTIAL}`);
     for (const payload of socket.sent) expect(containsCredential(payload, CREDENTIAL)).toBe(false);
     const setup = socket.sentObjects()[0]?.["setup"] as Record<string, unknown>;
-    expect((setup["inputAudioTranscription"] as Record<string, unknown>)["customVocabulary"]).toContain("useVoiceSession");
+    expect((setup["inputAudioTranscription"] as Record<string, unknown>)["customVocabulary"]).toContain("TypeScript");
   });
 
   it("reports interim revisions and then one final per utterance, with fresh ids for the next", async () => {

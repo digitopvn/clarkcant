@@ -45,6 +45,13 @@ export interface RecognizerBenchmark {
   abstained: number;
   /** Utterances where normalisation lost a term the raw text had, or changed one that needed no change. */
   regressions: string[];
+  /**
+   * Utterances whose raw text holds a session term the person did not say: a different word heard as a listed one.
+   *
+   * On a recognizer biased with the vocabulary this is the bias writing over speech; the `vocabulary-bias` entries
+   * (a person's name, another model version, a near-neighbour symbol) exist to catch it in an audio run.
+   */
+  substitutions: string[];
 }
 
 /** Validate a parsed corpus at the boundary, so a malformed file fails with the utterance that is wrong. */
@@ -94,9 +101,13 @@ export function benchmarkRecognizer(corpus: BenchmarkCorpus, recognizer: string,
   let changes = 0;
   let abstained = 0;
   const regressions: string[] = [];
+  const substitutions: string[] = [];
   for (const utterance of corpus.utterances) {
     const heard = utterance.recognizers[recognizer];
     if (heard === undefined) continue;
+    // A term the reference holds in another casing (`zod` for `Zod`) was said; a casing slip is not a substitution.
+    const said = utterance.reference.toLowerCase();
+    if (context.terms.some((term) => termPreserved(term.text, heard) && !termPreserved(term.text.toLowerCase(), said))) substitutions.push(utterance.id);
     const result = normalizeTranscript(heard, context);
     changes += result.changes.length;
     abstained += result.abstained.length;
@@ -106,7 +117,7 @@ export function benchmarkRecognizer(corpus: BenchmarkCorpus, recognizer: string,
     const changedCorrect = heard === utterance.reference && result.text !== heard;
     if (lostTerm || changedCorrect) regressions.push(utterance.id);
   }
-  return { recognizer, raw: scoreTranscripts(raw), normalized: scoreTranscripts(normalized), changes, abstained, regressions };
+  return { recognizer, raw: scoreTranscripts(raw), normalized: scoreTranscripts(normalized), changes, abstained, regressions, substitutions };
 }
 
 /**
@@ -151,6 +162,10 @@ export function formatBenchmarkReport(corpus: BenchmarkCorpus, results: readonly
       });
       lines.push(`| ${result.recognizer} | ${stage} | ${cells.join(" | ")} |`);
     }
+  }
+  lines.push("", "Session terms heard where the person said something else (raw):");
+  for (const result of results) {
+    lines.push(`- ${result.recognizer}: ${result.substitutions.length}${result.substitutions.length === 0 ? "" : ` (${result.substitutions.join(", ")})`}`);
   }
   return lines.join("\n");
 }
