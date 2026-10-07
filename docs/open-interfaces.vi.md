@@ -181,16 +181,22 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   `hostWritten: { "kind": "host-continuation", "version": 1 }`. Client vẽ tin nhắn như vậy thành một dòng lặng lẽ của
   host bằng ngôn ngữ của chính client ("Đã duyệt — Clark tiếp tục") thay vì lời của người dùng, và xử lý y như vậy với
   mọi kind hoặc version nó không biết; tìm kiếm và phần tóm tắt cho phiên mới đều bỏ qua nó.
-- Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào
-  lượt đang chạy, ngắt lượt đó, hoặc chạy nền. `references` và `attachmentIds` của nó được kiểm tra trước, nên một tham
-  chiếu hay tệp không còn dùng được, hoặc một `attachmentIds` không phải danh sách id, đều bị từ chối với cùng mã `400`
-  dù có lượt đang trả lời hay không, và lượt đang chạy được giữ nguyên. Một tin nhắn có nguồn gốc khác với lượt đang
-  chạy, một tin nhắn gõ trong lúc đang có lượt nói bằng giọng, hoặc một tin nhắn có tệp đính kèm, không bao giờ được
-  nhập (steer) vào lượt đó, và một tin nhắn có tệp đính kèm cũng không bao giờ chạy nền. Khi steer, hoặc chạy nền đối
-  với tin nhắn có tệp đính kèm, được chọn cho một tin nhắn như vậy, nó cũng không ngắt lượt đang chạy: nó chờ và được
-  trả lời thành một lượt riêng với nguồn gốc và tệp của chính nó, và Stop hủy được nó trong lúc chờ. Lượt đang chạy chỉ
-  bị ngắt khi bộ quyết định chọn ngắt, khi tin nhắn mới có tham chiếu, hoặc khi chạy nền mà không có worker nào nhận.
-  Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký audit cùng nguồn gốc.
+- Trên route `/messages` thường, `attachmentIds` được kiểm tra trước mọi thứ khác xử lý tin nhắn. Một tệp không còn
+  dùng được, hoặc một `attachmentIds` không phải danh sách id, bị từ chối với `400 ATTACHMENT_NOT_AVAILABLE` trên mọi
+  đường đi: lệnh gạch chéo (slash command), lệnh ứng dụng gõ bằng chữ, hay tin nhắn gửi trong lúc có lượt đang trả lời,
+  và lượt đang chạy được giữ nguyên. Một tin nhắn có tệp đính kèm không bao giờ được host trả lời như một lệnh gạch chéo
+  hay lệnh ứng dụng gõ bằng chữ, vì những câu trả lời đó, cùng việc chạy nền mà `/background` khởi động, chỉ mang theo
+  chữ: tin nhắn được lưu cùng tệp của nó và được trả lời thành một lượt, với đúng phần chữ đã gõ.
+- Cũng trên route đó, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
+  đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
+  không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có
+  nguồn gốc khác với lượt đang chạy, một tin nhắn gõ trong lúc đang có lượt nói bằng giọng, hoặc một tin nhắn có tệp
+  đính kèm, không bao giờ được nhập (steer) vào lượt đó, và một tin nhắn có tệp đính kèm không bao giờ chạy nền. Khi bộ
+  quyết định chọn steer cho một tin nhắn như vậy, hoặc chọn chạy nền cho một tin nhắn có tệp đính kèm, tin nhắn đó cũng
+  không ngắt lượt đang chạy: nó chờ và được trả lời thành một lượt riêng với nguồn gốc và tệp của chính nó, và Stop
+  hủy được nó trong lúc chờ. Lượt đang chạy chỉ bị ngắt khi bộ quyết định chọn ngắt, khi tin nhắn mới có tham chiếu,
+  hoặc khi chạy nền mà không có worker nào nhận. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký audit cùng
+  nguồn gốc.
 - Một lượt chỉ đang được chuẩn bị — phiên của nó còn đang được tạo, hoặc việc đổi model còn chưa xong — thì chưa trả
   lời. Stop vẫn chạm tới nó, nhưng tin nhắn mới không được quyết định dựa trên nó: tin nhắn đó không bao giờ dừng nó, và
   được trả lời sau nó như mục tiếp theo mô tả. Hai tin nhắn gửi liên tiếp ngay sau khi đổi model đều được trả lời.

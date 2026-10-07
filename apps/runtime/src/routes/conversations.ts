@@ -1177,35 +1177,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
     }
 
-    /*
-     * A typed command to the application.
-     *
-     * Checked before the turn machinery, because "mở settings" is not something to steer into a running answer. An
-     * intent is answered by the host and recorded with source "chat"; a command-shaped sentence that maps to nothing
-     * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
-     * anything else falls through untouched and reaches the agent exactly as before.
-     */
-    // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
-    const slash = parseSlashCommand(text);
-    if (slash !== undefined) {
-      const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
-      const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
-      return json(200, { accepted: true, messageId: appended.messageId, ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }) });
-    }
-
-    const asked = typedAppIntent(services, conversationId, text, at);
-    if (asked.kind !== "none") {
-      const said = answerTypedIntent(services, conversationId, asked);
-      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
-      return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
-    }
-
-    // Checked before anything acts on the message, so a reference that no longer holds refuses the whole message by
-    // name instead of a turn starting without the thing it was asked about.
-    const references = await resolveComposerReferences(services, { value: parsed.value.references });
-    if (!references.ok) return fail(400, "REFERENCE_NOT_AVAILABLE", references.message);
-    // Resolved here as well, before anything is joined, stopped or started, so a file that is not available refuses the
-    // message the same way whether or not a turn is answering, and never after the running answer was cut off.
+    // Resolved before anything answers, joins, stops or starts work for the message, so a file that is not available
+    // refuses the message the same way on every path, and never after the running answer was cut off.
     const attachments = resolveAttachmentRefs({
       db: services.runtime.db,
       principalId: runtime.identity.ownerPrincipalId,
@@ -1214,6 +1187,39 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     });
     if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
     const attachedFiles = attachments.refs.length > 0;
+
+    /*
+     * A typed command to the application.
+     *
+     * Checked before the turn machinery, because "mở settings" is not something to steer into a running answer. An
+     * intent is answered by the host and recorded with source "chat"; a command-shaped sentence that maps to nothing
+     * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
+     * anything else falls through untouched and reaches the agent exactly as before.
+     *
+     * Not for a message with attachments: a host answer, and the background run `/background` starts, carry only words,
+     * so the files would be dropped without a word. Such a message is stored with its files and answered as a turn.
+     */
+    if (!attachedFiles) {
+      // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
+      const slash = parseSlashCommand(text);
+      if (slash !== undefined) {
+        const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
+        const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
+        return json(200, { accepted: true, messageId: appended.messageId, ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }) });
+      }
+
+      const asked = typedAppIntent(services, conversationId, text, at);
+      if (asked.kind !== "none") {
+        const said = answerTypedIntent(services, conversationId, asked);
+        const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
+        return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
+      }
+    }
+
+    // Checked before anything acts on the message, so a reference that no longer holds refuses the whole message by
+    // name instead of a turn starting without the thing it was asked about.
+    const references = await resolveComposerReferences(services, { value: parsed.value.references });
+    if (!references.ok) return fail(400, "REFERENCE_NOT_AVAILABLE", references.message);
 
     /*
      * A message sent while the assistant is still working.
