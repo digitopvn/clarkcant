@@ -51,7 +51,7 @@ The key belongs in the runtime's environment or its local, gitignored `.env`. It
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
 referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt. Khi cả hai nơi đều có,
 key lưu trong thẻ được ưu tiên, theo quy tắc chung cho mọi credential của nhà cung cấp; key trong môi
-trường chỉ được dùng khi thẻ chưa có key. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. Token của Cloudflare chỉ được đọc từ môi
+trường chỉ được dùng khi thẻ chưa có key. Lưu hoặc xoá key trong thẻ có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. Token của Cloudflare chỉ được đọc từ môi
 trường: không có thẻ cài đặt cho nó, và một secret được lưu cho mục đích khác không bao giờ được dùng
 làm credential của decision provider.
 
@@ -233,7 +233,9 @@ selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
 
-Dạng thứ hai chỉ xuất hiện khi Cloudflare được chọn.
+Dạng thứ hai chỉ xuất hiện khi Cloudflare được chọn. Dòng này mô tả node lúc khởi động: key TypeSafe
+được lưu hoặc xoá trong thẻ cài đặt sau đó thay đổi cách selector hoạt động mà không làm thay đổi dòng
+này.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one
