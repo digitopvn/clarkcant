@@ -1,11 +1,12 @@
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect } from "vitest";
 
 import { observationIdSchema, type AutomationAction, type Observation } from "@clarkcant/contracts";
 
+import { removeTestDirectory, trackedTests } from "../../../tools/test-cleanup.ts";
 import { createDriver } from "../src/driver.ts";
 import type { BrowserDriver } from "../src/driver.ts";
 
@@ -27,6 +28,13 @@ const PAGE = `<!doctype html>
   <input id="pw" name="password" type="password" aria-label="Password" />
 </body></html>`;
 
+/**
+ * Every test starts and stops a Chromium. Closing one takes under 200 ms alone, but up to 12 s while the full suite runs
+ * on a loaded Windows machine, and tests that take under 1 s alone took up to 10 s there. The budget covers that with
+ * room to spare, as `click-answer.spec.ts` already gives its browser tests.
+ */
+const { it, settled } = trackedTests(60_000);
+
 let server: Server;
 let origin: string;
 let dir: string;
@@ -44,9 +52,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await settled();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   // Chromium has closed, but Windows may briefly retain a lock on a profile file.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 /**
