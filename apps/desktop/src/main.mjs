@@ -66,6 +66,10 @@ import {
   nextWindowMode,
 } from "./window-mode.mjs";
 import { placementToRemember, restoredPlacement } from "./window-placement.mjs";
+import { applyChromiumSwitches } from "./chromium-switches.mjs";
+
+// Before anything else and before the app is ready: Electron reads the feature list once the main script has run.
+applyChromiumSwitches(app.commandLine, process.platform);
 
 const here = dirname(fileURLToPath(import.meta.url));
 /*
