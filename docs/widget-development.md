@@ -2925,9 +2925,18 @@ Nothing goes through npm, the Marketplace or a directory index, and nothing is p
 `node_modules` folder is left out of each build; built output such as `dist` is kept.
 
 Clark develops widgets in its own widget workspace (`<dataDir>/widget-workspace`), where it scaffolds a new widget. To
-have Clark work on a widget project you already have, copy its folder into the widget workspace. Clark cannot be pointed
-at another project folder yet; choosing one is tracked in
-[#538](https://github.com/digitopvn/clarkcant/issues/538). The node's own data folder is never developed, and neither
+have Clark work on a widget project you already have, choose its folder yourself: type `/develop` (or
+`/develop <folder>`, or ask Clark), then press **Choose folder…** in the card that answers. The desktop app opens the
+system folder dialog; a browser, or a desktop app connected to a node on another machine, asks for the folder's full
+path on the node's machine instead. If Clark asks to develop a folder you have not chosen, nothing starts and the same
+card appears with **Develop this folder**. The card names the folder the path really leads to, and says so when that
+differs from the path given; a path that is not found gets no button. A press keeps the folder as your choice only if
+the path is still that folder itself when you press, so a link put in its place meanwhile gains nothing. Once you start a folder, Clark may work in it, and in every folder inside it, without
+asking again, until you take that back: type `/develop forget` (or ask Clark which folders it may use) and press
+**Forget** beside the folder. Forgetting does not stop a session that is running, and a folder inside another folder
+you chose stays reachable through that one (the answer says so). A chosen folder that is moved away is listed as not
+found, so you can still forget it. Only a message you sent can make Clark show a folder to choose. A whole drive or your home folder can
+be developed for one session, but Clark never keeps access to it. The node's own data folder is never developed, and neither
 is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
 a native part is refused with a problem saying so; install that package the ordinary way.
 

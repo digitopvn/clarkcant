@@ -9,8 +9,12 @@ import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
  * The same session registry `/widget-dev/sessions` drives, so a sentence, a voice command and the HTTP API start one
  * thing. Starting installs the folder's package through the node's install path. A session started here is Clark's
  * initiative: its installs are decided as Clark's own proposal (a mode that asks before what the person did not ask for
- * by name asks), and it may watch only Clark's widget workspace or a project root the person configured. Only a turn the person
- * sent can start, rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
+ * by name asks), and it may watch only Clark's widget workspace, a folder the person chose for widget development, or a
+ * project root the person configured. For any other folder, start answers with the host-owned card the person chooses a
+ * folder on (`folderCard`): their press starts the session as their own, and Clark never does. `choose` shows that card
+ * when the person asks to pick a folder in words or by voice, and `folders` the folders they chose, each with a way to
+ * take it back: the same cards `/develop` and `/develop forget` answer with. Only a turn the person sent can start,
+ * rebuild or place one, or offer a folder to choose; a turn a machine surface, an automation or a peer sent cannot.
  */
 
 export interface DevelopWidgetToolDeps {
@@ -22,9 +26,14 @@ export interface DevelopWidgetToolDeps {
   origin?: () => TurnOrigin | undefined;
 }
 
-const ACTIONS = ["start", "status", "rebuild", "stop", "place"] as const;
+const ACTIONS = ["start", "choose", "folders", "status", "rebuild", "stop", "place"] as const;
 type Action = (typeof ACTIONS)[number];
 const INSTALLS: readonly Action[] = ["start", "rebuild", "place"];
+/**
+ * Only the person's own turn may also show them the card that offers a lasting choice of a folder: a machine surface, an
+ * automation or a peer must not get to frame and time that consent. Listing the chosen folders, which only narrows, stays open.
+ */
+const PERSON_ONLY: readonly Action[] = [...INSTALLS, "choose"];
 
 /** What the model is told about a session: facts, short, with the folder's words marked as data. */
 export function describeDevSession(view: WidgetDevSessionView): string {
@@ -44,7 +53,10 @@ export function describeDevSession(view: WidgetDevSessionView): string {
       capacity: "the node already watches as many folders as it can",
       "root-refused": "its folder is no longer one it may watch",
     }[view.stopReason];
-    const next = view.stopReason === "root-refused" ? "copy the project into the widget workspace and start a session there" : "start it again to resume";
+    const next =
+      view.stopReason === "root-refused"
+        ? "ask the person to choose its folder themselves (they can type /develop), or develop it in the widget workspace"
+        : "start it again to resume";
     lines.push(`It stopped watching because ${why}; ${next}.`);
   }
   if (view.latest?.delta.verdict === "wider") lines.push("The newest build asks to reach more than the one before it.");
@@ -77,19 +89,22 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       "that still reads as a package rebuilds it, and the widget reloads in place. A save that does not read as a package " +
       "keeps the last good build on screen and reports what is wrong. A build that asks to reach more is decided by the " +
       "execution policy again, and may wait for the person in the inbox. status reports a session, rebuild builds now, " +
-      "place puts its widget here again, stop ends watching (what runs keeps running). The folder must be inside your " +
-      "widget workspace" +
+      "place puts its widget here again, stop ends watching (what runs keeps running). choose shows the person a card to " +
+      "pick a folder themselves (with root, offering that folder first): use it when they ask to choose or browse for a " +
+      "folder. folders shows the folders they chose, where they can take one back. You may watch your widget " +
+      "workspace" +
       (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget,`) +
-      ". To develop an existing project, have it copied into the widget workspace first; choosing another project " +
-      "folder for widget development is not available yet (digitopvn/clarkcant#538). Only widgets that render in the frame or are data are " +
-      "developed this way: a package with a service, tools or a native part is refused.",
+      " and folders the person chose for widget development, including the folders inside them. For any other folder, start shows the person a card to " +
+      "choose it themselves; when they do, the session starts and its widget appears here, so do not ask them to copy " +
+      "the project anywhere. Only widgets that render in the frame or are data are developed this way: a package with " +
+      "a service, tools or a native part is refused.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["action"],
       properties: {
         action: { type: "string", enum: [...ACTIONS], description: "What to do." },
-        root: { type: "string", description: "For start: the package folder, as an absolute path on this machine." },
+        root: { type: "string", description: "For start: the package folder, as an absolute path on this machine. For choose, optional: the folder to offer first." },
         sessionId: { type: "string", description: "For status, rebuild, stop and place: the session id start returned." },
         widgetId: { type: "string", description: "For start and place, optional: which of the package's widgets to place." },
       },
@@ -102,10 +117,34 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       if (sessions === undefined) return { text: "This node is not running widget dev sessions. Nothing was started." };
       const origin = deps.origin?.();
       // Only the person's own turn installs: a machine surface, an automation or a peer starts nothing here.
-      if (INSTALLS.includes(action as Action) && origin !== undefined && origin !== "person") {
-        return { text: "A widget dev session installs code, so only a turn the person sent can start, rebuild or place one. Nothing was done." };
+      if (PERSON_ONLY.includes(action as Action) && origin !== undefined && origin !== "person") {
+        return {
+          text:
+            action === "choose"
+              ? "Choosing a folder gives Clark lasting access to it, so only a turn the person sent can offer one. No card was shown; the person can type /develop."
+              : "A widget dev session installs code, so only a turn the person sent can start, rebuild or place one. Nothing was done.",
+        };
       }
       const widgetId = typeof params.widgetId === "string" && params.widgetId.trim() !== "" ? params.widgetId.trim() : undefined;
+
+      // Showing a card starts nothing: the person's press on it does, on their own surface.
+      if (action === "choose") {
+        const offered = typeof params.root === "string" ? params.root.trim() : "";
+        return {
+          text: "The person now sees a card to choose a folder to develop a widget from. Tell them it is there; when they pick one, the session starts and its widget is placed here.",
+          hostBlocks: [sessions.folderCard(offered === "" ? {} : { proposed: offered })],
+        };
+      }
+      if (action === "folders") {
+        const chosen = sessions.marked();
+        return {
+          text:
+            chosen.length === 0
+              ? "The person has chosen no folder; you may develop only in your widget workspace. The card they now see says so."
+              : `The person sees the ${String(chosen.length)} folder(s) they chose, each with a Forget button; only their press takes one back.`,
+          hostBlocks: [sessions.folderCard({ only: "chosen" })],
+        };
+      }
 
       if (action === "start") {
         const root = typeof params.root === "string" ? params.root.trim() : "";
@@ -120,7 +159,15 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
           initiative: { kind: "clark", ...(origin === undefined ? {} : { origin }) },
           ...(widgetId === undefined ? {} : { widgetId }),
         });
-        return { text: started.ok ? describeDevSession(started.value) : `Not started: ${started.message}` };
+        if (started.ok) return { text: describeDevSession(started.value) };
+        if (started.code !== "ROOT_NOT_OWNED") return { text: `Not started: ${started.message}` };
+        // A folder Clark may not watch is the person's to choose: the card is theirs to press, and Clark only names it.
+        return {
+          text:
+            `Not started: ${started.message}\nThe person now sees a card offering to develop ${root} themselves. ` +
+            "Tell them it is there; when they press it, the session starts and its widget is placed here. Do not start it another way.",
+          hostBlocks: [sessions.folderCard({ proposed: root })],
+        };
       }
 
       const sessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";

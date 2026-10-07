@@ -1,8 +1,8 @@
-import { useState, type FormEvent, type ReactElement } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
 import type { CommandCard, ProviderSignInView } from "@clarkcant/contracts";
 
-import type { BlockActions, CommandActionState } from "./blocks.tsx";
+import type { BlockActions, CommandActionState, FolderEntryReason } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -74,6 +74,12 @@ function CommandRow({
   const pending = states.some((state) => state?.status === "pending");
   const settled = states.find((state): state is Exclude<CommandActionState, { status: "pending" }> => state !== undefined && state.status !== "pending");
   const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
+  /** The row's buttons, so focus returns to the one that opened a folder path field once that field closes. */
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  // A `/develop` row's badge is what was true when the card was drawn; once a press on the row has settled, the status
+  // line beside it says what is true now (a session started, a folder forgotten), so the old badge is not shown with it.
+  const superseded = settled?.status === "done" && row.actions.some((entry) => entry.action.kind === "develop-folder" || entry.action.kind === "develop-folder-forget");
+  const badge = superseded ? undefined : row.badge;
   return (
     <li className="cc-list-item cc-command-row" data-row-id={row.rowId} data-current={row.current === true ? "true" : undefined}>
       <div className="cc-list-main">
@@ -84,9 +90,9 @@ function CommandRow({
           </span>
           {row.note === undefined ? null : <span className="cc-list-subtitle">{row.note}</span>}
         </div>
-        {row.badge === undefined ? null : (
-          <span className="cc-badge" data-tone={BADGE_TONE[row.badge.tone]}>
-            {row.badge.text}
+        {badge === undefined ? null : (
+          <span className="cc-badge" data-tone={BADGE_TONE[badge.tone]}>
+            {badge.text}
           </span>
         )}
       </div>
@@ -95,6 +101,10 @@ function CommandRow({
           {row.actions.map((entry) => (
             <button
               key={entry.actionId}
+              ref={(element) => {
+                if (element === null) buttons.current.delete(entry.actionId);
+                else buttons.current.set(entry.actionId, element);
+              }}
               type="button"
               className="cc-action"
               data-emphasis={entry.tone === "primary" ? "primary" : undefined}
@@ -117,7 +127,95 @@ function CommandRow({
         </p>
       )}
       {signIn === undefined ? null : <SignInPanel signIn={signIn} rowKey={rowKey} t={t} actions={actions} />}
+      {live
+        ? row.actions.map((entry) => {
+            const key = `${rowKey}/${entry.actionId}`;
+            const reason = actions?.folderEntries?.[key];
+            return reason === undefined ? null : (
+              <FolderEntry
+                key={key}
+                cardId={cardId}
+                rowId={row.rowId}
+                actionId={entry.actionId}
+                reason={reason}
+                t={t}
+                actions={actions}
+                onClosed={() => buttons.current.get(entry.actionId)?.focus()}
+              />
+            );
+          })
+        : null}
     </li>
+  );
+}
+
+/**
+ * A folder's path, typed: what a `/develop` row asks for where the OS folder dialog cannot answer — a browser, a node on
+ * another machine, or a dialog that did not open — and says which. The path goes to the node as the person's own start.
+ */
+function FolderEntry({
+  cardId,
+  rowId,
+  actionId,
+  reason,
+  t,
+  actions,
+  onClosed,
+}: {
+  cardId: string;
+  rowId: string;
+  actionId: string;
+  reason: FolderEntryReason;
+  t: (key: MessageKey) => string;
+  actions: BlockActions | undefined;
+  /** Called once the field closes, so focus goes back to the button that opened it rather than to the page. */
+  onClosed: () => void;
+}): ReactElement {
+  const [value, setValue] = useState("");
+  const hintId = useId();
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const root = value.trim();
+    if (root === "") return;
+    actions?.onFolderEntrySubmit?.({ cardId, rowId, actionId, root });
+    onClosed();
+  };
+  const cancel = () => {
+    actions?.onFolderEntryCancel?.({ key: `${cardId}/${rowId}/${actionId}` });
+    onClosed();
+  };
+  return (
+    <form className="cc-card-stack" data-folder-entry={reason} onSubmit={submit}>
+      <p className="cc-list-subtitle" id={hintId}>
+        {t(`commandCard.develop.reason.${reason}`)}
+      </p>
+      <div className="cc-search-row">
+        <input
+          className="cc-field-input"
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          // The person pressed the row's button to get here, so the field is where they are about to type.
+          autoFocus
+          aria-label={t("commandCard.develop.pathLabel")}
+          aria-describedby={hintId}
+          placeholder={t("commandCard.develop.pathPlaceholder")}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            cancel();
+          }}
+        />
+        <button type="submit" className="cc-action" data-emphasis="primary" disabled={value.trim() === ""}>
+          {t("commandCard.develop.submit")}
+        </button>
+        <button type="button" className="cc-action" onClick={cancel}>
+          {t("commandCard.develop.cancel")}
+        </button>
+      </div>
+    </form>
   );
 }
 
