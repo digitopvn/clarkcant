@@ -45,8 +45,8 @@ describe("the live reading kept while a recognizer is the source", () => {
     shadow.delivered("cái này là gì vậy");
     shadow.hear({ utteranceId: "s:u1", text: "mở settings giúp tui", isFinal: true });
     shadow.hear({ utteranceId: "s:u2", text: "cái này là gì vậy", isFinal: false });
-    // Neither live sentence was covered, so both are answered: the first was never delivered either.
-    expect(shadow.take()).toBe("mở settings giúp tui cái này là gì vậy");
+    // The first live sentence was never delivered. The second is the late reading of the expired final, so it is not.
+    expect(shadow.take()).toBe("mở settings giúp tui");
   });
 
   it("covers a live reading that arrives after the recognizer delivered it", () => {
@@ -105,6 +105,68 @@ describe("the live reading kept while a recognizer is the source", () => {
     shadow.hear({ utteranceId: "s:u3", text: "rồi mở file", isFinal: false });
     shadow.hear({ utteranceId: "s:u4", text: "voice session", isFinal: false });
     expect(shadow.take()).toBe("rồi mở file voice session");
+  });
+
+  for (const [lag, stepMs] of [[1, 500], [1, 3000], [2, 500], [3, 3000]] as const) {
+    it(`does not answer again sentences whose live reading lags the recognizer by ${lag} (${stepMs} ms apart)`, () => {
+      const { shadow, advance } = shadowAt();
+      const said = [
+        "mở file voice session giúp tui",
+        "rồi chạy lại test cho nó",
+        "xem log lỗi hôm qua đi",
+        "sửa cái hàm đọc cấu hình",
+        "thêm một test cho trường hợp này",
+        "đẩy nhánh này lên github nhé",
+        "tạo pull request cho issue đó",
+        "nhờ người khác review giúp tui",
+        "cập nhật tài liệu tiếng việt luôn",
+        "đóng issue cũ luôn nhé",
+      ];
+      const hear = (index: number): void => shadow.hear({ utteranceId: `s:u${index}`, text: said[index]!, isFinal: true });
+      // Each live reading arrives only after the recognizer delivered the sentences `lag` places after it.
+      said.forEach((sentence, index) => {
+        shadow.delivered(sentence);
+        advance(stepMs);
+        if (index >= lag) hear(index - lag);
+      });
+      for (let index = said.length - lag; index < said.length; index += 1) hear(index);
+      expect(shadow.take()).toBe("");
+    });
+  }
+
+  it("does not answer again finals whose live reading arrives after they stopped waiting", () => {
+    const { shadow, advance } = shadowAt();
+    const said = ["mở file voice session giúp tui", "rồi chạy lại test cho nó", "xem log lỗi hôm qua đi"];
+    for (const sentence of said) shadow.delivered(sentence);
+    advance(6000);
+    said.forEach((sentence, index) => shadow.hear({ utteranceId: `s:u${index}`, text: sentence, isFinal: true }));
+    expect(shadow.take()).toBe("");
+  });
+
+  it("still answers a new sentence that only looks like a final which stopped waiting", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.delivered("mở file voice session giúp tui");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u1", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "mở file voice session của bạn đi", isFinal: false });
+    expect(shadow.take()).toBe("mở file voice session của bạn đi");
+  });
+
+  it("answers a sentence said again after a final that stopped waiting excused its first reading", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.delivered("chạy lại test cho tui");
+    advance(6000);
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại test cho tui", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test cho tui", isFinal: false });
+    expect(shadow.take()).toBe("chạy lại test cho tui");
+  });
+
+  it("answers a live sentence heard long after a final that stopped waiting, even if it reads the same", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.delivered("chạy lại test cho tui");
+    advance(60_000);
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại test cho tui", isFinal: false });
+    expect(shadow.take()).toBe("chạy lại test cho tui");
   });
 
   it("answers again a sentence too short to tell apart, rather than risk losing it", () => {

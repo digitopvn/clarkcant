@@ -46,8 +46,12 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
      nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
-     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mọi quy
-     tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng.
+     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Ngoại
+     lệ là câu live tới muộn cho một bản final đã hết hạn: mười sáu bản final hết hạn gần nhất được ghi nhớ, và một câu
+     live nghe được trong vòng ba mươi giây quanh một bản final đó mà đọc giống nó, hoặc giống phần đầu của nó, theo
+     cùng quy tắc ba từ và lệch vài ký tự, sẽ không được trả lời lại. Mỗi bản final hết hạn chỉ miễn cho tối đa một câu
+     live. Quy tắc này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời
+     nguyên câu. Mọi quy tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;

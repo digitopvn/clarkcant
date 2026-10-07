@@ -22,7 +22,11 @@
  * - when a final never found its live reading, or matched only after passing over a live sentence it did not match,
  *   the alignment is unclear: every live sentence after the last one a final fully covered is answered, whole and in
  *   order, since the live session may have cut the sentence the recognizer was in the middle of into several
- *   utterances; a sentence already delivered whole is not answered again.
+ *   utterances; a sentence already delivered whole is not answered again;
+ * - a final that expired without finding its live reading is still remembered for a while, because the live reading
+ *   often arrives only after the recognizer finalized the next sentence: in unclear mode a live sentence heard close
+ *   in time to it that reads as it, or as its beginning, under the same three-word and few-character rule, was
+ *   delivered and is not answered again. Each remembered final excuses one live sentence at most.
  */
 
 const MAX_SENTENCES = 16;
@@ -37,16 +41,28 @@ const MIN_MATCH_WORDS = 3;
 const EDITS_PER_CHAR = 0.15;
 /** Longest stretch compared, so one alignment stays cheap; anything past it stays undelivered. */
 const MAX_COMPARE_CHARS = 1200;
+/**
+ * Expired finals remembered: one can only excuse a live sentence still kept, and at most MAX_SENTENCES are kept.
+ */
+const MAX_EXPIRED = MAX_SENTENCES;
+/**
+ * How far apart in time an expired final and the live sentence it excuses may be. The live reading of a final lags it
+ * by a few seconds, a few sentences at worst; half a minute covers that while a sentence said again later is answered.
+ */
+const EXPIRED_MATCH_MS = 30_000;
 
 interface Sentence {
   ordinal: number;
   utteranceId: string;
   text: string;
   closed: boolean;
+  /** When its first fragment was heard. */
+  heardMs: number;
 }
 
 interface Pending {
   words: string[];
+  deliveredMs: number;
   deadlineMs: number;
   /** The last live sentence this final may still be the reading of. */
   lastOrdinal: number;
@@ -72,6 +88,8 @@ export class LiveShadow {
   #pending: Pending[] = [];
   /** A recognizer final never found its live reading, so what lies after the cursor is not known to be undelivered. */
   #unclear = false;
+  /** Finals that left the waiting list without finding their live reading, oldest first. */
+  #expired: Pending[] = [];
 
   constructor(options: { nowMs?: () => number } = {}) {
     this.#nowMs = options.nowMs ?? Date.now;
@@ -98,6 +116,7 @@ export class LiveShadow {
           utteranceId: fragment.utteranceId,
           text: fragment.text.slice(0, MAX_SENTENCE_CHARS),
           closed: fragment.isFinal,
+          heardMs: this.#nowMs(),
         });
         this.#nextOrdinal += 1;
         if (this.#sentences.length > MAX_SENTENCES) this.#sentences.shift();
@@ -114,9 +133,10 @@ export class LiveShadow {
     if (said.length < MIN_MATCH_WORDS) return;
     if (this.#align(said, Number.POSITIVE_INFINITY)) return;
     // Its live reading may be the sentence in progress, or the next one if the live session is that far behind.
-    this.#pending.push({ words: said, deadlineMs: this.#nowMs() + PENDING_MS, lastOrdinal: this.#nextOrdinal });
+    const now = this.#nowMs();
+    this.#pending.push({ words: said, deliveredMs: now, deadlineMs: now + PENDING_MS, lastOrdinal: this.#nextOrdinal });
     if (this.#pending.length > MAX_PENDING) {
-      this.#pending.shift();
+      this.#forget(this.#pending.splice(0, 1));
       this.#unclear = true;
     }
   }
@@ -140,6 +160,7 @@ export class LiveShadow {
     const answer = (unclear ? this.#uncoveredWhole() : remainders.map((remainder) => remainder.text)).join(" ");
     this.#sentences = [];
     this.#pending = [];
+    this.#expired = [];
     this.#cursor = { ordinal: this.#nextOrdinal, offset: 0 };
     this.#unclear = false;
     return answer;
@@ -152,16 +173,27 @@ export class LiveShadow {
    * not only the newest. The cursor may stand partway into the first of them on the strength of a match that belonged
    * to an earlier sentence, so that one is answered whole rather than its tail. A sentence the cursor stands at the end
    * of was delivered whole and is not answered again, and neither is one the live session is still reading for a final
-   * already delivered.
+   * already delivered, nor the late live reading of a final that expired waiting for it.
    */
   #uncoveredWhole(): string[] {
     const answered: string[] = [];
+    const excused = new Set<Pending>();
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal) continue;
       if (sentence.ordinal === this.#cursor.ordinal && words(sentence.text, this.#cursor.offset).length === 0) continue;
       const text = sentence.text.trim();
       const heard = words(text).map((word) => word.text);
       if (heard.length === 0 || this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) continue;
+      const late = this.#expired.find(
+        (final) =>
+          !excused.has(final) &&
+          Math.abs(sentence.heardMs - final.deliveredMs) <= EXPIRED_MATCH_MS &&
+          coveredWords(heard, final.words) > 0,
+      );
+      if (late !== undefined) {
+        excused.add(late);
+        continue;
+      }
       answered.push(text);
     }
     return answered;
@@ -194,7 +226,7 @@ export class LiveShadow {
       const pending = this.#pending[index]!;
       if (!this.#align(pending.words, pending.lastOrdinal)) continue;
       // Earlier finals were passed over: their live reading never matched.
-      this.#pending.splice(0, index + 1);
+      this.#forget(this.#pending.splice(0, index + 1).slice(0, -1));
       index = -1;
     }
   }
@@ -205,7 +237,14 @@ export class LiveShadow {
     const newest = this.#nextOrdinal - 1;
     const kept = this.#pending.filter((pending) => pending.deadlineMs > now && newest <= pending.lastOrdinal);
     if (kept.length < this.#pending.length) this.#unclear = true;
+    this.#forget(this.#pending.filter((pending) => !kept.includes(pending)));
     this.#pending = kept;
+  }
+
+  /** Remember finals that stopped waiting without their live reading, which may still arrive late. */
+  #forget(finals: readonly Pending[]): void {
+    this.#expired.push(...finals);
+    if (this.#expired.length > MAX_EXPIRED) this.#expired.splice(0, this.#expired.length - MAX_EXPIRED);
   }
 }
 

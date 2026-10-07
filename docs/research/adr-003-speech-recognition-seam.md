@@ -48,8 +48,12 @@ them before they mean anything.
      the beginning of what the live reading holds next, so a final may cover only the first part of a live utterance.
      Finals shorter than three words never move it, and a final whose live reading does not arrive soon expires. When the
      alignment is unclear, every live sentence after the last fully covered one is answered, whole and in order, so a
-     sentence the live session split into two utterances is not lost. Every rule prefers answering words twice to
-     losing them.
+     sentence the live session split into two utterances is not lost. The exception is a live sentence that arrives
+     late for a final that already expired: the last sixteen expired finals are remembered, and a live sentence heard
+     within thirty seconds of one that reads as it, or as its beginning, under the same three-word and few-character
+     rule is not answered again. Each expired final excuses one live sentence at most. The rule works on whole
+     sentences, so a live sentence that holds a delivered part and an undelivered part is answered whole. Every rule
+     prefers answering words twice to losing them.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;
