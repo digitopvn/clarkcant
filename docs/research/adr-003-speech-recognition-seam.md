@@ -73,9 +73,13 @@ them before they mean anything.
    - Part of a longer written word (`live` in `gemini-live.tsx`) is never touched, and punctuation a spelling carries
      is not written twice.
    - A real word or a person's name is never an alias: "Jeff" stays "Jeff".
-   - Casing never lowers a letter.
+   - Casing lowers a letter only to restore a code-like term heard exactly, case aside: `RedactSecrets` becomes
+     `redactSecrets`, `PNPM` becomes `pnpm` and "Git stash" becomes `git stash`. Code-like means mixed case, a digit, code
+     punctuation, or a command or tool. An ordinary word starting a sentence ("Rebase", "Worktree", a proper noun such as
+     ClarkCant beside a repository called `clarkcant`) keeps its capital, and a near match is never re-cased.
    - Commands are never changed except by casing, and no respelled word may complete one with its neighbours ("git re
-     base" stays as heard).
+     base" stays as heard). Only case is restored: `npm` never becomes `pnpm`, even when the vocabulary has pnpm
+     (#574).
    - A span that could be two terms is left as heard, and the abstention is recorded.
    - A canonical sentence comes back exactly as it is. The benchmark checks this on every reference, including negative
      entries built from near neighbours, embedded names, a person's name and other model versions.
@@ -102,22 +106,23 @@ make a decision they cannot evaluate, so there is none.
 ## Evidence
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` runs the scorer over
-`packages/voice-adapters/bench/vi-en-coding-corpus.json`. The corpus holds 76 utterances (code-switched Vietnamese and
-English with Vietnamese context, including eight negative entries that must come back unchanged) and 100 technical
+`packages/voice-adapters/bench/vi-en-coding-corpus.json`. The corpus holds 84 utterances (code-switched Vietnamese and
+English with Vietnamese context, including twelve negative entries that must come back unchanged) and 105 technical
 terms. Its recognizer outputs are simulated: they are typical live-transcription errors written by hand, not
 recordings. No canonical reference is changed by the normaliser.
 
 | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| raw | 24.9% | 4.2% | 77.0% | 23.7% | - | - | - |
-| normalized | 4.0% | 0.9% | 16.0% | 76.3% | 61 | 1 | 0 |
+| raw | 22.8% | 3.8% | 77.1% | 26.2% | - | - | - |
+| normalized | 3.7% | 0.8% | 15.2% | 78.6% | 65 | 1 | 0 |
 
-Commands and versions are never worse after normalisation (9/12 and 2/2 both before and after); symbols go from 1/20 to
-17/20, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
+Commands and versions are never worse after normalisation (commands go from 9/14 to 11/14, versions stay 2/2); symbols
+go from 1/21 to 18/21, paths from 3/9 to 8/9, acronyms from 0/9 to 9/9. The residuals are deliberate:
 
 - `git stash` heard as `git status` is not corrected, because commands are never guessed;
 - "git re base" is not completed into `git rebase`, for the same reason;
 - "Jeff" is not rewritten to Jev, because it is also a person's name;
+- `npm` is not rewritten to `pnpm`, and an ordinary word starting a sentence keeps its capital;
 - issue numbers are not rewritten;
 - out-of-vocabulary names are left alone;
 - English prose with no technical anchor is left alone;
