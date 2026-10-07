@@ -344,6 +344,22 @@ describe("words that run together into a longer term than a form starting the sa
       expect(result.text).toBe("the front end of the web app");
       expect(result.changes).toEqual([]);
     });
+
+    // A capitalised hyphenated or digit tool name is evidence, yet lowering it needs evidence too: the word a
+    // run-together span absorbed on its strength is not that evidence, or each change would rest only on the other.
+    it("keeps Follow-up when the only support for lowering it is the web that webapp absorbed", () => {
+      const session = buildRecognitionContext({ tools: ["follow-up", "web"], packages: ["webapp"] }, { glossary: false });
+      const result = normalizeTranscript("Follow-up on the web app", session);
+      expect(result.text).toBe("Follow-up on the webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+
+    it("keeps S3 when the only support for lowering it is the web that webapp absorbed", () => {
+      const session = buildRecognitionContext({ tools: ["s3", "web"], packages: ["webapp"] }, { glossary: false });
+      const result = normalizeTranscript("S3 is on the web app", session);
+      expect(result.text).toBe("S3 is on the webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
   });
 });
 
