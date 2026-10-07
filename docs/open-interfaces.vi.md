@@ -713,7 +713,10 @@ nguồn mà người dùng đã chọn khi bấm Cài trên một dòng. Không 
 nguồn đứng trước không đọc được, và `409 DIRECTORY_SOURCE_CHANGED` khi gói đang được cài từ một nguồn khác. Có nó,
 route trả `409 DIRECTORY_SOURCE_CHANGED` khi giờ đây một nguồn khác sở hữu listing đó. Node ghi nguồn lên generation
 đã cài (`directorySource`), và thông báo cập nhật chỉ đến từ chính nguồn đó; generation được cài trước khi nguồn được
-ghi lại được coi là cài từ file index. Một yêu cầu chấp thuận cài đặt giữ nguồn sở hữu listing lúc người dùng được hỏi,
+ghi lại được coi là cài từ file index. Các bản build của [phiên phát triển widget](#phiên-phát-triển-widget) trên node được
+liệt kê trước mọi nguồn khác dưới nguồn riêng của chúng, `widget-dev` (kind `widget-dev`), và chỉ trên node này, không
+bao giờ xuất hiện trong kết quả tìm kiếm: một lần cài có `sourceId` chỉ tới nguồn khác sẽ trả
+`409 DIRECTORY_SOURCE_CHANGED` thay vì lấy bản build của phiên có cùng id và version. Một yêu cầu chấp thuận cài đặt giữ nguồn sở hữu listing lúc người dùng được hỏi,
 và `POST /packages/approvals/{id}/decision` với `granted` trả `409 DIRECTORY_SOURCE_CHANGED` khi lúc đó một nguồn khác
 đã sở hữu listing. Một listing từ marketplace được cài qua đúng những bước kiểm tra như listing từ file.
 
