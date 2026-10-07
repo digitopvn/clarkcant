@@ -74,6 +74,9 @@ import {
   type SettingsTab,
   type Suggestion,
   type VoiceCapabilities,
+  type WidgetDevSessionCreate,
+  type WidgetDevSessionView,
+  widgetDevSessionViewSchema,
 } from "@clarkcant/contracts";
 import { JOB_LIST_LIMIT, browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
 import { answerWidgetPerform } from "./frame-performs.ts";
@@ -209,6 +212,11 @@ export interface IsolatedFrameLiveResponse {
   stateStatus: FrameStateStatus;
   /** Keys the widget keeps as view state: never sent to the node, never stored. */
   ephemeralStateKeys: readonly string[];
+  /**
+   * The widget dev session whose build this frame runs, when one does: the host shows that session's build status
+   * beside the frame (`widgetDevSession`). The frame is told nothing about it.
+   */
+  development?: { sessionId: string };
 }
 
 export type FrameStateStatus =
@@ -2021,6 +2029,26 @@ export class GatewayClient {
         ...(sourceId === undefined ? {} : { sourceId }),
       }),
     );
+  }
+
+  /** A live widget authoring session: its newest build, what runs, and whether that is the last good build. */
+  async widgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("GET", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
+  }
+
+  /** Start developing the package in a folder on the node, placed in `conversationId` once a build of it runs. */
+  async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("POST", "/widget-dev/sessions", input));
+  }
+
+  /** Build the session's folder now, rather than on its next save. */
+  async rebuildWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("POST", `/widget-dev/sessions/${encodeURIComponent(sessionId)}/rebuild`));
+  }
+
+  /** Stop watching the folder. What runs keeps running where it was placed. */
+  async stopWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
+    return widgetDevSessionViewSchema.parse(await this.#call("DELETE", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
   }
 
   claimLiveOwner(
