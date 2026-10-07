@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent, type ReactElement } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
 import type { CommandCard, ProviderSignInView } from "@clarkcant/contracts";
 
@@ -74,6 +74,12 @@ function CommandRow({
   const pending = states.some((state) => state?.status === "pending");
   const settled = states.find((state): state is Exclude<CommandActionState, { status: "pending" }> => state !== undefined && state.status !== "pending");
   const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
+  /** The row's buttons, so focus returns to the one that opened a folder path field once that field closes. */
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  // A `/develop` row's badge is what was true when the card was drawn; once a press on the row has settled, the status
+  // line beside it says what is true now (a session started, a folder forgotten), so the old badge is not shown with it.
+  const superseded = settled?.status === "done" && row.actions.some((entry) => entry.action.kind === "develop-folder" || entry.action.kind === "develop-folder-forget");
+  const badge = superseded ? undefined : row.badge;
   return (
     <li className="cc-list-item cc-command-row" data-row-id={row.rowId} data-current={row.current === true ? "true" : undefined}>
       <div className="cc-list-main">
@@ -84,9 +90,9 @@ function CommandRow({
           </span>
           {row.note === undefined ? null : <span className="cc-list-subtitle">{row.note}</span>}
         </div>
-        {row.badge === undefined ? null : (
-          <span className="cc-badge" data-tone={BADGE_TONE[row.badge.tone]}>
-            {row.badge.text}
+        {badge === undefined ? null : (
+          <span className="cc-badge" data-tone={BADGE_TONE[badge.tone]}>
+            {badge.text}
           </span>
         )}
       </div>
@@ -95,6 +101,10 @@ function CommandRow({
           {row.actions.map((entry) => (
             <button
               key={entry.actionId}
+              ref={(element) => {
+                if (element === null) buttons.current.delete(entry.actionId);
+                else buttons.current.set(entry.actionId, element);
+              }}
               type="button"
               className="cc-action"
               data-emphasis={entry.tone === "primary" ? "primary" : undefined}
@@ -122,7 +132,16 @@ function CommandRow({
             const key = `${rowKey}/${entry.actionId}`;
             const reason = actions?.folderEntries?.[key];
             return reason === undefined ? null : (
-              <FolderEntry key={key} cardId={cardId} rowId={row.rowId} actionId={entry.actionId} reason={reason} t={t} actions={actions} />
+              <FolderEntry
+                key={key}
+                cardId={cardId}
+                rowId={row.rowId}
+                actionId={entry.actionId}
+                reason={reason}
+                t={t}
+                actions={actions}
+                onClosed={() => buttons.current.get(entry.actionId)?.focus()}
+              />
             );
           })
         : null}
@@ -141,6 +160,7 @@ function FolderEntry({
   reason,
   t,
   actions,
+  onClosed,
 }: {
   cardId: string;
   rowId: string;
@@ -148,6 +168,8 @@ function FolderEntry({
   reason: FolderEntryReason;
   t: (key: MessageKey) => string;
   actions: BlockActions | undefined;
+  /** Called once the field closes, so focus goes back to the button that opened it rather than to the page. */
+  onClosed: () => void;
 }): ReactElement {
   const [value, setValue] = useState("");
   const hintId = useId();
@@ -156,6 +178,11 @@ function FolderEntry({
     const root = value.trim();
     if (root === "") return;
     actions?.onFolderEntrySubmit?.({ cardId, rowId, actionId, root });
+    onClosed();
+  };
+  const cancel = () => {
+    actions?.onFolderEntryCancel?.({ key: `${cardId}/${rowId}/${actionId}` });
+    onClosed();
   };
   return (
     <form className="cc-card-stack" data-folder-entry={reason} onSubmit={submit}>
@@ -178,13 +205,13 @@ function FolderEntry({
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.stopPropagation();
-            actions?.onFolderEntryCancel?.({ key: `${cardId}/${rowId}/${actionId}` });
+            cancel();
           }}
         />
         <button type="submit" className="cc-action" data-emphasis="primary" disabled={value.trim() === ""}>
           {t("commandCard.develop.submit")}
         </button>
-        <button type="button" className="cc-action" onClick={() => actions?.onFolderEntryCancel?.({ key: `${cardId}/${rowId}/${actionId}` })}>
+        <button type="button" className="cc-action" onClick={cancel}>
           {t("commandCard.develop.cancel")}
         </button>
       </div>

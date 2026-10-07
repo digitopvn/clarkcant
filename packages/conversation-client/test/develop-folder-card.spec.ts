@@ -52,6 +52,45 @@ describe("the /develop card", () => {
     expect(record).not.toContain("<button");
   });
 
+  it("offers a Forget button on a chosen folder, and drops a row's old badge once a press on it has settled", () => {
+    const chosen: CommandCard = {
+      ...CARD,
+      rows: [
+        {
+          rowId: "chosen:0",
+          label: "/home/me/widgets",
+          note: "Clark may develop in this folder and every folder inside it.",
+          badge: { text: "you chose", tone: "success" },
+          actions: [{ actionId: "forget", label: "Forget", action: { kind: "develop-folder-forget", root: "/home/me/widgets" } }],
+        },
+      ],
+    };
+    const actions = { onCommandAction: () => undefined };
+    const before = renderToStaticMarkup(createElement(CommandCardBlock, { block: chosen, t: en, actions }));
+    expect(before).toContain("you chose");
+    expect(before).toContain(">Forget</button>");
+    expect(before).toContain("every folder inside it");
+
+    const forgotten = en("commandCard.develop.forgotten").replace("{folder}", "/home/me/widgets");
+    const after = renderToStaticMarkup(
+      createElement(CommandCardBlock, {
+        block: chosen,
+        t: en,
+        actions: { ...actions, commandAction: { "card_develop/chosen:0/forget": { status: "done", message: forgotten } } },
+      }),
+    );
+    expect(after).not.toContain("you chose");
+    expect(after).toContain(forgotten.replaceAll("'", "&#x27;"));
+
+    // A failed press leaves what was true when the card was drawn.
+    const failed = renderToStaticMarkup(
+      createElement(CommandCardBlock, { block: chosen, t: en, actions: { ...actions, commandAction: { "card_develop/chosen:0/forget": { status: "failed", message: "no" } } } }),
+    );
+    expect(failed).toContain("you chose");
+    expect(MESSAGES_VI["commandCard.develop.forgotten"]).toContain("{folder}");
+    expect(MESSAGES_EN["commandCard.develop.notChosen"]).toContain("{folder}");
+  });
+
   it("says what became of the session, in the owner's language", () => {
     expect(developOutcomeMessage(view({}), en)).toContain("/home/me/timer");
     expect(developOutcomeMessage(view({ activation: { state: "refused", code: "X", message: "no room" } as never }), vi)).toContain("no room");

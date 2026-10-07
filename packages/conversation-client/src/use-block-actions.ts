@@ -570,6 +570,17 @@ export function useBlockActions({
           });
           return;
         }
+        case "develop-folder-forget":
+          settle({ status: "pending" });
+          void client.forgetWidgetDevFolder(action.root).then(
+            (result) =>
+              settle({
+                status: "done",
+                message: fillMessage(t(result.forgotten ? "commandCard.develop.forgotten" : "commandCard.develop.notChosen"), { folder: result.root }),
+              }),
+            fail,
+          );
+          return;
       }
     },
     [client, developFolder, followSignIn, newConversation, openConversation, t],

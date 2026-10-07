@@ -80,8 +80,10 @@ import {
   type SettingsTab,
   type Suggestion,
   type VoiceCapabilities,
+  type WidgetDevFolderForgetResult,
   type WidgetDevSessionCreate,
   type WidgetDevSessionView,
+  widgetDevFolderForgetResultSchema,
   widgetDevSessionViewSchema,
 } from "@clarkcant/contracts";
 import { JOB_LIST_LIMIT, browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
@@ -869,7 +871,9 @@ export class GatewayClient {
   /**
    * Whether the node answers on this machine's loopback address, so a path the person picks in this machine's folder
    * dialog names a folder on the node. A node reached over the network is on another machine, where that path means
-   * nothing; its folder is typed instead.
+   * nothing; its folder is typed instead. A tunnel to another machine (SSH or a port forward) also answers on loopback;
+   * there a picked path names a folder on this machine, and the node, which checks every path on its own machine, says
+   * what it found there or that nothing is.
    */
   nodeOnThisMachine(): boolean {
     try {
@@ -2058,6 +2062,11 @@ export class GatewayClient {
   /** Start developing the package in a folder on the node, placed in `conversationId` once a build of it runs. */
   async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionView> {
     return widgetDevSessionViewSchema.parse(await this.#call("POST", "/widget-dev/sessions", input));
+  }
+
+  /** Take back the person's choice of a folder: Clark may no longer start sessions in it. Person-only on the node. */
+  async forgetWidgetDevFolder(root: string): Promise<WidgetDevFolderForgetResult> {
+    return widgetDevFolderForgetResultSchema.parse(await this.#call("POST", "/widget-dev/chosen-folders/forget", { root }));
   }
 
   /** Build the session's folder now, rather than on its next save. */

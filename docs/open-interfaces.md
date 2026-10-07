@@ -859,6 +859,7 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 | `DELETE /widget-dev/sessions/:id` | Stop watching (`stopReason: "requested"`). The running generation stays installed and keeps rendering where it was placed. |
 | `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
+| `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Take back the person's choice of a folder (`widgetDevFolderForgetSchema`): Clark may no longer start sessions in it, or in the folders inside it. Answers `{ root, forgotten }`; `forgotten: false` when the folder was not chosen, so pressing twice is harmless. Sessions and what they run stay as they are. Person-only. |
 
 Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
 `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` and
@@ -877,16 +878,26 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   exception is Clark's widget workspace, `<dataDir>/widget-workspace`.
 - A session the person starts on this route may watch any other local folder.
 - A session the person starts on this route marks its folder as one they chose (`chosenByPerson` in the node's
-  session store). Starting it again keeps the mark, and so does Clark picking the session up later.
+  session store). The choice covers the folder and every folder inside it. Starting it again keeps the mark, and so
+  does Clark picking the session up later. A whole drive (a filesystem or drive root) or the home folder itself is
+  never marked: a session may still run there, but Clark gets no lasting access to it.
+- A chosen folder is kept as the real path it had when the person started it. If that path later leads somewhere else
+  (the folder was replaced by a link or junction), the choice no longer counts, so a swapped link cannot widen it.
+- The person takes a choice back with `POST /widget-dev/chosen-folders/forget`, the **Forget** button on the card
+  `/develop forget` answers with, or the same card Clark shows when asked in words (`develop_widget` action
+  `folders`). Forgetting does not stop a running session.
 - A session Clark starts with `develop_widget` may watch the widget workspace, where Clark scaffolds a new widget, a
   folder the person chose (or a folder inside one), or a folder inside a `workspace.roots` preference the person
   recorded themselves. The built-in default roots (the home folder and the drive the node runs from) and values Clark
   wrote do not count, and a session Clark starts never marks its folder as chosen. Any other folder is refused with
   `403 ROOT_NOT_OWNED`, in the owner's language, and nothing is started. The tool's answer then carries a host-drawn
   `develop` command card offering that folder to the person; Clark only tells them it is there.
-- **Choosing a folder.** `/develop` (or `/develop <folder>`, or asking in words) answers with the same host-owned
-  `develop` command card: a row for the proposed folder, a row to choose another, and the node's recent sessions,
-  where a stopped one can be developed again. Each row's action is `{ "kind": "develop-folder", "root"? }`. The card
+- **Choosing a folder.** `/develop` (or `/develop <folder>`, or asking in words, where Clark uses the `develop_widget`
+  action `choose`) answers with the same host-owned `develop` command card: a row for the proposed folder, a row to
+  choose another, the folders already chosen, and the node's recent sessions, where a stopped one can be developed
+  again. The proposed row names the folder the path resolves to now, and says so when that differs from the path given;
+  its press starts that resolved folder. Each row's action is `{ "kind": "develop-folder", "root"? }`, and a chosen
+  folder's is `{ "kind": "develop-folder-forget", "root" }`. The card
   starts nothing on its own: a press in the person's own client calls `POST /widget-dev/sessions` with the person's
   initiative, so no agent, widget or machine surface can choose a folder for itself. Without a `root`, the desktop app
   opens the operating system's folder dialog. Where that dialog cannot answer (a browser, a node on another machine, a
@@ -974,12 +985,14 @@ the frame) when a new generation runs; the instance, its state and its migration
 code is never told it is in a session.
 
 `POST /widget-dev/sessions`, `/:id/rebuild` and `/:id/place` install code. The WebSocket relay, `clarkcant api` and MCP
-refuse them with `403 PERSON_ONLY`, and so does the route itself for any request a machine surface marked. Reading and
-stopping a session stay reachable everywhere.
+refuse them with `403 PERSON_ONLY`, and so does the route itself for any request a machine surface marked.
+`POST /widget-dev/chosen-folders/forget` is refused the same way: taking back a chosen folder is the person's, as
+choosing it is. Reading and stopping a session stay reachable everywhere.
 
-In the conversation, Clark's `develop_widget` tool (`start`, `status`, `rebuild`, `place`, `stop`) drives the same
-sessions. It starts, rebuilds or places only in a turn the person sent; a turn a machine surface, an automation or a
-peer sent does none of these.
+In the conversation, Clark's `develop_widget` tool (`start`, `choose`, `folders`, `status`, `rebuild`, `place`, `stop`)
+drives the same sessions. It starts, rebuilds or places only in a turn the person sent; a turn a machine surface, an
+automation or a peer sent does none of these. `choose` and `folders` only show the person the `develop` card (a folder
+to choose, or the folders already chosen, each with **Forget**); neither starts nor forgets anything.
 
 The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes a body the route validates with
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); anything outside it is `400 INVALID_SCHEMA`, and so is

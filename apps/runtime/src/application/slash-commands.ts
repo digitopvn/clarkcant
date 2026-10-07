@@ -199,7 +199,8 @@ export async function answerSlashCommand(
 }
 
 /**
- * `/develop` and `/develop <folder>`: the card the person chooses a folder to develop a widget from. Nothing starts here;
+ * `/develop`, `/develop <folder>` and `/develop forget`: the card the person chooses a folder to develop a widget from, or
+ * takes a choice back on. Nothing starts here;
  * a press on the card starts the session through the person-only route, as the person.
  */
 function developAnswer(services: SlashServices, argument: string, locale: Locale, say: Say): SlashCommandAnswer {
@@ -209,6 +210,21 @@ function developAnswer(services: SlashServices, argument: string, locale: Locale
         "Node này không chạy phiên phát triển widget, nên chưa phát triển được widget từ một thư mục ở đây.",
         "This node is not running widget dev sessions, so a widget cannot be developed from a folder here.",
       ),
+    };
+  }
+  // `/develop forget`: the folders Clark may develop in because the person chose them, each with a way to take that back.
+  // A folder is always an absolute path, so the word never names one.
+  if (argument.toLowerCase() === "forget") {
+    const chosen = services.widgetDev.chosen().length;
+    return {
+      text:
+        chosen === 0
+          ? say("Bạn chưa chọn thư mục nào cho Clark, nên không có gì để thu hồi.", "You have not chosen any folder for Clark, so there is nothing to forget.")
+          : say(
+              "Đây là những thư mục Clark được phát triển vì bạn đã chọn chúng. Bấm “Thu hồi” ở thư mục nào thì Clark không tự bắt đầu phiên ở đó nữa.",
+              "These are the folders Clark may develop in because you chose them. Press \"Forget\" on one and Clark no longer starts sessions there on its own.",
+            ),
+      card: services.widgetDev.folderCard({ locale, only: "chosen" }),
     };
   }
   return {

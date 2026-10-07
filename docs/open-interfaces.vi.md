@@ -861,6 +861,7 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 | `DELETE /widget-dev/sessions/:id` | Dừng theo dõi (`stopReason: "requested"`). Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
 | `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
+| `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Thu hồi lựa chọn một thư mục của người dùng (`widgetDevFolderForgetSchema`): Clark không được bắt đầu phiên trong thư mục đó, hay trong các thư mục bên trong nó, nữa. Trả `{ root, forgotten }`; `forgotten: false` khi thư mục chưa được chọn, nên bấm hai lần cũng không sao. Các phiên và những gì chúng chạy vẫn giữ nguyên. Chỉ người dùng được gọi. |
 
 Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
 `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` và
@@ -880,16 +881,27 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   duy nhất là không gian widget của Clark, `<dataDir>/widget-workspace`.
 - Một phiên người dùng bắt đầu trên route này được theo dõi mọi thư mục cục bộ khác.
 - Một phiên người dùng bắt đầu trên route này đánh dấu thư mục của nó là thư mục họ đã chọn (`chosenByPerson` trong kho
-  phiên của node). Bắt đầu lại phiên đó vẫn giữ dấu này, và Clark tiếp tục phiên đó về sau cũng vậy.
+  phiên của node). Lựa chọn này gồm thư mục đó và mọi thư mục bên trong nó. Bắt đầu lại phiên đó vẫn giữ dấu này, và
+  Clark tiếp tục phiên đó về sau cũng vậy. Cả một ổ đĩa (gốc của hệ thống tệp hoặc của ổ đĩa) hay chính thư mục home
+  không bao giờ được đánh dấu: một phiên vẫn có thể chạy ở đó, nhưng Clark không giữ quyền lâu dài với nó.
+- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu. Nếu về sau đường dẫn đó dẫn tới nơi khác
+  (thư mục bị thay bằng một liên kết hoặc junction), lựa chọn không còn được tính, nên một liên kết bị tráo không mở rộng
+  được nó.
+- Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
+  `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
+  `develop_widget`). Thu hồi không dừng phiên đang chạy.
 - Một phiên Clark bắt đầu bằng `develop_widget` được theo dõi không gian widget, nơi Clark dựng khung một widget mới,
   một thư mục người dùng đã chọn (hoặc một thư mục nằm trong đó), hoặc một thư mục nằm trong tùy chọn `workspace.roots`
   do chính người dùng ghi. Các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) và giá trị do Clark ghi
   đều không được tính, và một phiên Clark bắt đầu không bao giờ đánh dấu thư mục của nó là đã chọn. Mọi thư mục khác bị
   từ chối với `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy, và không có gì được bắt đầu. Khi đó câu trả lời của tool
   mang một thẻ lệnh `develop` do host vẽ, mời người dùng phát triển thư mục đó; Clark chỉ báo cho họ biết thẻ ở đó.
-- **Chọn một thư mục.** `/develop` (hoặc `/develop <thư mục>`, hoặc hỏi bằng lời) trả về cùng thẻ lệnh `develop` do host
-  sở hữu: một dòng cho thư mục được đề xuất, một dòng để chọn thư mục khác, và các phiên gần đây của node, trong đó phiên
-  đã dừng có thể được phát triển lại. Thao tác của mỗi dòng là `{ "kind": "develop-folder", "root"? }`. Thẻ tự nó không
+- **Chọn một thư mục.** `/develop` (hoặc `/develop <thư mục>`, hoặc hỏi bằng lời, khi đó Clark dùng thao tác `choose`
+  của `develop_widget`) trả về cùng thẻ lệnh `develop` do host sở hữu: một dòng cho thư mục được đề xuất, một dòng để
+  chọn thư mục khác, các thư mục đã được chọn, và các phiên gần đây của node, trong đó phiên đã dừng có thể được phát
+  triển lại. Dòng đề xuất nêu thư mục mà đường dẫn hiện dẫn tới, và nói rõ khi nó khác đường dẫn được đưa ra; lần bấm
+  trên dòng đó bắt đầu chính thư mục đã phân giải. Thao tác của mỗi dòng là `{ "kind": "develop-folder", "root"? }`, còn
+  của một thư mục đã chọn là `{ "kind": "develop-folder-forget", "root" }`. Thẻ tự nó không
   bắt đầu gì: một lần bấm trong chính client của người dùng gọi `POST /widget-dev/sessions` với quyền chủ động của người
   dùng, nên không agent, widget hay bề mặt máy nào tự chọn được thư mục cho mình. Khi không có `root`, ứng dụng desktop
   mở hộp chọn thư mục của hệ điều hành. Ở nơi hộp đó không trả lời được (trình duyệt, node chạy trên máy khác, hộp chọn
@@ -978,12 +990,15 @@ frame) khi một generation mới chạy; instance, state và migration của n�
 giờ được cho biết nó đang ở trong một phiên.
 
 `POST /widget-dev/sessions`, `/:id/rebuild` và `/:id/place` cài mã. Relay WebSocket, `clarkcant api` và MCP từ chối
-chúng với `403 PERSON_ONLY`, và chính route cũng từ chối như vậy với mọi yêu cầu được một bề mặt máy đánh dấu. Đọc và
-dừng một phiên vẫn gọi được ở mọi nơi.
+chúng với `403 PERSON_ONLY`, và chính route cũng từ chối như vậy với mọi yêu cầu được một bề mặt máy đánh dấu.
+`POST /widget-dev/chosen-folders/forget` cũng bị từ chối như vậy: thu hồi một thư mục đã chọn là việc của người dùng,
+giống như chọn nó. Đọc và dừng một phiên vẫn gọi được ở mọi nơi.
 
-Trong cuộc hội thoại, tool `develop_widget` của Clark (`start`, `status`, `rebuild`, `place`, `stop`) điều khiển cùng các
-phiên đó. Tool chỉ bắt đầu, dựng lại hoặc đặt widget trong một lượt do người dùng gửi; một lượt do bề mặt máy, tác vụ tự
-động hoặc máy ngang hàng gửi không làm được những việc này.
+Trong cuộc hội thoại, tool `develop_widget` của Clark (`start`, `choose`, `folders`, `status`, `rebuild`, `place`,
+`stop`) điều khiển cùng các phiên đó. Tool chỉ bắt đầu, dựng lại hoặc đặt widget trong một lượt do người dùng gửi; một
+lượt do bề mặt máy, tác vụ tự động hoặc máy ngang hàng gửi không làm được những việc này. `choose` và `folders` chỉ cho
+người dùng thấy thẻ `develop` (một thư mục để chọn, hoặc các thư mục đã chọn, mỗi thư mục có nút **Thu hồi**); cả hai
+đều không bắt đầu hay thu hồi gì.
 
 Lời gọi action của widget, `POST /conversations/{id}/widgets/{instanceId}/actions`, nhận một body được route kiểm bằng
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); body nằm ngoài schema nhận `400 INVALID_SCHEMA`, và một

@@ -255,3 +255,17 @@ export const widgetDevSessionCreateSchema = z.strictObject({
   widgetId: z.string().min(1).max(160).optional(),
 });
 export type WidgetDevSessionCreate = z.infer<typeof widgetDevSessionCreateSchema>;
+
+/** `POST /widget-dev/chosen-folders/forget`: the folder the person no longer lets Clark develop in. */
+export const widgetDevFolderForgetSchema = z.strictObject({
+  /** The chosen folder, as the node lists it (its canonical path) or as a path that resolves to it. */
+  root: z.string().min(1).max(1000),
+});
+export type WidgetDevFolderForget = z.infer<typeof widgetDevFolderForgetSchema>;
+
+/** What a forget did: the folder it matched, and whether Clark had been allowed to develop there until now. */
+export const widgetDevFolderForgetResultSchema = z.strictObject({
+  root: z.string().min(1).max(1000),
+  forgotten: z.boolean(),
+});
+export type WidgetDevFolderForgetResult = z.infer<typeof widgetDevFolderForgetResultSchema>;

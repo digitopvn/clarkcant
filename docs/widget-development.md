@@ -2908,8 +2908,11 @@ have Clark work on a widget project you already have, choose its folder yourself
 `/develop <folder>`, or ask Clark), then press **Choose folder…** in the card that answers. The desktop app opens the
 system folder dialog; a browser, or a desktop app connected to a node on another machine, asks for the folder's full
 path on the node's machine instead. If Clark asks to develop a folder you have not chosen, nothing starts and the same
-card appears with **Develop this folder**. Once you start a folder, Clark may work in it, and in folders inside it,
-without asking again. The node's own data folder is never developed, and neither
+card appears with **Develop this folder**. The card names the folder the path really leads to, and says so when that
+differs from the path given. Once you start a folder, Clark may work in it, and in every folder inside it, without
+asking again, until you take that back: type `/develop forget` (or ask Clark which folders it may use) and press
+**Forget** beside the folder. Forgetting does not stop a session that is running. A whole drive or your home folder can
+be developed for one session, but Clark never keeps access to it. The node's own data folder is never developed, and neither
 is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
 a native part is refused with a problem saying so; install that package the ordinary way.
 

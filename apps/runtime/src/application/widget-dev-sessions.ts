@@ -1,5 +1,6 @@
 import { mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   WIDGET_DEV_ALLOWED_ISOLATIONS,
@@ -110,7 +111,14 @@ export interface WidgetDevSessions {
    * The host-owned card a person chooses a folder to develop on (`developFolderCard`), offering `proposed` first, in
    * `locale` (the owner's language when left out).
    */
-  folderCard(input: { proposed?: string; locale?: "vi" | "en" }): CommandCard;
+  folderCard(input: { proposed?: string; locale?: "vi" | "en"; only?: "chosen" }): CommandCard;
+  /** The folders the person chose that Clark may develop in now (`chosenFolders`), as canonical paths. */
+  chosen(): string[];
+  /**
+   * Take back the person's choice of a folder: Clark may no longer start sessions in it, or in a folder inside it. Only
+   * the person's own surface calls this (the route is person-only). Sessions there, and what they run, stay as they are.
+   */
+  forget(root: string): WidgetDevResult<{ root: string; forgotten: boolean }>;
   /** Start watching again every session that was live when the node stopped. */
   resume(): Promise<void>;
   close(): void;
@@ -263,9 +271,14 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_IN_DATA_FOLDER", "the folder holds or lies inside this node's data folder, which is not developed from; use a project folder");
     }
     if (initiative.kind === "clark" && !inWorkspace) {
-      const allowed = [...configuredRoots(), ...chosenFolders()]
-        .map((path) => realOrUndefined(path))
-        .filter((path): path is string => path !== undefined);
+      // The person's configured roots are resolved as they are now; a chosen folder is the canonical path the person's
+      // start stored, compared as it is (`chosenFolders`), so a link swapped in at its path later widens nothing.
+      const allowed = [
+        ...configuredRoots()
+          .map((path) => realOrUndefined(path))
+          .filter((path): path is string => path !== undefined),
+        ...chosenFolders(),
+      ];
       if (containingRoot(ownedResources(allowed), root) === undefined) {
         return refusal(403, "ROOT_NOT_OWNED", hostText(ownerLocale(services().runtime)).approvals.devSessionRootNotOwned(root, widgetWorkspace));
       }
@@ -294,10 +307,30 @@ export function createWidgetDevSessions(
    * (`chosenByPerson`), live or stopped. Only the person-only start writes that mark, so no turn, widget or machine
    * surface can add a folder here; a session the store forgets takes its folder with it.
    */
-  const chosenFolders = (): string[] =>
-    readDevSessions(dataDir())
-      .filter((session) => session.chosenByPerson === true)
-      .map((session) => session.root);
+  const chosenFolders = (): string[] => {
+    const folders: string[] = [];
+    for (const session of readDevSessions(dataDir())) {
+      if (session.chosenByPerson !== true || folders.some((folder) => sameRoot(folder, session.root))) continue;
+      // The stored root is the canonical path the person's start resolved. A folder that now resolves anywhere else (it
+      // was replaced by a link, or removed) is not the folder they chose, so it grants nothing.
+      const now = realOrUndefined(session.root);
+      if (now !== undefined && sameRoot(now, session.root)) folders.push(session.root);
+    }
+    return folders;
+  };
+
+  /**
+   * Whether a folder is too broad to keep as a choice: a filesystem or drive root, or the person's home folder itself. A
+   * session there may still run, but its start leaves no lasting choice behind, since a choice covers every folder inside.
+   */
+  const broadFolder = (root: string): "drive" | "home" | undefined => {
+    if (dirname(root) === root) return "drive";
+    const home = realOrUndefined(homedir()) ?? resolve(homedir());
+    return sameRoot(root, home) ? "home" : undefined;
+  };
+
+  /** The person's start chooses its folder, unless the folder is too broad to keep (`broadFolder`). */
+  const choosesFolder = (initiative: WidgetDevInitiative, root: string): boolean => initiative.kind === "person" && broadFolder(root) === undefined;
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {
     const session = live.get(stored.sessionId);
@@ -803,7 +836,7 @@ export function createWidgetDevSessions(
       const existing = sessions.find((session) => sameRoot(session.root, root) && session.status === "live" && live.has(session.sessionId));
       if (existing !== undefined) {
         const view = await serial(existing.sessionId, async () => {
-          if (initiative.kind === "person") update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
+          if (choosesFolder(initiative, root)) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
           await settle(existing.sessionId, "start");
           return sessionView(existing.sessionId);
         });
@@ -832,7 +865,7 @@ export function createWidgetDevSessions(
         startedAt: nowInstant(),
         initiative,
         // The person starting a folder is them choosing it; Clark picking up a folder they chose keeps the mark.
-        ...(initiative.kind === "person" ? { chosenByPerson: true as const } : {}),
+        ...(choosesFolder(initiative, root) ? { chosenByPerson: true as const } : {}),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(input.widgetId === undefined ? {} : { widgetId: input.widgetId }),
         ...(placed === undefined ? {} : { placed }),
@@ -906,13 +939,41 @@ export function createWidgetDevSessions(
 
     folderCard(input) {
       const node = services();
+      const given = input.proposed?.trim().slice(0, 1000);
+      // The card names, and its press starts, the folder the path resolves to now, never only the words Clark or the
+      // command gave: a link or `..` cannot make the person approve one folder and grant a wider one.
+      const folder = given === undefined || given === "" || !isAbsolute(given) || isRemoteOrDevicePath(given) ? undefined : realOrUndefined(resolve(given));
+      const broad = folder === undefined ? undefined : broadFolder(folder);
       return developFolderCard({
         cardId: node.conductor.newId("card"),
         at: nowInstant(),
         locale: input.locale ?? ownerLocale(node.runtime),
-        ...(input.proposed === undefined ? {} : { proposed: input.proposed }),
+        ...(given === undefined || given === "" ? {} : { proposed: { given, ...(folder === undefined ? {} : { folder }), ...(broad === undefined ? {} : { broad }) } }),
+        chosen: chosenFolders(),
         sessions: readDevSessions(dataDir()).map(viewOf),
+        ...(input.only === undefined ? {} : { only: input.only }),
       });
+    },
+
+    chosen: chosenFolders,
+
+    forget(raw) {
+      const given = raw.trim();
+      if (!isAbsolute(given)) return refusal(400, "ROOT_NOT_ABSOLUTE", "give the chosen folder as an absolute path on this node");
+      const real = realOrUndefined(resolve(given));
+      const matches = (root: string): boolean => sameRoot(root, given) || (real !== undefined && sameRoot(root, real));
+      const sessions = readDevSessions(dataDir());
+      const chosen = sessions.find((session) => session.chosenByPerson === true && matches(session.root));
+      if (chosen === undefined) return { ok: true, value: { root: real ?? given, forgotten: false } };
+      writeDevSessions(
+        dataDir(),
+        sessions.map((session) => {
+          if (session.chosenByPerson !== true || !matches(session.root)) return session;
+          const { chosenByPerson: _forgotten, ...rest } = session;
+          return rest;
+        }),
+      );
+      return { ok: true, value: { root: chosen.root, forgotten: true } };
     },
 
     async resume() {

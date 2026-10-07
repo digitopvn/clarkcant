@@ -172,8 +172,10 @@ test("a folder typed into the /develop card in a browser is developed as the per
     await expect(field).toBeFocused();
 
     // Escape leaves the card as it was; pressing the row again asks again.
+    // Focus returns to the button that opened the field, so the keyboard is where it was.
     await field.press("Escape");
     await expect(entry).toHaveCount(0);
+    await expect(choose.getByRole("button", { name: "Chọn thư mục…" })).toBeFocused();
     await choose.getByRole("button", { name: "Chọn thư mục…" }).click();
     await entry.getByRole("textbox").fill(root);
     await entry.getByRole("button", { name: "Phát triển" }).click();
@@ -187,7 +189,18 @@ test("a folder typed into the /develop card in a browser is developed as the per
     };
     const mine = listed.sessions.find((candidate) => candidate.root.endsWith(root.split(/[\\/]/).at(-1) ?? root));
     expect(mine).toMatchObject({ status: "live" });
+
+    // /develop forget lists the folder the person chose, and takes the choice back on their press.
+    await send(page, "/develop forget");
+    const folders = lastCard(page, "develop");
+    await expect(folders).toContainText("Thư mục Clark được phát triển", { timeout: 20_000 });
+    const row = folders.locator("li", { hasText: root.split(/[\\/]/).at(-1) ?? root });
+    await expect(row).toContainText("bạn đã chọn");
+    await row.getByRole("button", { name: "Thu hồi" }).click();
+    await expect(row.locator('.cc-command-status[data-result="done"]')).toContainText("Đã thu hồi", { timeout: 10_000 });
+    await expect(row).not.toContainText("bạn đã chọn");
   } finally {
+    await request.post(`${GATEWAY}/widget-dev/chosen-folders/forget`, { headers, data: { root } });
     const listed = (await (await request.get(`${GATEWAY}/widget-dev/sessions`, { headers })).json()) as { sessions: { sessionId: string; root: string }[] };
     for (const entry of listed.sessions.filter((candidate) => candidate.root.endsWith(root.split(/[\\/]/).at(-1) ?? root))) {
       await request.delete(`${GATEWAY}/widget-dev/sessions/${entry.sessionId}`, { headers });

@@ -2894,8 +2894,11 @@ widget mới. Để Clark làm việc với một dự án widget bạn đã có
 `/develop <thư mục>`, hoặc nhờ Clark), rồi bấm **Chọn thư mục…** trên thẻ trả lời. Ứng dụng desktop mở hộp chọn thư mục
 của hệ thống; trình duyệt, hoặc ứng dụng desktop nối với một node trên máy khác, sẽ hỏi đường dẫn đầy đủ của thư mục trên
 máy chạy node. Nếu Clark muốn phát triển một thư mục bạn chưa chọn, không có gì được bắt đầu và chính thẻ đó hiện ra với
-nút **Phát triển thư mục này**. Khi bạn đã bắt đầu một thư mục, Clark được làm việc trong đó, và trong các thư mục nằm
-bên trong nó, mà không cần hỏi lại. Thư mục dữ liệu của chính node không bao giờ được phát triển,
+nút **Phát triển thư mục này**. Thẻ nêu thư mục mà đường dẫn thật sự dẫn tới, và nói rõ khi nó khác đường dẫn được đưa
+ra. Khi bạn đã bắt đầu một thư mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi
+lại, cho tới khi bạn thu hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh
+thư mục đó. Thu hồi không dừng phiên đang chạy. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
+phiên, nhưng Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển,
 và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
 dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
 

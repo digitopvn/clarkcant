@@ -11,8 +11,10 @@ import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
  * initiative: its installs are decided as Clark's own proposal (a mode that asks before what the person did not ask for
  * by name asks), and it may watch only Clark's widget workspace, a folder the person chose for widget development, or a
  * project root the person configured. For any other folder, start answers with the host-owned card the person chooses a
- * folder on (`folderCard`): their press starts the session as their own, and Clark never does. Only a turn the person
- * sent can start, rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
+ * folder on (`folderCard`): their press starts the session as their own, and Clark never does. `choose` shows that card
+ * when the person asks to pick a folder in words or by voice, and `folders` the folders they chose, each with a way to
+ * take it back: the same cards `/develop` and `/develop forget` answer with. Only a turn the person sent can start,
+ * rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
  */
 
 export interface DevelopWidgetToolDeps {
@@ -24,7 +26,7 @@ export interface DevelopWidgetToolDeps {
   origin?: () => TurnOrigin | undefined;
 }
 
-const ACTIONS = ["start", "status", "rebuild", "stop", "place"] as const;
+const ACTIONS = ["start", "choose", "folders", "status", "rebuild", "stop", "place"] as const;
 type Action = (typeof ACTIONS)[number];
 const INSTALLS: readonly Action[] = ["start", "rebuild", "place"];
 
@@ -82,10 +84,12 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       "that still reads as a package rebuilds it, and the widget reloads in place. A save that does not read as a package " +
       "keeps the last good build on screen and reports what is wrong. A build that asks to reach more is decided by the " +
       "execution policy again, and may wait for the person in the inbox. status reports a session, rebuild builds now, " +
-      "place puts its widget here again, stop ends watching (what runs keeps running). You may watch your widget " +
+      "place puts its widget here again, stop ends watching (what runs keeps running). choose shows the person a card to " +
+      "pick a folder themselves (with root, offering that folder first): use it when they ask to choose or browse for a " +
+      "folder. folders shows the folders they chose, where they can take one back. You may watch your widget " +
       "workspace" +
       (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget,`) +
-      " and folders the person chose for widget development. For any other folder, start shows the person a card to " +
+      " and folders the person chose for widget development, including the folders inside them. For any other folder, start shows the person a card to " +
       "choose it themselves; when they do, the session starts and its widget appears here, so do not ask them to copy " +
       "the project anywhere. Only widgets that render in the frame or are data are developed this way: a package with " +
       "a service, tools or a native part is refused.",
@@ -95,7 +99,7 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       required: ["action"],
       properties: {
         action: { type: "string", enum: [...ACTIONS], description: "What to do." },
-        root: { type: "string", description: "For start: the package folder, as an absolute path on this machine." },
+        root: { type: "string", description: "For start: the package folder, as an absolute path on this machine. For choose, optional: the folder to offer first." },
         sessionId: { type: "string", description: "For status, rebuild, stop and place: the session id start returned." },
         widgetId: { type: "string", description: "For start and place, optional: which of the package's widgets to place." },
       },
@@ -112,6 +116,25 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
         return { text: "A widget dev session installs code, so only a turn the person sent can start, rebuild or place one. Nothing was done." };
       }
       const widgetId = typeof params.widgetId === "string" && params.widgetId.trim() !== "" ? params.widgetId.trim() : undefined;
+
+      // Showing a card starts nothing: the person's press on it does, on their own surface.
+      if (action === "choose") {
+        const offered = typeof params.root === "string" ? params.root.trim() : "";
+        return {
+          text: "The person now sees a card to choose a folder to develop a widget from. Tell them it is there; when they pick one, the session starts and its widget is placed here.",
+          hostBlocks: [sessions.folderCard(offered === "" ? {} : { proposed: offered })],
+        };
+      }
+      if (action === "folders") {
+        const chosen = sessions.chosen();
+        return {
+          text:
+            chosen.length === 0
+              ? "The person has chosen no folder; you may develop only in your widget workspace. The card they now see says so."
+              : `The person sees the ${String(chosen.length)} folder(s) they chose, each with a Forget button; only their press takes one back.`,
+          hostBlocks: [sessions.folderCard({ only: "chosen" })],
+        };
+      }
 
       if (action === "start") {
         const root = typeof params.root === "string" ? params.root.trim() : "";

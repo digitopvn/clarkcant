@@ -195,6 +195,21 @@ describe("slash commands in a conversation", () => {
       services.widgetDev.close();
     }
   });
+
+  it("lists on /develop forget the folders Clark may develop in because the person chose them, and says when there are none", async () => {
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    try {
+      const id = await createConversation("thu hồi");
+      const { text, card } = await command(id, "/develop Forget");
+      expect(card).toMatchObject({ command: "develop", owner: "host", rows: [] });
+      expect(card?.empty ?? "").not.toBe("");
+      expect(text.length).toBeGreaterThan(0);
+      // The word is the command's, not a folder: nothing is offered to develop.
+      expect(card?.rows.some((row) => row.rowId === "proposed")).toBe(false);
+    } finally {
+      services.widgetDev.close();
+    }
+  });
 });
 
 describe("provider sign-in routes", () => {
