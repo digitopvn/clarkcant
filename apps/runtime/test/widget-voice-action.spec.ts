@@ -139,4 +139,23 @@ describe("what the resolver declines to do", () => {
   it("refuses an empty utterance rather than matching the first action", () => {
     expect(resolveVoiceWidgetAction({ utterance: "   ", focused: CALENDAR }).ok).toBe(false);
   });
+
+  it("says each refusal in the person's language, and says whether a widget was focused at all", () => {
+    expect(resolveVoiceWidgetAction({ utterance: "next", focused: undefined, locale: "en" })).toEqual({
+      ok: false,
+      say: "No widget is open right now, so I have no action to do.",
+      focused: false,
+    });
+    expect(resolveVoiceWidgetAction({ utterance: "next", focused: view([]), locale: "en" })).toEqual({
+      ok: false,
+      say: "The open widget has no action for me to do.",
+      focused: true,
+    });
+    const unmatched = resolveVoiceWidgetAction({ utterance: "show me december", focused: CALENDAR, locale: "en" });
+    if (unmatched.ok) throw new Error("unreachable");
+    expect(unmatched.say.startsWith("I'm not sure what you want to do with the open widget. It offers: ")).toBe(true);
+    expect(unmatched.focused).toBe(true);
+    // Vietnamese when no language is given, as before.
+    expect(resolveVoiceWidgetAction({ utterance: "kỳ sau", focused: undefined })).toMatchObject({ say: NO_FOCUSED_SURFACE_SAY, focused: false });
+  });
 });

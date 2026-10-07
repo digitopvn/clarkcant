@@ -30,10 +30,9 @@ import {
 } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
-import { type SpeechLocale, spokenApprovalDecided } from "./application/action-speech.ts";
+import { type SpeechLocale, spokenApprovalDecided, spokenApprovalQuestion } from "./application/action-speech.ts";
 import { tokenMatches } from "./gateway.ts";
 import {
-  NO_FOCUSED_SURFACE_SAY,
   describeVoiceWidgetAction,
   resolveVoiceWidgetAction,
   type VoiceWidgetAction,
@@ -176,6 +175,12 @@ export interface VoiceGatewayOptions {
      * the socket was already closed and nothing went out.
      */
     onWidgetPerform?: VoiceFrameSink;
+    /**
+     * The actions the focused widget offers, as `focusedWidgetContext` renders them, read when the turn starts: present
+     * only when the sentence was said with a widget focused and named none of its labels. `undefined` when that widget is
+     * no longer focused, or offers nothing Clark can perform, by then. Data about the widget, never guidance.
+     */
+    widgetContext?: () => string | undefined;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -259,6 +264,15 @@ export interface VoiceGatewayOptions {
      */
     onWidgetPerform?: VoiceFrameSink;
   }) => Promise<VoiceWidgetRun>;
+  /**
+   * The actions a focused widget offers Clark, rendered as a turn's data, or `undefined` when it offers none.
+   *
+   * Read when the agent's turn for a sentence that named none of the focused widget's labels starts, while that widget is
+   * still focused and the page can hand a perform to a frame. With a rendering, the turn has it as data, and the agent may
+   * perform one of the actions through `perform_widget_action` — the typed path, under the same execution policy and
+   * card. Without one, the turn answers the sentence as any other.
+   */
+  focusedWidgetContext?: (input: { conversationId: ConversationId; instanceId: string }) => string | undefined;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   /**
@@ -1141,12 +1155,17 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        *
        * After the questions that may be waiting, because a sentence said while one is waiting is an answer to it. The
        * action is resolved by the shared resolver: a sentence selects among the actions the focused instance offers,
-       * and the binding id comes from that view rather than from the words. An unmatched sentence is refused when a
-       * widget is open and left to the agent when none is - which is why those two are different sentences rather than
-       * one "I did not understand".
+       * and the binding id comes from that view rather than from the words. An unmatched sentence is the agent's, like
+       * any sentence that is not a command: one Clark answers it whether a widget is open or not. When the widget that
+       * was focused as it was said offers actions Clark can perform on a page that can reach its frame, the turn is given
+       * those actions as data — read when the turn starts, so a widget closed or unfocused while it waited is not
+       * described as on screen. No host heuristic guesses which action was meant, and the agent can only perform one
+       * through the typed tool path. Only with no agent wired is the sentence refused: by naming what the widget offers,
+       * or by saying that none is open.
        */
+      let focusedAtSentence: string | undefined;
       if (options.widgetAction !== undefined) {
-        const resolved = resolveVoiceWidgetAction({ utterance: text, focused: focusedViewNow() });
+        const resolved = resolveVoiceWidgetAction({ utterance: text, focused: focusedViewNow(), locale: locale() });
         if (resolved.ok) {
           if (resolved.action.requiresApproval) {
             // Asked before anything runs. A widget says which of its actions need a person, and a spoken sentence is
@@ -1160,12 +1179,24 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           runWidgetAction(resolved.action);
           return;
         }
-        if (resolved.say !== NO_FOCUSED_SURFACE_SAY) {
+        // With no agent to answer, the refusal is the answer, whether or not a widget is focused.
+        if (answer === undefined) {
           send({ type: "transcript", role: "assistant", text: resolved.say, final: true });
           say(resolved.say);
           return;
         }
+        if (resolved.focused) focusedAtSentence = focusedInstanceId;
       }
+      const focusedWidgetContext = options.focusedWidgetContext;
+      // The focused widget's offered actions, read when the turn starts: only while the same widget is still focused,
+      // on a session that is still open, and only for a page that can hand a perform to its frame.
+      const widgetContext =
+        focusedAtSentence === undefined || focusedWidgetContext === undefined
+          ? undefined
+          : (): string | undefined =>
+              performsWidgets && !closing && ws.readyState === ws.OPEN && focusedInstanceId === focusedAtSentence
+                ? focusedWidgetContext({ conversationId: askIn, instanceId: focusedAtSentence })
+                : undefined;
 
       // The agent path needs an agent. This is the only branch that does, so the check lives here.
       if (answer === undefined) return;
@@ -1190,6 +1221,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             // Only to a page that said it can hand one to a frame and report back: any other surface is sent none, and
             // the node learns at once that nobody can ask a frame rather than waiting on a report that cannot come.
             ...frameSink(),
+            ...(widgetContext === undefined ? {} : { widgetContext }),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;
@@ -1210,7 +1242,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             // yes-or-no phrasing, and a question is read through the host-generated voice prompt.
             const question =
               proposed.kind === "approval"
-                ? `${proposed.description}. Bạn cho phép chạy hay là không?`
+                ? spokenApprovalQuestion(proposed.description, locale())
                 : proposed.voicePrompt;
             send({ type: "transcript", role: "assistant", text: question, final: true });
             say(question);

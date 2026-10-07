@@ -71,23 +71,14 @@ async function openVoice(page: Page): Promise<void> {
 }
 
 /**
- * BLOCKED, and the missing condition is named here rather than left as a quiet skip.
+ * A sentence that names none of the open widget's actions is Clark's, like any sentence that is not a command.
  *
- * This test drives the real action and asserts the state afterwards, and it fails: the spoken sentence
- * resolves to nothing, so the session answers "I am not sure what you want to do with the open widget".
- * That answer comes from the resolver's unmatched path, which means the focused instance's offered
- * actions were listed and the words matched none of their labels.
- *
- * What is not established: the label `semanticViewOf` actually emits for this binding. `compose-mini-app.ts`
- * compiles it as "Đổi khoảng thời gian", and the resolver's own unit test passes for exactly that label,
- * so the app is producing something else - most likely a second binding compiled from the section spec
- * rather than the template's. Until that is read off the node, matching this label is a guess, and a guess
- * is what the resolver exists to refuse.
- *
- * The refusal journey below does pass, and it is what proves the focus frame, the view lookup and the
- * "refuse rather than guess" rule are wired. T66 is not claimed: it needs this one green.
+ * The spoken words select nothing on the surface: the resolver matches labels only, so the surface is left alone and
+ * the sentence becomes the person's message, which Clark's turn answers. The overview offers no action Clark can
+ * perform, so the turn is given none. This node runs no model, so the turn's answer says that; what this pins is that
+ * the sentence reached the turn, was neither refused nor acted on by the host, and left the period unchanged.
  */
-test("a spoken action the widget does not offer changes nothing", async ({ page, request }) => {
+test("a spoken sentence naming none of the widget's actions goes to Clark and changes nothing by itself", async ({ page, request }) => {
   await openApp(page);
   await ask(page, "cho tui xem tổng quan công việc tuần này");
   await page.locator("[data-open-live]").first().click();
@@ -96,23 +87,19 @@ test("a spoken action the widget does not offer changes nothing", async ({ page,
   const period = live.locator("[data-slot='filter'] select");
   await expect(period).toHaveValue("week", { timeout: 30_000 });
 
-  // Names no offered action. A refusal is said out loud and the surface is left alone - which is the property that
-  // separates this from a widget acted on by whatever a transcription happened to say. Which refusal is not pinned
-  // here: "that widget has nothing to offer" and "I did not understand which of its actions you meant" are different
-  // facts, and a person is told both truthfully, so the assertion is that it was refused rather than which sentence.
   await scriptVoice(request, "cho tui xem tháng mười hai");
   await openVoice(page);
-  await expect(
-    page.getByText(/chưa rõ bạn muốn làm gì|không có hành động nào|không có widget nào đang mở/i).first(),
-  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("cho tui xem tháng mười hai").first()).toBeVisible({ timeout: 20_000 });
+  // Clark's turn answered it: this node runs no model, and the turn says so, which only a turn can say.
+  await expect(page.getByText(/chưa có model nào để tui dùng/u).first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/chưa rõ bạn muốn làm gì|không có hành động nào|không có widget nào đang mở/i)).toHaveCount(0);
   await expect(period).toHaveValue("week");
 });
-
 
 /**
  * T66: one real action, reached two ways, landing in the same state.
  *
- * Measured rather than assumed, and the note above was wrong about why: the sentence does resolve and the action
+ * Measured rather than assumed, and an earlier note here was wrong about why it failed: the sentence does resolve and the action
  * does run - the node reported ok, revision 7 to 8, "Da Doi khoang thoi gian". What was missing was that the page
  * had no handler for the node's report, so the surface kept showing the old period. The sentence also has to carry
  * the argument: this action takes a period, and a sentence naming only the action cannot choose one.

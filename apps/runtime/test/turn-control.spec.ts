@@ -15,8 +15,17 @@ import { createModelTurn } from "../src/model-turn.ts";
 class HangingAdapter extends FakePiAdapter {
   release: (() => void) | undefined;
   readonly steered: { sessionId: string; text: string }[] = [];
+  readonly prompts: string[] = [];
+  private readonly prompted: (() => void)[] = [];
+
+  /** Resolves once `count` prompts have reached the adapter: no sleep stands in for "the turn is running". */
+  async promptsReached(count: number): Promise<void> {
+    while (this.prompts.length < count) await new Promise<void>((resolve) => this.prompted.push(resolve));
+  }
 
   override async prompt(sessionId: string, text: string): Promise<void> {
+    this.prompts.push(text);
+    for (const resolve of this.prompted.splice(0)) resolve();
     await new Promise<void>((resolve) => {
       this.release = resolve;
     });
@@ -101,5 +110,116 @@ describe("what is running while a message arrives", () => {
     turn!.interrupt(CONVERSATION);
     adapter.release?.();
     await machine.catch(() => undefined);
+  });
+
+  it("reads a waiting message's start-time data only once its own turn starts, after the running turn ended", async () => {
+    const adapter = new HangingAdapter({ script: ["Câu trả lời.", "Câu thứ hai."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    const first = turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "việc dài", messageId: "msg_1", origin: "person" });
+    await adapter.promptsReached(1);
+    let firstEnded = false;
+    void first.then(() => (firstEnded = true));
+
+    let reads = 0;
+    const spoken = turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "cho mấy ô này thành phần trăm",
+      messageId: "msg_2",
+      origin: "person",
+      channel: "voice",
+      // What is on screen while the message waits, and once the running turn has ended: read early, it says A.
+      dataAtStart: () => {
+        reads += 1;
+        return firstEnded ? "[Widget B, focused when the turn started]" : "[Widget A, focused when the person spoke]";
+      },
+    });
+
+    adapter.release?.();
+    await first;
+    await adapter.promptsReached(2);
+    expect(reads).toBe(1);
+    expect(adapter.steered).toEqual([]);
+    const prompt = adapter.prompts[1] ?? "";
+    expect(prompt).toContain("[Widget B, focused when the turn started]");
+    expect(prompt).not.toContain("Widget A");
+    // Data, after the person's own words.
+    expect(prompt.indexOf("Widget B")).toBeGreaterThan(prompt.indexOf("cho mấy ô này thành phần trăm"));
+    adapter.release?.();
+    await spoken;
+  });
+
+  it("never joins typed words that carry start-time data to the running turn: they wait and become a turn of their own", async () => {
+    const adapter = new HangingAdapter({ script: ["Câu trả lời.", "Câu thứ hai."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    const first = turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "việc dài", messageId: "msg_1", origin: "person" });
+    await adapter.promptsReached(1);
+
+    // Bare words of the same origin on the chat channel, which would be steered but for the data read at the start.
+    const typed = turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "thêm phần này",
+      messageId: "msg_2",
+      origin: "person",
+      channel: "chat",
+      dataAtStart: () => "[What was on screen]",
+    });
+    adapter.release?.();
+    await first;
+    await adapter.promptsReached(2);
+    expect(adapter.steered).toEqual([]);
+    expect(adapter.prompts[1]).toContain("[What was on screen]");
+    adapter.release?.();
+    await typed;
+  });
+
+  it("starts a turn whose start-time data throws without it, and leaves the conversation free for the next message", async () => {
+    const adapter = new HangingAdapter({ script: ["Câu trả lời.", "Câu thứ hai."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    const broken = turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "cho mấy ô này thành phần trăm",
+      messageId: "msg_1",
+      channel: "voice",
+      dataAtStart: () => {
+        throw new Error("database is locked");
+      },
+    });
+    await adapter.promptsReached(1);
+    expect(adapter.prompts[0]?.startsWith("cho mấy ô này thành phần trăm")).toBe(true);
+    expect(adapter.prompts[0]).not.toContain("database is locked");
+    adapter.release?.();
+    await broken;
+
+    const next = turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "câu tiếp theo", messageId: "msg_2" });
+    await adapter.promptsReached(2);
+    expect(adapter.prompts[1]?.startsWith("câu tiếp theo")).toBe(true);
+    adapter.release?.();
+    await next;
+    expect(turn!.running()).toEqual([]);
+  });
+
+  it("sends nothing for start-time data that no longer holds when the turn starts", async () => {
+    const adapter = new HangingAdapter({ script: ["Câu trả lời."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    let reads = 0;
+    const spoken = turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "cho mấy ô này thành phần trăm",
+      messageId: "msg_1",
+      channel: "voice",
+      dataAtStart: () => {
+        reads += 1;
+        return undefined;
+      },
+    });
+    await adapter.promptsReached(1);
+    expect(reads).toBe(1);
+    expect(adapter.prompts[0]?.trim()).toBe("cho mấy ô này thành phần trăm");
+    adapter.release?.();
+    await spoken;
   });
 });
