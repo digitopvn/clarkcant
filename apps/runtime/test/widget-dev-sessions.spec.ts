@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  messageBlockSchema,
+  type CommandCard,
   type ExecutionPolicyConfig,
   type Instant,
   type TurnOrigin,
@@ -449,15 +451,14 @@ describe("a widget dev session", () => {
     const unset = await toolFor(conversationId).execute({ action: "start", root });
     expect(unset.text).toContain("Not started");
     expect(unset.text).toContain("widget-workspace");
-    // Said in the owner's language (Vietnamese by default), with only what works today: copy the project into the
-    // widget workspace. Choosing another folder is not offered, since nothing lets the person choose one yet.
-    expect(unset.text).toContain("hãy chép thư mục của nó vào không gian widget");
-    expect(unset.text).toContain("digitopvn/clarkcant#538");
-    expect(unset.text).not.toContain("workspace.roots");
+    // Said in the owner's language (Vietnamese by default), with what the person can do: choose the folder themselves,
+    // on the card the answer carries or with /develop. A preference they have no way to write is never offered.
+    expect(unset.text).toContain("“Phát triển thư mục này”");
+    expect(unset.text).toContain("/develop");
+    expect(unset.text).not.toMatch(/workspace\.roots|#538/);
     const english = hostText("en").approvals.devSessionRootNotOwned("/x", "/w");
-    expect(english).toContain("copy its folder into the widget workspace");
-    expect(english).toContain("not available yet");
-    expect(english).not.toMatch(/workspace\.roots|yourself|from the app/);
+    expect(english).toContain('press "Develop this folder" on the card, or type /develop');
+    expect(english).not.toMatch(/workspace\.roots|#538|not available yet|copy its folder/);
 
     setRoots("agent");
     expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Not started");
@@ -465,6 +466,62 @@ describe("a widget dev session", () => {
 
     setRoots("user");
     expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Running generation 1.");
+  });
+
+  it("offers the person a card for a folder Clark may not watch, and lets Clark work there once the person starts it", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+
+    const offered = await toolFor(conversationId).execute({ action: "start", root: elsewhere });
+    expect(offered.text).toContain("Not started");
+    expect(offered.text).toContain("card offering to develop");
+    // The card is the host's, valid as a message block, and names the folder Clark asked for; nothing started.
+    const card = messageBlockSchema.parse(offered.hostBlocks?.[0]) as CommandCard;
+    expect(card).toMatchObject({ type: "command-card", owner: "host", command: "develop" });
+    expect(card.rows[0]).toMatchObject({ rowId: "proposed", label: elsewhere, actions: [{ action: { kind: "develop-folder", root: elsewhere } }] });
+    expect(card.rows[1]?.actions[0]?.action).toEqual({ kind: "develop-folder" });
+    expect((await call("GET", "/widget-dev/sessions")).body).toEqual({ sessions: [] });
+
+    // The press on the card is the person's own start, on the person-only route: it marks the folder as theirs.
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    expect(started.activation).toMatchObject({ state: "active", generation: 1 });
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)?.chosenByPerson).toBe(true);
+    expect((await call("DELETE", `/widget-dev/sessions/${started.sessionId}`)).status).toBe(200);
+
+    // Clark may now pick that folder up again, keeping the mark, and develop a folder inside it.
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Running generation 1.");
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)).toMatchObject({
+      status: "live",
+      chosenByPerson: true,
+      initiative: { kind: "clark" },
+    });
+    const inner = join(elsewhere, "inner");
+    writePackage("<!doctype html><p>inner</p>\n", [], inner, { id: "com.example.inner" });
+    expect((await toolFor(conversationId).execute({ action: "start", root: inner })).text).toContain("Running generation 1.");
+
+    // A restart checks the folder again for whoever started the session, and Clark's session in the chosen folder stays live.
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`))).toMatchObject({ status: "live" });
+  });
+
+  it("never lets a session Clark starts mark its folder as chosen", async () => {
+    const conversationId = await conversation();
+    // Allowed by the person's project root only.
+    const started = await toolFor(conversationId).execute({ action: "start", root });
+    expect(started.text).toContain("Running generation 1.");
+    const stored = readDevSessions(join(dir, "node"));
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.chosenByPerson).toBeUndefined();
+
+    // Without that root, the folder Clark watched before is not one it may watch again: the person is asked to choose it.
+    services.runtime.db.prepare("DELETE FROM preferences WHERE key = ?").run("workspace.roots");
+    await call("DELETE", `/widget-dev/sessions/${stored[0]?.sessionId ?? ""}`);
+    const again = await toolFor(conversationId).execute({ action: "start", root });
+    expect(again.text).toContain("Not started");
+    expect((again.hostBlocks?.[0] as CommandCard | undefined)?.command).toBe("develop");
   });
 
   it("decides a session Clark started as Clark's own proposal, so guarded mode asks", async () => {

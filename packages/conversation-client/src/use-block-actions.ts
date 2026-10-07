@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView } from "@clarkcant/contracts";
+import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView, WidgetDevSessionView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
+import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
+import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import type {
   ArtifactOpenState,
@@ -10,6 +12,7 @@ import type {
   CommandActionState,
   ControlSessionActionState,
   FeedbackCardState,
+  FolderEntryReason,
   PackageInstallState,
   QuestionOutcome,
   TaskStopState,
@@ -66,6 +69,24 @@ export function feedbackReportToReuse(previous: FeedbackCardState | undefined, r
   if (previous?.status === "prepared" && previous.requestKey === requestKey) return previous.draft.reportId;
   if (previous?.status === "failed" && previous.reportId !== undefined && previous.requestKey === requestKey) return previous.reportId;
   return undefined;
+}
+
+/**
+ * What a started widget dev session is doing, said beside the `/develop` card's button: running and placed here,
+ * waiting for the person's answer in the inbox, built but not run (with the node's reason), or a first build that
+ * failed. Read from the session the node answered with, never assumed from the press.
+ */
+export function developOutcomeMessage(view: WidgetDevSessionView, t: (key: MessageKey) => string): string {
+  const folder = view.root;
+  const { activation } = view;
+  if (activation.state === "active") return fillMessage(t("commandCard.develop.running"), { folder });
+  if (activation.state === "awaiting-approval") return fillMessage(t("commandCard.develop.awaitingApproval"), { folder });
+  if (activation.state === "refused") return fillMessage(t("commandCard.develop.refused"), { folder, reason: activation.message });
+  if (view.lastBuild?.ok === false) {
+    const reason = view.lastBuild.diagnostics.map((entry) => entry.message).join("; ");
+    return fillMessage(t("commandCard.develop.buildFailed"), { folder, reason });
+  }
+  return fillMessage(t("commandCard.develop.watching"), { folder });
 }
 
 /**
@@ -460,6 +481,33 @@ export function useBlockActions({
     [client],
   );
 
+  /** Rows of a `/develop` card asking for a folder's path in words, and why (`FolderEntryReason`). */
+  const [folderEntries, setFolderEntries] = useState<Record<string, FolderEntryReason>>({});
+
+  /**
+   * Start a widget dev session for a folder the person named on a card: on the person-only route, as them, placing the
+   * widget in this conversation. What the node answered is said beside the button; the node's own reason when it refused.
+   */
+  const developFolder = useCallback(
+    (key: string, root: string) => {
+      setFolderEntries((current) => {
+        const { [key]: _answered, ...rest } = current;
+        return rest;
+      });
+      const settle = (state: CommandActionState) => setCommandAction((current) => ({ ...current, [key]: state }));
+      if (conversationId === undefined) {
+        settle({ status: "failed", message: t("commandCard.failed") });
+        return;
+      }
+      settle({ status: "pending" });
+      void client.startWidgetDevSession({ root, conversationId }).then(
+        (view) => settle({ status: "done", message: developOutcomeMessage(view, t) }),
+        (error: unknown) => settle({ status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
+      );
+    },
+    [client, conversationId, t],
+  );
+
   const runCommandAction = useCallback(
     ({ cardId, rowId, actionId, action }: { cardId: string; rowId: string; actionId: string; action: CommandCardAction }) => {
       const key = `${cardId}/${rowId}/${actionId}`;
@@ -497,9 +545,34 @@ export function useBlockActions({
             client.notifyModelChange();
           }, fail);
           return;
+        case "develop-folder": {
+          if (action.root !== undefined) {
+            developFolder(key, action.root);
+            return;
+          }
+          // The OS dialog when it names a folder on the node; the path in words otherwise, and said why.
+          const reason: FolderEntryReason | undefined = !canPickFolder() ? "browser" : !client.nodeOnThisMachine() ? "remote-node" : undefined;
+          if (reason !== undefined) {
+            setFolderEntries((current) => ({ ...current, [key]: reason }));
+            return;
+          }
+          settle({ status: "pending" });
+          void pickFolderOnDesktop(t("commandCard.develop.dialogTitle")).then((picked) => {
+            if (picked.kind === "picked") {
+              developFolder(key, picked.path);
+              return;
+            }
+            setCommandAction((current) => {
+              const { [key]: _asked, ...rest } = current;
+              return rest;
+            });
+            if (picked.kind === "failed") setFolderEntries((current) => ({ ...current, [key]: "dialog-failed" }));
+          });
+          return;
+        }
       }
     },
-    [client, followSignIn, newConversation, openConversation, t],
+    [client, developFolder, followSignIn, newConversation, openConversation, t],
   );
 
   const answerSignIn = useCallback(
@@ -651,6 +724,13 @@ export function useBlockActions({
       ...(conversationId === undefined ? {} : { onFeedbackPreview: previewFeedback, onFeedbackCreate: createFeedback }),
       feedback,
       answeredFeedbackCards,
+      folderEntries,
+      onFolderEntrySubmit: ({ cardId, rowId, actionId, root }) => developFolder(`${cardId}/${rowId}/${actionId}`, root),
+      onFolderEntryCancel: ({ key }) =>
+        setFolderEntries((current) => {
+          const { [key]: _closed, ...rest } = current;
+          return rest;
+        }),
     }),
     [
       answeredFeedbackCards,
@@ -660,6 +740,8 @@ export function useBlockActions({
       previewFeedback,
       answerSignIn,
       cancelSignIn,
+      developFolder,
+      folderEntries,
       commandAction,
       runCommandAction,
       signIns,

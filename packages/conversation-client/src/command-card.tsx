@@ -1,8 +1,8 @@
-import { useState, type FormEvent, type ReactElement } from "react";
+import { useId, useState, type FormEvent, type ReactElement } from "react";
 
 import type { CommandCard, ProviderSignInView } from "@clarkcant/contracts";
 
-import type { BlockActions, CommandActionState } from "./blocks.tsx";
+import type { BlockActions, CommandActionState, FolderEntryReason } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -117,7 +117,78 @@ function CommandRow({
         </p>
       )}
       {signIn === undefined ? null : <SignInPanel signIn={signIn} rowKey={rowKey} t={t} actions={actions} />}
+      {live
+        ? row.actions.map((entry) => {
+            const key = `${rowKey}/${entry.actionId}`;
+            const reason = actions?.folderEntries?.[key];
+            return reason === undefined ? null : (
+              <FolderEntry key={key} cardId={cardId} rowId={row.rowId} actionId={entry.actionId} reason={reason} t={t} actions={actions} />
+            );
+          })
+        : null}
     </li>
+  );
+}
+
+/**
+ * A folder's path, typed: what a `/develop` row asks for where the OS folder dialog cannot answer — a browser, a node on
+ * another machine, or a dialog that did not open — and says which. The path goes to the node as the person's own start.
+ */
+function FolderEntry({
+  cardId,
+  rowId,
+  actionId,
+  reason,
+  t,
+  actions,
+}: {
+  cardId: string;
+  rowId: string;
+  actionId: string;
+  reason: FolderEntryReason;
+  t: (key: MessageKey) => string;
+  actions: BlockActions | undefined;
+}): ReactElement {
+  const [value, setValue] = useState("");
+  const hintId = useId();
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const root = value.trim();
+    if (root === "") return;
+    actions?.onFolderEntrySubmit?.({ cardId, rowId, actionId, root });
+  };
+  return (
+    <form className="cc-card-stack" data-folder-entry={reason} onSubmit={submit}>
+      <p className="cc-list-subtitle" id={hintId}>
+        {t(`commandCard.develop.reason.${reason}`)}
+      </p>
+      <div className="cc-search-row">
+        <input
+          className="cc-field-input"
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          // The person pressed the row's button to get here, so the field is where they are about to type.
+          autoFocus
+          aria-label={t("commandCard.develop.pathLabel")}
+          aria-describedby={hintId}
+          placeholder={t("commandCard.develop.pathPlaceholder")}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            actions?.onFolderEntryCancel?.({ key: `${cardId}/${rowId}/${actionId}` });
+          }}
+        />
+        <button type="submit" className="cc-action" data-emphasis="primary" disabled={value.trim() === ""}>
+          {t("commandCard.develop.submit")}
+        </button>
+        <button type="button" className="cc-action" onClick={() => actions?.onFolderEntryCancel?.({ key: `${cardId}/${rowId}/${actionId}` })}>
+          {t("commandCard.develop.cancel")}
+        </button>
+      </div>
+    </form>
   );
 }
 

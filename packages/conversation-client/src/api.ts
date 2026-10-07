@@ -867,6 +867,19 @@ export class GatewayClient {
   }
 
   /**
+   * Whether the node answers on this machine's loopback address, so a path the person picks in this machine's folder
+   * dialog names a folder on the node. A node reached over the network is on another machine, where that path means
+   * nothing; its folder is typed instead.
+   */
+  nodeOnThisMachine(): boolean {
+    try {
+      return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(this.#baseUrl).hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Open a live voice session against this node.
    *
    * The token stays here rather than being handed to the surface. That is the point: the voice

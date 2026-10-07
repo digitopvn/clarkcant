@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
@@ -121,4 +121,81 @@ test("a provider is signed in to with a key from the /login card, and signed out
 
   await stored.getByRole("button", { name: "Đăng xuất" }).click();
   await expect(stored.locator(".cc-command-status")).toContainText("Đã đăng xuất", { timeout: 10_000 });
+});
+
+/** A widget project folder of the test's own, outside the node's data folder, with a package id no other test uses. */
+function writeProject(): { root: string; packageId: string } {
+  const unique = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const root = join(process.cwd(), ".data", "e2e-develop", `timer-${unique}`);
+  const packageId = `com.example.e2e.develop.t${unique}`;
+  mkdirSync(join(root, "widgets", "main"), { recursive: true });
+  writeFileSync(join(root, "widgets", "main", "index.html"), "<!doctype html><p>timer</p>\n");
+  writeFileSync(
+    join(root, "widgets", "main", "widget.json"),
+    JSON.stringify({ name: "Timer", dataContract: { kind: "none" }, actions: [], datasetRefs: [], semanticDescription: "A timer", requestedCapabilities: [] }),
+  );
+  writeFileSync(
+    join(root, "clarkcant.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: packageId,
+      version: "0.1.0",
+      displayName: "Timer",
+      description: "A timer.",
+      hostApi: { min: 1, max: 1 },
+      facets: [{ kind: "widget", id: "timer", entry: "widgets/main/index.html", definition: "widgets/main/widget.json", isolation: "isolated-ui" }],
+      requestedCapabilities: [],
+      permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+      platforms: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64", "web"],
+      publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+    }),
+  );
+  return { root, packageId };
+}
+
+test("a folder typed into the /develop card in a browser is developed as the person's own choice", async ({ page, request }) => {
+  const { root, packageId } = writeProject();
+  const headers = { authorization: `Bearer ${token()}` };
+  try {
+    await openApp(page);
+    await send(page, "/develop");
+    const card = lastCard(page, "develop");
+    await expect(card).toBeVisible({ timeout: 20_000 });
+
+    // A browser has no folder dialog: the row asks for the path and says why, rather than offering a dialog it cannot open.
+    const choose = card.locator('[data-row-id="choose"]');
+    await choose.getByRole("button", { name: "Chọn thư mục…" }).click();
+    const entry = choose.locator('[data-folder-entry="browser"]');
+    await expect(entry).toBeVisible();
+    await expect(entry).toContainText("Trình duyệt không mở được hộp chọn thư mục");
+    const field = entry.getByRole("textbox", { name: "Đường dẫn thư mục" });
+    await expect(field).toBeFocused();
+
+    // Escape leaves the card as it was; pressing the row again asks again.
+    await field.press("Escape");
+    await expect(entry).toHaveCount(0);
+    await choose.getByRole("button", { name: "Chọn thư mục…" }).click();
+    await entry.getByRole("textbox").fill(root);
+    await entry.getByRole("button", { name: "Phát triển" }).click();
+
+    const status = choose.locator('.cc-command-status[data-result="done"]');
+    await expect(status).toContainText(root.split(/[\\/]/).at(-1) ?? root, { timeout: 20_000 });
+
+    // The node holds the session, which only the person's own start can have begun outside Clark's workspace.
+    const listed = (await (await request.get(`${GATEWAY}/widget-dev/sessions`, { headers })).json()) as {
+      sessions: { root: string; status: string }[];
+    };
+    const mine = listed.sessions.find((candidate) => candidate.root.endsWith(root.split(/[\\/]/).at(-1) ?? root));
+    expect(mine).toMatchObject({ status: "live" });
+  } finally {
+    const listed = (await (await request.get(`${GATEWAY}/widget-dev/sessions`, { headers })).json()) as { sessions: { sessionId: string; root: string }[] };
+    for (const entry of listed.sessions.filter((candidate) => candidate.root.endsWith(root.split(/[\\/]/).at(-1) ?? root))) {
+      await request.delete(`${GATEWAY}/widget-dev/sessions/${entry.sessionId}`, { headers });
+    }
+    const packages = (await (await request.get(`${GATEWAY}/packages`, { headers })).json()) as { packages: { packageId: string }[] };
+    if (packages.packages.some((entry) => entry.packageId === packageId)) {
+      await request.post(`${GATEWAY}/packages/${encodeURIComponent(packageId)}/uninstall`, { headers });
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });

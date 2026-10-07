@@ -9,7 +9,9 @@ import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
  * The same session registry `/widget-dev/sessions` drives, so a sentence, a voice command and the HTTP API start one
  * thing. Starting installs the folder's package through the node's install path. A session started here is Clark's
  * initiative: its installs are decided as Clark's own proposal (a mode that asks before what the person did not ask for
- * by name asks), and it may watch only Clark's widget workspace or a project root the person configured. Only a turn the person
+ * by name asks), and it may watch only Clark's widget workspace, a folder the person chose for widget development, or a
+ * project root the person configured. For any other folder, start answers with the host-owned card the person chooses a
+ * folder on (`folderCard`): their press starts the session as their own, and Clark never does. Only a turn the person
  * sent can start, rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
  */
 
@@ -44,7 +46,10 @@ export function describeDevSession(view: WidgetDevSessionView): string {
       capacity: "the node already watches as many folders as it can",
       "root-refused": "its folder is no longer one it may watch",
     }[view.stopReason];
-    const next = view.stopReason === "root-refused" ? "copy the project into the widget workspace and start a session there" : "start it again to resume";
+    const next =
+      view.stopReason === "root-refused"
+        ? "ask the person to choose its folder themselves (they can type /develop), or develop it in the widget workspace"
+        : "start it again to resume";
     lines.push(`It stopped watching because ${why}; ${next}.`);
   }
   if (view.latest?.delta.verdict === "wider") lines.push("The newest build asks to reach more than the one before it.");
@@ -77,12 +82,13 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       "that still reads as a package rebuilds it, and the widget reloads in place. A save that does not read as a package " +
       "keeps the last good build on screen and reports what is wrong. A build that asks to reach more is decided by the " +
       "execution policy again, and may wait for the person in the inbox. status reports a session, rebuild builds now, " +
-      "place puts its widget here again, stop ends watching (what runs keeps running). The folder must be inside your " +
-      "widget workspace" +
+      "place puts its widget here again, stop ends watching (what runs keeps running). You may watch your widget " +
+      "workspace" +
       (workspace === undefined ? "" : ` (${workspace}), where you scaffold a new widget,`) +
-      ". To develop an existing project, have it copied into the widget workspace first; choosing another project " +
-      "folder for widget development is not available yet (digitopvn/clarkcant#538). Only widgets that render in the frame or are data are " +
-      "developed this way: a package with a service, tools or a native part is refused.",
+      " and folders the person chose for widget development. For any other folder, start shows the person a card to " +
+      "choose it themselves; when they do, the session starts and its widget appears here, so do not ask them to copy " +
+      "the project anywhere. Only widgets that render in the frame or are data are developed this way: a package with " +
+      "a service, tools or a native part is refused.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -120,7 +126,15 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
           initiative: { kind: "clark", ...(origin === undefined ? {} : { origin }) },
           ...(widgetId === undefined ? {} : { widgetId }),
         });
-        return { text: started.ok ? describeDevSession(started.value) : `Not started: ${started.message}` };
+        if (started.ok) return { text: describeDevSession(started.value) };
+        if (started.code !== "ROOT_NOT_OWNED") return { text: `Not started: ${started.message}` };
+        // A folder Clark may not watch is the person's to choose: the card is theirs to press, and Clark only names it.
+        return {
+          text:
+            `Not started: ${started.message}\nThe person now sees a card offering to develop ${root} themselves. ` +
+            "Tell them it is there; when they press it, the session starts and its widget is placed here. Do not start it another way.",
+          hostBlocks: [sessions.folderCard({ proposed: root })],
+        };
       }
 
       const sessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";

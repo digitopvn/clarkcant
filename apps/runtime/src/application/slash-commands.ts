@@ -32,7 +32,7 @@ import { composeFeedback, feedbackComposeCard } from "./product-feedback.ts";
  */
 
 type Locale = "vi" | "en";
-type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub">;
+type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub" | "widgetDev">;
 
 export interface SlashCommandAnswer {
   text: string;
@@ -52,6 +52,7 @@ const NOTES: Record<SlashCommand, Record<Locale, string>> = {
   background: { vi: "Chạy một yêu cầu ở chế độ nền", en: "Run a request in the background" },
   changelog: { vi: "Phiên bản này của Clark có gì mới", en: "What this version of Clark changed" },
   report: { vi: "Báo lỗi hoặc đề xuất tính năng cho ClarkCant", en: "Report a bug or request a feature for ClarkCant" },
+  develop: { vi: "Phát triển widget từ một thư mục bạn chọn", en: "Develop a widget from a folder you choose" },
 };
 
 /** What the composer's picker says beside a command, in the person's language. */
@@ -192,7 +193,37 @@ export async function answerSlashCommand(
       return changelogAnswer(services, argument, say, input.at);
     case "report":
       return reportAnswer(services, input.conversationId, argument, input.at, say);
+    case "develop":
+      return developAnswer(services, argument, locale, say);
   }
+}
+
+/**
+ * `/develop` and `/develop <folder>`: the card the person chooses a folder to develop a widget from. Nothing starts here;
+ * a press on the card starts the session through the person-only route, as the person.
+ */
+function developAnswer(services: SlashServices, argument: string, locale: Locale, say: Say): SlashCommandAnswer {
+  if (services.widgetDev === undefined) {
+    return {
+      text: say(
+        "Node này không chạy phiên phát triển widget, nên chưa phát triển được widget từ một thư mục ở đây.",
+        "This node is not running widget dev sessions, so a widget cannot be developed from a folder here.",
+      ),
+    };
+  }
+  return {
+    text:
+      argument === ""
+        ? say(
+            "Chọn thư mục chứa widget. Clark sẽ theo dõi nó, dựng lại mỗi lần bạn lưu và hiện widget ngay tại đây.",
+            "Choose the folder that holds the widget. Clark watches it, rebuilds on every save and shows the widget right here.",
+          )
+        : say(
+            "Bấm “Phát triển thư mục này” để Clark bắt đầu theo dõi thư mục đó, hoặc chọn một thư mục khác.",
+            "Press \"Develop this folder\" to have Clark start watching it, or choose another folder.",
+          ),
+    card: services.widgetDev.folderCard({ ...(argument === "" ? {} : { proposed: argument }), locale }),
+  };
 }
 
 /** `/changelog` and `/changelog 1.4`: the release notes embedded with this build, as the host-owned card. */

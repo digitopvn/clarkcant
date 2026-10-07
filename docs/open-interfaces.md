@@ -777,8 +777,8 @@ Install button and a notice's `update` call; no agent tool installs a package fr
 uninstalls, restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with
 `403 PERSON_ONLY`. The one agent tool that reaches the install path is `develop_widget`
 ([widget dev sessions](#widget-dev-sessions)). It runs only in a turn the person sent. It watches Clark's own widget
-workspace (choosing another project folder is not available yet; see
-[#538](https://github.com/digitopvn/clarkcant/issues/538)), and the policy decides its installs as Clark's own proposal.
+workspace and the folders the person chose themselves ([which folders](#widget-dev-sessions)), and the policy decides
+its installs as Clark's own proposal.
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
@@ -876,14 +876,24 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
 - `400 ROOT_IN_DATA_FOLDER` refuses the node's data folder, any folder inside it, and any folder that holds it. The one
   exception is Clark's widget workspace, `<dataDir>/widget-workspace`.
 - A session the person starts on this route may watch any other local folder.
-- A session Clark starts with `develop_widget` watches the widget workspace, where Clark scaffolds a new widget. To
-  develop an existing project, copy its folder into the widget workspace. Any other folder is refused with
-  `403 ROOT_NOT_OWNED`, in the owner's language, and the message says exactly that.
-- Choosing another project folder for Clark to develop in is not available yet; it is tracked in
-  [#538](https://github.com/digitopvn/clarkcant/issues/538). The check would also accept a folder inside a
-  `workspace.roots` preference the person recorded themselves, but no setting, onboarding step or route records one
-  today, and the built-in default roots (the home folder and the drive the node runs from) and values Clark wrote do not
-  count.
+- A session the person starts on this route marks its folder as one they chose (`chosenByPerson` in the node's
+  session store). Starting it again keeps the mark, and so does Clark picking the session up later.
+- A session Clark starts with `develop_widget` may watch the widget workspace, where Clark scaffolds a new widget, a
+  folder the person chose (or a folder inside one), or a folder inside a `workspace.roots` preference the person
+  recorded themselves. The built-in default roots (the home folder and the drive the node runs from) and values Clark
+  wrote do not count, and a session Clark starts never marks its folder as chosen. Any other folder is refused with
+  `403 ROOT_NOT_OWNED`, in the owner's language, and nothing is started. The tool's answer then carries a host-drawn
+  `develop` command card offering that folder to the person; Clark only tells them it is there.
+- **Choosing a folder.** `/develop` (or `/develop <folder>`, or asking in words) answers with the same host-owned
+  `develop` command card: a row for the proposed folder, a row to choose another, and the node's recent sessions,
+  where a stopped one can be developed again. Each row's action is `{ "kind": "develop-folder", "root"? }`. The card
+  starts nothing on its own: a press in the person's own client calls `POST /widget-dev/sessions` with the person's
+  initiative, so no agent, widget or machine surface can choose a folder for itself. Without a `root`, the desktop app
+  opens the operating system's folder dialog. Where that dialog cannot answer (a browser, a node on another machine, a
+  dialog that does not open, as on a Linux desktop without a file chooser portal) the row asks for the folder's full
+  path on the node's machine and says why.
+- When the node starts again, each live session's folder is checked again for whoever started it, so a folder Clark
+  started in stays live while it is still the person's choice or still inside a `workspace.roots` preference.
 
 **Which packages.** A session runs only packages whose facets stay in the widget frame or are data (`isolated-ui` and
 `declarative`). A build of a package with a service, tools or native facet fails with a diagnostic coded

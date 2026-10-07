@@ -212,7 +212,8 @@ export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
  * - `folder-gone`: the folder was deleted or renamed while it was watched, or was not there when the node started again.
  * - `capacity`: the node already watched as many folders as it does at once when it started again.
  * - `root-refused`: when the node started again, the folder was no longer one the session may watch (for example a
- *   session Clark started whose folder is outside the widget workspace, or a folder now inside the data folder).
+ *   session Clark started whose folder is outside the widget workspace and every folder the person chose, or a folder
+ *   now inside the data folder).
  */
 export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity", "root-refused"]);
 export type WidgetDevStopReason = z.infer<typeof widgetDevStopReasonSchema>;

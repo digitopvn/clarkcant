@@ -2904,9 +2904,12 @@ Nothing goes through npm, the Marketplace or a directory index, and nothing is p
 `node_modules` folder is left out of each build; built output such as `dist` is kept.
 
 Clark develops widgets in its own widget workspace (`<dataDir>/widget-workspace`), where it scaffolds a new widget. To
-have Clark work on a widget project you already have, copy its folder into the widget workspace. Clark cannot be pointed
-at another project folder yet; choosing one is tracked in
-[#538](https://github.com/digitopvn/clarkcant/issues/538). The node's own data folder is never developed, and neither
+have Clark work on a widget project you already have, choose its folder yourself: type `/develop` (or
+`/develop <folder>`, or ask Clark), then press **Choose folder…** in the card that answers. The desktop app opens the
+system folder dialog; a browser, or a desktop app connected to a node on another machine, asks for the folder's full
+path on the node's machine instead. If Clark asks to develop a folder you have not chosen, nothing starts and the same
+card appears with **Develop this folder**. Once you start a folder, Clark may work in it, and in folders inside it,
+without asking again. The node's own data folder is never developed, and neither
 is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
 a native part is refused with a problem saying so; install that package the ordinary way.
 

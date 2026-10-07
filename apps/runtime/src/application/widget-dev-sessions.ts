@@ -5,6 +5,7 @@ import {
   WIDGET_DEV_ALLOWED_ISOLATIONS,
   messageBlockSchema,
   nowInstant,
+  type CommandCard,
   type MessageBlock,
   type PackageManifest,
   type TurnOrigin,
@@ -35,6 +36,7 @@ import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
 import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
+import { developFolderCard } from "./widget-dev-card.ts";
 import {
   WIDGET_DEV_DIRECTORY_SOURCE,
   WIDGET_DEV_SNAPSHOTS_MAX,
@@ -58,10 +60,11 @@ import {
  * Whose intent the installs carry out is the session's initiative. A session the person starts on their own surface
  * installs as their request, for any folder on the node outside its data folder. A session Clark starts during a turn
  * installs as Clark's own proposal (`proposed`), so a mode that asks before what the person did not ask for by name asks,
- * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`), or a folder inside a `workspace.roots` value
- * the person recorded themselves (`configuredRoots`). Nothing lets the person record that value yet, so in practice Clark
- * develops in the workspace; choosing a project folder is tracked in digitopvn/clarkcant#538. A turn a machine surface,
- * an automation or a peer sent starts nothing.
+ * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`), a folder the person chose for widget
+ * development by starting a session there themselves (`chosenFolders`), or a folder inside a `workspace.roots` value the
+ * person recorded themselves (`configuredRoots`). For any other folder Clark offers the person a card to choose it
+ * (`folderCard`); the press on it starts the session on the person's own surface. A turn a machine surface, an
+ * automation or a peer sent starts nothing.
  *
  * Phases 1–2 run only packages whose facets stay in the widget frame or are data (`WIDGET_DEV_ALLOWED_ISOLATIONS`); a
  * package with a service, tools or native facet is a failed build saying so.
@@ -103,6 +106,11 @@ export interface WidgetDevSessions {
   ): Promise<WidgetDevResult<{ session: WidgetDevSessionView; text: string; hostBlocks: Record<string, unknown>[] }>>;
   /** The folder Clark may scaffold widgets in, created when missing. */
   workspace(): string;
+  /**
+   * The host-owned card a person chooses a folder to develop on (`developFolderCard`), offering `proposed` first, in
+   * `locale` (the owner's language when left out).
+   */
+  folderCard(input: { proposed?: string; locale?: "vi" | "en" }): CommandCard;
   /** Start watching again every session that was live when the node stopped. */
   resume(): Promise<void>;
   close(): void;
@@ -226,9 +234,10 @@ export function createWidgetDevSessions(
    * Local folders only: a Windows share or device path is refused. Nothing that holds the node's data folder, or lies
    * inside it, may be watched, except Clark's widget workspace: the package cache, the session store and the database
    * live there, and a session that watched them would build from its own snapshots. A session Clark starts may watch only
-   * that workspace and folders inside a root the person recorded themselves (`configuredRoots`), so a model cannot
-   * point the node's install path at an arbitrary folder. A session the person starts on their own surface (the REST
-   * route, as the owner) may name any other local folder.
+   * that workspace, folders the person chose for widget development (`chosenFolders`) and folders inside a root the
+   * person recorded themselves (`configuredRoots`), so a model cannot point the node's install path at an arbitrary
+   * folder. A session the person starts on their own surface (the REST route, as the owner) may name any other local
+   * folder.
    */
   const checkRoot = (raw: string, initiative: { kind: WidgetDevInitiative["kind"] }): WidgetDevResult<string> => {
     const given = raw.trim();
@@ -254,10 +263,10 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_IN_DATA_FOLDER", "the folder holds or lies inside this node's data folder, which is not developed from; use a project folder");
     }
     if (initiative.kind === "clark" && !inWorkspace) {
-      const configured = configuredRoots()
+      const allowed = [...configuredRoots(), ...chosenFolders()]
         .map((path) => realOrUndefined(path))
         .filter((path): path is string => path !== undefined);
-      if (containingRoot(ownedResources(configured), root) === undefined) {
+      if (containingRoot(ownedResources(allowed), root) === undefined) {
         return refusal(403, "ROOT_NOT_OWNED", hostText(ownerLocale(services().runtime)).approvals.devSessionRootNotOwned(root, widgetWorkspace));
       }
     }
@@ -268,8 +277,7 @@ export function createWidgetDevSessions(
    * The folders the person recorded themselves for their projects: a `workspace.roots` preference whose source is the
    * person (`user` or `onboarding`). The built-in default, the home folder and the drive the node runs from, is not a
    * choice the person made, and a value Clark wrote is not one either: neither lets Clark watch a folder. No surface
-   * writes such a value today, so this is normally empty; the node has no registry of projects apart from these roots
-   * (its project index is a scan beneath them), and letting the person choose a folder is digitopvn/clarkcant#538.
+   * writes such a value today, so this is normally empty; the folders the person chooses are `chosenFolders`.
    */
   const configuredRoots = (): string[] => {
     const runtime = services().runtime;
@@ -280,6 +288,16 @@ export function createWidgetDevSessions(
     if (record === undefined || (record.source !== "user" && record.source !== "onboarding") || !Array.isArray(record.value)) return [];
     return record.value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "" && isAbsolute(entry.trim())).map((entry) => entry.trim());
   };
+
+  /**
+   * The folders the person chose for widget development: the folder of every session they started on their own surface
+   * (`chosenByPerson`), live or stopped. Only the person-only start writes that mark, so no turn, widget or machine
+   * surface can add a folder here; a session the store forgets takes its folder with it.
+   */
+  const chosenFolders = (): string[] =>
+    readDevSessions(dataDir())
+      .filter((session) => session.chosenByPerson === true)
+      .map((session) => session.root);
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {
     const session = live.get(stored.sessionId);
@@ -785,6 +803,7 @@ export function createWidgetDevSessions(
       const existing = sessions.find((session) => sameRoot(session.root, root) && session.status === "live" && live.has(session.sessionId));
       if (existing !== undefined) {
         const view = await serial(existing.sessionId, async () => {
+          if (initiative.kind === "person") update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
           await settle(existing.sessionId, "start");
           return sessionView(existing.sessionId);
         });
@@ -812,6 +831,8 @@ export function createWidgetDevSessions(
         status: "live",
         startedAt: nowInstant(),
         initiative,
+        // The person starting a folder is them choosing it; Clark picking up a folder they chose keeps the mark.
+        ...(initiative.kind === "person" ? { chosenByPerson: true as const } : {}),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(input.widgetId === undefined ? {} : { widgetId: input.widgetId }),
         ...(placed === undefined ? {} : { placed }),
@@ -882,6 +903,17 @@ export function createWidgetDevSessions(
     },
 
     workspace,
+
+    folderCard(input) {
+      const node = services();
+      return developFolderCard({
+        cardId: node.conductor.newId("card"),
+        at: nowInstant(),
+        locale: input.locale ?? ownerLocale(node.runtime),
+        ...(input.proposed === undefined ? {} : { proposed: input.proposed }),
+        sessions: readDevSessions(dataDir()).map(viewOf),
+      });
+    },
 
     async resume() {
       try {

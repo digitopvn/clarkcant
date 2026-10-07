@@ -780,9 +780,8 @@ của chính ứng dụng và thao tác `update` của một thông báo gọi; 
 gói chỉ liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
 `403 PERSON_ONLY`. Tool duy nhất của agent đi tới đường cài là `develop_widget`
 ([phiên phát triển widget](#phiên-phát-triển-widget)). Tool này chỉ chạy trong một lượt do chính người dùng gửi. Nó
-theo dõi không gian widget riêng của Clark (việc chọn một thư mục dự án khác hiện chưa có; xem
-[#538](https://github.com/digitopvn/clarkcant/issues/538)), và chính sách quyết định các lần cài của nó như đề xuất của
-chính Clark.
+theo dõi không gian widget riêng của Clark và những thư mục chính người dùng đã chọn
+([thư mục nào](#phiên-phát-triển-widget)), và chính sách quyết định các lần cài của nó như đề xuất của chính Clark.
 
 Với một gói được liệt kê bằng đường dẫn trên máy này, node sao chép các tệp của nó vào bộ nhớ đệm gói
 (`<dataDir>/package-cache/local/<sha256>`) và tính digest của bản sao (`digestOfDirectory`, cùng digest mà một lần
@@ -880,14 +879,24 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
 - `400 ROOT_IN_DATA_FOLDER` từ chối thư mục dữ liệu của node, mọi thư mục nằm trong nó và mọi thư mục chứa nó. Ngoại lệ
   duy nhất là không gian widget của Clark, `<dataDir>/widget-workspace`.
 - Một phiên người dùng bắt đầu trên route này được theo dõi mọi thư mục cục bộ khác.
-- Một phiên Clark bắt đầu bằng `develop_widget` theo dõi không gian widget, nơi Clark dựng khung một widget mới. Để phát
-  triển một dự án có sẵn, hãy chép thư mục của nó vào không gian widget. Mọi thư mục khác bị từ chối với
-  `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy, và thông báo nói đúng như vậy.
-- Việc chọn một thư mục dự án khác để Clark phát triển hiện chưa có; việc này được theo dõi tại
-  [#538](https://github.com/digitopvn/clarkcant/issues/538). Bước kiểm cũng sẽ chấp nhận một thư mục nằm trong tùy chọn
-  `workspace.roots` do chính người dùng ghi, nhưng hiện chưa có cài đặt, bước bắt đầu dùng hay route nào ghi tùy chọn
-  này, còn các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) và giá trị do Clark ghi đều không được
-  tính.
+- Một phiên người dùng bắt đầu trên route này đánh dấu thư mục của nó là thư mục họ đã chọn (`chosenByPerson` trong kho
+  phiên của node). Bắt đầu lại phiên đó vẫn giữ dấu này, và Clark tiếp tục phiên đó về sau cũng vậy.
+- Một phiên Clark bắt đầu bằng `develop_widget` được theo dõi không gian widget, nơi Clark dựng khung một widget mới,
+  một thư mục người dùng đã chọn (hoặc một thư mục nằm trong đó), hoặc một thư mục nằm trong tùy chọn `workspace.roots`
+  do chính người dùng ghi. Các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) và giá trị do Clark ghi
+  đều không được tính, và một phiên Clark bắt đầu không bao giờ đánh dấu thư mục của nó là đã chọn. Mọi thư mục khác bị
+  từ chối với `403 ROOT_NOT_OWNED`, bằng ngôn ngữ của chủ máy, và không có gì được bắt đầu. Khi đó câu trả lời của tool
+  mang một thẻ lệnh `develop` do host vẽ, mời người dùng phát triển thư mục đó; Clark chỉ báo cho họ biết thẻ ở đó.
+- **Chọn một thư mục.** `/develop` (hoặc `/develop <thư mục>`, hoặc hỏi bằng lời) trả về cùng thẻ lệnh `develop` do host
+  sở hữu: một dòng cho thư mục được đề xuất, một dòng để chọn thư mục khác, và các phiên gần đây của node, trong đó phiên
+  đã dừng có thể được phát triển lại. Thao tác của mỗi dòng là `{ "kind": "develop-folder", "root"? }`. Thẻ tự nó không
+  bắt đầu gì: một lần bấm trong chính client của người dùng gọi `POST /widget-dev/sessions` với quyền chủ động của người
+  dùng, nên không agent, widget hay bề mặt máy nào tự chọn được thư mục cho mình. Khi không có `root`, ứng dụng desktop
+  mở hộp chọn thư mục của hệ điều hành. Ở nơi hộp đó không trả lời được (trình duyệt, node chạy trên máy khác, hộp chọn
+  không mở được như trên một desktop Linux không có file chooser portal), dòng đó hỏi đường dẫn đầy đủ của thư mục trên
+  máy đang chạy node và nói rõ lý do.
+- Khi node khởi động lại, thư mục của mỗi phiên đang chạy được kiểm lại theo người đã bắt đầu phiên, nên một thư mục
+  Clark bắt đầu vẫn chạy chừng nào nó còn là lựa chọn của người dùng hoặc còn nằm trong tùy chọn `workspace.roots`.
 
 **Gói nào.** Một phiên chỉ chạy các gói có facet nằm trong frame widget hoặc là dữ liệu (`isolated-ui` và
 `declarative`). Lần dựng một gói có facet dịch vụ, công cụ hoặc native sẽ lỗi với một chẩn đoán mang mã

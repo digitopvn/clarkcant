@@ -9,6 +9,7 @@ import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { messagesSince } from "@clarkcant/storage";
 
 import { type ProviderAuthPort, ProviderSignIns, providerAuthPort } from "../src/application/provider-sign-in.ts";
+import { createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -165,6 +166,34 @@ describe("slash commands in a conversation", () => {
     expect(fake).toBeDefined();
     expect(fake?.actions).toEqual([]);
     expect(fake?.note ?? "").not.toBe("");
+  });
+
+  it("says plainly on /develop when the node is not running widget dev sessions", async () => {
+    const id = await createConversation("phát triển");
+    const { text, card } = await command(id, "/develop");
+
+    expect(card).toBeUndefined();
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it("offers on /develop to choose a folder, and on /develop <folder> to develop that one, with the sessions there are", async () => {
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    try {
+      const id = await createConversation("phát triển");
+      const plain = await command(id, "/develop");
+      expect(plain.card).toMatchObject({ command: "develop", owner: "host" });
+      expect(plain.card?.rows.map((row) => row.rowId)).toEqual(["choose"]);
+      expect(plain.card?.rows[0]?.actions).toEqual([expect.objectContaining({ tone: "primary", action: { kind: "develop-folder" } })]);
+
+      const folder = join(dir, "projects", "đồng hồ");
+      const named = await command(id, `/develop ${folder}`);
+      expect(named.card?.rows.map((row) => row.rowId)).toEqual(["proposed", "choose"]);
+      expect(named.card?.rows[0]).toMatchObject({ label: folder, actions: [{ action: { kind: "develop-folder", root: folder } }] });
+      // The card only offers: nothing starts until the person presses it.
+      expect(services.widgetDev.list()).toEqual([]);
+    } finally {
+      services.widgetDev.close();
+    }
   });
 });
 
