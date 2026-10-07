@@ -975,6 +975,14 @@ describe("a secret a person types", () => {
     expect(readCredential(services.runtime.db, owner(), "typesafe")).toBe("second");
   });
 
+  it("refuses a value made only of spaces, so the vault never holds a key nothing can use", async () => {
+    // Readiness says "vault" whenever the vault holds the name; a blank stored value would make it claim a key in use
+    // while the environment's key answered.
+    const response = await request("POST", "/credentials", { body: { fields: [{ name: "gemini", value: "   " }] } });
+
+    expect(response.status).toBe(400);
+    expect(readCredential(services.runtime.db, owner(), "gemini")).toBeUndefined();
+  });
   it("refuses a body it cannot use without repeating what it got", async () => {
     const response = await request("POST", "/credentials", {
       body: { fields: [{ name: "", value: "secret-shaped" }] },

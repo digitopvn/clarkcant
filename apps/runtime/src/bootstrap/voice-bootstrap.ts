@@ -425,7 +425,7 @@ export function nodeVoiceCredential(input: {
     input.fixture ? "fixture-credential" : voiceCredential({ env: input.env, vaultCredential: input.stored() }).value;
 }
 
-type SpokenWidgetActionInput =Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];
+type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];
 type SpokenApprovalInput = Parameters<NonNullable<VoiceGatewayOptions["decideApproval"]>>[0];
 
 /**

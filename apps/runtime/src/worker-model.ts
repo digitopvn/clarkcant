@@ -15,7 +15,8 @@ import { MODEL_CONFIG_DIR_VARIABLE } from "./worker-process.ts";
  *
  * The key is looked up the way the rest of the node looks one up (`provider-credential.ts`): a credential stored under
  * the provider's name, else the provider's variable in this node's environment — the same two places model routing
- * counts as "this provider has a key", and the stored one wins when both exist. Neither is ever put into a child's environment; the dispatcher hands it to the worker over stdin. When the node
+ * counts as "this provider has a key", and the stored one wins when both exist. Neither is ever put into a child's
+ * environment; the dispatcher hands it to the worker over stdin. When the node
  * holds neither, the worker's model runtime reads its own configuration directory, which is the directory this node's
  * runtime reads too.
  */
