@@ -1891,7 +1891,10 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return json(200, { released: true, ownerSurface: null });
     }
 
-    const surface = parsed.value.surface === "pin" ? "pin" : "inline";
+    // Named, not folded into "inline": a detached window holds the lease too, and a competing claim is told which
+    // surface holds it so the conversation can say the widget is open in its own window.
+    const asked = parsed.value.surface;
+    const surface = asked === "pin" || asked === "detached" ? asked : "inline";
     const leaseMs = typeof parsed.value.leaseMs === "number" && parsed.value.leaseMs > 0 ? parsed.value.leaseMs : undefined;
     // Expired claims are cleared first so the reply distinguishes "somebody else is holding it"
     // from "somebody else held it until a moment ago".
