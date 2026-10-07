@@ -27,6 +27,7 @@ import { startUnknownEffectNoticeSweep } from "./effect-notices.ts";
 import { performEmergencyStop } from "./application/emergency-stop.ts";
 import { STOP_GRACE_MS } from "./process-tree.ts";
 import { killRunningCommandsNow, refuseNewCommands } from "./run-command.ts";
+import { shutdownStepBudget } from "./shutdown-budget.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
 import { attachTerminalGateway } from "./terminal-gateway.ts";
 import { attachApiSocket } from "./api-socket.ts";
@@ -496,13 +497,15 @@ async function main(): Promise<void> {
    * Everything this process started goes first — commands, task workers, shells, background runs — through the same
    * stop a person uses, so a shutdown can never leave behind what a stop would have ended. Background runs are
    * marked interrupted rather than stopped, and say nothing in their conversation: the next boot reports them once,
-   * with what it did about them. Then the sessions, the sockets and the database.
+   * with what it did about them. Then, once the stopped tasks have tidied up, the sessions, the sockets and the database.
    *
    * Bounded, because a shutdown that waits on something that is not listening is a node that will not close: past
    * the grace the process exits anyway, and whatever is left is the next boot's to find in the journal. A second
    * signal exits at once.
    */
   const SHUTDOWN_GRACE_MS = 5_000;
+  /** Kept back from waiting on stopped tasks, for the steps that make the exit clean: sessions, tokens, sockets, the database. */
+  const CLOSE_RESERVE_MS = 1_000;
   let closing = false;
   // An exit before a stop's grace has run out would skip its SIGKILL, since no timer fires after exit: taken now.
   const killChildrenNow = (): void => {
@@ -517,6 +520,7 @@ async function main(): Promise<void> {
     }
     closing = true;
     process.stderr.write(`received ${signal}; closing the node\n`);
+    const closeBy = Date.now() + SHUTDOWN_GRACE_MS;
     // Nothing new starts in a node that is closing: it would outlive the process that has to stop it.
     refuseNewCommands();
     services.taskDispatch?.close();
@@ -532,6 +536,8 @@ async function main(): Promise<void> {
     services.artifactSweep?.stop();
     effectNotices.stop();
     services.automation?.stop();
+    // Started now and awaited before the database closes: a channel turn still finishing writes as it does.
+    const channelsStopped = services.channels?.stop(1_500);
     services.peerDelivery?.stop();
     void (async () => {
       try {
@@ -551,6 +557,21 @@ async function main(): Promise<void> {
         // A child given SIGTERM gets its grace before the group is killed; exiting first would skip the second step.
         if (stopped.commands + stopped.tasks + stopped.jobs > 0) {
           await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS + 100));
+        }
+        // A stopped task still tidies up after its worker ends (its browser, its lease, its worktrees) and writes as it
+        // does, so the database stays open while it does — for what is left before the hard stop, less the time kept
+        // for the steps below. A task still tidying up past that is cut off when the process exits: a lease it did not
+        // release expires on its time-to-live, and the next boot's worktree sweep removes its worktree once the task has
+        // settled and holds nothing uncommitted.
+        const dispatch = services.taskDispatch;
+        if (dispatch !== undefined) {
+          const budget = shutdownStepBudget({ deadline: closeBy, now: Date.now(), reserveMs: CLOSE_RESERVE_MS });
+          if (!(await dispatch.drain(budget))) {
+            process.stderr.write(`stopped tasks were still tidying up after ${String(budget)} ms; closing anyway\n`);
+          }
+        }
+        if (channelsStopped !== undefined && !(await channelsStopped)) {
+          process.stderr.write("channel turns were still running at shutdown; closing anyway\n");
         }
         await modelTurn?.dispose();
         // Every browser token still held is withdrawn where its provider allows, rather than left to lapse.

@@ -748,6 +748,26 @@ export function previousGenerationSurvives(failedAt: InstallState): boolean {
  * Generations
  * ------------------------------------------------------------------ */
 
+/**
+ * The kinds of source a node's directory is composed from: the person's own index file (`CC_DIRECTORY_INDEX`), a
+ * marketplace or catalog feed they configured, and the official ClarkCant Marketplace. Every one of them is discovery
+ * data, never authority; the kind says where a listing came from, not how far it is trusted.
+ */
+export const directorySourceKindSchema = z.enum(["local-file", "official-marketplace", "custom-marketplace"]);
+export type DirectorySourceKind = z.infer<typeof directorySourceKindSchema>;
+
+/**
+ * Which directory source a listing came from: its id on the node (`local`, `official`, or `custom-<hash of the feed
+ * address>`, so two feeds never share one), its kind, and the name a person recognises (the index file's path, or the
+ * feed's host and path without its query).
+ */
+export const directorySourceRefSchema = z.strictObject({
+  id: z.string().min(1).max(120),
+  kind: directorySourceKindSchema,
+  label: z.string().min(1).max(300),
+});
+export type DirectorySourceRef = z.infer<typeof directorySourceRefSchema>;
+
 export const packageGenerationSchema = z.strictObject({
   generationId: z.string().min(1).max(200),
   packageId: z.string().min(1).max(160),
@@ -800,6 +820,12 @@ export const packageGenerationSchema = z.strictObject({
    * from its source, and for a local install made before snapshots, which reads its path until it is installed again.
    */
   snapshotDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+  /**
+   * The directory source the installed listing came from. An update is offered, and an install over this generation is
+   * made without asking which source, only from this same source: another source listing the same package id is a
+   * different publisher until the person chooses it. Absent on a generation installed before this was kept.
+   */
+  directorySource: directorySourceRefSchema.optional(),
 });
 export type PackageGeneration = z.infer<typeof packageGenerationSchema>;
 

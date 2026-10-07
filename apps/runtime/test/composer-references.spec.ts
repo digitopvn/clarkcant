@@ -18,7 +18,7 @@ import {
 } from "@clarkcant/storage";
 
 import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
-import { MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
+import { COMPOSER_SUGGESTIONS_MAX, MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -363,8 +363,9 @@ describe("the picker", () => {
     const all = await suggest("/", "");
     expect(all.status).toBe(200);
     const body = all.body as ComposerSuggestionsResponse;
-    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"]);
-    expect(refsOf(body.suggestions)[1]).toEqual(reviewRef);
+    // Commands first, then skills, up to the picker's eight rows: a bare slash shows the commands and the first skill,
+    // and typing reaches the rest.
+    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"].slice(0, COMPOSER_SUGGESTIONS_MAX));
     // A command row writes the command, not a reference.
     expect(body.suggestions[0]).toMatchObject({ kind: "command", command: "new", trigger: "/" });
     expect(body.suggestions[0]).not.toHaveProperty("ref");
@@ -374,6 +375,7 @@ describe("the picker", () => {
 
     const narrowed = (await suggest("/", "rev")).body as ComposerSuggestionsResponse;
     expect(narrowed.suggestions.map((row) => row.label)).toEqual(["review"]);
+    expect(refsOf(narrowed.suggestions)[0]).toEqual(reviewRef);
   });
 
   it("offers projects and titled conversations after an at sign, leaving out the one being written in", async () => {

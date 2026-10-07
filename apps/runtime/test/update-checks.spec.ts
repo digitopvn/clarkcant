@@ -301,6 +301,80 @@ describe("checkForUpdates — packages and widgets", () => {
   });
 });
 
+describe("checkForUpdates — the source an update comes from", () => {
+  const MINE = { id: "custom-aaaa", kind: "custom-marketplace", label: "catalog.acme.example/feed" } as const;
+  const THEIRS = { id: "official", kind: "official-marketplace", label: "ClarkCant Marketplace" } as const;
+  const INDEX = { id: "local", kind: "local-file", label: "/home/me/index.json" } as const;
+
+  function packageNotices() {
+    return listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId).filter(
+      (notice) => notice.sourceKind === "package",
+    );
+  }
+
+  it("never offers another source's listing of the same package id as an update", () => {
+    const report = checkForUpdates({
+      services,
+      installedPackages: [installedPackage({ version: "1.0.0", directorySource: MINE })],
+      directory: [directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS })],
+      now: () => AT,
+      platform: HOST,
+    });
+    expect(report.packageUpdates).toBe(0);
+    expect(packageNotices()).toEqual([]);
+  });
+
+  it("offers the installed source's own newer version, and the notice names that source", () => {
+    const report = checkForUpdates({
+      services,
+      installedPackages: [installedPackage({ version: "1.0.0", directorySource: MINE })],
+      directory: [
+        directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS }),
+        directoryCandidate({ version: "1.1.0", origin: MINE }),
+      ],
+      now: () => AT,
+      platform: HOST,
+    });
+    expect(report.packageUpdates).toBe(1);
+    const [notice] = packageNotices();
+    expect(notice?.body).toContain("1.1.0");
+    expect(notice?.body).toContain(MINE.label);
+    expect(notice?.body).not.toContain("9.0.0");
+  });
+
+  it("takes a package installed before sources were recorded from the index file only", () => {
+    const report = checkForUpdates({
+      services,
+      installedPackages: [installedPackage({ version: "1.0.0" })],
+      directory: [
+        directoryCandidate({ version: "1.1.0", origin: INDEX }),
+        directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS }),
+      ],
+      now: () => AT,
+      platform: HOST,
+    });
+    expect(report.packageUpdates).toBe(1);
+    const [notice] = packageNotices();
+    expect(notice?.body).toContain("1.1.0");
+    expect(notice?.body).not.toContain("9.0.0");
+  });
+
+  it("offers a package installed before sources were recorded no update when the index file does not list it", () => {
+    const report = checkForUpdates({
+      services,
+      installedPackages: [installedPackage({ version: "1.0.0" })],
+      directory: [
+        directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS }),
+        directoryCandidate({ version: "1.1.0", origin: MINE }),
+      ],
+      now: () => AT,
+      platform: HOST,
+    });
+    expect(report.packageUpdates).toBe(0);
+    expect(packageNotices()).toEqual([]);
+  });
+});
+
 describe("checkForUpdates — Pi SDK", () => {
   it("does not check the Pi SDK: no registry call and no notice, since it ships pinned with ClarkCant", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");

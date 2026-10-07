@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import {
   attachmentRefSchema,
+  changelogCardSchema,
   commandCardSchema,
   modelNoteSchema,
   referenceBlockSchema,
@@ -22,6 +23,7 @@ import { useT } from "./i18n/locale-context.tsx";
 import { useSurfaceViewState } from "./surface-view-state.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
+import { ChangelogCardBlock } from "./changelog-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
@@ -605,7 +607,7 @@ export interface BlockActions {
    * control is not rendered at all in that case rather than rendered and refused, which is the difference between a
    * disabled button with a reason and a button that looks usable and is not.
    */
-  onInstallPackage?: (input: { packageId: string; version: string; contentDigest?: string }) => void;
+  onInstallPackage?: (input: { packageId: string; version: string; contentDigest?: string; sourceId?: string }) => void;
   /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
   packageInstall?: Record<string, PackageInstallState>;
   /**
@@ -2013,6 +2015,11 @@ export function renderBlock(
         <CommandCardBlock key={index} block={card.data} t={t} {...(actions === undefined ? {} : { actions })} />
       ) : null;
     }
+    case "changelog-card": {
+      // Read through the contract, like the command card: a card that does not match it draws nothing.
+      const card = changelogCardSchema.safeParse(block);
+      return card.success ? <ChangelogCardBlock key={index} block={card.data} t={t} /> : null;
+    }
     case "terminal-session-card":
       return (
         <TerminalCardBlock key={index} block={block} client={client} t={t} {...(actions === undefined ? {} : { actions })} />
@@ -2251,6 +2258,41 @@ function describePackageSource(
   return t("blocks.marketplace.unknownSource");
 }
 
+type MarketplaceSourceState = "stale" | "not-fetched" | "unreachable" | "unsupported" | "unreadable";
+
+const SOURCE_STATE_KEYS = {
+  stale: "blocks.marketplace.sourceState.stale",
+  "not-fetched": "blocks.marketplace.sourceState.notFetched",
+  unreachable: "blocks.marketplace.sourceState.unreachable",
+  unsupported: "blocks.marketplace.sourceState.unsupported",
+  unreadable: "blocks.marketplace.sourceState.unreadable",
+} as const satisfies Record<MarketplaceSourceState, string>;
+
+/** The card's source notes, keeping only the ones whose state this client can name. */
+function readSourceNotes(raw: unknown): { label: string; state: MarketplaceSourceState; reason?: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item: unknown) => {
+    if (item === null || typeof item !== "object") return [];
+    const note = item as Record<string, unknown>;
+    const state = note.state;
+    if (typeof note.label !== "string" || typeof state !== "string" || !Object.hasOwn(SOURCE_STATE_KEYS, state)) return [];
+    return [
+      {
+        label: note.label,
+        state: state as MarketplaceSourceState,
+        ...(typeof note.reason === "string" && note.reason !== "" ? { reason: note.reason } : {}),
+      },
+    ];
+  });
+}
+
+/** A row's origin, when the card names one. */
+function readOrigin(raw: unknown): { kind: string; label: string } | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const origin = raw as Record<string, unknown>;
+  return typeof origin.kind === "string" && typeof origin.label === "string" ? { kind: origin.kind, label: origin.label } : undefined;
+}
+
 /**
  * The results of a marketplace search.
  *
@@ -2275,6 +2317,7 @@ export function MarketplaceResultsBlock({
   const query = typeof block.query === "string" ? block.query : "";
   const reason = typeof block.unavailableReason === "string" ? block.unavailableReason : undefined;
   const results = Array.isArray(block.results) ? block.results : [];
+  const sourceNotes = readSourceNotes(block.sources);
 
   return (
     <div className="cc-card cc-marketplace" role="group" aria-label={t("blocks.marketplace.searchResultsAria")} data-marketplace="true">
@@ -2282,6 +2325,20 @@ export function MarketplaceResultsBlock({
         <span className="cc-card-title">{t("blocks.marketplace.resultsIn").replace("{directory}", directory)}</span>
       </header>
       <div className="cc-card-body">
+        {/*
+          A source that did not fully answer is said before the rows, so a partial answer is not read as the whole
+          directory and a listing from an earlier copy is not read as live.
+        */}
+        {sourceNotes.map((note) => (
+          <p
+            className="cc-card-note"
+            key={`${note.label}-${note.state}`}
+            data-marketplace-source-state={note.state}
+          >
+            {note.label}: {t(SOURCE_STATE_KEYS[note.state])}
+            {note.reason === undefined ? "" : ` — ${note.reason}`}
+          </p>
+        ))}
         {reason !== undefined ? (
           // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
           <p className="cc-card-note" data-marketplace-unavailable="true">
@@ -2300,7 +2357,9 @@ export function MarketplaceResultsBlock({
               const digest = typeof result.digest === "string" ? result.digest : "";
               // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
               const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
+              const sourceId = typeof result.sourceId === "string" && result.sourceId !== "" ? result.sourceId : undefined;
               const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+              const origin = readOrigin(result.origin);
               const attempt = actions?.packageInstall?.[packageId];
               /*
                * Out of date only on a row that shows the digest the refused press sent: pressing it again would send the
@@ -2327,6 +2386,10 @@ export function MarketplaceResultsBlock({
                   <UnreadListingFieldsNote fields={readUnreadFields(result.unreadFields)} />
                   <div className="cc-marketplace-meta">
                     <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
+                    {/* Which directory listed the row: results from several sources share one card. */}
+                    {origin !== undefined && (
+                      <span data-marketplace-origin={origin.kind}>{t("blocks.marketplace.listedBy").replace("{label}", origin.label)}</span>
+                    )}
                     <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
                     {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
                     <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
@@ -2349,7 +2412,12 @@ export function MarketplaceResultsBlock({
                         disabled={installState?.status === "installing" || stale}
                         {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
                         onClick={() =>
-                          actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
+                          actions.onInstallPackage?.({
+                            packageId,
+                            version,
+                            ...(contentDigest === undefined ? {} : { contentDigest }),
+                            ...(sourceId === undefined ? {} : { sourceId }),
+                          })
                         }
                       >
                         {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
