@@ -267,7 +267,7 @@ export function containsCredential(message: unknown, credential: string): boolea
  * This is the boundary: it is the only place in the module that touches untyped parsed JSON, and
  * it returns a named shape so nothing downstream has to handle `unknown`.
  */
-function parseFrame(raw: string): Record<string, unknown> | undefined {
+export function parseFrame(raw: string): Record<string, unknown> | undefined {
   try {
     return asRecord(JSON.parse(raw));
   } catch {
@@ -282,13 +282,13 @@ function parseFrame(raw: string): Record<string, unknown> | undefined {
  * elsewhere: this function is where an untyped frame becomes a shape the rest of the module can
  * read, and it is deliberately the only place that touches raw parsed JSON.
  */
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }
 
-function asString(value: unknown): string | undefined {
+export function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 

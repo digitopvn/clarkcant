@@ -380,3 +380,189 @@ export const voiceCapabilitiesSchema = z.strictObject({
   note: z.string().max(300).optional(),
 });
 export type VoiceCapabilities = z.infer<typeof voiceCapabilitiesSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Speech recognition: the ears, separate from the mouth
+ * ------------------------------------------------------------------ */
+
+/**
+ * The most terms a recognition context carries.
+ *
+ * Bounded on purpose: the context is derived from the person's working state, and the whole repository is never
+ * what a recognizer should be biased towards. A hundred is also where the first dedicated provider documents its
+ * best results, which is a measured ceiling rather than one chosen for taste.
+ */
+export const MAX_RECOGNITION_TERMS = 100;
+/** Longest term kept. A longer one is a sentence or a blob, and neither is vocabulary. */
+export const MAX_RECOGNITION_TERM_LENGTH = 80;
+
+/** A BCP-47 tag as a recognizer reports or accepts it. Loose on purpose: providers disagree on region casing. */
+const languageTagSchema = z.string().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u);
+
+/**
+ * Where a term came from.
+ *
+ * `command` is separate from `glossary` because a command can have an effect: a recognizer may be biased towards
+ * one, but the normaliser never rewrites a near miss into one (`git status` and `git stash` are both commands, and a
+ * guess between them is a guess about what runs).
+ */
+export const recognitionTermKindSchema = z.enum([
+  "repository",
+  "package",
+  "path",
+  "branch",
+  "symbol",
+  "issue",
+  "tool",
+  "model",
+  "provider",
+  "command",
+  "glossary",
+]);
+export type RecognitionTermKind = z.infer<typeof recognitionTermKindSchema>;
+
+export const recognitionTermSchema = z.strictObject({
+  /** The canonical spelling: what the conversation should read when this term was said. */
+  text: z.string().min(1).max(MAX_RECOGNITION_TERM_LENGTH),
+  kind: recognitionTermKindSchema,
+  /**
+   * Known mis-hearings that map to this term and to nothing else, such as "stale closer" for "stale closure".
+   *
+   * Deterministic and short: an alias is a fact about how one term is misheard, not a rewrite rule for sentences.
+   */
+  aliases: z.array(z.string().min(1).max(MAX_RECOGNITION_TERM_LENGTH)).max(8).optional(),
+  /** Relevance to the current session, 0 to 1. Ordering, not confidence. */
+  weight: z.number().min(0).max(1),
+});
+export type RecognitionTerm = z.infer<typeof recognitionTermSchema>;
+
+/**
+ * What a recognizer may be told about the person's working context.
+ *
+ * Provider-neutral: each adapter translates it into its own vocabulary or keyterm field. Every term has already
+ * passed the shared secret redaction before it is placed here, because some recognizers are external services.
+ *
+ * `languageHints` are hints and never a lock. A Vietnamese sentence carrying English technical words is the normal
+ * case this exists for, and a recognizer locked to one language rewrites the other one.
+ */
+export const recognitionContextSchema = z.strictObject({
+  version: z.literal(1),
+  languageHints: z.array(languageTagSchema).max(4),
+  terms: z.array(recognitionTermSchema).max(MAX_RECOGNITION_TERMS),
+});
+export type RecognitionContext = z.infer<typeof recognitionContextSchema>;
+
+/** A stretch of an utterance the recognizer scored, as character offsets into `text`. */
+export const recognitionSpanSchema = z.strictObject({
+  start: z.int().nonnegative(),
+  end: z.int().nonnegative(),
+  confidence: z.number().min(0).max(1),
+  /** The language the recognizer heard in this span, when it says. */
+  language: languageTagSchema.optional(),
+});
+export type RecognitionSpan = z.infer<typeof recognitionSpanSchema>;
+
+/**
+ * One utterance as a recognizer reports it.
+ *
+ * An interim result is a hypothesis that replaces the one before it for the same `utteranceId`; `revision` orders
+ * them. Only a final result can become a message, and a final result for an utterance that was already settled is a
+ * duplicate rather than a second sentence.
+ */
+export const recognizedUtteranceSchema = z.strictObject({
+  voiceSessionId: z.string().min(1).max(128),
+  utteranceId: z.string().min(1).max(128),
+  revision: z.int().nonnegative(),
+  isFinal: z.boolean(),
+  text: z.string().max(8000),
+  /** Languages the recognizer detected, most dominant first. Absent when it does not say. */
+  languages: z.array(languageTagSchema).max(4).optional(),
+  /** Whole-utterance confidence, when the provider reports one. Never invented. */
+  confidence: z.number().min(0).max(1).optional(),
+  /** Span confidence, when the provider reports it. */
+  spans: z.array(recognitionSpanSchema).max(128).optional(),
+  /**
+   * How the utterance was closed. `provider` is the recognizer's own end of utterance; `session-end` is the last
+   * hypothesis kept because the connection ended before the recognizer finished it, which is better than losing a
+   * sentence that was heard.
+   */
+  settledBy: z.enum(["provider", "session-end"]).optional(),
+  provider: z.string().min(1).max(120),
+  model: z.string().min(1).max(120),
+  /** Whether a recognition context was applied to the session that produced this. */
+  contextApplied: z.boolean(),
+  at: instantSchema,
+  sequence: sequenceSchema,
+});
+export type RecognizedUtterance = z.infer<typeof recognizedUtteranceSchema>;
+
+/**
+ * What a recognizer can do, as it reports it.
+ *
+ * `contextUpdate` is the honest answer to "can the vocabulary change mid-session": `live` applies at once,
+ * `next-connection` applies when the recognizer next connects, and `none` never.
+ */
+export const speechRecognitionCapabilitiesSchema = z.strictObject({
+  provider: z.string().min(1).max(120),
+  model: z.string().min(1).max(120),
+  interimResults: z.boolean(),
+  languageDetection: z.boolean(),
+  confidence: z.enum(["none", "utterance", "span"]),
+  vocabulary: z.boolean(),
+  maxVocabularyTerms: z.int().nonnegative().max(MAX_RECOGNITION_TERMS),
+  contextUpdate: z.enum(["none", "next-connection", "live"]),
+  /** Whether a completed utterance's audio can be recognized again on its own. */
+  utteranceRetry: z.boolean(),
+});
+export type SpeechRecognitionCapabilities = z.infer<typeof speechRecognitionCapabilitiesSchema>;
+
+/** Most normalisation changes recorded for one utterance. More than this is itself a sign to stop correcting. */
+export const MAX_NORMALIZATION_CHANGES = 32;
+
+/**
+ * One deterministic change the transcript normaliser made.
+ *
+ * Recorded so the canonical text can always be explained: what was heard, what it became, and by which rule.
+ */
+export const transcriptNormalizationChangeSchema = z.strictObject({
+  from: z.string().min(1).max(MAX_RECOGNITION_TERM_LENGTH * 2),
+  to: z.string().min(1).max(MAX_RECOGNITION_TERM_LENGTH),
+  rule: z.enum(["casing", "spacing", "alias", "near-match"]),
+  kind: recognitionTermKindSchema,
+});
+export type TranscriptNormalizationChange = z.infer<typeof transcriptNormalizationChangeSchema>;
+
+/**
+ * Bounded provenance for one settled utterance.
+ *
+ * Diagnostics, not a second transcript store: it says which recognizer produced the words, how sure it was, what was
+ * normalised and whether the utterance was re-recognized - and it never carries audio. The canonical text itself is
+ * the conversation message and lives there.
+ */
+export const recognitionProvenanceSchema = z.strictObject({
+  utteranceId: z.string().min(1).max(128),
+  provider: z.string().min(1).max(120),
+  model: z.string().min(1).max(120),
+  contextApplied: z.boolean(),
+  termCount: z.int().nonnegative().max(MAX_RECOGNITION_TERMS),
+  languages: z.array(languageTagSchema).max(4).optional(),
+  confidence: z
+    .strictObject({
+      utterance: z.number().min(0).max(1).optional(),
+      lowestSpan: z.number().min(0).max(1).optional(),
+      lowSpans: z.int().nonnegative(),
+    })
+    .optional(),
+  normalization: z.array(transcriptNormalizationChangeSchema).max(MAX_NORMALIZATION_CHANGES),
+  /** Technical spans the normaliser saw more than one reading for and left as heard. */
+  abstained: z.int().nonnegative(),
+  retry: z
+    .strictObject({
+      reason: z.enum(["low-confidence-technical-span", "ambiguous-technical-span"]),
+      outcome: z.enum(["kept-original", "used-retry", "unavailable", "failed"]),
+    })
+    .optional(),
+  /** Time from the final result to the canonical text, which is the latency the normaliser and a retry add. */
+  settleMs: z.number().nonnegative().optional(),
+});
+export type RecognitionProvenance = z.infer<typeof recognitionProvenanceSchema>;
