@@ -1,14 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { appearanceSnapshotSchema } from "@clarkcant/contracts";
 import { compileAppearance } from "@clarkcant/design-tokens";
 
 import {
   DETACHED_CHANNELS,
+  DETACHED_LEASE,
   PRIVILEGED_FIELDS,
   detachedBootstrap,
   detachedBounds,
   detachedWindowOptions,
+  keepDetachedLease,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
   reviewDetachedAppearance,
@@ -242,5 +244,70 @@ describe("the detached channels", () => {
     // act of the conversation, and asking for a bootstrap is only a detached window's business.
     expect(DETACHED_CHANNELS).toContain("desktop:detachWidget");
     expect(DETACHED_CHANNELS).toContain("detached:bootstrap");
+  });
+});
+
+describe("the detached window keeps its lease while it is open", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("uses the conversation's own numbers, refreshing well inside the lease", () => {
+    expect(DETACHED_LEASE).toEqual({ refreshMs: 30_000, leaseMs: 90_000 });
+    expect(DETACHED_LEASE.refreshMs * 3).toBe(DETACHED_LEASE.leaseMs);
+  });
+
+  it("re-claims on every tick until stopped", async () => {
+    vi.useFakeTimers();
+    const claim = vi.fn(async () => ({ ok: true }));
+    const onLost = vi.fn();
+    const lease = keepDetachedLease({ claim, onLost });
+    await vi.advanceTimersByTimeAsync(DETACHED_LEASE.refreshMs * 3);
+    expect(claim).toHaveBeenCalledTimes(3);
+    lease.stop();
+    await vi.advanceTimersByTimeAsync(DETACHED_LEASE.refreshMs * 3);
+    expect(claim).toHaveBeenCalledTimes(3);
+    expect(onLost).not.toHaveBeenCalled();
+  });
+
+  it("says the instance was lost, once, when another surface holds it now", async () => {
+    vi.useFakeTimers();
+    const refusal = { ok: false, code: "ALREADY_OWNED", refused: "the node refused: another surface holds it" };
+    const claim = vi.fn(async () => refusal);
+    const onLost = vi.fn();
+    keepDetachedLease({ claim, onLost, refreshMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(onLost).toHaveBeenCalledTimes(1);
+    expect(onLost).toHaveBeenCalledWith(refusal);
+    // Stopped after the loss: a window that no longer owns the instance does not keep claiming it.
+    expect(claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps trying through a node that is not answering, which is not a loss", async () => {
+    vi.useFakeTimers();
+    const claim = vi
+      .fn<() => Promise<{ ok: boolean; code?: string }>>()
+      .mockResolvedValueOnce({ ok: false, code: "NODE_UNREACHABLE" })
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValue({ ok: true });
+    const onLost = vi.fn();
+    const lease = keepDetachedLease({ claim, onLost, refreshMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(claim).toHaveBeenCalledTimes(4);
+    expect(onLost).not.toHaveBeenCalled();
+    lease.stop();
+  });
+
+  it("does not queue claims behind a node slow to answer", async () => {
+    vi.useFakeTimers();
+    let answer: (value: { ok: boolean }) => void = () => undefined;
+    const claim = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => (answer = resolve)));
+    const lease = keepDetachedLease({ claim, onLost: vi.fn(), refreshMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(claim).toHaveBeenCalledTimes(1);
+    answer({ ok: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(claim).toHaveBeenCalledTimes(2);
+    lease.stop();
   });
 });

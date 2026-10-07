@@ -252,7 +252,7 @@ export interface LiveWidgetResponse {
   state: Record<string, unknown>;
   /** The graph's values as the node holds them, with a one-line summary; null when the surface has no graph. */
   semanticState: GraphSemanticState | null;
-  ownerSurface: "inline" | "pin" | null;
+  ownerSurface: "inline" | "pin" | "detached" | null;
   capturedAt: null;
   tombstone: null;
   period: "week" | "month";

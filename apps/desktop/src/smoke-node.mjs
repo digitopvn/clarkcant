@@ -16,17 +16,23 @@
 
 import { createServer } from "node:http";
 
+/** Where the stand-in serves its widget document, as the node serves one under a frame grant. */
+export const SMOKE_FRAME_PATH = "/frame/smoke-grant/index.html";
+
 /**
  * Start the stand-in on a free loopback port.
  *
- * Loopback only, and it answers exactly two routes: anything else is a 404, so a host that called the wrong path
- * would fail loudly here rather than being quietly served something plausible.
+ * Loopback only, and it answers exactly the live-owner route, a blank page and one widget document: anything else is
+ * a 404, so a host that called the wrong path would fail loudly here rather than being quietly served something
+ * plausible.
  *
- * @returns {Promise<{ url: string, calls: { method: string, path: string, body: Record<string, unknown> }[], close: () => Promise<void> }>}
+ * @returns {Promise<{ url: string, calls: { method: string, path: string, body: Record<string, unknown> }[], control: { refuseClaims: boolean }, close: () => Promise<void> }>}
  */
 export async function startSmokeNode() {
   /** @type {{ method: string, path: string, body: Record<string, unknown> }[]} */
   const calls = [];
+  /** Switched by the smoke test: when set, a claim is refused as the node refuses one another surface holds. */
+  const control = { refuseClaims: false };
 
   const server = createServer((request, response) => {
     /** @type {Buffer[]} */
@@ -50,6 +56,14 @@ export async function startSmokeNode() {
 
       if (isLiveOwner && (request.method === "POST" || request.method === "DELETE")) {
         calls.push({ method: request.method, path, body });
+        if (request.method === "POST" && control.refuseClaims) {
+          // What the node answers once another surface holds the instance: the detached window has lost it.
+          response.writeHead(409, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({ code: "ALREADY_OWNED", message: "another surface holds the live view of this instance", heldBySurface: "pin" }),
+          );
+          return;
+        }
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
           JSON.stringify(
@@ -70,8 +84,25 @@ export async function startSmokeNode() {
         return;
       }
 
+      if (request.method === "GET" && path === SMOKE_FRAME_PATH) {
+        /*
+         * A widget document the way the node serves one: its own policy in the response, with a per-response script
+         * nonce and `frame-ancestors` naming who may frame it (`widgetDocumentPolicy` in core). The script says it ran,
+         * which is the one thing a frame the window's policy refused could not do.
+         */
+        response.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "default-src 'none'; script-src 'nonce-smokeframe'; frame-ancestors 'self'",
+        });
+        response.end(
+          "<!doctype html><html lang='en'><title>smoke frame</title><body>" +
+            "<script nonce='smokeframe'>parent.postMessage({ smokeFrame: 'ready' }, '*');</script></body></html>",
+        );
+        return;
+      }
+
       response.writeHead(404, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: { code: "NOT_FOUND" } }));
+      response.end(JSON.stringify({ code: "NOT_FOUND", message: "the smoke node does not serve that route" }));
     });
   });
 
@@ -90,6 +121,7 @@ export async function startSmokeNode() {
   return {
     url: `http://127.0.0.1:${String(address.port)}/`,
     calls,
+    control,
     close: () =>
       new Promise((resolve) => {
         server.close(() => {

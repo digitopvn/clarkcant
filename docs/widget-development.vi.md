@@ -2199,6 +2199,10 @@ Detach không reset state/subscription/media.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
 
+Cửa sổ detached giữ lease live-owner của instance dưới bề mặt `detached` và làm mới nó trong lúc còn mở. Cửa sổ đóng lại,
+và trả instance về, khi phần hiển thị trong hội thoại đã mở nó biến mất, khi cửa sổ hội thoại đóng, khi ứng dụng thoát,
+hoặc khi một bề mặt khác đã lấy lease.
+
 Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
 thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
 semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
