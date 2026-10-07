@@ -365,6 +365,12 @@ export interface TaskDispatcher {
   close(): void;
   /** SIGKILL every worker's group now, without the grace: for a node that exits before the grace runs out. */
   killAllNow(): void;
+  /**
+   * Wait, at most `timeoutMs`, until every run this dispatcher admitted has finished tidying up (browser closed, lease
+   * released, worktrees taken away) and every refusal it started has been written. Answers whether it got there in time.
+   * Stops nothing itself: the node stops the runs first, then waits for this before it closes the database.
+   */
+  drain(timeoutMs: number): Promise<boolean>;
 }
 
 interface QueuedRun {
@@ -575,6 +581,16 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   /** Admitted tasks whose run has reported: the settlement is written, though the run may still be tidying up. */
   const reported = new Set<string>();
   let running = 0;
+  /**
+   * Everything this dispatcher still has writing to storage: admitted runs until their tidying up is done, and the
+   * refusals it reports on its own. What `drain` waits for before the node closes the database under them.
+   */
+  const inFlight = new Set<Promise<void>>();
+  const track = (work: Promise<void>): Promise<void> => {
+    const tracked = work.finally(() => inFlight.delete(tracked));
+    inFlight.add(tracked);
+    return tracked;
+  };
 
   const journal = (write: (journal: NonNullable<TaskDispatcherDeps["journal"]>) => void): void => {
     if (deps.journal === undefined) return;
@@ -603,10 +619,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       const next = queue.shift();
       if (next === undefined) return;
       running += 1;
-      void runOne(next).finally(() => {
-        running -= 1;
-        pump();
-      });
+      // The next queued run is tracked before this one stops being: `drain` never sees a gap between them.
+      void track(
+        runOne(next).finally(() => {
+          running -= 1;
+          pump();
+        }),
+      );
     }
   };
 
@@ -655,6 +674,16 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       });
       return;
     }
+    const leaseId = lease.lease.leaseId;
+    /*
+     * A run whose tidying up outlasts the node's shutdown can find storage already closed. Its lease then stays held until
+     * its time-to-live runs out, when the lease sweeper or the next run that asks for the capability reclaims it; what
+     * follows the release — taking the run's worktrees away — still runs.
+     */
+    const freeLease = (): void => {
+      if (!deps.conductor.db.isOpen) return;
+      releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, leaseId);
+    };
 
     /*
      * A browser task is let onto exactly the sites the tool that created it checked against the person's own words and
@@ -677,7 +706,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
               ? { code: "browser-sites-mismatch" }
               : undefined;
       if (refusal !== undefined) {
-        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        freeLease();
         await refuse(job, refusal);
         return;
       }
@@ -686,7 +715,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
     const plan = planRoots(task);
     if (!plan.ok) {
-      releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+      freeLease();
       await refuse(job, plan.refusal);
       return;
     }
@@ -703,7 +732,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       } catch (cause) {
         // No model the worker could start on may receive the task: refused with what to change, and nothing is sent.
         if (isDataClassUnavailable(cause)) {
-          releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+          freeLease();
           recordModelRefusal(job, cause.model, cause.dataClass);
           await refuse(job, {
             code: "data-class",
@@ -717,7 +746,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         reason = cause instanceof Error ? cause.message : String(cause);
       }
       if (launch === undefined) {
-        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        freeLease();
         await refuse(job, reason === undefined ? { code: "no-model" } : { code: "model-not-chosen", detail: reason });
         return;
       }
@@ -727,7 +756,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
        * then reports plainly if the model answered without using the browser.
        */
       if (browsing && launch.toolCalls === false) {
-        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        freeLease();
         await refuse(job, { code: "model-no-tools", model: `${launch.model.provider}/${launch.model.id}` });
         return;
       }
@@ -772,7 +801,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         });
 
         if (policyDecision.kind === "deny") {
-          releaseLease(coordination, lease.lease.leaseId);
+          freeLease();
           await refuse(job, { code: "policy-denied", refusal: policyDecision.refusal, reason: policyDecision.reason });
           return;
         }
@@ -796,7 +825,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             : policyDecision;
 
         if (decision.kind === "ask") {
-          releaseLease(coordination, lease.lease.leaseId);
+          freeLease();
           // A browser task is approved for its sites and its request, so the person is shown both. The approval, the
           // parked reason and the line in the conversation are for this node's owner, in their interface language; the
           // effect a peer that handed this task over is told stays as it was, because its owner's language is not known.
@@ -862,7 +891,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           ? ({ ok: false, refusal: { code: "no-worktree-place" } } as const)
           : await ensureManagedWorktree({ repoPath: repository, worktreesDir: deps.worktreesDir(), taskId: job.taskId });
       if (!made.ok) {
-        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        freeLease();
         // The repositories before this one already have their worktree. None was worked in, so a clean one goes now
         // rather than at the next boot; the branch stays, with anything an earlier run of the task committed.
         await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
@@ -884,7 +913,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       const principalId = deps.ownerPrincipalId?.();
       // Without an owner there is no policy to decide a click by; without a registered capability the gate never ran.
       if (host === undefined || principalId === undefined || admission === undefined) {
-        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        freeLease();
         await refuse(job, host === undefined || principalId === undefined ? { code: "no-browser" } : { code: "browser-policy-unknown" });
         return;
       }
@@ -1119,7 +1148,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       await browser?.close();
       browsers.delete(job.taskId);
       liveChildren.delete(runId);
-      releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+      freeLease();
       await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
     }
   }
@@ -1272,11 +1301,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         ...(input.authorizedByApprovalId === undefined ? {} : { authorizedByApprovalId: input.authorizedByApprovalId }),
       };
       if (closing) {
-        void refuse(job, { code: "shutting-down" });
+        void track(refuse(job, { code: "shutting-down" }));
         return false;
       }
       if (running >= maxConcurrent && queue.length >= maxQueued) {
-        void refuse(job, { code: "queue-full", running, waiting: queue.length });
+        void track(refuse(job, { code: "queue-full", running, waiting: queue.length }));
         return false;
       }
       queue.push({ ...job, queuedAt: at() });
@@ -1294,14 +1323,14 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
       // A queued task is failed with a reason rather than dropped: dropped, it would stay `dispatched` with nothing
       // behind it, which is the state this module exists to end.
-      for (const job of queue.splice(0)) void refuse(job, { code: "stopped-before-start" });
+      for (const job of queue.splice(0)) void track(refuse(job, { code: "stopped-before-start" }));
       return stopped;
     },
     stop(taskId) {
       const queuedAt = queue.findIndex((job) => job.taskId === taskId);
       if (queuedAt >= 0) {
         const [job] = queue.splice(queuedAt, 1);
-        if (job !== undefined) void refuse(job, { code: "stopped-before-start" });
+        if (job !== undefined) void track(refuse(job, { code: "stopped-before-start" }));
         return true;
       }
       if (!active.has(taskId)) return false;
@@ -1351,6 +1380,23 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     killAllNow() {
       for (const { child } of liveChildren.values()) {
         if (child.pid !== undefined) signalTree(child.pid, "SIGKILL", child);
+      }
+    },
+    async drain(timeoutMs) {
+      let timer: NodeJS.Timeout | undefined;
+      const timedOut = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      });
+      try {
+        // A run that ends can start the next queued one, so the set is read again until it stays empty.
+        while (inFlight.size > 0) {
+          const drained = await Promise.race([Promise.allSettled([...inFlight]).then(() => true as const), timedOut]);
+          if (!drained) return false;
+        }
+        return true;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     },
   };
