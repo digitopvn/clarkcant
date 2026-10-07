@@ -13,7 +13,8 @@ import { createModelTurn } from "../src/model-turn.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
- * A message with files on the plain route: while a turn is answering, and when its words are a command the host answers.
+ * A message with files on the plain and streaming message routes: while a turn is answering, and when its words are a
+ * command the host answers.
  *
  * The decider is a model call, so it is replaced here by one whose answer each test sets: what is under test is what the
  * route does with the message's files for each answer, not what the decider would choose.
@@ -91,9 +92,22 @@ async function node(script: readonly string[]) {
     return (uploaded.body as { attachmentRef: { attachmentId: string } }).attachmentRef.attachmentId;
   };
   const send = (body: Record<string, unknown>) => call("POST", `/conversations/${conversationId}/messages`, body);
+  /** The streaming route the composer uses: its status, and the frames it sends when it streams. */
+  const sendStreamed = async (body: Record<string, unknown>) => {
+    const response = await call("POST", `/conversations/${conversationId}/messages/stream`, body);
+    const chunks: string[] = [];
+    await response.stream?.run((chunk) => chunks.push(chunk));
+    const frames = chunks.map((chunk) => {
+      const lines = chunk.split("\n");
+      const event = (lines.find((line) => line.startsWith("event: ")) ?? "event: unknown").slice(7).trim();
+      const data = (lines.find((line) => line.startsWith("data: ")) ?? "data: {}").slice(6);
+      return { event, data: JSON.parse(data) as Record<string, unknown> };
+    });
+    return { status: response.status, body: response.body, done: frames.find((frame) => frame.event === "done")?.data };
+  };
   const storedFiles = () =>
     attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId }).map((ref) => ref.attachmentId);
-  return { adapter, turn, steered, interrupted, backgrounded, conversationId, upload, send, storedFiles };
+  return { adapter, turn, steered, interrupted, backgrounded, conversationId, upload, send, sendStreamed, storedFiles };
 }
 
 describe("a message's files on the plain route while a turn is answering", () => {
@@ -219,5 +233,48 @@ describe("a message with files whose words the host would answer", () => {
       expect(sent.body).toMatchObject({ code: "ATTACHMENT_NOT_AVAILABLE" });
     }
     expect(backgrounded).not.toHaveBeenCalled();
+  });
+});
+
+describe("a message with files on the streaming route the composer uses", () => {
+  it("answers /background with files as a turn that reads them, not as a background run without them", async () => {
+    const { adapter, backgrounded, upload, sendStreamed, storedFiles } = await node(["đã đọc tệp"]);
+    const file = await upload();
+    const sent = await sendStreamed({ text: "/background tóm tắt tệp này", attachmentIds: [file] });
+    expect(sent.status).toBe(200);
+    expect(sent.done).toMatchObject({ resolution: "model" });
+    expect(backgrounded).not.toHaveBeenCalled();
+    expect(storedFiles()).toEqual([file]);
+    expect(adapter.allPrompts().join("\n")).toContain(FILE_TEXT);
+  });
+
+  it("answers a typed app command with files as a turn that reads them", async () => {
+    const { adapter, upload, sendStreamed, storedFiles } = await node(["đã đọc tệp"]);
+    const file = await upload();
+    const sent = await sendStreamed({ text: "mở settings", attachmentIds: [file] });
+    expect(sent.status).toBe(200);
+    expect(sent.done).toMatchObject({ resolution: "model" });
+    expect(sent.done).not.toHaveProperty("appIntent");
+    expect(storedFiles()).toEqual([file]);
+    expect(adapter.allPrompts().join("\n")).toContain(FILE_TEXT);
+  });
+
+  it("refuses a slash command or app command naming a file that is not available", async () => {
+    const { backgrounded, sendStreamed } = await node(["không dùng tới"]);
+    for (const text of ["/background tóm tắt tệp này", "mở settings"]) {
+      const sent = await sendStreamed({ text, attachmentIds: ["att_khong_co"] });
+      expect(sent.status, text).toBe(400);
+      expect(sent.body).toMatchObject({ code: "ATTACHMENT_NOT_AVAILABLE" });
+    }
+    expect(backgrounded).not.toHaveBeenCalled();
+  });
+
+  it("still answers a slash command or app command without files as the host", async () => {
+    const { adapter, sendStreamed } = await node(["không dùng tới"]);
+    const slash = await sendStreamed({ text: "/thinking" });
+    expect(slash.done).toMatchObject({ resolution: "app-intent" });
+    const intent = await sendStreamed({ text: "mở settings" });
+    expect(intent.done).toMatchObject({ resolution: "app-intent", appIntent: { kind: "intent", intent: { kind: "settings.open" } } });
+    expect(adapter.allPrompts()).toEqual([]);
   });
 });

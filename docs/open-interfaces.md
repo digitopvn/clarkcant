@@ -177,13 +177,13 @@ The origin stays with the work it started:
   `hostWritten: { "kind": "host-continuation", "version": 1 }`. A client draws such a message as a quiet line from the
   host in its own language ("Approved — Clark carries on") rather than as the person's words, and treats any kind or
   version it does not know the same way; search and a new session's recap leave it out.
-- On the plain `/messages` route, `attachmentIds` is checked before anything else acts on the message. A file that
-  is not available, or an `attachmentIds` that is not a list of ids, is refused with `400 ATTACHMENT_NOT_AVAILABLE`
-  on every path: a slash command, a typed app command, or a message sent while a turn is answering, and a running turn
-  is left as it was. A message that carries attachments is never answered by the host as a slash command or typed app
-  command, since those answers, and the background run `/background` starts, carry only words: it is stored with its
-  files and answered as a turn, with its text as typed.
-- On the same route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
+- On both `/messages` and `/messages/stream`, `attachmentIds` is checked before anything else acts on the message. A
+  file that is not available, or an `attachmentIds` that is not a list of ids, is refused with
+  `400 ATTACHMENT_NOT_AVAILABLE` on every path: a slash command, a typed app command, or on `/messages` a message sent
+  while a turn is answering, whose running turn is left as it was. A message that carries attachments is never
+  answered by the host as a slash command or typed app command, since those answers, and the background run
+  `/background` starts, carry only words: it is stored with its files and answered as a turn, with its text as typed.
+- On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A
   message whose origin differs from the running turn's, a typed message during a spoken turn, or a message that
