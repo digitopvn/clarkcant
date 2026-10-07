@@ -10,6 +10,7 @@ import {
   assertMigrationListIsSane,
   appendMessage,
   latestMessagesContaining,
+  messagePage,
   messagesSince,
   checkRestoreCompatibility,
   claimConversationAuthority,
@@ -601,6 +602,122 @@ describe("a stored message", () => {
     expect(found.map((message) => message.messageId)).toEqual(["msg_conv_long_3", "msg_conv_long_6", "msg_conv_long_9"]);
     expect(latestMessagesContaining(db, "conv_long", "q_1", 10)).toHaveLength(4);
     expect(latestMessagesContaining(db, "conv_long", "q_2", 10)).toHaveLength(0);
+  });
+});
+
+describe("a page of a long conversation", () => {
+  const at = "2026-09-17T05:00:00.000Z";
+  /** A conversation of `count` messages, sequences 1..count, beside another conversation that must never leak in. */
+  function longConversation(count: number, skip: ReadonlySet<number> = new Set()): ReturnType<typeof freshDb> {
+    const db = freshDb();
+    for (const id of ["conv_long", "conv_other"]) {
+      db.prepare(
+        "INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)",
+      ).run(id, "node_local", at, at);
+    }
+    const say = (conversationId: string, sequence: number): void =>
+      appendMessage(
+        db,
+        {
+          messageId: `msg_${conversationId}_${String(sequence)}`,
+          conversationId,
+          role: "assistant",
+          blocks: [{ type: "text", format: "plain", content: String(sequence), streaming: false }],
+          authorNodeId: "node_local",
+          createdAt: at,
+          delivery: "accepted",
+        } as never,
+        sequence,
+      );
+    db.exec("BEGIN");
+    for (let sequence = 1; sequence <= count; sequence += 1) if (!skip.has(sequence)) say("conv_long", sequence);
+    for (let sequence = 1; sequence <= 5; sequence += 1) say("conv_other", sequence);
+    db.exec("COMMIT");
+    return db;
+  }
+
+  it("opens on the newest messages of a conversation longer than one page", () => {
+    const db = longConversation(250);
+    const page = messagePage(db, "conv_long", { kind: "latest" }, 200);
+    expect(page.messages).toHaveLength(200);
+    expect(page.sequences[0]).toBe(51);
+    expect(page.sequences.at(-1)).toBe(250);
+    expect(page.messages.at(-1)?.messageId).toBe("msg_conv_long_250");
+    expect(page).toMatchObject({ fromSequence: 51, toSequence: 250, hasOlder: true, hasNewer: false });
+  });
+
+  it("reads back to the first of thousands of messages, every one exactly once, with no gap between pages", () => {
+    const db = longConversation(3_000);
+    const seen: number[] = [];
+    let page = messagePage(db, "conv_long", { kind: "latest" }, 200);
+    let reads = 1;
+    seen.unshift(...page.sequences);
+    while (page.hasOlder) {
+      const before = page.fromSequence;
+      page = messagePage(db, "conv_long", { kind: "before", beforeSequence: before }, 200);
+      reads += 1;
+      // Each page ends exactly where the one after it starts.
+      expect(page.toSequence).toBe(before - 1);
+      expect(page.hasNewer).toBe(true);
+      seen.unshift(...page.sequences);
+    }
+    expect(reads).toBe(15);
+    expect(page.fromSequence).toBe(0);
+    expect(seen).toEqual(Array.from({ length: 3_000 }, (_, index) => index + 1));
+    expect(page.messages[0]?.messageId).toBe("msg_conv_long_1");
+  });
+
+  it("reads forward after a sequence, and states the range up to the next message it left out", () => {
+    const db = longConversation(450);
+    const first = messagePage(db, "conv_long", { kind: "after", afterSequence: 0 }, 200);
+    expect(first).toMatchObject({ fromSequence: 1, toSequence: 200, hasOlder: false, hasNewer: true });
+    const second = messagePage(db, "conv_long", { kind: "after", afterSequence: first.toSequence }, 200);
+    expect(second).toMatchObject({ fromSequence: 201, toSequence: 400, hasOlder: true, hasNewer: true });
+    const last = messagePage(db, "conv_long", { kind: "after", afterSequence: second.toSequence }, 200);
+    expect(last).toMatchObject({ fromSequence: 401, toSequence: 450, hasOlder: true, hasNewer: false });
+    expect([...first.sequences, ...second.sequences, ...last.sequences]).toEqual(Array.from({ length: 450 }, (_, index) => index + 1));
+    // The old `after` read returns the same messages it always did.
+    expect(first.messages.map((message) => message.messageId)).toEqual(
+      messagesSince(db, "conv_long" as never, 0, 200).map((message) => message.messageId),
+    );
+  });
+
+  it("bounds a page by the messages that exist, so a removed message leaves no gap the pages disagree about", () => {
+    // Sequences 101..110 were removed: the newest page's range reaches down past them to the message it left out.
+    const db = longConversation(300, new Set(Array.from({ length: 10 }, (_, index) => 101 + index)));
+    const latest = messagePage(db, "conv_long", { kind: "latest" }, 190);
+    expect(latest.sequences[0]).toBe(111);
+    expect(latest.fromSequence).toBe(101);
+    const older = messagePage(db, "conv_long", { kind: "before", beforeSequence: latest.fromSequence }, 50);
+    expect(older).toMatchObject({ fromSequence: 51, toSequence: 100, hasOlder: true });
+    expect(older.sequences[0]).toBe(51);
+    expect(older.sequences.at(-1)).toBe(100);
+  });
+
+  it("answers an empty conversation, and a page past either end, with an empty page that says so", () => {
+    const db = longConversation(0);
+    expect(messagePage(db, "conv_long", { kind: "latest" }, 200)).toMatchObject({
+      messages: [],
+      fromSequence: 0,
+      toSequence: 0,
+      hasOlder: false,
+      hasNewer: false,
+    });
+    const full = longConversation(10);
+    expect(messagePage(full, "conv_long", { kind: "before", beforeSequence: 1 }, 200)).toMatchObject({
+      messages: [],
+      fromSequence: 0,
+      toSequence: 0,
+      hasOlder: false,
+      hasNewer: true,
+    });
+    expect(messagePage(full, "conv_long", { kind: "after", afterSequence: 10 }, 200)).toMatchObject({
+      messages: [],
+      fromSequence: 11,
+      toSequence: 10,
+      hasOlder: true,
+      hasNewer: false,
+    });
   });
 });
 
