@@ -1012,6 +1012,28 @@ describe("a secret a person types", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("reaches the running decider when saved, and stops it when removed, without a restart", async () => {
+    // A blank variable is no key, so the decider starts with none and only the card can change that.
+    vi.stubEnv("TYPESAFE_API_KEY", "");
+    vi.stubEnv("CLARKCANT_DECISION_PROVIDER", "");
+    vi.stubEnv("CLARKCANT_JEV_LOCAL_ONLY", "");
+    try {
+      // The configuration the decider was built with, before anything was saved; the same object every decision reads.
+      const config = services.jev.deps.config;
+      expect(config.apiKey).toBeUndefined();
+
+      await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "saved-not-a-real-key" }] } });
+      expect(config.apiKey).toBe("saved-not-a-real-key");
+
+      const removed = await request("DELETE", "/credentials/typesafe");
+      expect(removed.status).toBe(200);
+      expect(config.apiKey).toBeUndefined();
+      expect(config.enabled).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("the model catalogue route", () => {
