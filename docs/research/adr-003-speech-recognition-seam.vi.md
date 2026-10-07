@@ -45,8 +45,37 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      ngừng, và một con trỏ đánh dấu recognizer đã gửi tới đâu: một bản final dời con trỏ khi các từ của nó, đúng thứ
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
-     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, chỉ câu live mới nhất được trả lời. Mọi quy tắc đều ưu
-     tiên trả lời một số từ hai lần hơn là làm mất chúng.
+     nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
+     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mười sáu
+     bản final hết hạn gần nhất mà chưa có cách đọc live được ghi nhớ, vì cách đọc đó thường chỉ tới sau khi recognizer
+     đã chốt câu kế tiếp; chúng được đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con
+     trỏ. Bản final bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua
+     rồi. Câu live nào bị giữ lại tuân theo một phép đếm, vì mỗi bản final của recognizer chỉ ứng với nhiều nhất một câu
+     live. Một câu live chỉ bị giữ lại khi có một bản final ứng với nó và không ứng với câu bị giữ lại nào khác: câu mà
+     bản final đó khớp, cách đọc muộn của nó, hoặc câu đầu tiên tới lượt nó mà không đọc giống bản final nào. Câu không
+     ứng với bản final nào sẽ được trả lời, và khi một lần khớp đã vượt qua một câu như vậy thì câu được khớp cũng được
+     trả lời, vì một trong hai câu chưa bao giờ được gửi. Cách đọc live tới theo đúng thứ tự các bản final đã được gửi,
+     nên một câu đọc giống một bản final sau, hoặc đã được một bản final sau khớp, sẽ kết thúc lượt của bản final
+     trước. Quy tắc này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời
+     nguyên câu. Có ba trường hợp mất được chấp nhận, mỗi trường hợp là một câu nói lại các từ của một bản final đã gửi
+     trong vòng ba mươi giây quanh nó, vì luồng live không thể phân biệt câu đó với cách đọc của chính bản final ấy:
+     - cách đọc live của bản final không bao giờ tới, và câu đọc giống trọn bản final: câu bị coi là cách đọc muộn ấy.
+       Nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi lại;
+     - cách đọc live của bản final tới nhưng bị đọc sai, đúng lượt và đúng thứ tự, trong khi cách đọc của một bản final
+       trước không bao giờ tới: cách đọc sai bị coi là của bản final trước, và câu bị coi là cách đọc muộn của bản final
+       này. Luồng live giống hệt một luồng mà cách đọc của bản final trước tới nhưng bị đọc sai, còn cách đọc của bản
+       final này tới muộn;
+     - phiên live vẫn đang đọc câu đó khi recognizer hỏng, và cách đọc live của chính bản final đã tới nhưng bị đọc sai
+       hoặc bị tách đôi: phần đã nghe được bị coi là cách đọc của bản final ấy vẫn đang tới.
+
+     Một mô phỏng có seed của các phiên bị hỏng (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) kiểm tra
+     quy tắc này. Mọi câu chưa được gửi đều được trả lại, theo thứ tự. Một câu bị mất chỉ được chấp nhận khi nó nói lại
+     các từ của một bản final khác đã gửi trong vòng ba mươi giây quanh lúc câu được nghe lần đầu, và hoặc cách đọc
+     live của bản final đó hay của một bản final trước nó không bao giờ tới, hoặc câu vẫn đang được đọc khi recognizer
+     hỏng và cách đọc của chính bản final đó đã tới nhưng bị đọc sai hoặc bị tách đôi. Khi không cách đọc live nào chậm
+     hơn bản final của nó quá ba mươi giây, mô phỏng kiểm tra rằng số câu trùng lặp không vượt quá hai lần số cách đọc
+     mơ hồ (đọc sai, bị mất, bị tách đôi, nói lại, hoặc quá ngắn để khớp) cộng một, và rằng các phiên mô phỏng không có
+     cách đọc mơ hồ nào thì không có câu trùng lặp nào.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;
@@ -70,9 +99,20 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
    - Một phần của một từ viết dài hơn (`live` trong `gemini-live.tsx`) không bao giờ bị động tới, và dấu câu mà một
      cách viết đã mang sẵn không bị viết hai lần.
    - Một từ thật hoặc tên người không bao giờ là alias: "Jeff" vẫn là "Jeff".
-   - Casing không bao giờ hạ chữ hoa.
+   - Casing chỉ hạ chữ hoa để khôi phục một term dạng code được nghe đúng nguyên văn, chỉ khác chữ hoa: `RedactSecrets`
+     thành `redactSecrets`, "PNPM verify" thành `pnpm verify` và "Git stash" thành `git stash`. Dạng code nghĩa là có
+     chữ hoa xen chữ thường, có chữ số, có dấu câu của code, hoặc là một lệnh. Vì vậy tên model có chữ số được viết đúng
+     như vocabulary: "GPT-4o" thành `gpt-4o` khi vocabulary có `gpt-4o`. Tool được xét theo cách viết chứ không theo
+     loại, vì tên skill và extension đã cài thường là từ thường (`test`, `review`, `weather`). Một từ thường đứng đầu
+     câu ("Rebase", "Worktree", "Test", một skill tên `deploy`, một tên riêng như ClarkCant bên cạnh repository tên
+     `clarkcant`) giữ nguyên chữ hoa, và `pnpm` đứng một mình cũng vậy ("dùng PNPM" được giữ nguyên như đã nghe). Tên
+     tool viết thường mà chỉ mang dạng code nhờ một dấu gạch nối hoặc một chữ số (`follow-up`, `check-in`, `s3`) cũng
+     có thể là một từ thường, nên chỉ bị hạ chữ hoa khi có cùng bằng chứng mà một từ thường cần: "Follow-up with the
+     team tomorrow" và "S3 is down" giữ nguyên chữ hoa, còn "Daily-notes skill chạy lỗi khi build" thành
+     `daily-notes skill ...`. Một từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
    - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
-     lệnh ("git re base" được giữ nguyên như đã nghe).
+     lệnh ("git re base" được giữ nguyên như đã nghe). Chỉ chữ hoa được khôi phục: `npm` không bao giờ thành `pnpm`, kể
+     cả khi vocabulary có pnpm (#574).
    - Một đoạn có thể là hai term thì được giữ nguyên như đã nghe, và việc abstain được ghi lại.
    - Một câu đã chuẩn được trả lại đúng như cũ. Benchmark kiểm tra điều này trên mọi câu tham chiếu, kể cả các mục âm
      dựng từ tên hàng xóm gần, tên nằm trong từ dài hơn, tên người và các phiên bản model khác.
@@ -98,30 +138,42 @@ quyết định họ không thể đánh giá, nên không có bộ chọn nào.
 ## Bằng chứng
 
 `corepack pnpm --filter @clarkcant/voice-adapters bench:transcription` chạy bộ chấm điểm trên
-`packages/voice-adapters/bench/vi-en-coding-corpus.json`. Corpus có 76 utterance (tiếng Việt chuyển sang tiếng Anh, và
-tiếng Anh có ngữ cảnh tiếng Việt, gồm tám mục âm phải được trả lại nguyên vẹn) và 100 thuật ngữ kỹ thuật. Đầu ra
+`packages/voice-adapters/bench/vi-en-coding-corpus.json`. Corpus có 84 utterance (tiếng Việt chuyển sang tiếng Anh, và
+tiếng Anh có ngữ cảnh tiếng Việt, gồm mười hai mục âm phải được trả lại nguyên vẹn) và 105 thuật ngữ kỹ thuật. Đầu ra
 recognizer trong đó là giả lập: các lỗi transcription live điển hình được viết tay, không phải bản ghi âm. Normaliser
 không đổi câu tham chiếu chuẩn nào.
 
-| Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Utterance khớp hoàn toàn | Thay đổi | Abstain | Hồi quy |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| thô | 24.9% | 4.2% | 77.0% | 23.7% | - | - | - |
-| đã chuẩn hóa | 4.0% | 0.9% | 16.0% | 76.3% | 61 | 1 | 0 |
+| Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Khớp hoàn toàn (nghiêm ngặt) | Khớp hoàn toàn (dung sai âm thanh) | Thay đổi | Abstain | Hồi quy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| thô | 22.8% | 3.8% | 77.1% | 26.2% | 42.9% | - | - | - |
+| đã chuẩn hóa | 3.7% | 0.8% | 16.2% | 77.4% | 84.5% | 64 | 1 | 0 |
 
-Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (9/12 và 2/2 ở cả trước lẫn sau); symbol từ 1/20 lên 17/20, path
-từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
+Khớp nghiêm ngặt so sánh nguyên câu sau khi gộp khoảng trắng. Khớp dung sai âm thanh còn bỏ qua chữ hoa/thường ở bất kỳ
+đâu trong câu và các dấu `. , ! ? ; : …` ở cuối câu; dấu câu nằm bên trong câu vẫn được tính. Vì gộp chữ hoa/thường trên
+toàn câu, phép đo này cũng bỏ qua cách viết hoa của định danh (`useeffect` thay cho `useEffect`), điều mà Technical Term
+Error Rate (phân biệt hoa/thường) vẫn tính là lỗi. Các recognizer thật được đo trong #468 viết hoa chữ đầu và thêm dấu
+kết câu, nên khớp nghiêm ngặt của từng recognizer đó là 0% dù mọi từ đều đúng.
+
+Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (lệnh từ 9/14 lên 11/14, phiên bản giữ 2/2); symbol từ 1/21 lên
+18/21, path từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
 
 - `git stash` bị nghe thành `git status` không được sửa, vì lệnh không bao giờ bị đoán;
 - "git re base" không được ghép thành `git rebase`, cùng lý do đó;
 - "Jeff" không bị viết lại thành Jev, vì đó cũng là tên người;
+- `npm` không bị viết lại thành `pnpm`, và một từ thường đứng đầu câu giữ nguyên chữ hoa;
+- "PNPM" đứng một mình không bị hạ thành `pnpm`, vì một từ thường không bao giờ bị hạ chữ hoa; "PNPM verify" thì có;
 - số issue không bị viết lại;
 - tên ngoài vocabulary được giữ nguyên;
 - văn xuôi tiếng Anh không có mốc kỹ thuật được giữ nguyên;
 - đoạn mơ hồ `voiceSession` / `voice_session` được abstain.
 
 Cùng lệnh đó với `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` nhận dạng bản ghi âm thật, chấm
-điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lượt chạy đó cần `GEMINI_API_KEY`, và dừng với thông báo
-"external gate" nếu không có key.
+điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lặp lại `--recognizer` để chạy nhiều recognizer trên cùng bộ bản
+ghi và chấm điểm chúng cạnh nhau trong một bảng, mỗi recognizer có tên `<id>-audio`. Lượt chạy đó cần `GEMINI_API_KEY`,
+và dừng với thông báo "external gate" nếu không có key. `--transcripts` in thêm transcript của từng utterance theo
+từng recognizer, cả thô lẫn đã chuẩn hóa, cạnh câu tham chiếu, và đánh dấu mỗi transcript đạt thước đo khớp nào. Dấu
+phân tách quen thuộc dùng được:
+`corepack pnpm --filter @clarkcant/voice-adapters bench:transcription -- --transcripts`.
 
 ## Hệ quả
 

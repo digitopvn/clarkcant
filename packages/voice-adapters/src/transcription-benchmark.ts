@@ -7,7 +7,9 @@ import {
   type BenchmarkTerm,
   type BenchmarkTermKind,
   type TranscriptScore,
+  audioExact,
   scoreTranscripts,
+  strictExact,
   termPreserved,
 } from "./transcription-metrics.ts";
 
@@ -132,13 +134,13 @@ export function formatBenchmarkReport(corpus: BenchmarkCorpus, results: readonly
     `Corpus: ${corpus.utterances.length} utterances, ${corpus.utterances.reduce((sum, utterance) => sum + utterance.terms.length, 0)} technical terms.`,
     `Canonical references the normaliser would change: ${unstable.length}${unstable.length === 0 ? "" : ` (${unstable.join(", ")})`}.`,
     "",
-    "| Recognizer | Stage | WER | CER | Technical Term Error Rate | Exact utterances | Changes | Abstained | Regressions |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Recognizer | Stage | WER | CER | Technical Term Error Rate | Exact (strict) | Exact (audio-tolerant) | Changes | Abstained | Regressions |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const result of results) {
     for (const [stage, score] of [["raw", result.raw], ["normalized", result.normalized]] as const) {
       lines.push(
-        `| ${result.recognizer} | ${stage} | ${percent(score.wer)} | ${percent(score.cer)} | ${percent(score.technicalTermErrorRate)} | ${percent(score.exactUtteranceRate)} | ${stage === "raw" ? "-" : result.changes} | ${stage === "raw" ? "-" : result.abstained} | ${stage === "raw" ? "-" : result.regressions.length} |`,
+        `| ${result.recognizer} | ${stage} | ${percent(score.wer)} | ${percent(score.cer)} | ${percent(score.technicalTermErrorRate)} | ${percent(score.exactUtteranceRate)} | ${percent(score.audioExactUtteranceRate)} | ${stage === "raw" ? "-" : result.changes} | ${stage === "raw" ? "-" : result.abstained} | ${stage === "raw" ? "-" : result.regressions.length} |`,
       );
     }
   }
@@ -150,6 +152,28 @@ export function formatBenchmarkReport(corpus: BenchmarkCorpus, results: readonly
         return bucket === undefined ? "-" : `${bucket.preserved}/${bucket.total}`;
       });
       lines.push(`| ${result.recognizer} | ${stage} | ${cells.join(" | ")} |`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Every utterance's transcript per recognizer, as heard and normalised, beside the reference, so a failure can be read
+ * rather than inferred from a rate. Only utterances with an output from one of `recognizers` are listed.
+ */
+export function formatTranscripts(corpus: BenchmarkCorpus, recognizers: readonly string[], context = corpusContext(corpus)): string {
+  const mark = (reference: string, text: string): string => (strictExact(reference, text) ? "strict" : audioExact(reference, text) ? "audio-tolerant" : "no");
+  const cell = (text: string): string => text.replace(/\\/gu, "\\\\").replace(/\|/gu, "\\|").replace(/\s+/gu, " ");
+  const lines = ["| Utterance | Source | Transcript | Exact |", "| --- | --- | --- | --- |"];
+  for (const utterance of corpus.utterances) {
+    const heardBy = recognizers.filter((recognizer) => utterance.recognizers[recognizer] !== undefined);
+    if (heardBy.length === 0) continue;
+    lines.push(`| ${utterance.id} | reference | ${cell(utterance.reference)} | - |`);
+    for (const recognizer of heardBy) {
+      const heard = utterance.recognizers[recognizer]!;
+      const normalized = normalizeTranscript(heard, context).text;
+      lines.push(`| ${utterance.id} | ${recognizer} (raw) | ${cell(heard)} | ${mark(utterance.reference, heard)} |`);
+      lines.push(`| ${utterance.id} | ${recognizer} (normalized) | ${cell(normalized)} | ${mark(utterance.reference, normalized)} |`);
     }
   }
   return lines.join("\n");

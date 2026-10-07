@@ -11,7 +11,7 @@ import {
   referenceToken,
 } from "@clarkcant/contracts";
 import type { PiSkill, PiSkillBody } from "@clarkcant/pi-adapter";
-import { type Database, getConversation, getNotification, getProject, messageById, messagesSince } from "@clarkcant/storage";
+import { type Database, getConversation, getNotification, getProject, latestMessages, messageById } from "@clarkcant/storage";
 
 import { isWithinRoot } from "./path-roots.ts";
 import { type ProjectFinderDeps, relativePaths, verifyProject } from "./project-finder.ts";
@@ -239,10 +239,11 @@ function describeSize(bytes: number): string {
  * The references the message being answered carries, read back from the row it was stored as.
  *
  * The same reading the timeline does, for the reason attachments are read this way: the prompt and the conversation
- * then agree on what was named, including when the conversation is reopened later.
+ * then agree on what was named, including when the conversation is reopened later. Read from the newest messages, as
+ * the attachments are, so a conversation longer than the window still names what its newest message named.
  */
 export function referencesForLastUserMessage(input: { db: Database; conversationId: string }): ReferenceBlock[] {
-  const records = messagesSince(input.db, input.conversationId, 0, 40);
+  const records = latestMessages(input.db, input.conversationId, 40);
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
     if (record === undefined || record.role !== "user") continue;
