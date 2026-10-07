@@ -13,8 +13,9 @@ import {
  * for stale closure. This puts the known spelling back, and nothing else: it is a lookup against the session's own
  * vocabulary, never a model, and it never rewrites a sentence. Four rules, each a fact about one term:
  *
- * - `casing`: the same word in the wrong case ("Github" -> GitHub). Never lowers a letter, so a sentence's first
- *   word stays as it was written.
+ * - `casing`: the same word in the wrong case ("Github" -> GitHub). A letter is lowered only to restore a code-like
+ *   term heard exactly, case aside ("RedactSecrets" -> redactSecrets, "PNPM" -> pnpm, "Git stash" -> git stash);
+ *   any other word, such as an ordinary word starting a sentence, keeps the capital it was written with.
  * - `spacing`: the term's own words, split the way speech splits them ("use effect" -> useEffect, "voice session dot
  *   ts" -> voice-session.ts).
  * - `alias`: a mis-hearing recorded for that term and no other ("stale closer" -> stale closure).
@@ -34,7 +35,10 @@ import {
  * A command is never the result of a guess. Commands are recognized and kept, but no alias, spacing variant or near
  * match is ever rewritten into one: `git status` and `git stash` differ by what they do, and a normaliser that picked
  * between them would be deciding what runs. For the same reason no respelled word is allowed to complete a command
- * with its neighbours ("git re base" stays as heard).
+ * with its neighbours ("git re base" stays as heard). Restoring case is the one exception, because it changes how a
+ * command is written and never which command it is: "Git stash" becomes `git stash`, but `npm` never becomes `pnpm`,
+ * even in a project whose vocabulary says pnpm. That is a product decision (#574): only case is restored, and a
+ * command is never guessed.
  */
 
 export interface NormalizationResult {
@@ -165,8 +169,12 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // Nor is a command assembled from a guess: "git re base" stays as heard rather than becoming `git rebase` because
     // its last word was respelled. Which command runs is never the normaliser's decision.
     if (rule !== "casing" && completesCommand(tokens, hit.from, hit.to, term, lexicon)) continue;
-    if (rule === "casing" && !raisesCaseOnly(source, term.text)) continue;
-    const needsContext = rule !== "casing" || !isDistinctive(term);
+    // Lowering a letter restores a code-like term heard exactly, case aside, and nothing else: "RedactSecrets" is
+    // `redactSecrets`, but "Rebase" starting a sentence is the word rebase written as a sentence starts.
+    const lowers = rule === "casing" && !raisesCaseOnly(source, term.text);
+    if (lowers && !isCodeLike(term)) continue;
+    // A command heard in its own words is evidence enough for its own case: "Git stash" names no other command.
+    const needsContext = rule !== "casing" || !(isDistinctive(term) || (lowers && term.kind === "command"));
     if (needsContext && !supported(hit.from, hit.to)) continue;
     if (result.changes.length >= MAX_NORMALIZATION_CHANGES) continue;
 
@@ -288,7 +296,17 @@ function isDistinctive(term: RecognitionTerm): boolean {
   return /\p{Ll}\p{Lu}|\p{Lu}{2}|\p{N}|[._/-]/u.test(term.text);
 }
 
-/** Whether `to` differs from `from` only by raising letters to capitals. Lowering is never a correction here. */
+/**
+ * A term only ever written as code, so a capital it does not have is a recognizer's, not the person's: mixed case
+ * (`redactSecrets`, `OAuth`), a digit, code punctuation (`git-stash`, `voice-session.ts`), or a command or tool
+ * (`git stash`, `pnpm`). A plain word - `rebase`, `worktree`, a repository called `clarkcant`, a symbol called `update`
+ * - is also an ordinary word, and a sentence may start with it.
+ */
+function isCodeLike(term: RecognitionTerm): boolean {
+  return term.kind === "command" || term.kind === "tool" || /\p{Ll}\p{Lu}|\p{Lu}{2}\p{Ll}|\p{N}|[._/\\@#:-]/u.test(term.text);
+}
+
+/** Whether `to` differs from `from` only by raising letters to capitals. Lowering is decided separately. */
 function raisesCaseOnly(from: string, to: string): boolean {
   if (from.length !== to.length || from.toLowerCase() !== to.toLowerCase()) return true;
   for (let index = 0; index < from.length; index += 1) {

@@ -103,9 +103,75 @@ describe("normalising a code-switched utterance", () => {
     expect(normalizeTranscript(`sửa ${long}`, CONTEXT).changes.length).toBeLessThanOrEqual(MAX_NORMALIZATION_CHANGES);
   });
 
-  it("raises casing for a known name, and never lowers it", () => {
+  it("raises casing for a known name", () => {
     expect(normalized("dùng Json để lưu")).toBe("dùng JSON để lưu");
-    expect(normalized("dùng PNPM để cài")).toBe("dùng PNPM để cài");
+  });
+});
+
+describe("restoring the case of a code-like term heard exactly", () => {
+  const SESSION = buildRecognitionContext({
+    symbols: ["redactSecrets", "update", "test"],
+    repositories: ["clarkcant"],
+    paths: ["voice-session.ts"],
+  });
+  const restored = (text: string): string => normalizeTranscript(text, SESSION).text;
+
+  it("lowers a symbol, a tool and a command written with a recognizer's capitals", () => {
+    expect(restored("RedactSecrets có bắt được GitHub token không")).toBe("redactSecrets có bắt được GitHub token không");
+    expect(restored("dùng PNPM để cài")).toBe("dùng pnpm để cài");
+    expect(restored("chạy PNPM verify trước khi mở pull request")).toBe("chạy pnpm verify trước khi mở pull request");
+    expect(restored("Git stash my changes before switching branches")).toBe("git stash my changes before switching branches");
+    expect(restored("mở Voice-Session.ts giúp tôi")).toBe("mở voice-session.ts giúp tôi");
+    expect(restored("dùng TYPESCRIPT cho file này")).toBe("dùng TypeScript cho file này");
+  });
+
+  it("reports the restored case as a casing change of that term", () => {
+    expect(normalizeTranscript("RedactSecrets có bắt được token không", SESSION).changes).toEqual([
+      { from: "RedactSecrets", to: "redactSecrets", rule: "casing", kind: "symbol" },
+    ]);
+  });
+
+  it("never turns npm into pnpm: only case is restored, and a command is never guessed", () => {
+    const pnpmCount = (text: string): number => text.match(/\bpnpm\b/giu)?.length ?? 0;
+    for (const sentence of ["chạy npm install đi", "repo cũ vẫn chạy NPM install", "run npm install then npm verify", "Npm hay PNPM cũng được"]) {
+      expect(pnpmCount(restored(sentence))).toBe(pnpmCount(sentence));
+    }
+    expect(restored("chạy npm install đi")).toBe("chạy npm install đi");
+    expect(restored("repo cũ vẫn chạy NPM install")).toBe("repo cũ vẫn chạy NPM install");
+  });
+
+  it("restores only an exact match, never a near one", () => {
+    // One letter off a code-like term is a different name, whatever its case.
+    for (const sentence of ["RedactSecret có bắt được token không", "dùng PNPMX để cài", "Git stashes my changes"]) {
+      expect(restored(sentence)).toBe(sentence);
+    }
+  });
+
+  it("leaves an ordinary word that starts a sentence alone, even when the vocabulary has it", () => {
+    for (const sentence of [
+      // English prose: a plain symbol, a glossary word and an ordinary word, each starting the sentence.
+      "Update the build script before the release",
+      "Rebase onto main before you merge",
+      "Worktree support landed last week",
+      "Test the build on Windows first",
+      // Vietnamese prose: the same words starting a Vietnamese sentence.
+      "Test này chạy bằng Vitest hay Playwright",
+      "Rebase nhánh này lên main rồi push",
+      // A proper noun matching a plain lowercase vocabulary entry.
+      "ClarkCant có bản cho Windows chưa",
+      // A plain name in capitals for emphasis is not a code-like term.
+      "REACT hay Vue thì nhanh hơn cho script này",
+    ]) {
+      expect(restored(sentence)).toBe(sentence);
+    }
+  });
+
+  it("is idempotent once case is restored", () => {
+    for (const sentence of ["RedactSecrets có bắt được GitHub token không", "dùng PNPM để cài", "Git stash my changes before switching branches"]) {
+      const once = restored(sentence);
+      expect(restored(once)).toBe(once);
+      expect(normalizeTranscript(once, SESSION).changes).toEqual([]);
+    }
   });
 });
 
