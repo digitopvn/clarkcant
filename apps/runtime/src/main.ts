@@ -536,6 +536,7 @@ async function main(): Promise<void> {
     services.artifactSweep?.stop();
     effectNotices.stop();
     services.automation?.stop();
+    services.channels?.stop();
     services.peerDelivery?.stop();
     void (async () => {
       try {

@@ -459,6 +459,18 @@ export interface UserMessageInput {
    */
   hostWritten?: HostWrittenMessage;
   /**
+   * Who wrote this message when it was not the owner here: the principal an external channel's sender maps to
+   * (`MessageRecord.authorPrincipalId`). Set only by the host's channel intake.
+   */
+  authorPrincipalId?: string;
+  /** The message in this conversation this one answers (`MessageRecord.inReplyToMessageId`). Set only by the host. */
+  inReplyToMessageId?: string;
+  /**
+   * Told the stored user message as soon as it is appended, before the turn runs: for a caller that links it to
+   * something outside — a channel's provider message — so the link exists even when the turn fails or is stopped.
+   */
+  onAccepted?: (message: MessageRecord) => void;
+  /**
    * Files this message carries.
    *
    * The refs arrive already authorised — the gateway resolves each id against the conversation and the
@@ -593,6 +605,7 @@ function appendUser(
   surface?: MessageSurface,
   origin?: TurnOrigin,
   hostWritten?: HostWrittenMessage,
+  authorship: { authorPrincipalId?: string; inReplyToMessageId?: string } = {},
 ): MessageRecord {
   const message: MessageRecord = {
     messageId: deps.newId("msg") as MessageRecord["messageId"],
@@ -615,6 +628,8 @@ function appendUser(
     ...(surface === undefined ? {} : { surface }),
     ...(origin === undefined ? {} : { origin }),
     ...(hostWritten === undefined ? {} : { hostWritten }),
+    ...(authorship.authorPrincipalId === undefined ? {} : { authorPrincipalId: authorship.authorPrincipalId }),
+    ...(authorship.inReplyToMessageId === undefined ? {} : { inReplyToMessageId: authorship.inReplyToMessageId }),
   };
   appendMessage(deps.db, message, nextMessageSequence(deps.db, conversationId));
   return message;
@@ -714,7 +729,12 @@ export async function handleUserMessage(
     input.surface,
     input.origin,
     input.hostWritten,
+    {
+      ...(input.authorPrincipalId === undefined ? {} : { authorPrincipalId: input.authorPrincipalId }),
+      ...(input.inReplyToMessageId === undefined ? {} : { inReplyToMessageId: input.inReplyToMessageId }),
+    },
   );
+  input.onAccepted?.(userMessage);
 
 
   // A host composer gets the first look, and only when one is configured. In production there is

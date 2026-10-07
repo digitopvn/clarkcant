@@ -232,6 +232,17 @@ export interface HostText {
     failed: Record<AppIntentConfirmationFailure, string>;
     declined: string;
   };
+  /** What the host says in a conversation about a channel bound to it: a reply it did not send, a message it lost. */
+  channels: {
+    /** A reply the policy held or refused, so it stayed here and did not reach the channel. */
+    replyNotSent: (provider: string, reason: string) => string;
+    /** A reply handed to the channel with no answer the node can trust; never sent again. */
+    replyUnknown: (provider: string) => string;
+    /** A message whose turn had started when the node stopped; it is not answered twice. */
+    interrupted: (provider: string) => string;
+    /** Turn-starting messages beyond what one thread holds while it waits. */
+    dropped: (provider: string, count: number) => string;
+  };
   /** The Tools tab: the agent's own tools, which this node did not define, and the note under them. */
   toolsTab: {
     agentTools: Readonly<Record<"read" | "write" | "edit" | "bash", { label: string; description: string }>>;
@@ -582,6 +593,16 @@ const VI: HostText = {
     },
     declined: "Tôi đã bỏ qua câu lệnh đó.",
   },
+  channels: {
+    replyNotSent: (provider, reason) =>
+      `Câu trả lời này chưa được gửi sang ${provider}: ${reason}. Nó vẫn ở đây; đổi lại trong Cài đặt → Điều khiển nếu muốn Clark trả lời ở đó.`,
+    replyUnknown: (provider) =>
+      `Câu trả lời này đã được giao cho ${provider} nhưng không nhận được xác nhận, nên không rõ nó đã tới chưa. Clark không gửi lại; hộp thư hỏi bạn nó có tới không.`,
+    interrupted: (provider) =>
+      `Một tin nhắn từ ${provider} đến ngay trước khi node dừng và chưa được trả lời. Tin nhắn vẫn ở đây; Clark không trả lời lại hai lần.`,
+    dropped: (provider, count) =>
+      `${String(count)} tin nhắn cũ từ ${provider} bị bỏ qua vì đến quá dồn dập; Clark trả lời những tin mới nhất.`,
+  },
   toolsTab: {
     agentTools: {
       read: { label: "Đọc tệp", description: "Đọc nội dung một tệp trong thư mục làm việc." },
@@ -852,6 +873,16 @@ const EN: HostText = {
       CONFIRMATION_ALREADY_USED: "This confirmation has already been used.",
     },
     declined: "I skipped that command.",
+  },
+  channels: {
+    replyNotSent: (provider, reason) =>
+      `This reply was not sent to ${provider}: ${reason}. It stays here; change it in Settings → Control if Clark should answer there.`,
+    replyUnknown: (provider) =>
+      `This reply was handed to ${provider} with no confirmation, so whether it arrived is unknown. Clark does not send it again; the inbox asks you whether it arrived.`,
+    interrupted: (provider) =>
+      `A message from ${provider} arrived just before the node stopped and was not answered. It is kept here; Clark does not answer it twice.`,
+    dropped: (provider, count) =>
+      `${String(count)} older messages from ${provider} were skipped because they arrived too quickly; Clark answered the newest.`,
   },
   toolsTab: {
     agentTools: {
