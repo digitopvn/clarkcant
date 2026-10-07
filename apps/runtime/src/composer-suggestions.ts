@@ -6,6 +6,7 @@ import {
   type ComposerSuggestion,
   type ComposerSuggestionsResponse,
   type ComposerTrigger,
+  SKILL_TOKEN_PREFIX,
   SLASH_COMMANDS,
   nowInstant,
   projectRelativePathSchema,
@@ -186,6 +187,11 @@ async function skillSuggestions(services: ReferenceServices, query: string): Pro
         { note: `${SKILL_SOURCE[skill.source] ?? skill.source} · ${skill.description}` },
       ),
     }));
+  // `/skill:<name>` names a skill and never a command, so after `skill:` only skills are offered, matched by the rest.
+  const qualified = SKILL_TOKEN_PREFIX.slice(1);
+  if (query.toLowerCase().startsWith(qualified)) {
+    return rankCandidates(candidates, query.slice(qualified.length)).map((candidate) => candidate.suggestion);
+  }
   return rankCandidates([...commands, ...candidates], query).map((candidate) => candidate.suggestion);
 }
 

@@ -427,7 +427,8 @@ Bắt buộc:
   một danh sách do textarea điều khiển như combobox (mũi tên để di chuyển, Enter để thêm, Tab để mở project hay thư mục,
   Escape để đóng danh sách mà giữ nguyên bản nháp; chọn bằng chuột hay chạm cũng được). Lựa chọn ghi token vào bản nháp
   và hiện thành chip cạnh chip tệp; xoá token hay chip là bỏ luôn reference, nên tin nhắn không bao giờ mang theo thứ
-  người dùng không nhìn thấy. Reference là con trỏ, không phải quyền: node kiểm lại lúc gửi, và nếu nó đã cũ thì từ chối
+  người dùng không nhìn thấy. Skill trùng tên với một lệnh gạch chéo được ghi là `/skill:<tên>`, cả trên dòng của nó lẫn
+  trong bản nháp, nên chọn nó luôn gọi skill đó, còn gõ `/new` thì luôn chạy lệnh. Reference là con trỏ, không phải quyền: node kiểm lại lúc gửi, và nếu nó đã cũ thì từ chối
   lượt gửi, nói rõ reference nào, đồng thời giữ nguyên bản nháp. Khi bộ gõ đang ghép một chữ, Enter của nó chỉ để hoàn
   tất chữ đó: không chọn dòng nào và không gửi. Shift+Enter xuống dòng dù danh sách đang mở hay đóng. Đây là tính năng
   bổ trợ, không phải navigation chính.

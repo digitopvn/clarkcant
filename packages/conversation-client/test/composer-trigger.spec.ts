@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ComposerReference } from "@clarkcant/contracts";
+import { type ComposerReference, parseSlashCommand, referenceToken } from "@clarkcant/contracts";
 
 import { activeTrigger, commandFullyTyped, liveReferences, replaceToken, tokenPresent, withoutToken } from "../src/composer-trigger.ts";
 
@@ -45,6 +45,25 @@ describe("where a trigger opens the picker", () => {
     // Right after a space the token is empty.
     expect(activeTrigger(draft, 7)).toBeUndefined();
     expect(activeTrigger(draft, 99)).toBeUndefined();
+  });
+});
+
+describe("a skill named like a slash command", () => {
+  const newSkill: ComposerReference = { kind: "skill", skillId: "new", source: "personal", revision: "b".repeat(64), label: "new" };
+
+  it("is written as /skill:<name>, which is the skill when sent and never the command", () => {
+    const active = at("/ne");
+    if (active === undefined) throw new Error("expected a trigger");
+    const chosen = replaceToken("/ne", active, referenceToken(newSkill));
+    expect(chosen.draft).toBe("/skill:new ");
+    const sent = `${chosen.draft}một app ghi chú`;
+    expect(parseSlashCommand(sent)).toBeUndefined();
+    expect(liveReferences(sent, [{ ref: newSkill }])).toEqual([{ ref: newSkill }]);
+  });
+
+  it("leaves a typed /new to the command, with no skill riding along", () => {
+    expect(parseSlashCommand("/new")).toEqual({ command: "new", argument: "" });
+    expect(liveReferences("/new", [{ ref: newSkill }])).toEqual([]);
   });
 });
 

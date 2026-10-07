@@ -32,7 +32,7 @@ import {
   setPreference,
 } from "@clarkcant/core";
 import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
-import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
+import { DEFAULT_FAKE_SKILLS, FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 
 import { providerAuthPort } from "../application/provider-sign-in.ts";
 import {
@@ -3481,8 +3481,19 @@ export function arrangeModelNode(deps: { services: NodeServices; dataDir: string
   const fakeProviderAuth = providerAuthPort(new FakePiAdapter());
   if (fakeProviderAuth !== undefined) services.providerAuth ??= fakeProviderAuth;
 
-  // The fake adapter's skills, for the composer's slash: the same list a node with the fake model would offer.
-  const skillSource = new FakePiAdapter();
+  // The fake adapter's skills, for the composer's slash: the same list a node with the fake model would offer, plus one
+  // that shares its name with the `/new` command, so a journey can choose a skill a command's name would shadow.
+  const skillSource = new FakePiAdapter({
+    skills: [
+      ...DEFAULT_FAKE_SKILLS,
+      {
+        name: "new",
+        description: "Phác thảo một ý tưởng mới thành vài gạch đầu dòng.",
+        source: "personal",
+        body: "Biến ý tưởng người dùng đưa ra thành ba gạch đầu dòng: vấn đề, cách làm, bước đầu tiên.",
+      },
+    ],
+  });
   services.skills ??= {
     list: () => skillSource.skills(),
     body: (name, revision) => skillSource.skillBody(name, revision),

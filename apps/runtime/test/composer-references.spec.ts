@@ -4,13 +4,23 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type ComposerReference, type ComposerReferenceSuggestion, type ComposerSuggestion, type ComposerSuggestionsResponse, type MessageRecord, SLASH_COMMANDS } from "@clarkcant/contracts";
+import {
+  type ComposerReference,
+  type ComposerReferenceSuggestion,
+  type ComposerSuggestion,
+  type ComposerSuggestionsResponse,
+  type MessageRecord,
+  SLASH_COMMANDS,
+  parseSlashCommand,
+  referenceToken,
+} from "@clarkcant/contracts";
 import { setPreference } from "@clarkcant/core";
 import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcant/pi-adapter";
 import {
   appendMessage,
   dismissNotification,
   getNotification,
+  listConversations,
   messagesSince,
   nextMessageSequence,
   recordNotification,
@@ -357,6 +367,52 @@ function referenceRows(rows: readonly ComposerSuggestion[]): ComposerReferenceSu
 function refsOf(rows: readonly ComposerSuggestion[]): ComposerReference[] {
   return referenceRows(rows).map((row) => row.ref);
 }
+
+describe("a skill that shares its name with a command", () => {
+  const NEW_SKILL = { name: "new", description: "Phác thảo ý tưởng mới.", source: "personal" as const, body: "Ba gạch đầu dòng: vấn đề, cách làm, bước đầu." };
+  const newRef: ComposerReference = { kind: "skill", skillId: "new", source: "personal", revision: fakeSkillRevision(NEW_SKILL), label: "new" };
+
+  beforeEach(() => {
+    adapter.setSkills([...DEFAULT_FAKE_SKILLS, NEW_SKILL]);
+  });
+
+  it("is written as /skill:<name> when chosen, so the picker row never reads as the command", async () => {
+    expect(referenceToken(newRef)).toBe("/skill:new");
+    expect(parseSlashCommand(`${referenceToken(newRef)} một app ghi chú`)).toBeUndefined();
+    // A skill no command shadows keeps its short token.
+    expect(referenceToken(reviewRef)).toBe("/review");
+
+    // Typing the qualified form lists that skill and no command.
+    const qualified = (await suggest("/", "skill:ne")).body as ComposerSuggestionsResponse;
+    expect(qualified.suggestions.map((row) => `${row.kind}:${row.label}`)).toEqual(["skill:new"]);
+    expect(refsOf(qualified.suggestions)).toEqual([newRef]);
+  });
+
+  it("invokes the skill when its row is sent, and starts no new conversation", async () => {
+    const before = listConversations(services.runtime.db, 50).length;
+    const response = await send("/skill:new một app ghi chú", [newRef]);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    // A turn the model answered, not the host's `/new` answer and its move to a fresh conversation.
+    expect(response.body).toMatchObject({ resolution: "model" });
+    expect(response.body).not.toHaveProperty("appIntent");
+    expect(listConversations(services.runtime.db, 50)).toHaveLength(before);
+
+    const [stored] = userMessages();
+    expect(stored?.blocks.filter((block) => block.type === "reference")).toEqual([{ type: "reference", reference: newRef }]);
+    const prompt = adapter.allPrompts()[0] ?? "";
+    expect(prompt).toContain('<skill name="new">');
+    expect(prompt).toContain(NEW_SKILL.body);
+    // The host briefed the skill, so pi is not handed a leading `/skill:` to expand a second time.
+    expect(prompt.startsWith(" /skill:new một app ghi chú")).toBe(true);
+  });
+
+  it("leaves a typed /new to the command", async () => {
+    const response = await send("/new", []);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body).toMatchObject({ accepted: true, appIntent: { kind: "intent", intent: { kind: "nav.home" } } });
+    expect(adapter.allPrompts()).toEqual([]);
+  });
+});
 
 describe("the picker", () => {
   it("offers the node's commands and then skills after a slash, best match first", async () => {

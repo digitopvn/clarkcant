@@ -427,7 +427,8 @@ Required:
   the textarea drives as a combobox (arrows move, Enter adds, Tab opens a project or folder, Escape closes the list and
   keeps the draft; pointer and touch choose too). A choice writes its token into the draft and shows as a chip beside
   the file chips; deleting the token or the chip drops the reference, so a message never carries one the person cannot
-  see. A reference is a pointer, not a permission: the node checks it again at send time and refuses the send by name,
+  see. A skill whose name is also a slash command's is written `/skill:<name>`, in its row and in the draft, so choosing
+  it always invokes the skill and a typed `/new` always runs the command. A reference is a pointer, not a permission: the node checks it again at send time and refuses the send by name,
   keeping the draft, when it has gone stale. While an input method is composing a word, its Enter finishes the word:
   it neither chooses a row nor sends. Shift+Enter starts a new line with the list open or closed. This is an
   enhancement, not the primary navigation.

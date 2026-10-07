@@ -65,6 +65,7 @@ import {
 } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { wordsBesideBrief } from "./composer-references.ts";
 import { channelToolWords } from "./channels/channel-tool-gate.ts";
 import { hostText } from "./host-text.ts";
 import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
@@ -2596,7 +2597,7 @@ export async function createModelTurn(options: {
       // What this run's system prompt is given of the person's instructions: the value checked above, for this session.
       pinPersonal(promptedSession, personal);
       const promptText = promptForTurn({
-        text: input.text,
+        text: wordsBesideBrief(input.text, referencePart),
         ...(note === undefined ? {} : { note }),
         ...(brief === "" ? {} : { brief }),
         ...(data === "" ? {} : { data }),
