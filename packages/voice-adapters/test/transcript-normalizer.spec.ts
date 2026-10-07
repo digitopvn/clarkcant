@@ -291,6 +291,37 @@ describe("words that run together into a longer term than a form starting the sa
     expect(normalizeTranscript("sửa clark cant trước", session).text).toBe("sửa ClarkCant trước");
     expect(normalizeTranscript("sửa clark cant web trước", session).text).toBe("sửa clarkcant-web trước");
   });
+
+  describe("still counts the words a run-together term absorbed as evidence for the rest of the sentence", () => {
+    // `web` and `Web` are both real names, so "web" heard exactly is a known term and says the sentence is about code.
+    // Folded into `webapp`, it says so still: the run-together match is no weaker evidence than the words it took in.
+    const SESSION = buildRecognitionContext({
+      symbols: ["UserService", "userService", "Web", "web", "userserviceApi"],
+      packages: ["userservice-api", "webapp"],
+    });
+
+    it("restores ClarkCant beside a run-together web app, and leaves web app as heard", () => {
+      const result = normalizeTranscript("fix the clark cant web app now", SESSION);
+      expect(result.text).toBe("fix the ClarkCant web app now");
+      expect(result.changes).toEqual([{ from: "clark cant", to: "ClarkCant", rule: "spacing", kind: "repository" }]);
+      expect(result.abstained).toEqual([]);
+    });
+
+    it("restores React after a run-together web app", () => {
+      const result = normalizeTranscript("fix the web app react now", SESSION);
+      expect(result.text).toBe("fix the web app React now");
+      expect(result.changes).toEqual([{ from: "react", to: "React", rule: "casing", kind: "glossary" }]);
+    });
+
+    it("abstains on user service api, which reads as either run-together term", () => {
+      const result = normalizeTranscript("fix the user service api now", SESSION);
+      expect(result.text).toBe("fix the user service api now");
+      expect(result.changes).toEqual([]);
+      expect(result.abstained).toEqual([
+        { start: 8, end: 24, text: "user service api", candidates: ["userservice-api", "userserviceApi"] },
+      ]);
+    });
+  });
 });
 
 describe("a session term spelled one way beside the glossary's spelling", () => {
