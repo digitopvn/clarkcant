@@ -4,7 +4,12 @@ import type { Server } from "node:http";
 import { type VoiceCapabilities, describeAppIntent, voicePromptFor } from "@clarkcant/contracts";
 import { handleUserMessage, recordAppIntentEvent } from "@clarkcant/core";
 import { credentialNames, readCredential } from "@clarkcant/storage";
-import type { VoiceProviderAdapter } from "@clarkcant/voice-adapters";
+import {
+  GeminiTranscribeLiveAdapter,
+  type VoiceProviderAdapter,
+  recognizerRetry,
+} from "@clarkcant/voice-adapters";
+import type { RecognitionProvenance } from "@clarkcant/contracts";
 import { catalogFamilies, libraryEntries } from "@clarkcant/widget-catalog";
 import type { WidgetTarget } from "@clarkcant/core";
 
@@ -39,6 +44,7 @@ import { availableCredentials } from "../readiness.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type NodeServices } from "../services.ts";
 import { accumulateAnswerText } from "../voice-answer.ts";
+import { voiceRecognitionContext } from "../voice-vocabulary.ts";
 import {
   type PendingVoiceInteraction,
   VOICE_ANSWER_NOTE,
@@ -162,20 +168,23 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     deps.services.voiceLiveUtterance = voiceLiveUtterance;
   }
 
+  const credential = (): string | undefined =>
+    voiceFixture
+      ? "fixture-credential"
+      : // The vault first, then the environment. A key typed into the credential card is a key the person
+        // expects to be used, and an environment variable that happens to be absent must not make that
+        // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
+        deps.env["GEMINI_API_KEY"] ??
+        readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME);
+
   const voice = attachVoiceGateway({
     server: deps.server,
     services: deps.services,
-    credential: () =>
-      voiceFixture
-        ? "fixture-credential"
-        : // The vault first, then the environment. A key typed into the credential card is a key the person
-          // expects to be used, and an environment variable that happens to be absent must not make that
-          // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
-          deps.env["GEMINI_API_KEY"] ??
-          readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
+    credential,
     ...(scripted === undefined ? {} : { createAdapter: () => scripted.createAdapter() }),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     ...(voiceLiveUtterance === undefined ? {} : { voiceLiveUtterance }),
+    ...recognitionWiring({ services: deps.services, env: deps.env, credential, fixture: voiceFixture }),
     /**
      * What a finished sentence does.
      *
@@ -408,6 +417,72 @@ type SpokenApprovalInput = Parameters<NonNullable<VoiceGatewayOptions["decideApp
  * How a voice session decides an approval card out loud, as one set: the decision through the route a click takes,
  * whether the card it is listening for still waits, and the person's language for what it says about either.
  */
+/** The operator setting that opts a node into the dedicated recognizer. Unset: the live session's transcription. */
+export const VOICE_RECOGNIZER_ENV = "CC_VOICE_RECOGNIZER";
+const DEDICATED_RECOGNIZERS = ["gemini-transcribe"] as const;
+
+/**
+ * How a node hears the person: the session vocabulary always, the dedicated recognizer when the operator chose it.
+ *
+ * Not a setting in the interface. Which recognizer hears best is a measurement - the benchmark harness exists to make
+ * it - and a person should not be asked to choose between providers they cannot evaluate. Until audio measurements
+ * decide, the live session's own transcription stays the default and the dedicated recognizer is an operator opt-in
+ * (`CC_VOICE_RECOGNIZER=gemini-transcribe`). It uses the same credential the live session does, read the same way.
+ *
+ * The scripted fixture provider never gets a real recognizer: a fixture session must not reach a provider.
+ */
+export function recognitionWiring(input: {
+  services: NodeServices;
+  env: Record<string, string | undefined>;
+  credential: () => string | undefined;
+  fixture: boolean;
+}): Pick<VoiceGatewayOptions, "recognitionContext" | "createRecognizer" | "utteranceRetry" | "onRecognition"> {
+  const { services } = input;
+  const recognitionContext: VoiceGatewayOptions["recognitionContext"] = ({ conversationId }) =>
+    voiceRecognitionContext(services, {
+      conversationId,
+      locale: preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId),
+    });
+  const onRecognition = (provenance: RecognitionProvenance): void => {
+    process.stderr.write(`${describeRecognition(provenance)}\n`);
+  };
+  const chosen = input.env[VOICE_RECOGNIZER_ENV]?.trim();
+  if (chosen === undefined || chosen === "" || input.fixture) return { recognitionContext, onRecognition };
+  if (!(DEDICATED_RECOGNIZERS as readonly string[]).includes(chosen)) {
+    process.stderr.write(
+      `voice: ${VOICE_RECOGNIZER_ENV} names no recognizer this node has (known: ${DEDICATED_RECOGNIZERS.join(", ")}), so the live session's transcription is used\n`,
+    );
+    return { recognitionContext, onRecognition };
+  }
+  const tokenProvider = async (): Promise<string> => {
+    const key = input.credential();
+    if (key === undefined || key === "") throw new Error("no credential for the recognizer");
+    return key;
+  };
+  process.stderr.write("voice: the dedicated recognizer (gemini-transcribe) hears the person; the live session stays the voice\n");
+  return {
+    recognitionContext,
+    onRecognition,
+    createRecognizer: () => new GeminiTranscribeLiveAdapter(),
+    // A retry is one utterance on a fresh connection, so it is not reopened: it either answers in time or is skipped.
+    utteranceRetry: recognizerRetry({ createRecognizer: () => new GeminiTranscribeLiveAdapter({ maxReopens: 0 }), tokenProvider }),
+  };
+}
+
+/**
+ * One line about one utterance, for the operator: who heard it, how many terms the session had, which normalisation
+ * rules fired, and what a retry came to. Counts and rule names only - never the sentence, and never a changed term,
+ * since a term is still a fragment of what was said.
+ */
+export function describeRecognition(provenance: RecognitionProvenance): string {
+  const rules = new Map<string, number>();
+  for (const change of provenance.normalization) rules.set(change.rule, (rules.get(change.rule) ?? 0) + 1);
+  const changes = rules.size === 0 ? "none" : [...rules].map(([rule, count]) => `${rule}×${count}`).join(" ");
+  const retry = provenance.retry === undefined ? "" : ` retry=${provenance.retry.reason}:${provenance.retry.outcome}`;
+  const settle = provenance.settleMs === undefined ? "" : ` settle=${Math.round(provenance.settleMs)}ms`;
+  return `voice: recognized via ${provenance.provider}/${provenance.model} context=${provenance.contextApplied ? "applied" : "node-side"} terms=${provenance.termCount} changes=${changes} abstained=${provenance.abstained}${retry}${settle}`;
+}
+
 export function spokenApprovalWiring(
   services: NodeServices,
 ): Required<Pick<VoiceGatewayOptions, "decideApproval" | "approvalWaits" | "speechLocale">> {
