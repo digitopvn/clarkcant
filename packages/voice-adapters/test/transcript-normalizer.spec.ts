@@ -58,11 +58,19 @@ describe("the session vocabulary", () => {
     expect(JSON.stringify(context)).not.toContain("coming back");
   });
 
-  it("dedupes case-insensitively and keeps the glossary's aliases", () => {
+  it("lets the session's spelling replace the glossary's, and keeps the glossary's aliases", () => {
     const context = buildRecognitionContext({ tools: ["PNPM"] });
-    expect(context.terms.filter((term) => term.text.toLowerCase() === "pnpm")).toHaveLength(1);
+    expect(context.terms.filter((term) => term.text.toLowerCase() === "pnpm").map((term) => term.text)).toEqual(["PNPM"]);
     const glossary = CODING_GLOSSARY.find((entry) => entry.text === "pnpm");
     expect(glossary?.aliases).toContain("pnp m");
+  });
+
+  it("keeps every spelling the session uses when two differ only by case, and each exact spelling once", () => {
+    const context = buildRecognitionContext({ symbols: ["UserService", "userService", "userService"] });
+    expect(context.terms.filter((term) => term.text.toLowerCase() === "userservice").map((term) => term.text).sort()).toEqual([
+      "UserService",
+      "userService",
+    ]);
   });
 
   it("finds code-shaped mentions in conversation text", () => {
@@ -216,6 +224,35 @@ describe("restoring the case of a code-like term heard exactly", () => {
       expect(restored(once)).toBe(once);
       expect(normalizeTranscript(once, SESSION).changes).toEqual([]);
     }
+  });
+});
+
+describe("a term the vocabulary spells two ways by case alone", () => {
+  // A class and its instance: two real symbols, so the heard case is the only evidence of which one was meant.
+  const SESSION = buildRecognitionContext({ symbols: ["UserService", "userService", "redactSecrets"] });
+  const heard = (text: string) => normalizeTranscript(text, SESSION);
+
+  it("leaves userservice, UserService and userService exactly as heard, as a known term", () => {
+    for (const spelling of ["userservice", "UserService", "userService", "USERSERVICE"]) {
+      const sentence = `sửa lỗi trong ${spelling} trước khi build`;
+      const result = heard(sentence);
+      expect(result.text).toBe(sentence);
+      expect(result.changes).toEqual([]);
+      expect(result.abstained).toEqual([]);
+      expect(result.technical).toEqual([{ start: 14, end: 14 + spelling.length }]);
+    }
+    expect(heard("Rename UserService before the build").text).toBe("Rename UserService before the build");
+  });
+
+  it("does not pick a case for the term's spoken words, and says which spellings it could be", () => {
+    const result = heard("sửa lỗi trong user service");
+    expect(result.text).toBe("sửa lỗi trong user service");
+    expect(result.abstained).toEqual([{ start: 14, end: 26, text: "user service", candidates: ["UserService", "userService"] }]);
+  });
+
+  it("still restores the case of an unambiguous term in the same vocabulary", () => {
+    expect(heard("RedactSecrets có bắt được token không").text).toBe("redactSecrets có bắt được token không");
+    expect(heard("userService gọi RedactSecrets").text).toBe("userService gọi redactSecrets");
   });
 });
 

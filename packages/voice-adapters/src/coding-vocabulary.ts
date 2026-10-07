@@ -143,19 +143,25 @@ export interface BuildContextOptions {
 export function buildRecognitionContext(sources: VocabularySources, options: BuildContextOptions = {}): RecognitionContext {
   const maxTerms = Math.max(0, Math.min(options.maxTerms ?? MAX_RECOGNITION_TERMS, MAX_RECOGNITION_TERMS));
   const recent = (sources.recentText ?? []).join("\n").toLowerCase();
-  const byKey = new Map<string, RecognitionTerm>();
+  const bySpelling = new Map<string, RecognitionTerm>();
+  const sessionSpellings = new Set<string>();
 
-  const offer = (text: string, kind: RecognitionTermKind, position: number, count: number, aliases?: readonly string[]): void => {
+  const offer = (text: string, kind: RecognitionTermKind, position: number, count: number, aliases?: readonly string[], glossary = false): void => {
     const term = vocabularyTerm(text);
     if (term === undefined) return;
+    // The glossary is the floor: when the session itself spells a word another way (a repository called `clarkcant`
+    // beside the glossary's ClarkCant, a dependency called `typescript`), the session's spelling replaces the generic one.
+    if (!glossary) sessionSpellings.add(term.toLowerCase());
+    else if (sessionSpellings.has(term.toLowerCase()) && !bySpelling.has(term)) return;
     const recency = count <= 1 ? 0.2 : 0.2 * (1 - position / count);
     const mentioned = recent === "" ? 0 : Math.min(0.3, 0.1 * mentions(recent, term.toLowerCase()));
     const weight = round(Math.min(1, KIND_BASE[kind] + recency + mentioned));
-    const key = term.toLowerCase();
-    const existing = byKey.get(key);
+    // Keyed by the exact spelling: `UserService` and `userService` are two real symbols, and keeping one would let the
+    // normaliser re-case a heard term into the other. Both stay, and the normaliser leaves such a term as heard.
+    const existing = bySpelling.get(term);
     if (existing !== undefined && existing.weight >= weight) return;
     const safeAliases = (aliases ?? []).map(vocabularyTerm).filter((alias): alias is string => alias !== undefined).slice(0, 8);
-    byKey.set(key, { text: term, kind, weight, ...(safeAliases.length === 0 ? {} : { aliases: safeAliases }) });
+    bySpelling.set(term, { text: term, kind, weight, ...(safeAliases.length === 0 ? {} : { aliases: safeAliases }) });
   };
 
   for (const [source, kind] of SOURCE_KINDS) {
@@ -165,10 +171,10 @@ export function buildRecognitionContext(sources: VocabularySources, options: Bui
   }
   if (options.glossary !== false) {
     // Glossary entries carry no recency: their order is not a statement about this session.
-    for (const entry of CODING_GLOSSARY) offer(entry.text, entry.kind, 0, 1, entry.aliases);
+    for (const entry of CODING_GLOSSARY) offer(entry.text, entry.kind, 0, 1, entry.aliases, true);
   }
 
-  const terms = [...byKey.values()]
+  const terms = [...bySpelling.values()]
     .sort((left, right) => right.weight - left.weight || left.text.localeCompare(right.text))
     .slice(0, maxTerms);
   return recognitionContextSchema.parse({

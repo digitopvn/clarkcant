@@ -15,7 +15,8 @@ import {
  *
  * - `casing`: the same word in the wrong case ("Github" -> GitHub). A letter is lowered only to restore a code-like
  *   term heard exactly, case aside ("RedactSecrets" -> redactSecrets, "PNPM verify" -> pnpm verify, "Git stash" ->
- *   git stash); any other word, such as an ordinary word starting a sentence, keeps the capital it was written with.
+ *   git stash); any other word, such as an ordinary word starting a sentence, keeps the capital it was written with. A
+ *   term the vocabulary spells two ways by case alone (`UserService` and `userService`) keeps the case it was heard in.
  * - `spacing`: the term's own words, split the way speech splits them ("use effect" -> useEffect, "voice session dot
  *   ts" -> voice-session.ts).
  * - `alias`: a mis-hearing recorded for that term and no other ("stale closer" -> stale closure).
@@ -66,6 +67,8 @@ interface Lexicon {
   longest: number;
   nearMatchable: Array<{ term: RecognitionTerm; words: string[] }>;
   compacts: Array<{ term: RecognitionTerm; compact: string }>;
+  /** Terms by their spelling, case aside, when more than one term has it: `UserService` and `userService`. */
+  caseVariants: Map<string, RecognitionTerm[]>;
 }
 
 /**
@@ -120,7 +123,7 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
       index += 1;
       continue;
     }
-    hits.push(hit);
+    hits.push({ ...hit, candidates: withCaseVariants(hit.candidates, lexicon) });
     index = hit.to;
   }
 
@@ -135,7 +138,13 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // Only a term heard in its own spelling, case aside, is evidence: a corrected span supporting another correction
     // would let two guesses vouch for each other.
     const term = unique[0];
-    if (unique.length === 1 && term !== undefined && !hit.near && source.toLowerCase() === term.text.toLowerCase() && (source === term.text || isDistinctive(term))) {
+    if (
+      term !== undefined &&
+      sameSpellingAsideCase(unique) &&
+      !hit.near &&
+      source.toLowerCase() === term.text.toLowerCase() &&
+      unique.some((candidate) => source === candidate.text || isDistinctive(candidate))
+    ) {
       for (let at = hit.from; at < hit.to; at += 1) anchors.push(at);
     }
   }
@@ -155,6 +164,13 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     if (embeddedInWord(text, start, end)) continue;
     const source = text.slice(start, end);
     if (terms.length > 1) {
+      // Terms that differ only by case (`UserService` and `userService`) are different real names, and the heard
+      // casing is the only evidence of which one was meant: heard in their shared spelling, it stays as heard. A retry
+      // would not settle it, so this is a known term, not an abstention.
+      if (sameSpellingAsideCase(terms) && source.toLowerCase() === terms[0]!.text.toLowerCase()) {
+        result.technical.push({ start, end });
+        continue;
+      }
       result.abstained.push({ start, end, text: source, candidates: terms.map((term) => term.text).slice(0, 8) });
       continue;
     }
@@ -269,7 +285,13 @@ function lexiconFor(context: RecognitionContext): Lexicon {
       nearMatchable.push({ term, words: tokenize(term.text).map((token) => token.lower) });
     }
   }
-  const lexicon = { forms, longest, nearMatchable, compacts };
+  const caseVariants = new Map<string, RecognitionTerm[]>();
+  for (const term of context.terms) {
+    const spelling = term.text.toLowerCase();
+    caseVariants.set(spelling, [...(caseVariants.get(spelling) ?? []), term]);
+  }
+  for (const [spelling, terms] of caseVariants) if (terms.length < 2) caseVariants.delete(spelling);
+  const lexicon = { forms, longest, nearMatchable, compacts, caseVariants };
   lexicons.set(context, lexicon);
   return lexicon;
 }
@@ -335,6 +357,26 @@ function distinctTerms(forms: readonly Form[]): RecognitionTerm[] {
   const seen = new Map<string, RecognitionTerm>();
   for (const form of forms) if (!seen.has(form.term.text)) seen.set(form.term.text, form.term);
   return [...seen.values()];
+}
+
+/**
+ * A hit's candidates with every term spelled like one of them, case aside. "clark cant" is the spoken form of ClarkCant
+ * alone, but beside a symbol `clarkcant` writing it would pick a case, which the heard words never said.
+ */
+function withCaseVariants(forms: readonly Form[], lexicon: Lexicon): Form[] {
+  const all = [...forms];
+  for (const form of forms) {
+    for (const term of lexicon.caseVariants.get(form.term.text.toLowerCase()) ?? []) {
+      if (!all.some((existing) => existing.term === term)) all.push({ term, rule: form.rule });
+    }
+  }
+  return all;
+}
+
+/** Whether every term is the same spelling, case aside: one term, or names such as `UserService` and `userService`. */
+function sameSpellingAsideCase(terms: readonly RecognitionTerm[]): boolean {
+  const spelling = terms[0]?.text.toLowerCase();
+  return terms.every((term) => term.text.toLowerCase() === spelling);
 }
 
 /** The rule a single-term hit is reported under: the most literal one that matched. */

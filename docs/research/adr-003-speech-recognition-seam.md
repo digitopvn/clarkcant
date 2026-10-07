@@ -84,6 +84,10 @@ them before they mean anything.
      `s3`) can also be an ordinary word, so it is lowered only with the evidence a plain word needs: "Follow-up with
      the team tomorrow" and "S3 is down" keep their capitals, while "Daily-notes skill chạy lỗi khi build" becomes
      `daily-notes skill ...`. A near match is never re-cased.
+   - Session terms that differ only by case (`UserService` and `userService`, a class and its instance) are all kept,
+     and a term heard in that shared spelling keeps the case it was heard in: re-casing it would turn one real name
+     into the other. Its spoken words ("user service") abstain. The glossary is the floor: a session spelling such as
+     a repository called `clarkcant` replaces the glossary's ClarkCant rather than standing beside it (#590).
    - Commands are never changed except by casing, and no respelled word may complete one with its neighbours ("git re
      base" stays as heard). Only case is restored: `npm` never becomes `pnpm`, even when the vocabulary has pnpm
      (#574).
