@@ -31,6 +31,7 @@ import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
@@ -653,7 +654,7 @@ describe("a widget dev session", () => {
 
   it("stops as folder-gone, rather than building again, when the folder is deleted before a rebuild", async () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    await removeTestDirectory(root);
     const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
     expect(rebuilt.status).toBe(200);
     expect(session(rebuilt)).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
@@ -665,7 +666,7 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    await removeTestDirectory(root);
     // Bounded: the node looks for the folder at least once a second (`DEV_ENGINE_ROOT_CHECK_MS`), and on every change.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
@@ -677,8 +678,9 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    // In one turn of the event loop: the path names a folder again, but not the one being watched.
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    // In one turn of the event loop: the path names a folder again, but not the one being watched. Synchronous on purpose,
+    // so nothing looks between the delete and the new folder; no retries are asked for, since `rmSync` would not run them.
+    rmSync(root, { recursive: true, force: true });
     writePackage("<!doctype html><p>a new folder</p>\n");
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });

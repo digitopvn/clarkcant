@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +14,7 @@ import { type CapabilityInvokeDeps, STRUCTURED_OUTPUT_LIMIT, invokeCapability } 
 import { createInvokeCapabilityTool } from "../src/invoke-capability-tool.ts";
 import { toolResultGuardFor } from "../src/send-boundary.ts";
 import { createServiceHost, type ServiceHost } from "../src/service-host.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A service's structured result, from the MCP server that wrote it to what the model's tool call is answered with.
@@ -143,7 +144,7 @@ afterEach(async () => {
   await host?.stopAll();
   host = undefined;
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("a service tool that returns a structured result", () => {

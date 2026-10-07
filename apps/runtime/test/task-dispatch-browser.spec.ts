@@ -1,5 +1,5 @@
 import { spawn, type SpawnOptions } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,6 +29,7 @@ import { createTaskDispatcher, type TaskDispatcherDeps, type WorkerModelSource }
 import { nodeWorkerModel } from "../src/worker-model.ts";
 import { runWorkerProcess, type WorkerProcessOptions } from "../src/worker-process.ts";
 import { STUB_MODEL, STUB_PROVIDER, startStubProvider, writeStubAgentDir, type StubProvider, type StubReply } from "./stub-model-provider.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A task dispatched to the browser, end to end on one node.
@@ -54,9 +55,9 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 /**

@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import { type BrowserActor, actWithLedger } from "../src/browser-effects.ts";
 import { sweepUnknownEffects } from "../src/effect-notices.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A consequential browser action in the effect ledger (#273).
@@ -34,9 +35,9 @@ beforeEach(() => {
   owner = { principalId: services.runtime.identity.ownerPrincipalId as never, kind: "user", nodeId: services.runtime.identity.nodeId as never };
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 function runningTask(): { taskId: string; conversationId: string } {

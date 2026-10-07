@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,7 @@ import { buildViewCatalog } from "../src/view-catalog.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
 import { type ActionBindingDeps } from "../src/application/action-bindings.ts";
 import { type ServiceCallOptions, type ServiceHost } from "../src/service-host.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 const AT = "2026-10-01T05:00:00.000Z" as Instant;
 const CONVERSATION = "conv_board_view";
@@ -62,7 +63,7 @@ beforeEach(() => {
   } as unknown as ServiceHost;
   services.runtime.db.prepare("INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)").run(CONVERSATION, services.runtime.identity.nodeId, AT, AT);
 });
-afterEach(() => { services.runtime.db.close(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+afterEach(async () => { services.runtime.db.close(); await removeTestDirectory(dir); });
 
 describe("placing a kanban board", () => {
   it("binds host-checked state operations and preserves a bounded text alternative", async () => {

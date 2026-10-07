@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import type { Instant } from "@clarkcant/contracts";
 import { appendAuditEvent, listAuditEvents } from "../src/audit.ts";
 import { openDatabase, type Database } from "../src/db.ts";
 import { currentSchemaVersion, migrate } from "../src/migrate.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The audit trail.
@@ -28,9 +29,9 @@ beforeEach(() => {
   migrate(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 function append(overrides: Partial<Parameters<typeof appendAuditEvent>[1]> = {}): void {
