@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  # Only main: a PR branch is already checked by `pull_request`, and pushing it too ran every job twice per commit.
-  # With the merge gate not strict, this run on main is what checks the combined tree after each merge.
+  # Only the long-lived lines: a PR branch is already checked by `pull_request`, and pushing it too ran every job twice
+  # per commit. With the merge gate not strict, this run is what checks the combined tree after each merge.
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   # A manual run can repeat chosen browser specs, so a test that failed only on
   # the runner can be shown to pass there more than once. Left empty, the
