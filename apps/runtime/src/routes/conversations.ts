@@ -59,6 +59,7 @@ import { readDirectory,
   readSnapshotForDisplay,
   readyCapabilities,
   releaseLiveOwner,
+  resolveAppIntent,
   sweepExpiredLiveOwners,
   unpinInstance,
   type UnavailableCapability,
@@ -1101,7 +1102,15 @@ async function readSentMessage(
     ids: input.attachmentIds,
   });
   if (!attachments.ok) return { kind: "refused", message: attachments.message };
-  if (attachments.refs.length > 0) return { kind: "message", attachmentRefs: attachments.refs };
+  if (attachments.refs.length > 0) {
+    // Stop is a safety control, so a typed stop still stops the running turn when the message carries files. The
+    // message itself is then stored with its files and answered like any other, so they are not dropped either.
+    const principalId = services.runtime.identity.ownerPrincipalId;
+    const locale = preferredAppIntentLocale({ db: services.runtime.db, now: () => at() as never }, principalId);
+    const meant = resolveAppIntent({ text, locale, mintConfirmationToken: () => "" as never });
+    if (meant.kind === "intent" && meant.intent.kind === "turn.stop") stopTurnOnNode(services, { conversationId, source: "chat" });
+    return { kind: "message", attachmentRefs: attachments.refs };
+  }
 
   // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
   const slash = parseSlashCommand(text);

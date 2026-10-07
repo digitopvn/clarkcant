@@ -103,7 +103,12 @@ async function node(script: readonly string[]) {
       const data = (lines.find((line) => line.startsWith("data: ")) ?? "data: {}").slice(6);
       return { event, data: JSON.parse(data) as Record<string, unknown> };
     });
-    return { status: response.status, body: response.body, done: frames.find((frame) => frame.event === "done")?.data };
+    return {
+      status: response.status,
+      body: response.body,
+      deltas: frames.filter((frame) => frame.event === "delta").map((frame) => frame.data.text),
+      done: frames.find((frame) => frame.event === "done")?.data,
+    };
   };
   const storedFiles = () =>
     attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId }).map((ref) => ref.attachmentId);
@@ -186,6 +191,29 @@ describe("a message's files on the plain route while a turn is answering", () =>
     const prompt = adapter.allPrompts().find((text) => text.includes("xem tệp này")) ?? "";
     expect(prompt).toContain(FILE_TEXT);
   });
+
+  it.each(["plain", "streaming"] as const)(
+    "still stops the running turn for a typed stop with files on the %s route, and keeps the files",
+    async (route) => {
+      const { send, sendStreamed, upload, storedFiles, first, open } = await start("steer");
+      const file = await upload();
+      const body = { text: "dừng lại", attachmentIds: [file] };
+      let ended = false;
+      void first.finally(() => {
+        ended = true;
+      });
+      const sending = route === "plain" ? send(body) : sendStreamed(body);
+      try {
+        // The running turn ends because it was stopped, not because it was let go.
+        await vi.waitFor(() => expect(ended).toBe(true));
+      } finally {
+        open();
+      }
+      expect((await first).stopped).toBeDefined();
+      expect((await sending).status).toBe(200);
+      expect(storedFiles()).toEqual([file]);
+    },
+  );
 
   it("still sends bare words the decider chose for the background to the background", async () => {
     const { backgrounded, interrupted, turn, conversationId, send, first, open } = await start("background");
@@ -272,9 +300,15 @@ describe("a message with files on the streaming route the composer uses", () => 
   it("still answers a slash command or app command without files as the host", async () => {
     const { adapter, sendStreamed } = await node(["không dùng tới"]);
     const slash = await sendStreamed({ text: "/thinking" });
-    expect(slash.done).toMatchObject({ resolution: "app-intent" });
+    expect(slash.done).toMatchObject({ resolution: "app-intent", messageIds: [expect.any(String)] });
+    expect(slash.deltas).toEqual([expect.stringMatching(/\S/)]);
     const intent = await sendStreamed({ text: "mở settings" });
-    expect(intent.done).toMatchObject({ resolution: "app-intent", appIntent: { kind: "intent", intent: { kind: "settings.open" } } });
+    expect(intent.done).toMatchObject({
+      resolution: "app-intent",
+      messageIds: [expect.any(String)],
+      appIntent: { kind: "intent", intent: { kind: "settings.open" } },
+    });
+    expect(intent.deltas).toEqual([expect.stringMatching(/\S/)]);
     expect(adapter.allPrompts()).toEqual([]);
   });
 });

@@ -183,6 +183,7 @@ The origin stays with the work it started:
   while a turn is answering, whose running turn is left as it was. A message that carries attachments is never
   answered by the host as a slash command or typed app command, since those answers, and the background run
   `/background` starts, carry only words: it is stored with its files and answered as a turn, with its text as typed.
+  A typed stop that carries attachments still stops the running turn first.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A

@@ -187,7 +187,7 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   trong lúc có lượt đang trả lời, khi đó lượt đang chạy được giữ nguyên. Một tin nhắn có tệp đính kèm không bao giờ
   được host trả lời như một lệnh gạch chéo hay lệnh ứng dụng gõ bằng chữ, vì những câu trả lời đó, cùng việc chạy nền
   mà `/background` khởi động, chỉ mang theo chữ: tin nhắn được lưu cùng tệp của nó và được trả lời thành một lượt, với
-  đúng phần chữ đã gõ.
+  đúng phần chữ đã gõ. Một lệnh dừng gõ bằng chữ có tệp đính kèm vẫn dừng lượt đang chạy trước.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
   đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
   không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có
