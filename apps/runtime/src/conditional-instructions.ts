@@ -56,8 +56,9 @@ export const INSTRUCTION_LIMITS = {
   /** What a session remembers having touched, newest kept. */
   touched: 64,
   /**
-   * Touches checked in one ask, newest kept: what a session remembers plus what the message points at. Whatever a
-   * caller hands over, one ask checks no more paths than this.
+   * Touches checked in one ask, newest kept: what a session remembers (`touched`) plus up to the rest for what the
+   * message points at, so a message's places never push the session's own touches out. Whatever a caller hands over,
+   * one ask checks no more paths than this.
    */
   touchesPerAsk: 96,
   /**
@@ -152,6 +153,8 @@ export interface CompiledGlob {
   anywhere: boolean;
   /** Case is folded, in the glob and in every path matched against it. */
   caseless: boolean;
+  /** The glob up to its first wildcard, folded: what a scope's folder must lie above. */
+  literal: string;
 }
 
 const foldIf = (caseless: boolean, text: string): string => (caseless ? text.toLowerCase() : text);
@@ -179,7 +182,8 @@ export function compileGlob(glob: string, caseless: boolean = caselessPaths()): 
     segments.push(segment);
   }
   if (segments.length === 0) return undefined;
-  return { glob: pattern, segments, anywhere: !pattern.includes("/"), caseless };
+  const literal = foldIf(caseless, pattern.split(/[*?]/)[0] ?? "");
+  return { glob: pattern, segments, anywhere: !pattern.includes("/"), caseless, literal };
 }
 
 /**
@@ -220,9 +224,19 @@ function segmentMatches(pattern: string, name: string, budget: MatchBudget): boo
  * and with a budget, work no larger than it. A budget that runs out answers no match.
  */
 export function globMatches(glob: CompiledGlob, relativePath: string, budget: MatchBudget = { steps: Number.POSITIVE_INFINITY }): boolean {
-  const parts = foldIf(glob.caseless, relativePath)
-    .split("/")
-    .filter((part) => part !== "" && part !== ".");
+  return partsMatch(glob, pathParts(foldIf(glob.caseless, relativePath)), budget);
+}
+
+/** A project-relative path's folders and name, already folded as its globs need. */
+const pathParts = (relativePath: string): readonly string[] => relativePath.split("/").filter((part) => part !== "" && part !== ".");
+
+/**
+ * `globMatches` over a path already split and folded, so checking many globs against one path splits it once. Each call
+ * costs a step even when it fails at once, so the number of globs is inside the budget too.
+ */
+function partsMatch(glob: CompiledGlob, parts: readonly string[], budget: MatchBudget): boolean {
+  budget.steps -= 1;
+  if (budget.steps < 0) return false;
   if (glob.anywhere) {
     const only = glob.segments[0] ?? "";
     if (only === "**") return true;
@@ -290,27 +304,35 @@ function parseRules(raw: string, caseless: boolean): Rule[] | { invalid: Project
  * Whether a path condition holds. For a scope, it holds when the glob could match something inside it: the whole
  * project, a folder its literal prefix lies under, or a path it matches outright.
  */
-function pathHolds(entry: CompiledGlob, relativePath: string, scope: boolean, budget: MatchBudget): boolean {
-  if (globMatches(entry, relativePath, budget)) return true;
+function pathHolds(entry: CompiledGlob, path: FoldedPath, scope: boolean, budget: MatchBudget): boolean {
+  if (partsMatch(entry, path.parts, budget)) return true;
   if (!scope) return false;
-  if (relativePath === ".") return true;
+  if (path.folded === ".") return true;
   // A glob with no folder in it matches a file name anywhere, so anywhere includes this folder.
-  if (!entry.glob.includes("/")) return true;
-  const literal = entry.glob.split(/[*?]/)[0] ?? "";
-  return foldIf(entry.caseless, literal).startsWith(`${foldIf(entry.caseless, relativePath)}/`);
+  if (entry.anywhere) return true;
+  return entry.literal.startsWith(`${path.folded}/`);
+}
+
+/** One path, folded and split once for every glob of a file. */
+interface FoldedPath {
+  folded: string;
+  parts: readonly string[];
 }
 
 /**
- * For each rule, whether its path condition holds for one path (a rule with none: true). Every glob of the file shares
- * one budget, checked in file order; a path that spends it all holds no path condition, so the answer is the same
- * whichever call asks and whatever was asked before.
+ * For each rule, whether its path condition holds for one path (a rule with none: true). The path is folded and split
+ * once; every glob of the file shares one budget, checked in file order; a path that spends it all holds no path
+ * condition, so the answer is the same whichever call asks and whatever was asked before.
  */
-function pathHits(rules: readonly Rule[], relativePath: string, scope: boolean): readonly boolean[] {
+function pathHits(rules: readonly Rule[], relativePath: string, scope: boolean, caseless: boolean): { hits: readonly boolean[]; steps: number } {
   const unconditioned = rules.map((rule) => rule.path === undefined);
-  if (relativePath.length > INSTRUCTION_LIMITS.pathChars) return unconditioned;
+  if (relativePath.length > INSTRUCTION_LIMITS.pathChars) return { hits: unconditioned, steps: 0 };
+  const folded = foldIf(caseless, relativePath);
+  const path: FoldedPath = { folded, parts: pathParts(folded) };
   const budget: MatchBudget = { steps: INSTRUCTION_LIMITS.matchSteps };
-  const hits = rules.map((rule) => rule.path === undefined || rule.path.some((entry) => pathHolds(entry, relativePath, scope, budget)));
-  return budget.steps < 0 ? unconditioned : hits;
+  const hits = rules.map((rule) => rule.path === undefined || rule.path.some((entry) => pathHolds(entry, path, scope, budget)));
+  const steps = INSTRUCTION_LIMITS.matchSteps - Math.max(budget.steps, 0);
+  return { hits: budget.steps < 0 ? unconditioned : hits, steps };
 }
 
 /** Whether a rule holds for one touch inside its project, its path condition already answered. */
@@ -340,18 +362,25 @@ export function createConditionalInstructions(deps: {
   /** Told once per rules file that cannot be used, by project folder name only, with why. */
   onInvalid?: (input: { project: string; reason: ProjectInstructionsInvalidReason }) => void;
   /**
-   * Whose file-system rules decide case: a root, a project and a glob compare without case on Windows and macOS and
-   * with it on Linux. This host's platform unless a test stands in for another one.
+   * Whose rules decide case where only a spelling is compared: a glob, and which granted root a touched path is looked
+   * up under, fold case on Windows and macOS and keep it on Linux and every other platform. This host's platform unless
+   * a test stands in for another one. Whether a project is inside its root, and which folder it is, is decided by real
+   * paths instead, so a case-sensitive volume on Windows or macOS keeps two folders apart.
    */
   platform?: NodeJS.Platform;
-  /** How links are resolved: the file system's own unless a test stands in for another platform's. */
+  /**
+   * A folder's real path: links resolved, and spelled the way the volume stores it, so two spellings of one folder give
+   * one answer and two folders give two. The file system's own (`realpathSync.native`) unless a test stands in for
+   * another platform's.
+   */
   realpath?: (path: string) => string;
+  /** Told the matching steps each newly checked path spent: what the budget bounds, for a reader that wants to see it. */
+  onMatched?: (input: { steps: number }) => void;
 }): ConditionalInstructions {
   const caseless = caselessPaths(deps.platform);
-  const realpath = deps.realpath ?? realpathSync;
+  const realpath = deps.realpath ?? realpathSync.native;
+  /** A lookup by spelling only: which root to walk under, and where the walk stops. Never what is read. */
   const within = (root: string, path: string): boolean => isWithinRootCased(root, path, caseless);
-  /** One spelling for a folder, however a touch typed it: what a project is known by. */
-  const keyOf = (path: string): string => (caseless ? resolve(path).toLowerCase() : resolve(path));
   const files = new Map<string, { stamp: string; value: unknown }>();
   /** Per rules file as read (a changed file is a new array), the path conditions each remembered path met. */
   const matched = new WeakMap<readonly Rule[], Map<string, readonly boolean[]>>();
@@ -364,7 +393,8 @@ export function createConditionalInstructions(deps: {
     const key = `${scope ? "scope" : "path"}:${relativePath}`;
     const known = paths.get(key);
     if (known !== undefined) return known;
-    const hits = pathHits(rules, relativePath, scope);
+    const { hits, steps } = pathHits(rules, relativePath, scope, caseless);
+    deps.onMatched?.({ steps });
     paths.set(key, hits);
     // The oldest goes first; an answer recomputed later is the same answer.
     if (paths.size > INSTRUCTION_LIMITS.matchCache) paths.delete(paths.keys().next().value as string);
@@ -395,7 +425,8 @@ export function createConditionalInstructions(deps: {
    */
   const inside = (folder: string, path: string): boolean => {
     try {
-      return within(realpath(folder), realpath(path));
+      // Real paths are the volume's own spelling, so they compare exactly, whatever the platform.
+      return isWithinRootCased(realpath(folder), realpath(path), false);
     } catch {
       return false;
     }
@@ -441,8 +472,8 @@ export function createConditionalInstructions(deps: {
 
   /**
    * The nearest folder at or above a path, still inside its approved root, that keeps instructions, spelled the way the
-   * path spelled it. `known` remembers, by `keyOf`, how many folders up from a walked folder its project is (or that it
-   * has none), so many touches under one tree cost one walk however each spelled its case.
+   * path spelled it. `known` remembers, by spelling, how many folders up from a walked folder its project is (or that it
+   * has none), so many touches under one tree cost one walk.
    */
   const projectOf = (path: string, roots: readonly string[], known: Map<string, number | undefined>): string | undefined => {
     const root = roots.find((candidate) => within(candidate, path));
@@ -458,7 +489,7 @@ export function createConditionalInstructions(deps: {
     };
     let current = start;
     for (let depth = 0; depth < INSTRUCTION_LIMITS.walkDepth; depth += 1) {
-      const key = keyOf(current);
+      const key = current;
       // Folders already walked in this pass answer at once.
       if (known.has(key)) {
         const up = known.get(key);
@@ -469,7 +500,7 @@ export function createConditionalInstructions(deps: {
         // The project folder itself, links resolved, must still be inside the approved root.
         return settle(inside(root, current) ? depth : undefined);
       }
-      if (keyOf(current) === keyOf(root)) return settle(undefined);
+      if (isWithinRootCased(current, root, caseless)) return settle(undefined);
       const parent = dirname(current);
       if (parent === current || !within(root, parent)) return settle(undefined);
       current = parent;
@@ -480,9 +511,22 @@ export function createConditionalInstructions(deps: {
   return {
     active: (state) => {
       const roots = deps.roots();
-      // One project however its touches spelled it, keyed by `keyOf` and read under the first spelling met.
+      // One project however its touches spelled it, keyed by its real path and read under the first spelling met.
       const byProject = new Map<string, { project: string; touches: { touch: InstructionTouch; relativePath: string }[] }>();
       const known = new Map<string, number | undefined>();
+      const keys = new Map<string, string>();
+      const keyOf = (project: string): string => {
+        let key = keys.get(project);
+        if (key === undefined) {
+          try {
+            key = realpath(project);
+          } catch {
+            key = resolve(project);
+          }
+          keys.set(project, key);
+        }
+        return key;
+      };
       for (const touch of state.touched.slice(-INSTRUCTION_LIMITS.touchesPerAsk)) {
         const project = projectOf(touch.path, roots, known);
         if (project === undefined) continue;
@@ -584,17 +628,21 @@ const LOOKALIKES: ReadonlyMap<string, string> = new Map(
   }).flatMap(([plain, alikes]) => [...alikes].map((alike): [string, string] => [alike, plain])),
 );
 
-/** Invisible characters a tag name can be split with: format characters and everything else Unicode says to ignore. */
-const IGNORABLE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}]$/u;
+/**
+ * Characters a tag name can be split or decorated with and still read as the tag: format characters, everything else
+ * Unicode says to ignore, and combining marks (a `p` with a dot or an underline above it is still a `p`).
+ */
+const IGNORABLE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}\p{M}]$/u;
 
 /**
  * A snippet's own tags are defused, so it cannot end its block early or open one of its own.
  *
- * A tag is found in a comparison form of the text: each character NFKC-normalised (a fullwidth `＜ｐｒｏｊｅｃｔ` is
- * `<project`), invisible characters dropped (a tag name split with U+200B is still the tag name), look-alikes read as
- * the character they look like, and case folded. The match is then rewritten in the original text, the whole span from
- * its `<` to the end of `instruction`, as plain `<project_instruction` or `</project_instruction`; everything else in the
- * snippet stays exactly as written.
+ * A tag is found in a comparison form of the text: each character NFKD-decomposed (a fullwidth `＜ｐｒｏｊｅｃｔ` is
+ * `<project`, an `ė` is `e` and a dot), invisible characters and combining marks dropped (a tag name split with U+200B,
+ * or with a mark on a letter, is still the tag name), look-alikes read as the character they look like, and case
+ * folded; white space may stand between `<`, `/` and the name. The match is then rewritten in the original text, the
+ * whole span from its `<` to the end of `instruction`, as plain `<project_instruction` or `</project_instruction`;
+ * everything else stays exactly as written, so ordinary text with diacritics is unchanged.
  */
 function defused(text: string): string {
   let comparable = "";
@@ -605,7 +653,8 @@ function defused(text: string): string {
   for (const char of text) {
     const end = offset + char.length;
     if (!IGNORABLE.test(char)) {
-      for (const part of char.normalize("NFKC")) {
+      for (const part of char.normalize("NFKD")) {
+        if (IGNORABLE.test(part)) continue;
         for (const plain of (LOOKALIKES.get(part) ?? part).toLowerCase()) {
           const mapped = LOOKALIKES.get(plain) ?? plain;
           comparable += mapped;
@@ -620,7 +669,7 @@ function defused(text: string): string {
   }
   let result = "";
   let copied = 0;
-  for (const match of comparable.matchAll(/<(\/?)project-instruction/g)) {
+  for (const match of comparable.matchAll(/<\s*(\/?)\s*project-instruction/g)) {
     const from = starts[match.index] ?? 0;
     // A match that starts inside a span already rewritten cannot happen: a `<` is never part of `project-instruction`.
     const to = ends[match.index + match[0].length - 1] ?? from;
@@ -628,6 +677,16 @@ function defused(text: string): string {
     copied = to;
   }
   return result + text.slice(copied);
+}
+
+/**
+ * A snippet's `source` as an attribute value: its tags defused, and every character that is or reads as `"`, `<` or
+ * `>` (a fullwidth `＂`, a `‹`) replaced with `_`, so a project folder's name cannot end the attribute or the tag.
+ */
+function attributeValue(source: string): string {
+  return [...defused(source)]
+    .map((char) => (/["<>]/.test(char.normalize("NFKD")) || LOOKALIKES.get(char) === "<" ? "_" : char))
+    .join("");
 }
 
 /**
@@ -661,7 +720,7 @@ export function instructionSection(input: {
       withheld += 1;
       continue;
     }
-    const part = `<project-instruction nonce="${nonce}" source="${entry.source.replace(/["<>]/g, "_")}">\n${defused(entry.text)}\n</project-instruction nonce="${nonce}">`;
+    const part = `<project-instruction nonce="${nonce}" source="${attributeValue(entry.source)}">\n${defused(entry.text)}\n</project-instruction nonce="${nonce}">`;
     if (part.length > remaining) continue;
     remaining -= part.length;
     parts.push(part);
@@ -737,9 +796,12 @@ export function turnInstructions(deps: {
 }): TurnInstructions {
   return (input) => {
     const referenced = deps.referenced(input.conversationId, input.messageId);
+    // The message's places get what an ask has beyond the session's own memory, so however many it points at, they never
+    // push out what the session touched.
+    const places = referenced.places.slice(0, INSTRUCTION_LIMITS.touchesPerAsk - INSTRUCTION_LIMITS.touched);
     const touched: InstructionTouch[] = [
-      ...input.touched,
-      ...referenced.places.map((place) => ({ path: place.path, operation: "read" as const, scope: place.folder })),
+      ...input.touched.slice(-INSTRUCTION_LIMITS.touched),
+      ...places.map((place) => ({ path: place.path, operation: "read" as const, scope: place.folder })),
     ];
     const active = deps.instructions.active({ touched, role: "foreground", skills: referenced.skills });
     return instructionSection({ active, stated: input.stated, allowed: input.allowed, newOnly: input.newOnly, nonce: input.nonce });

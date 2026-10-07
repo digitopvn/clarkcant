@@ -82,6 +82,12 @@ describe("project instructions contract", () => {
       `rules[2].when.path: takes the file's path globs over ${String(PROJECT_INSTRUCTION_LIMITS.globCharsPerFile)} characters in all; a node leaves this rule out`,
     ]);
     expect(projectInstructionsFileSchema.safeParse({ version: 1, rules: [wide, wide, RULE] }).success).toBe(true);
+    // Beside another invalid rule, the check still lists it, in one run.
+    const broken = { when: { operation: "delete" }, include: ["a"] };
+    expect(projectInstructionsProblems({ version: 1, rules: [wide, broken, wide, wide] })).toEqual([
+      expect.stringMatching(/^rules\[1\]\.when\.operation: /),
+      `rules[3].when.path: takes the file's path globs over ${String(PROJECT_INSTRUCTION_LIMITS.globCharsPerFile)} characters in all; a node leaves this rule out`,
+    ]);
   });
 
   it("says what is wrong with a file, one line each", () => {

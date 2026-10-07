@@ -959,10 +959,12 @@ it, and `clarkcant instructions check` validates it with the same schema. How a 
   order, a rule that would take the file over, and the check reports that rule. A file larger than 64 KB is not read.
 - Matching is bounded whatever the file says. A path may cost at most 200,000 matching steps against one file's rules,
   and a path that needs more, or a project-relative path longer than 4,096 characters, meets no `path` condition: the
-  guidance is missing, never stated for a path it is not about. One ask checks at most the newest 96 touched paths, and
+  guidance is missing, never stated for a path it is not about. One ask checks at most 96 touched paths, the session's newest 64 and at most 32 of the places a message points at, and
   the answer for a path is kept while the file is unchanged, so a tool call matches only what it newly touched. Case
-  is folded on Windows and macOS and kept on Linux, both in a `path` glob and when the node finds which granted root
-  holds the project.
+  is folded on Windows and macOS and kept on Linux and every other platform, both in a `path` glob and when the node
+  finds which granted root holds the project. Whether a path lies inside a project, and which project it is, are decided
+  on the volume's real paths, so two folders whose names differ only in case on a case-sensitive volume stay two
+  projects.
 - Unknown keys: at the top level only `$schema` (a string, for an editor's JSON schema) is allowed, and any other
   unknown top-level key makes the node read nothing from the file. An unknown key inside a rule or inside its `when`
   leaves out only that rule. The check reports both.

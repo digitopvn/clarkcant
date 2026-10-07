@@ -168,17 +168,28 @@ export const projectInstructionsFileSchema = z
     rules: z.array(projectInstructionRuleSchema).max(PROJECT_INSTRUCTION_LIMITS.rules),
   })
   .superRefine((file, context) => {
-    let total = 0;
-    for (const [index, rule] of file.rules.entries()) {
-      const chars = instructionRuleGlobChars(rule);
-      // The same count a reader keeps: a rule that goes over is left out and the next one is measured without it.
-      if (total + chars > PROJECT_INSTRUCTION_LIMITS.globCharsPerFile) {
-        context.addIssue({ code: "custom", path: ["rules", index, "when", "path"], message: globCharsPerFileProblem() });
-        continue;
-      }
-      total += chars;
+    for (const index of rulesOverGlobChars(file.rules)) {
+      context.addIssue({ code: "custom", path: ["rules", index, "when", "path"], message: globCharsPerFileProblem() });
     }
   });
+
+/**
+ * The rules, by index, that a reader leaves out for taking the file's path globs over
+ * `PROJECT_INSTRUCTION_LIMITS.globCharsPerFile`: counted the way a reader counts, over the rules that parse, in file
+ * order, a rule that goes over measured out and the next one measured without it.
+ */
+function rulesOverGlobChars(rules: readonly unknown[]): number[] {
+  const over: number[] = [];
+  let total = 0;
+  for (const [index, entry] of rules.entries()) {
+    const rule = projectInstructionRuleSchema.safeParse(entry);
+    if (!rule.success) continue;
+    const chars = instructionRuleGlobChars(rule.data);
+    if (total + chars > PROJECT_INSTRUCTION_LIMITS.globCharsPerFile) over.push(index);
+    else total += chars;
+  }
+  return over;
+}
 export type ProjectInstructionsFile = z.infer<typeof projectInstructionsFileSchema>;
 
 /**
@@ -227,6 +238,13 @@ export function projectInstructionsProblems(value: unknown): string[] {
         .map((part, index) => (typeof part === "number" ? `[${String(part)}]` : `${index === 0 ? "" : "."}${String(part)}`))
         .join("");
       problems.push(`${at === "" ? "file" : at}: ${issue.message}`);
+    }
+    // The file-wide count is a refinement, which does not run while another rule is invalid: said here too, so one check
+    // lists every problem.
+    const rules = typeof candidate === "object" && candidate !== null && "rules" in candidate ? candidate.rules : undefined;
+    for (const index of Array.isArray(rules) ? rulesOverGlobChars(rules) : []) {
+      const line = `rules[${String(index)}].when.path: ${globCharsPerFileProblem()}`;
+      if (!problems.includes(line)) problems.push(line);
     }
   }
   return problems;
