@@ -712,8 +712,10 @@ khi listing không có trong bản sao của node, trả `404 NOT_IN_DIRECTORY` 
 nguồn mà người dùng đã chọn khi bấm Cài trên một dòng. Không có nó, route trả `409 DIRECTORY_SOURCE_UNREAD` khi một
 nguồn đứng trước không đọc được, và `409 DIRECTORY_SOURCE_CHANGED` khi gói đang được cài từ một nguồn khác. Có nó,
 route trả `409 DIRECTORY_SOURCE_CHANGED` khi giờ đây một nguồn khác sở hữu listing đó. Node ghi nguồn lên generation
-đã cài (`directorySource`), và thông báo cập nhật chỉ đến từ chính nguồn đó. Một listing từ marketplace được cài qua
-đúng những bước kiểm tra như listing từ file.
+đã cài (`directorySource`), và thông báo cập nhật chỉ đến từ chính nguồn đó; generation được cài trước khi nguồn được
+ghi lại được coi là cài từ file index. Một yêu cầu chấp thuận cài đặt giữ nguồn sở hữu listing lúc người dùng được hỏi,
+và `POST /packages/approvals/{id}/decision` với `granted` trả `409 DIRECTORY_SOURCE_CHANGED` khi lúc đó một nguồn khác
+đã sở hữu listing. Một listing từ marketplace được cài qua đúng những bước kiểm tra như listing từ file.
 
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ

@@ -3085,8 +3085,13 @@ ids to a later one:
 - A package records the source it was installed from. The update check offers only that source's newer versions, and
   the update notice names the source. Installing the same package id from a different source answers
   `409 DIRECTORY_SOURCE_CHANGED`, unless you press Install on that source's row. A package installed before sources
-  were recorded takes its updates from your index file when the file lists it. Otherwise it takes them from the source
-  that lists it, and only when every earlier source was read.
+  were recorded came from your index file, the only source there was, so it is treated as installed from the index
+  file: it takes updates only from the file, gets no update notice when the file does not list it, and moves to
+  another source only when you press Install on that source's row.
+- An install the policy asks you about records the source that owned the listing when you were asked. If another
+  source owns it by the time you approve, even with identical bytes, approving answers
+  `409 DIRECTORY_SOURCE_CHANGED`, nothing is installed and the question leaves the inbox; installing again asks about
+  the new source.
 
 When no source can be read (for example, only the official Marketplace is on and it does not serve the feed yet), the
 directory is `unreadable`. The reason names each source, says why it failed and says how to set up an index file or a
@@ -3103,7 +3108,9 @@ private catalog without running a service. Entries are read with the same rules 
 listing may not name a path on this machine (`source.kind: "local"`), and the official Marketplace lists npm packages
 only. One refresh is bounded (10 s, 8 MiB per page, 20 pages, 5,000 entries) and a feed past a bound is refused whole.
 The request carries no credentials, cookies or identifying headers, an address with a username or password is refused,
-and redirects are not followed. A listing remains a pointer: installing it re-resolves the exact npm version, checks the
+and redirects are not followed. A feed is named by its host and path only; for an address that does not parse,
+everything from the first `?` or `#` and anything before an `@` is cut, so a token in the address never appears in a
+label, an error, the search card or `GET /packages`. A listing remains a pointer: installing it re-resolves the exact npm version, checks the
 registry's integrity and the entry's `digest` (the runtime content digest `clark widget pack` records as
 `npm.contentDigest`), reads the downloaded `clarkcant.json` and asks the policy, exactly as for a listing in a file.
 Nothing a listing carries grants a permission. The official Marketplace does not serve this feed yet; until it does,

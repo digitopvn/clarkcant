@@ -33,6 +33,8 @@ import {
 } from "@clarkcant/capability-host";
 import {
   HOST_API_VERSION,
+  LOCAL_DIRECTORY_SOURCE_ID,
+  PRE_SOURCES_DIRECTORY_SOURCE,
   activeGeneration,
   artifactMatchesPlan,
   decideApprovalWithinTransaction,
@@ -57,6 +59,7 @@ import {
   snapshotLocalPackage,
   type CoordinationDeps,
   type DirectoryIndexState,
+  type DirectoryOrigin,
   type DirectorySourceStatus,
 } from "@clarkcant/core";
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
@@ -356,6 +359,8 @@ export interface ApprovedInstall {
   digest: string;
   /** For a listing by a path on this machine: the content digest of its files when the person was asked. */
   localDigest?: string;
+  /** The id of the directory source that owned the listing when the person was asked; see `approvalSourceRefusal`. */
+  sourceId?: string;
 }
 
 /**
@@ -436,7 +441,11 @@ function localSourceUnreadable(
   };
 }
 
-/** The directory source the active generation of `packageId` was installed from, when it recorded one. */
+/**
+ * The directory source the active generation of `packageId` was installed from. A generation installed before sources
+ * were recorded came from the index file, the only source there was (`PRE_SOURCES_DIRECTORY_SOURCE`). Undefined when
+ * the package is not installed.
+ */
 function installedDirectorySource(deps: PackageInstallDeps, packageId: string): DirectorySourceRef | undefined {
   const { runtime } = deps;
   const generation = activeGeneration(
@@ -444,8 +453,30 @@ function installedDirectorySource(deps: PackageInstallDeps, packageId: string): 
     packageId,
     runtime.identity.nodeId,
   );
-  const recorded = directorySourceRefSchema.safeParse(generation?.directorySource);
-  return recorded.success ? recorded.data : undefined;
+  if (generation === undefined) return undefined;
+  const recorded = directorySourceRefSchema.safeParse(generation.directorySource);
+  return recorded.success ? recorded.data : PRE_SOURCES_DIRECTORY_SOURCE;
+}
+
+/**
+ * Whether an approved install is refused because another source owns the listing than the one that owned it when the
+ * person was asked. The bytes are pinned by digest either way, but the source decides where the package's updates come
+ * from, so the generation records only the source the person was shown. A question asked before sources were recorded
+ * was about the index file's listing, the only source there was.
+ */
+export function approvalSourceRefusal(input: {
+  packageId: string;
+  version: string;
+  origin: DirectoryOrigin | undefined;
+  askedSourceId: string | undefined;
+}): { status: 409; code: "DIRECTORY_SOURCE_CHANGED"; message: string } | undefined {
+  const { packageId, version, origin, askedSourceId } = input;
+  if ((origin?.id ?? LOCAL_DIRECTORY_SOURCE_ID) === (askedSourceId ?? LOCAL_DIRECTORY_SOURCE_ID)) return undefined;
+  return {
+    status: 409,
+    code: "DIRECTORY_SOURCE_CHANGED",
+    message: `${packageId}@${version} is now listed by ${origin?.label ?? "another source"}, not by the source you were asked about, so nothing was installed; install it again to be asked about where it comes from now`,
+  };
 }
 
 /**
@@ -573,6 +604,10 @@ export async function installPackage(
       chosenSourceId: request.sourceId,
     });
     if (refusal !== undefined) return refusal;
+  } else {
+    // The source the person was asked about is the one recorded, never one that took the listing over since.
+    const refusal = approvalSourceRefusal({ packageId, version, origin, askedSourceId: options.approved.sourceId });
+    if (refusal !== undefined) return { kind: "refused", ...refusal };
   }
 
   /*
@@ -740,11 +775,14 @@ export async function installPackage(
       "SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending' AND task_id IS NULL AND expires_at > ? ORDER BY requested_at, approval_id",
       entry.digest,
       nowInstant(),
-    ).find(
-      (row) =>
-        localDigest === undefined ||
-        findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id)?.localDigest === localDigest,
-    );
+    ).find((row) => {
+      // A question asked about another source's listing of the same bytes is another question.
+      const asked = findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id);
+      return (
+        approvalSourceRefusal({ packageId, version, origin, askedSourceId: asked?.sourceId }) === undefined &&
+        (localDigest === undefined || asked?.localDigest === localDigest)
+      );
+    });
     /*
      * A new question is recorded together with what it asks about - the package, the version and the artifact - in
      * one transaction, so an approval the inbox cannot name never exists. That record is what makes it an install
@@ -765,6 +803,7 @@ export async function installPackage(
           version: entry.version,
           digest: entry.digest,
           ...(localDigest === undefined ? {} : { localDigest }),
+          ...(origin === undefined ? {} : { sourceId: origin.id }),
           result: "asked",
         });
         return created.approvalId;
@@ -1026,6 +1065,8 @@ export interface InstallApprovalEvent {
   digest: string;
   /** For a listing by a path on this machine: the content digest of its files when the question was asked. */
   localDigest?: string;
+  /** The id of the directory source that owned the listing when the question was asked. */
+  sourceId?: string;
   result: InstallApprovalResult;
   code?: string;
   generationId?: string;
@@ -1073,7 +1114,7 @@ export function findInstallApprovalRequest(
   db: Database,
   nodeId: string,
   approvalId: string,
-): { packageId: string; version: string; digest: string; localDigest?: string } | undefined {
+): { packageId: string; version: string; digest: string; localDigest?: string; sourceId?: string } | undefined {
   const row = oneRow<{ document: string }>(
     db,
     `SELECT document FROM events
@@ -1091,6 +1132,7 @@ export function findInstallApprovalRequest(
     version: event.version,
     digest: event.digest,
     ...(event.localDigest === undefined ? {} : { localDigest: event.localDigest }),
+    ...(typeof event.sourceId === "string" ? { sourceId: event.sourceId } : {}),
   };
 }
 

@@ -80,7 +80,7 @@ export function feedUrlProblem(raw: string): string | undefined {
   try {
     url = new URL(raw);
   } catch {
-    return `${raw} is not a URL`;
+    return `${redactedAddress(raw)} is not a URL`;
   }
   if (url.username !== "" || url.password !== "") return "a directory address must not carry a username or password";
   if (url.hash !== "") return "a directory address must not carry a #fragment";
@@ -89,14 +89,31 @@ export function feedUrlProblem(raw: string): string | undefined {
   return "a directory address must use https (plain http is allowed only to this machine)";
 }
 
-/** The name a person recognises for a custom feed: its host and path, without a query that may carry anything. */
+/**
+ * An address as it may be shown, also when it does not parse as a URL: everything from the first `?` or `#` is cut, and
+ * anything up to the last `@` before that (a username, a password) is dropped, so a token in the query or the userinfo
+ * is never echoed into a message, a label or a card. An address with nothing left to show is named as such.
+ */
+export function redactedAddress(raw: string): string {
+  const end = raw.search(/[?#]/u);
+  const withoutQuery = end === -1 ? raw : raw.slice(0, end);
+  const at = withoutQuery.lastIndexOf("@");
+  const shown = at === -1 ? withoutQuery : withoutQuery.slice(at + 1);
+  return shown === "" ? "an address with no host" : shown;
+}
+
+/**
+ * The name a person recognises for a custom feed: its host and path, without a query or userinfo that may carry anything.
+ * An address with no host (it does not parse, or `user:token@host/feed` parsed as a `user:` scheme) is redacted as text.
+ */
 export function feedLabel(raw: string): string {
   try {
     const url = new URL(raw);
-    return `${url.host}${url.pathname === "/" ? "" : url.pathname}`;
+    if (url.host !== "") return `${url.host}${url.pathname === "/" ? "" : url.pathname}`;
   } catch {
-    return raw;
+    // Named as text below.
   }
+  return redactedAddress(raw);
 }
 
 /** A stable id for a custom feed, so its cached copy is found again and never confused with another feed's. */

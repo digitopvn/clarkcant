@@ -330,7 +330,7 @@ describe("checkForUpdates — the source an update comes from", () => {
       installedPackages: [installedPackage({ version: "1.0.0", directorySource: MINE })],
       directory: [
         directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS }),
-        directoryCandidate({ version: "1.1.0", origin: MINE, precededByUnreadSource: true }),
+        directoryCandidate({ version: "1.1.0", origin: MINE }),
       ],
       now: () => AT,
       platform: HOST,
@@ -342,39 +342,36 @@ describe("checkForUpdates — the source an update comes from", () => {
     expect(notice?.body).not.toContain("9.0.0");
   });
 
-  it("takes a package installed before sources were recorded from the index file when the index lists it", () => {
+  it("takes a package installed before sources were recorded from the index file only", () => {
     const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ version: "1.0.0" })],
       directory: [
-        directoryCandidate({ version: "1.0.0", origin: INDEX }),
+        directoryCandidate({ version: "1.1.0", origin: INDEX }),
         directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS }),
       ],
       now: () => AT,
       platform: HOST,
     });
-    expect(report.packageUpdates).toBe(0);
+    expect(report.packageUpdates).toBe(1);
+    const [notice] = packageNotices();
+    expect(notice?.body).toContain("1.1.0");
+    expect(notice?.body).not.toContain("9.0.0");
   });
 
-  it("offers a package installed before sources were recorded nothing from behind a source that could not be read", () => {
-    const behind = checkForUpdates({
+  it("offers a package installed before sources were recorded no update when the index file does not list it", () => {
+    const report = checkForUpdates({
       services,
       installedPackages: [installedPackage({ version: "1.0.0" })],
-      directory: [directoryCandidate({ version: "1.1.0", origin: THEIRS, precededByUnreadSource: true })],
+      directory: [
+        directoryCandidate({ version: "9.0.0", digest: "sha256:evil", origin: THEIRS }),
+        directoryCandidate({ version: "1.1.0", origin: MINE }),
+      ],
       now: () => AT,
       platform: HOST,
     });
-    expect(behind.packageUpdates).toBe(0);
-
-    const answered = checkForUpdates({
-      services,
-      installedPackages: [installedPackage({ version: "1.0.0" })],
-      directory: [directoryCandidate({ version: "1.1.0", origin: THEIRS, precededByUnreadSource: false })],
-      now: () => AT,
-      platform: HOST,
-    });
-    expect(answered.packageUpdates).toBe(1);
-    expect(packageNotices()[0]?.body).toContain(THEIRS.label);
+    expect(report.packageUpdates).toBe(0);
+    expect(packageNotices()).toEqual([]);
   });
 });
 

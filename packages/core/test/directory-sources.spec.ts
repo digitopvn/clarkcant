@@ -20,7 +20,14 @@ import {
   refreshDirectory,
   sourcesUnreadBefore,
 } from "../src/directory-sources.ts";
-import { DIRECTORY_FEED_FORMAT, feedUrlProblem, fetchDirectoryFeed, type FeedFetch } from "../src/marketplace-directory.ts";
+import {
+  DIRECTORY_FEED_FORMAT,
+  feedLabel,
+  feedUrlProblem,
+  fetchDirectoryFeed,
+  redactedAddress,
+  type FeedFetch,
+} from "../src/marketplace-directory.ts";
 
 /**
  * The directory as composed sources: the index file read exactly as before, remote marketplaces read from the copy this
@@ -329,6 +336,20 @@ describe("the bounds of one fetch", () => {
     const tokened = composeDirectory([customMarketplaceDirectory("http://catalog.example.com/feed?token=s3cret", tempDir())]);
     expect(tokened.kind === "unreadable" ? tokened.reason : "").toContain("catalog.example.com/feed");
     expect(JSON.stringify(tokened)).not.toContain("s3cret");
+  });
+
+  it("never echoes a query, fragment or userinfo of an address that does not parse as a URL", () => {
+    // The second parses, as a `me:` scheme with no host, and is named the same way.
+    const unparseable = ["catalog.acme.example/feed?token=SECRET123", "me:SECRET123@catalog.acme.example/feed#SECRET123"];
+    for (const raw of unparseable) {
+      expect(redactedAddress(raw)).toBe("catalog.acme.example/feed");
+      expect(feedLabel(raw)).toBe("catalog.acme.example/feed");
+      const state = composeDirectory([customMarketplaceDirectory(raw, tempDir())]);
+      expect(state.kind).toBe("unreadable");
+      expect(JSON.stringify(state)).not.toContain("SECRET123");
+    }
+    expect(feedUrlProblem("catalog.acme.example/feed?token=SECRET123")).toBe("catalog.acme.example/feed is not a URL");
+    expect(redactedAddress("?token=SECRET123")).toBe("an address with no host");
   });
 });
 

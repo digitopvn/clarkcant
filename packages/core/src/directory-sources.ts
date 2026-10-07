@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import type { DirectoryEntry, UnreadEntryFields } from "@clarkcant/contracts";
+import type { DirectoryEntry, DirectorySourceRef, UnreadEntryFields } from "@clarkcant/contracts";
 
 import {
   directoryIndexPath,
@@ -77,9 +77,23 @@ function isOff(value: string | undefined): boolean {
 
 export const OFFICIAL_MARKETPLACE_LABEL = "ClarkCant Marketplace";
 
+/** The id of the index file named by `CC_DIRECTORY_INDEX`, the only source a directory had before sources were recorded. */
+export const LOCAL_DIRECTORY_SOURCE_ID = "local";
+
+/**
+ * The source of a package installed before its generation recorded one. The index file was the only source then, so
+ * such a package came from it: its updates come only from the index file, and taking it from another source means
+ * installing that source's listing by name, as for any recorded package.
+ */
+export const PRE_SOURCES_DIRECTORY_SOURCE: DirectorySourceRef = {
+  id: LOCAL_DIRECTORY_SOURCE_ID,
+  kind: "local-file",
+  label: "the directory index file (CC_DIRECTORY_INDEX)",
+};
+
 /** The index file named by `CC_DIRECTORY_INDEX`, read exactly as `readDirectoryIndex` always has. */
 export function localFileDirectory(path: string): DirectoryProvider {
-  const origin: DirectoryOrigin = { id: "local", kind: "local-file", label: path };
+  const origin: DirectoryOrigin = { id: LOCAL_DIRECTORY_SOURCE_ID, kind: "local-file", label: path };
   return {
     origin,
     read: () => {

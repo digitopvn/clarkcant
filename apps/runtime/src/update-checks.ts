@@ -1,10 +1,11 @@
 import { entryFitsHost, platformForHost, type Instant, type Platform } from "@clarkcant/contracts";
 import {
   HOST_API_VERSION,
+  LOCAL_DIRECTORY_SOURCE_ID,
+  PRE_SOURCES_DIRECTORY_SOURCE,
   originOf,
   readDirectory,
   refreshDirectory,
-  sourcesUnreadBefore,
   listInstalledPackages,
   type DirectoryOrigin,
   type InstallDeps,
@@ -49,8 +50,9 @@ import {
  *
  * An update is only ever offered from the source the package was installed from (`InstalledPackageView.directorySource`):
  * the same package id listed by another source is another publisher's claim, not a newer version of what is installed.
- * A package installed before the source was recorded takes its updates from the person's index file when that lists it,
- * and otherwise from the source that lists it, only when every earlier source was read; the notice names that source.
+ * A package installed before the source was recorded came from the person's index file, the only source there was, so
+ * it takes its updates from the index file alone; when the index file does not list it, no update is offered. The
+ * notice names the source.
  */
 
 export const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
@@ -70,30 +72,20 @@ export interface UpdateCandidate {
   hostApi: { min: number; max: number };
   /** The platforms the entry declares it runs on. */
   platforms: readonly Platform[];
-  /** The directory source that lists the entry. */
+  /** The directory source that lists the entry. Unknown counts as the index file, the only source there once was. */
   origin?: DirectoryOrigin;
-  /**
-   * True when a source earlier in precedence had nothing to list when the directory was read, so it may list this
-   * package id itself: the entry is offered only to a package installed from its own source.
-   */
-  precededByUnreadSource?: boolean;
 }
 
 /** The longest source name an update notice carries, so the notice stays within its bound. */
 const NOTICE_SOURCE_LABEL_MAX = 120;
 
 /**
- * Which source an installed package's updates may come from: the one recorded at install; for a package installed
- * before that, the person's index file when it lists the package. Undefined means no source is pinned.
+ * Whether `candidate` comes from the source an update for `installed` may be offered from: the one recorded at install,
+ * or, for a package installed before sources were recorded, the index file (`PRE_SOURCES_DIRECTORY_SOURCE`).
  */
-function pinnedSourceId(installed: InstalledPackageView, directory: readonly UpdateCandidate[]): string | undefined {
-  if (installed.directorySource !== undefined) return installed.directorySource.id;
-  return directory.find((entry) => entry.packageId === installed.packageId && entry.origin?.kind === "local-file")?.origin?.id;
-}
-
-/** Whether `candidate` comes from a source an update for `installed` may be offered from. */
-function fromAllowedSource(candidate: UpdateCandidate, pinned: string | undefined): boolean {
-  return pinned === undefined ? candidate.precededByUnreadSource !== true : candidate.origin?.id === pinned;
+function fromInstalledSource(candidate: UpdateCandidate, installed: InstalledPackageView): boolean {
+  const pinned = (installed.directorySource ?? PRE_SOURCES_DIRECTORY_SOURCE).id;
+  return (candidate.origin?.id ?? LOCAL_DIRECTORY_SOURCE_ID) === pinned;
 }
 
 function noticeSourceLabel(origin: DirectoryOrigin | undefined): { sourceLabel?: string } {
@@ -222,12 +214,11 @@ export function checkForUpdates(input: CheckForUpdatesInput): UpdateCheckReport 
   if (platform !== undefined) {
     for (const installed of input.installedPackages) {
       const skipped = skippedFor(input.services, "package", installed.packageId);
-      const pinned = pinnedSourceId(installed, input.directory);
       const newest = input.directory
         .filter(
           (entry) =>
             entry.packageId === installed.packageId &&
-            fromAllowedSource(entry, pinned) &&
+            fromInstalledSource(entry, installed) &&
             isInstallableCandidate(entry, platform) &&
             isNewerVersion(entry.version, installed.version) &&
             !skipped(entry.version),
@@ -303,9 +294,7 @@ export function runUpdateCheckOnce(deps: UpdateCheckJobDeps): UpdateCheckReport 
             digest: entry.digest,
             hostApi: entry.hostApi,
             platforms: entry.platforms,
-            ...(origin === undefined
-              ? {}
-              : { origin, precededByUnreadSource: sourcesUnreadBefore(index, origin).length > 0 }),
+            ...(origin === undefined ? {} : { origin }),
           };
         })
       : [];

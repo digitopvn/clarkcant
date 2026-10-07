@@ -4,14 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { directoryEntrySchema, messageBlockSchema, type DirectoryEntry } from "@clarkcant/contracts";
-import { DIRECTORY_FEED_FORMAT, customFeedId, listInstalledPackages } from "@clarkcant/core";
+import {
+  DEFAULT_EXECUTION_POLICY_CONFIG,
+  directoryEntrySchema,
+  inboxResponseSchema,
+  messageBlockSchema,
+  type DirectoryEntry,
+  type Instant,
+} from "@clarkcant/contracts";
+import {
+  DIRECTORY_FEED_FORMAT,
+  EXECUTION_POLICY_PREFERENCE_KEY,
+  customFeedId,
+  listInstalledPackages,
+  refreshDirectory,
+  writeRegisteredPreference,
+} from "@clarkcant/core";
 import { startFakeNpmRegistry } from "@clarkcant/core/test-support/fake-npm-registry";
 
 import { runCli } from "../../../packages/widget-cli/src/cli.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { createSearchDirectoryTool } from "../src/search-directory-tool.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { runUpdateCheckOnce } from "../src/update-checks.ts";
 
 /**
  * A package listed by a remote marketplace, installed through the one install route.
@@ -77,6 +92,31 @@ async function install(entry: Pick<DirectoryEntry, "packageId" | "version">, sou
     headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
     body: JSON.stringify({ packageId: entry.packageId, version: entry.version, ...(sourceId === undefined ? {} : { sourceId }) }),
   });
+}
+
+/** A request through the gateway with the node's own token, as the app sends it. */
+async function call(method: string, path: string, body?: Record<string, unknown>): Promise<GatewayResponse> {
+  return handleRequest(deps, {
+    method,
+    path,
+    query: {},
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    body: body === undefined ? "" : JSON.stringify(body),
+  });
+}
+
+/** The person's policy asks before anything is written locally, which is the category an install is decided in. */
+function askBeforeInstalling(): void {
+  const written = writeRegisteredPreference(
+    { db: services.runtime.db, now: () => AT as Instant },
+    {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      key: EXECUTION_POLICY_PREFERENCE_KEY,
+      value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [{ effectCategory: "local-write", decision: "ask" }] },
+      source: "user",
+    },
+  );
+  if (!written.ok) throw new Error(written.message);
 }
 
 /** A feed address on loopback that nothing answers: closed right after it bound. */
@@ -237,6 +277,107 @@ describe("which source a package is installed from", () => {
       expect(installedSource(entry.packageId)).toMatchObject({ id: customFeedId(mine.url) });
     } finally {
       await registry.close();
+    }
+  });
+
+  it("records the source the person was asked about, and refuses the approval once another source owns the listing", async () => {
+    const { entry, tarball } = await authorPackage();
+    const registry = await startFakeNpmRegistry({ name: "quick-notes", version: entry.version, tarball });
+    try {
+      askBeforeInstalling();
+      const first = await startFeed([entry]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", first.url);
+      setEnv("CC_NPM_REGISTRY_URL", registry.url);
+      const askedFirst = await install(entry, customFeedId(first.url));
+      expect(askedFirst.status).toBe(202);
+      const firstApproval = (askedFirst.body as { approvalId: string }).approvalId;
+
+      // Another catalog now serves the identical bytes, and the person is asked again about that one.
+      const second = await startFeed([entry]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", second.url);
+      const askedSecond = await install(entry, customFeedId(second.url));
+      expect(askedSecond.status).toBe(202);
+      const secondApproval = (askedSecond.body as { approvalId: string }).approvalId;
+      expect(secondApproval).not.toBe(firstApproval);
+      const inbox = inboxResponseSchema.parse((await call("GET", "/inbox")).body);
+      expect(inbox.waiting.filter((item) => item.kind === "install-approval").map((item) => item.approvalId)).toEqual([
+        secondApproval,
+      ]);
+
+      const stale = await call("POST", `/packages/approvals/${firstApproval}/decision`, { decision: "granted", digest: entry.digest });
+      expect(stale.status).toBe(409);
+      expect((stale.body as Record<string, unknown>)["code"]).toBe("DIRECTORY_SOURCE_CHANGED");
+      expect(installedSource(entry.packageId)).toBeUndefined();
+
+      const current = await call("POST", `/packages/approvals/${secondApproval}/decision`, { decision: "granted", digest: entry.digest });
+      expect(current.status).toBe(200);
+      expect(installedSource(entry.packageId)).toMatchObject({ id: customFeedId(second.url) });
+    } finally {
+      await registry.close();
+    }
+  });
+
+  it("offers a package installed before sources were recorded no update from a marketplace when the index file does not list it", async () => {
+    const { entry, tarball } = await authorPackage();
+    const registry = await startFakeNpmRegistry({ name: "quick-notes", version: entry.version, tarball });
+    try {
+      const feed = await startFeed([entry]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", feed.url);
+      setEnv("CC_NPM_REGISTRY_URL", registry.url);
+      expect((await install(entry)).status).toBe(200);
+      // As a generation written before this node recorded where a package came from.
+      services.runtime.db
+        .prepare("UPDATE package_generations SET document = json_remove(document, '$.directorySource') WHERE package_id = ?")
+        .run(entry.packageId);
+      expect(installedSource(entry.packageId)).toBeUndefined();
+
+      const newer = await startFeed([{ ...entry, version: "9.0.0", digest: "sha256:another-publisher" }]);
+      setEnv("CC_DIRECTORY_MARKETPLACES", newer.url);
+      await refreshDirectory({ env: process.env, dataDir: services.runtime.dataDir });
+      const report = runUpdateCheckOnce({
+        services,
+        dataDir: services.runtime.dataDir,
+        installDeps: { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => AT as Instant, newId: services.conductor.newId },
+      });
+      expect(report.packageUpdates).toBe(0);
+
+      // Taking it from the marketplace is installing that listing by name, as for any recorded package.
+      const unnamed = await install({ packageId: entry.packageId, version: "9.0.0" });
+      expect(unnamed.status).toBe(409);
+      expect((unnamed.body as Record<string, unknown>)["code"]).toBe("DIRECTORY_SOURCE_CHANGED");
+    } finally {
+      await registry.close();
+    }
+  });
+});
+
+describe("a feed address that carries a token", () => {
+  it("never shows the token in a refusal, a source label, the package list or the search card", async () => {
+    const indexPath = join(dir, "index.json");
+    writeFileSync(indexPath, JSON.stringify([]));
+    const feeds = "catalog.acme.example/feed?token=SECRET123 me:SECRET123@catalog.acme.example/other#SECRET123";
+    setEnv("CC_DIRECTORY_INDEX", indexPath);
+    setEnv("CC_DIRECTORY_MARKETPLACES", feeds);
+
+    const refused = await install({ packageId: "com.example.quick-notes", version: "1.0.0" });
+    expect(refused.status).toBe(404);
+    expect(String((refused.body as Record<string, unknown>)["message"])).toContain("catalog.acme.example/feed is not a URL");
+
+    const packages = await call("GET", "/packages");
+    expect(packages.status).toBe(200);
+
+    const tool = createSearchDirectoryTool({
+      directory: { env: { CC_DIRECTORY_INDEX: indexPath, CC_DIRECTORY_MARKETPLACES: feeds, CC_OFFICIAL_MARKETPLACE: "off" }, dataDir: join(dir, "node") },
+      newId: () => "market_token",
+    });
+    const answer = (await tool.execute({ query: "notes" })) as { text: string; hostCard?: Record<string, unknown> };
+    expect(answer.hostCard?.["sources"]).toEqual([
+      expect.objectContaining({ kind: "custom-marketplace", state: "unreadable", label: "catalog.acme.example/feed" }),
+      expect.objectContaining({ kind: "custom-marketplace", state: "unreadable", label: "catalog.acme.example/other" }),
+    ]);
+
+    for (const shown of [refused.body, packages.body, answer.text, answer.hostCard]) {
+      expect(JSON.stringify(shown)).not.toContain("SECRET123");
     }
   });
 });

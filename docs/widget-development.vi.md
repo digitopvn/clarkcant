@@ -3071,9 +3071,12 @@ package id của nó cho nguồn sau:
   chọn đó sẽ trả `409 DIRECTORY_SOURCE_UNREAD` và nêu tên cả hai nguồn.
 - Mỗi gói ghi lại nguồn mà nó được cài từ đó. Lần kiểm tra cập nhật chỉ đề xuất các version mới hơn từ chính nguồn đó,
   và thông báo cập nhật nêu tên nguồn. Cài cùng package id từ một nguồn khác sẽ trả `409 DIRECTORY_SOURCE_CHANGED`,
-  trừ khi bạn bấm Cài trên dòng của nguồn đó. Gói được cài trước khi nguồn được ghi lại nhận cập nhật từ file index
-  của bạn khi file có liệt kê gói. Nếu không, gói nhận cập nhật từ nguồn đang liệt kê nó, và chỉ khi mọi nguồn đứng
-  trước đều đọc được.
+  trừ khi bạn bấm Cài trên dòng của nguồn đó. Gói được cài trước khi nguồn được ghi lại đến từ file index của bạn, vì
+  lúc đó đó là nguồn duy nhất, nên được coi là cài từ file index: gói chỉ nhận cập nhật từ file, không có thông báo cập
+  nhật khi file không liệt kê gói, và chỉ chuyển sang nguồn khác khi bạn bấm Cài trên dòng của nguồn đó.
+- Một lần cài mà policy hỏi bạn sẽ ghi lại nguồn sở hữu listing lúc bạn được hỏi. Nếu tới lúc bạn chấp thuận, một nguồn
+  khác đã sở hữu listing đó, kể cả với nội dung y hệt, việc chấp thuận trả `409 DIRECTORY_SOURCE_CHANGED`, không có gì
+  được cài và câu hỏi rời khỏi inbox; cài lại sẽ hỏi về nguồn mới.
 
 Khi không đọc được nguồn nào (ví dụ chỉ bật Marketplace chính thức và nó chưa phục vụ feed), directory là
 `unreadable`. Lý do nêu tên từng nguồn, vì sao nó lỗi, và cách thiết lập một file index hoặc một catalog.
@@ -3089,7 +3092,9 @@ catalog riêng mà không cần chạy dịch vụ. Các mục được đọc t
 listing từ xa không được nêu một đường dẫn trên máy này (`source.kind: "local"`), và Marketplace chính thức chỉ liệt kê
 gói npm. Một lần làm mới có giới hạn (10 giây, 8 MiB mỗi trang, 20 trang, 5.000 mục) và feed vượt giới hạn bị từ chối
 toàn bộ. Yêu cầu không mang credential, cookie hay header định danh, địa chỉ có username hoặc password bị từ chối, và
-redirect không được đi theo. Một listing vẫn chỉ là con trỏ: cài nó sẽ resolve lại đúng version npm, kiểm tra
+redirect không được đi theo. Feed chỉ được gọi tên bằng host và path; với địa chỉ không phân tích được, mọi thứ từ dấu
+`?` hoặc `#` đầu tiên và mọi thứ trước dấu `@` đều bị cắt bỏ, nên token trong địa chỉ không bao giờ xuất hiện trong
+nhãn, thông báo lỗi, card tìm kiếm hay `GET /packages`. Một listing vẫn chỉ là con trỏ: cài nó sẽ resolve lại đúng version npm, kiểm tra
 integrity của registry và `digest` của mục (content digest của runtime mà `clark widget pack` ghi là
 `npm.contentDigest`), đọc `clarkcant.json` đã tải về và hỏi policy, y như với listing trong file. Không gì trong một
 listing cấp được quyền. Marketplace chính thức chưa phục vụ feed này; cho tới khi có, nguồn đó báo `unsupported` bằng

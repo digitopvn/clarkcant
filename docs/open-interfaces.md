@@ -705,8 +705,11 @@ read or the index file is broken. It takes an optional `sourceId`: the source th
 row. Without one, it answers `409 DIRECTORY_SOURCE_UNREAD` when an earlier source could not be read, and
 `409 DIRECTORY_SOURCE_CHANGED` when the package is installed from a different source. With one, it answers
 `409 DIRECTORY_SOURCE_CHANGED` when another source owns the listing by now. The node records the source on the
-installed generation (`directorySource`), and update notices come only from that source. A listing from a marketplace
-installs through exactly the same checks as one from a file.
+installed generation (`directorySource`), and update notices come only from that source; a generation installed
+before sources were recorded counts as installed from the index file. An install approval holds the source that owned
+the listing when the person was asked, and `POST /packages/approvals/{id}/decision` with `granted` answers
+`409 DIRECTORY_SOURCE_CHANGED` when another source owns it by then. A listing from a marketplace installs through
+exactly the same checks as one from a file.
 
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
 Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
