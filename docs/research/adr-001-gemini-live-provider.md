@@ -54,6 +54,8 @@ Ephemeral tokens (the blueprint's "isolated auth bridge") remain available as a 
 
 **Not accepted:** silently presenting speech-to-text plus text-to-speech as a live conversation. The adapter keeps refusing that substitution, as it does today.
 
+**Note (2026-10-06):** [ADR-003](adr-003-speech-recognition-seam.md) adds a separate speech-recognition seam and an opt-in dedicated recognizer for the person's words. It does not reopen the rule above. Gemini Live remains the voice and the barge-in, the same audio still reaches it, and its own transcription remains the default and the fallback.
+
 ## Evidence
 
 `plans/reports/verification-260917-0957-gemini-live-handshake.md` records the catalogue query that resolved the model id and a live handshake that completed a turn: setup accepted in 679 ms, 80,160 bytes of PCM at 24 kHz returned, `sessionResumptionUpdate` observed.
