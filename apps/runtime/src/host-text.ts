@@ -301,6 +301,7 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   search_files: "Search files on this machine",
   search_history: "Search this machine's history",
   set_map_tiles: "Map tiles",
+  show_changelog: "See what's new in Clark",
   show_view: "Show a view",
   start_browser_task: "Work in the browser",
   stop_work: "Stop running work",

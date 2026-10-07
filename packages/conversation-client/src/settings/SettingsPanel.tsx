@@ -10,6 +10,7 @@ import { ControlSettings } from "./ControlSettings.tsx";
 import { DeveloperSettings } from "./DeveloperSettings.tsx";
 import { DevicesVoiceSettings } from "./DevicesVoiceSettings.tsx";
 import { ExperienceSettings } from "./ExperienceSettings.tsx";
+import { ChangelogSettings } from "./ChangelogSettings.tsx";
 import { ExtensionsSettings } from "./ExtensionsSettings.tsx";
 import { MapTilesSettings } from "./MapTilesSettings.tsx";
 import { MemorySettings } from "./MemorySettings.tsx";
@@ -379,6 +380,7 @@ export function SettingsPanel({
             themeGalleryRequest={themeGalleryRequest}
           />
         )}
+        {tab === "experience" && <ChangelogSettings client={client} />}
         {tab === "ai" && <AiRoutingSettings client={client} prefs={prefs} facts={facts} />}
         {tab === "control" && (
           <ControlSettings

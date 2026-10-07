@@ -20,13 +20,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 7891,
-      "sha256": "3eacee70e2552c1db5c607fe220386c14cc33fefe70bfd9c682331072accde9b"
+      "bytes": 8160,
+      "sha256": "a3f68953dd399be7fd41f00ce7a0940c721fefdc354ae6a805fdc4909d75a84c"
     },
     {
       "path": "README.vi.md",
-      "bytes": 8682,
-      "sha256": "1ea94eb9f1d2a36e3a5fb66cdd2638dbfe88cc5eec1105473e7a25b62f41f6ca"
+      "bytes": 8979,
+      "sha256": "54088f1b837c152730621d7d6ba849f09b04a9d6574037c2ad5b300b5c14d747"
     },
     {
       "path": "browser-computer-use.md",
