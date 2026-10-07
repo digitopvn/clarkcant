@@ -49,4 +49,8 @@ export * from "./conductor.ts";
 export * from "./conductor-text.ts";
 export * from "./app-intents.ts";
 export * from "./automation.ts";
+export * from "./channel-attention.ts";
+export * from "./channel-authority.ts";
+export * from "./channel-delivery-policy.ts";
+export * from "./channel-reply-text.ts";
 export * from "./capability-waiters.ts";

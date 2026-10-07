@@ -20,6 +20,7 @@ import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
+import { startChannelService } from "../channels/channel-service.ts";
 import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startArtifactSweep } from "../artifact-broker.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
@@ -360,6 +361,14 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     deps.services,
     sessionFixture ? {} : { pollSignals: createGithubPolling(deps.services).pollDue },
   );
+
+  /*
+   * External messaging channels. No provider adapter ships with the node yet, so the registry starts empty; the
+   * service still settles what a previous process left (a turn it was running, a reply it was sending) and routes any
+   * channel message already recorded.
+   */
+  deps.services.channels = startChannelService(deps.services);
+  deps.services.channels.kick();
 
   /*
    * What carries queued envelopes to paired nodes. A node that has paired with nothing finds nothing to send, and one

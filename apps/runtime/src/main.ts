@@ -536,6 +536,8 @@ async function main(): Promise<void> {
     services.artifactSweep?.stop();
     effectNotices.stop();
     services.automation?.stop();
+    // Started now and awaited before the database closes: a channel turn still finishing writes as it does.
+    const channelsStopped = services.channels?.stop(1_500);
     services.peerDelivery?.stop();
     void (async () => {
       try {
@@ -567,6 +569,9 @@ async function main(): Promise<void> {
           if (!(await dispatch.drain(budget))) {
             process.stderr.write(`stopped tasks were still tidying up after ${String(budget)} ms; closing anyway\n`);
           }
+        }
+        if (channelsStopped !== undefined && !(await channelsStopped)) {
+          process.stderr.write("channel turns were still running at shutdown; closing anyway\n");
         }
         await modelTurn?.dispose();
         // Every browser token still held is withdrawn where its provider allows, rather than left to lapse.
