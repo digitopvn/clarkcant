@@ -114,10 +114,16 @@ tiếng Anh có ngữ cảnh tiếng Việt, gồm mười hai mục âm phải 
 recognizer trong đó là giả lập: các lỗi transcription live điển hình được viết tay, không phải bản ghi âm. Normaliser
 không đổi câu tham chiếu chuẩn nào.
 
-| Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Utterance khớp hoàn toàn | Thay đổi | Abstain | Hồi quy |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| thô | 22.8% | 3.8% | 77.1% | 26.2% | - | - | - |
-| đã chuẩn hóa | 3.7% | 0.8% | 16.2% | 77.4% | 64 | 1 | 0 |
+| Giai đoạn | WER | CER | Tỷ lệ lỗi thuật ngữ kỹ thuật | Khớp hoàn toàn (nghiêm ngặt) | Khớp hoàn toàn (dung sai âm thanh) | Thay đổi | Abstain | Hồi quy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| thô | 22.8% | 3.8% | 77.1% | 26.2% | 42.9% | - | - | - |
+| đã chuẩn hóa | 3.7% | 0.8% | 16.2% | 77.4% | 84.5% | 64 | 1 | 0 |
+
+Khớp nghiêm ngặt so sánh nguyên câu sau khi gộp khoảng trắng. Khớp dung sai âm thanh còn bỏ qua chữ hoa/thường ở bất kỳ
+đâu trong câu và các dấu `. , ! ? ; : …` ở cuối câu; dấu câu nằm bên trong câu vẫn được tính. Vì gộp chữ hoa/thường trên
+toàn câu, phép đo này cũng bỏ qua cách viết hoa của định danh (`useeffect` thay cho `useEffect`), điều mà Technical Term
+Error Rate (phân biệt hoa/thường) vẫn tính là lỗi. Các recognizer thật được đo trong #468 viết hoa chữ đầu và thêm dấu
+kết câu, nên khớp nghiêm ngặt của từng recognizer đó là 0% dù mọi từ đều đúng.
 
 Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (lệnh từ 9/14 lên 11/14, phiên bản giữ 2/2); symbol từ 1/21 lên
 18/21, path từ 3/9 lên 8/9, từ viết tắt từ 0/9 lên 9/9. Phần còn sót là có chủ đích:
@@ -133,8 +139,12 @@ Lệnh và phiên bản không bao giờ tệ hơn sau chuẩn hóa (lệnh từ
 - đoạn mơ hồ `voiceSession` / `voice_session` được abstain.
 
 Cùng lệnh đó với `--audio <manifest> --recognizer gemini-transcribe-live|gemini-live` nhận dạng bản ghi âm thật, chấm
-điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lượt chạy đó cần `GEMINI_API_KEY`, và dừng với thông báo
-"external gate" nếu không có key.
+điểm chúng bên cạnh corpus, và báo độ trễ chốt câu. Lặp lại `--recognizer` để chạy nhiều recognizer trên cùng bộ bản
+ghi và chấm điểm chúng cạnh nhau trong một bảng, mỗi recognizer có tên `<id>-audio`. Lượt chạy đó cần `GEMINI_API_KEY`,
+và dừng với thông báo "external gate" nếu không có key. `--transcripts` in thêm transcript của từng utterance theo
+từng recognizer, cả thô lẫn đã chuẩn hóa, cạnh câu tham chiếu, và đánh dấu mỗi transcript đạt thước đo khớp nào. Dấu
+phân tách quen thuộc dùng được:
+`corepack pnpm --filter @clarkcant/voice-adapters bench:transcription -- --transcripts`.
 
 ## Hệ quả
 
