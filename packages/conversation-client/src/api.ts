@@ -9,6 +9,7 @@
 import type {
   AppearanceResponse,
   AutonomySettings,
+  ChangelogView,
   CompositionGraph,
   ConnectionStatus,
   GraphSemanticState,
@@ -31,6 +32,7 @@ import {
   COMPOSER_SURFACE_HEADER,
   MAP_TILES_OFFLINE_REASONS,
   appIntentDecisionSchema,
+  changelogViewSchema,
   WIDGET_PERFORM_HEADER,
   WIDGET_PERFORM_VERSION,
   type WidgetPerformReport,
@@ -1522,6 +1524,16 @@ export class GatewayClient {
    */
   piSettings(): Promise<{ settings: { key: string; value: string }[] }> {
     return this.#call("GET", "/pi-settings");
+  }
+
+  /**
+   * What this version of Clark changed: the release notes embedded with the node's build, read through the same
+   * capability `/changelog` answers from. Checked against the contract, so a malformed answer is an error rather than
+   * a half-drawn list.
+   */
+  async changelog(since?: string): Promise<ChangelogView> {
+    const query = since === undefined || since.trim() === "" ? "" : `?since=${encodeURIComponent(since.trim())}`;
+    return changelogViewSchema.parse(await this.#call("GET", `/changelog${query}`));
   }
 
   /**

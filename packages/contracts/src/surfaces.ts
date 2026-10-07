@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
+import { changelogCardSchema } from "./release-notes.ts";
 import { commandCardSchema } from "./slash-commands.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
 import {
@@ -853,6 +854,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   reconnectCardSchema,
   formCardSchema,
   commandCardSchema,
+  changelogCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
@@ -880,6 +882,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "reconnect-card",
   "form-card",
   "command-card",
+  "changelog-card",
   "browser-session-card",
   "computer-session-card",
   "terminal-session-card",
