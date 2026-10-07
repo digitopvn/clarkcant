@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -185,8 +185,11 @@ describe("slash commands in a conversation", () => {
       expect(plain.card?.rows.map((row) => row.rowId)).toEqual(["choose"]);
       expect(plain.card?.rows[0]?.actions).toEqual([expect.objectContaining({ tone: "primary", action: { kind: "develop-folder" } })]);
 
-      const folder = join(dir, "projects", "đồng hồ");
-      const named = await command(id, `/develop ${folder}`);
+      const typed = join(dir, "projects", "đồng hồ");
+      mkdirSync(typed, { recursive: true });
+      // The card names the folder as it resolves on the node.
+      const folder = realpathSync.native(typed);
+      const named = await command(id, `/develop ${typed}`);
       expect(named.card?.rows.map((row) => row.rowId)).toEqual(["proposed", "choose"]);
       expect(named.card?.rows[0]).toMatchObject({ label: folder, actions: [{ action: { kind: "develop-folder", root: folder } }] });
       // The card only offers: nothing starts until the person presses it.

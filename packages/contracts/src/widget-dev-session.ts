@@ -242,6 +242,12 @@ export const widgetDevSessionViewSchema = z.strictObject({
   showingLastKnownGood: z.boolean(),
   /** The widget the session placed in its conversation, when it placed one. */
   placed: z.strictObject({ conversationId: z.string().min(1).max(200), instanceId: z.string().min(1).max(200) }).optional(),
+  /**
+   * True when the person chose this folder, so Clark may develop in it and in every folder inside it. A start is kept as
+   * a choice only when the path pressed is the folder itself (not a link to it) and the folder is not a whole drive or
+   * the home folder; otherwise the session runs and this stays absent.
+   */
+  chosenByPerson: z.literal(true).optional(),
 });
 export type WidgetDevSessionView = z.infer<typeof widgetDevSessionViewSchema>;
 
@@ -263,9 +269,14 @@ export const widgetDevFolderForgetSchema = z.strictObject({
 });
 export type WidgetDevFolderForget = z.infer<typeof widgetDevFolderForgetSchema>;
 
-/** What a forget did: the folder it matched, and whether Clark had been allowed to develop there until now. */
+/**
+ * What a forget did: the folder it matched, and whether it took a choice back. `stillCoveredBy` names a folder Clark may
+ * still develop in that holds this one (another chosen folder, or a project root the person set), so the answer never
+ * says Clark lost access it still has.
+ */
 export const widgetDevFolderForgetResultSchema = z.strictObject({
   root: z.string().min(1).max(1000),
   forgotten: z.boolean(),
+  stillCoveredBy: z.string().min(1).max(1000).optional(),
 });
 export type WidgetDevFolderForgetResult = z.infer<typeof widgetDevFolderForgetResultSchema>;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView, WidgetDevSessionView } from "@clarkcant/contracts";
+import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView, WidgetDevFolderForgetResult, WidgetDevSessionView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
@@ -76,7 +76,29 @@ export function feedbackReportToReuse(previous: FeedbackCardState | undefined, r
  * waiting for the person's answer in the inbox, built but not run (with the node's reason), or a first build that
  * failed. Read from the session the node answered with, never assumed from the press.
  */
-export function developOutcomeMessage(view: WidgetDevSessionView, t: (key: MessageKey) => string): string {
+/**
+ * What a press on a `/develop` card came to, and, when the person pressed it, whether the folder was kept as one Clark may
+ * use: the node keeps a choice only for the folder itself (`pressed` was its own path, not a link to it) and never for a
+ * whole drive or the home folder (`chosenByPerson`).
+ */
+export function developOutcomeMessage(view: WidgetDevSessionView, t: (key: MessageKey) => string, pressed?: string): string {
+  const outcome = sessionOutcome(view, t);
+  if (pressed === undefined || view.chosenByPerson === true) return outcome;
+  const leadsElsewhere = pressed.trim().replace(/[\\/]+$/u, "").toLowerCase() !== view.root.replace(/[\\/]+$/u, "").toLowerCase();
+  const kept = fillMessage(t(leadsElsewhere ? "commandCard.develop.notKeptLink" : "commandCard.develop.notKeptBroad"), { folder: view.root });
+  return `${outcome} ${kept}`;
+}
+
+/** What a Forget press did, saying so when the folder stays reachable through a folder that holds it. */
+export function forgetOutcomeMessage(result: WidgetDevFolderForgetResult, t: (key: MessageKey) => string): string {
+  const folder = result.root;
+  if (result.stillCoveredBy !== undefined) {
+    return fillMessage(t(result.forgotten ? "commandCard.develop.forgottenCovered" : "commandCard.develop.notChosenCovered"), { folder, cover: result.stillCoveredBy });
+  }
+  return fillMessage(t(result.forgotten ? "commandCard.develop.forgotten" : "commandCard.develop.notChosen"), { folder });
+}
+
+function sessionOutcome(view: WidgetDevSessionView, t: (key: MessageKey) => string): string {
   const folder = view.root;
   const { activation } = view;
   if (activation.state === "active") return fillMessage(t("commandCard.develop.running"), { folder });
@@ -501,7 +523,7 @@ export function useBlockActions({
       }
       settle({ status: "pending" });
       void client.startWidgetDevSession({ root, conversationId }).then(
-        (view) => settle({ status: "done", message: developOutcomeMessage(view, t) }),
+        (view) => settle({ status: "done", message: developOutcomeMessage(view, t, root) }),
         (error: unknown) => settle({ status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
       );
     },
@@ -576,7 +598,7 @@ export function useBlockActions({
             (result) =>
               settle({
                 status: "done",
-                message: fillMessage(t(result.forgotten ? "commandCard.develop.forgotten" : "commandCard.develop.notChosen"), { folder: result.root }),
+                message: forgetOutcomeMessage(result, t),
               }),
             fail,
           );

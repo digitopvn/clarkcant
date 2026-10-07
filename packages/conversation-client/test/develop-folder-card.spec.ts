@@ -6,7 +6,7 @@ import { type CommandCard, type WidgetDevSessionView, instantSchema } from "@cla
 
 import { CommandCardBlock } from "../src/command-card.tsx";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
-import { developOutcomeMessage } from "../src/use-block-actions.ts";
+import { developOutcomeMessage, forgetOutcomeMessage } from "../src/use-block-actions.ts";
 
 /**
  * The `/develop` card in the page: a typed folder path where the OS folder dialog cannot answer, with the reason it is
@@ -89,6 +89,25 @@ describe("the /develop card", () => {
     expect(failed).toContain("you chose");
     expect(MESSAGES_VI["commandCard.develop.forgotten"]).toContain("{folder}");
     expect(MESSAGES_EN["commandCard.develop.notChosen"]).toContain("{folder}");
+  });
+
+  it("says when a press was not kept as a folder Clark may use, and why", () => {
+    const kept = developOutcomeMessage(view({ chosenByPerson: true }), en, "/home/me/timer");
+    expect(kept).not.toContain(en("commandCard.develop.notKeptLink").slice(0, 20));
+    const link = developOutcomeMessage(view({ root: "/home/me/wide" }), en, "/home/me/timer");
+    expect(link).toContain("The path you gave leads to /home/me/wide");
+    const broad = developOutcomeMessage(view({ root: "/home/me" }), en, "/home/me/");
+    expect(broad).toContain(en("commandCard.develop.notKeptBroad"));
+    // Without a press (a record of the session), nothing is said about choosing.
+    expect(developOutcomeMessage(view({}), en)).not.toContain(en("commandCard.develop.notKeptBroad"));
+  });
+
+  it("says a forgotten folder is still reachable through a folder that holds it", () => {
+    expect(forgetOutcomeMessage({ root: "/a/b", forgotten: true, stillCoveredBy: "/a" }, en)).toBe(
+      en("commandCard.develop.forgottenCovered").replace("{folder}", "/a/b").replace("{cover}", "/a"),
+    );
+    expect(forgetOutcomeMessage({ root: "/a/b", forgotten: false, stillCoveredBy: "/a" }, vi)).toContain("/a");
+    expect(forgetOutcomeMessage({ root: "/a", forgotten: true }, en)).toBe(en("commandCard.develop.forgotten").replace("{folder}", "/a"));
   });
 
   it("says what became of the session, in the owner's language", () => {

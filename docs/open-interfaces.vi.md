@@ -861,7 +861,7 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 | `DELETE /widget-dev/sessions/:id` | Dừng theo dõi (`stopReason: "requested"`). Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
 | `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
-| `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Thu hồi lựa chọn một thư mục của người dùng (`widgetDevFolderForgetSchema`): Clark không được bắt đầu phiên trong thư mục đó, hay trong các thư mục bên trong nó, nữa. Trả `{ root, forgotten }`; `forgotten: false` khi thư mục chưa được chọn, nên bấm hai lần cũng không sao. Các phiên và những gì chúng chạy vẫn giữ nguyên. Chỉ người dùng được gọi. |
+| `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Thu hồi lựa chọn một thư mục của người dùng (`widgetDevFolderForgetSchema`): lựa chọn đó không còn cho Clark bắt đầu phiên trong thư mục đó, hay trong các thư mục bên trong nó, nữa. Trả `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` khi thư mục chưa được chọn, nên bấm hai lần cũng không sao. `stillCoveredBy` nêu một thư mục Clark vẫn được phát triển và chứa thư mục này (một thư mục khác đã chọn, hoặc một giá trị `workspace.roots` người dùng đã ghi), nên Clark vẫn có quyền ở đó cho tới khi thư mục đó cũng bị thu hồi. Các phiên và những gì chúng chạy vẫn giữ nguyên. Chỉ người dùng được gọi. |
 
 Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
 `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` và
@@ -881,15 +881,20 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   duy nhất là không gian widget của Clark, `<dataDir>/widget-workspace`.
 - Một phiên người dùng bắt đầu trên route này được theo dõi mọi thư mục cục bộ khác.
 - Một phiên người dùng bắt đầu trên route này đánh dấu thư mục của nó là thư mục họ đã chọn (`chosenByPerson` trong kho
-  phiên của node). Lựa chọn này gồm thư mục đó và mọi thư mục bên trong nó. Bắt đầu lại phiên đó vẫn giữ dấu này, và
+  phiên của node, và trong view của phiên). Dấu này chỉ được đặt khi đường dẫn đưa ra chính là thư mục đó như nó được
+  phân giải lúc ấy: một đường dẫn qua liên kết hoặc junction, hay một đường dẫn đã dẫn tới thư mục khác lúc được bấm,
+  vẫn bắt đầu phiên ở nơi đường dẫn đó dẫn tới nhưng không đánh dấu gì, nên một liên kết bị tráo sau khi thẻ được vẽ
+  không cấp quyền gì. Lựa chọn này gồm thư mục đó và mọi thư mục bên trong nó. Bắt đầu lại phiên đó vẫn giữ dấu này, và
   Clark tiếp tục phiên đó về sau cũng vậy. Cả một ổ đĩa (gốc của hệ thống tệp hoặc của ổ đĩa) hay chính thư mục home
   không bao giờ được đánh dấu: một phiên vẫn có thể chạy ở đó, nhưng Clark không giữ quyền lâu dài với nó.
 - Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu. Nếu về sau đường dẫn đó dẫn tới nơi khác
-  (thư mục bị thay bằng một liên kết hoặc junction), lựa chọn không còn được tính, nên một liên kết bị tráo không mở rộng
-  được nó.
+  (thư mục bị thay bằng một liên kết hoặc junction, bị chuyển đi hoặc bị xoá), lựa chọn không còn được tính, nên một
+  liên kết bị tráo không mở rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu
+  thư mục trở lại đúng đường dẫn đó, lựa chọn lại được tính.
 - Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
   `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
-  `develop_widget`). Thu hồi không dừng phiên đang chạy.
+  `develop_widget`). Thu hồi không dừng phiên đang chạy. Một thư mục nằm trong một thư mục đã chọn khác, hoặc trong một
+  giá trị `workspace.roots`, vẫn được dùng qua thư mục đó, và câu trả lời nói rõ điều này.
 - Một phiên Clark bắt đầu bằng `develop_widget` được theo dõi không gian widget, nơi Clark dựng khung một widget mới,
   một thư mục người dùng đã chọn (hoặc một thư mục nằm trong đó), hoặc một thư mục nằm trong tùy chọn `workspace.roots`
   do chính người dùng ghi. Các thư mục gốc mặc định có sẵn (thư mục home và ổ đĩa node đang chạy) và giá trị do Clark ghi
@@ -899,8 +904,10 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
 - **Chọn một thư mục.** `/develop` (hoặc `/develop <thư mục>`, hoặc hỏi bằng lời, khi đó Clark dùng thao tác `choose`
   của `develop_widget`) trả về cùng thẻ lệnh `develop` do host sở hữu: một dòng cho thư mục được đề xuất, một dòng để
   chọn thư mục khác, các thư mục đã được chọn, và các phiên gần đây của node, trong đó phiên đã dừng có thể được phát
-  triển lại. Dòng đề xuất nêu thư mục mà đường dẫn hiện dẫn tới, và nói rõ khi nó khác đường dẫn được đưa ra; lần bấm
-  trên dòng đó bắt đầu chính thư mục đã phân giải. Thao tác của mỗi dòng là `{ "kind": "develop-folder", "root"? }`, còn
+  triển lại. Dòng đề xuất nêu thư mục mà đường dẫn dẫn tới lúc thẻ được vẽ, và nói rõ khi nó khác đường dẫn được đưa ra;
+  lần bấm gửi đường dẫn chuẩn đó, và nó chỉ được đánh dấu là đã chọn nếu lúc bấm nó vẫn chính là thư mục đó. Đường dẫn
+  không tìm thấy, không đầy đủ, hoặc trỏ tới thư mục chia sẻ qua mạng hay thiết bị thì không có nút, chỉ có một ghi chú
+  nói lý do. Thao tác của mỗi dòng là `{ "kind": "develop-folder", "root"? }`, còn
   của một thư mục đã chọn là `{ "kind": "develop-folder-forget", "root" }`. Thẻ tự nó không
   bắt đầu gì: một lần bấm trong chính client của người dùng gọi `POST /widget-dev/sessions` với quyền chủ động của người
   dùng, nên không agent, widget hay bề mặt máy nào tự chọn được thư mục cho mình. Khi không có `root`, ứng dụng desktop
@@ -998,7 +1005,8 @@ Trong cuộc hội thoại, tool `develop_widget` của Clark (`start`, `choose`
 `stop`) điều khiển cùng các phiên đó. Tool chỉ bắt đầu, dựng lại hoặc đặt widget trong một lượt do người dùng gửi; một
 lượt do bề mặt máy, tác vụ tự động hoặc máy ngang hàng gửi không làm được những việc này. `choose` và `folders` chỉ cho
 người dùng thấy thẻ `develop` (một thư mục để chọn, hoặc các thư mục đã chọn, mỗi thư mục có nút **Thu hồi**); cả hai
-đều không bắt đầu hay thu hồi gì.
+đều không bắt đầu hay thu hồi gì. `choose` đưa ra một lựa chọn lâu dài nên cũng chỉ chạy trong lượt do người dùng gửi;
+`folders` chỉ thu hẹp quyền và chạy được trong mọi lượt.
 
 Lời gọi action của widget, `POST /conversations/{id}/widgets/{instanceId}/actions`, nhận một body được route kiểm bằng
 `actionInvocationSchema` (`packages/contracts/src/widgets.ts`); body nằm ngoài schema nhận `400 INVALID_SCHEMA`, và một

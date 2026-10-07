@@ -70,7 +70,8 @@ export const commandCardActionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("develop-folder"), root: z.string().min(1).max(1000).optional() }),
   /**
    * Takes back the person's choice of a folder, through the person-only `POST /widget-dev/chosen-folders/forget`: Clark
-   * may no longer start sessions in it, or in the folders inside it. Sessions and what they run are left as they are.
+   * may no longer start sessions in it, or in the folders inside it, unless another folder Clark may use holds it (the
+   * answer names that one). Sessions and what they run are left as they are.
    */
   z.strictObject({ kind: z.literal("develop-folder-forget"), root: z.string().min(1).max(1000) }),
 ]);

@@ -37,7 +37,7 @@ import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
 import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
-import { developFolderCard } from "./widget-dev-card.ts";
+import { developFolderCard, type ProposedFolder } from "./widget-dev-card.ts";
 import {
   WIDGET_DEV_DIRECTORY_SOURCE,
   WIDGET_DEV_SNAPSHOTS_MAX,
@@ -115,10 +115,16 @@ export interface WidgetDevSessions {
   /** The folders the person chose that Clark may develop in now (`chosenFolders`), as canonical paths. */
   chosen(): string[];
   /**
-   * Take back the person's choice of a folder: Clark may no longer start sessions in it, or in a folder inside it. Only
-   * the person's own surface calls this (the route is person-only). Sessions there, and what they run, stay as they are.
+   * Every folder the person chose, with whether it is found at its path now (`markedFolders`): one that is missing, or
+   * now leads elsewhere, grants nothing, but is still listed so the person can forget it.
    */
-  forget(root: string): WidgetDevResult<{ root: string; forgotten: boolean }>;
+  marked(): { root: string; found: boolean }[];
+  /**
+   * Take back the person's choice of a folder: it no longer lets Clark start sessions in it, or in a folder inside it.
+   * `stillCoveredBy` names a folder Clark may still develop in that holds it, when there is one. Only the person's own
+   * surface calls this (the route is person-only). Sessions there, and what they run, stay as they are.
+   */
+  forget(root: string): WidgetDevResult<{ root: string; forgotten: boolean; stillCoveredBy?: string }>;
   /** Start watching again every session that was live when the node stopped. */
   resume(): Promise<void>;
   close(): void;
@@ -307,14 +313,19 @@ export function createWidgetDevSessions(
    * (`chosenByPerson`), live or stopped. Only the person-only start writes that mark, so no turn, widget or machine
    * surface can add a folder here; a session the store forgets takes its folder with it.
    */
-  const chosenFolders = (): string[] => {
-    const folders: string[] = [];
+  const chosenFolders = (): string[] => markedFolders().filter((folder) => folder.found).map((folder) => folder.root);
+
+  /**
+   * Every folder marked as chosen, once each. The stored root is the canonical path the person's start resolved; a folder
+   * that now resolves anywhere else (it was replaced by a link, moved or removed) is not `found`, and so grants nothing
+   * (`chosenFolders`), but it is still the person's mark to see and forget.
+   */
+  const markedFolders = (): { root: string; found: boolean }[] => {
+    const folders: { root: string; found: boolean }[] = [];
     for (const session of readDevSessions(dataDir())) {
-      if (session.chosenByPerson !== true || folders.some((folder) => sameRoot(folder, session.root))) continue;
-      // The stored root is the canonical path the person's start resolved. A folder that now resolves anywhere else (it
-      // was replaced by a link, or removed) is not the folder they chose, so it grants nothing.
+      if (session.chosenByPerson !== true || folders.some((folder) => sameRoot(folder.root, session.root))) continue;
       const now = realOrUndefined(session.root);
-      if (now !== undefined && sameRoot(now, session.root)) folders.push(session.root);
+      folders.push({ root: session.root, found: now !== undefined && sameRoot(now, session.root) });
     }
     return folders;
   };
@@ -329,8 +340,14 @@ export function createWidgetDevSessions(
     return sameRoot(root, home) ? "home" : undefined;
   };
 
-  /** The person's start chooses its folder, unless the folder is too broad to keep (`broadFolder`). */
-  const choosesFolder = (initiative: WidgetDevInitiative, root: string): boolean => initiative.kind === "person" && broadFolder(root) === undefined;
+  /**
+   * The person's start chooses its folder only when the path they pressed is the folder itself, as it resolves now. A card
+   * always carries the canonical path it showed; if that path leads somewhere else by the time of the press (a link
+   * swapped in, or a missing folder made a link), the session runs but nothing is kept, so the person never approves one
+   * folder and grants another. A folder too broad to keep (`broadFolder`) is never chosen either.
+   */
+  const choosesFolder = (initiative: WidgetDevInitiative, root: string, pressed: string): boolean =>
+    initiative.kind === "person" && sameRoot(resolve(pressed.trim()), root) && broadFolder(root) === undefined;
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {
     const session = live.get(stored.sessionId);
@@ -360,6 +377,7 @@ export function createWidgetDevSessions(
       ...(lastBuild === undefined ? {} : { lastBuild }),
       showingLastKnownGood: behind,
       ...(stored.placed === undefined ? {} : { placed: stored.placed }),
+      ...(stored.chosenByPerson === true ? { chosenByPerson: true as const } : {}),
     };
   };
 
@@ -836,7 +854,7 @@ export function createWidgetDevSessions(
       const existing = sessions.find((session) => sameRoot(session.root, root) && session.status === "live" && live.has(session.sessionId));
       if (existing !== undefined) {
         const view = await serial(existing.sessionId, async () => {
-          if (choosesFolder(initiative, root)) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
+          if (choosesFolder(initiative, root, input.root)) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
           await settle(existing.sessionId, "start");
           return sessionView(existing.sessionId);
         });
@@ -865,7 +883,7 @@ export function createWidgetDevSessions(
         startedAt: nowInstant(),
         initiative,
         // The person starting a folder is them choosing it; Clark picking up a folder they chose keeps the mark.
-        ...(choosesFolder(initiative, root) ? { chosenByPerson: true as const } : {}),
+        ...(choosesFolder(initiative, root, input.root) ? { chosenByPerson: true as const } : {}),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(input.widgetId === undefined ? {} : { widgetId: input.widgetId }),
         ...(placed === undefined ? {} : { placed }),
@@ -942,20 +960,32 @@ export function createWidgetDevSessions(
       const given = input.proposed?.trim().slice(0, 1000);
       // The card names, and its press starts, the folder the path resolves to now, never only the words Clark or the
       // command gave: a link or `..` cannot make the person approve one folder and grant a wider one.
-      const folder = given === undefined || given === "" || !isAbsolute(given) || isRemoteOrDevicePath(given) ? undefined : realOrUndefined(resolve(given));
-      const broad = folder === undefined ? undefined : broadFolder(folder);
+      // A path that names no local folder now gets no button: a press could only fail, or find something else there later.
+      let proposed: ProposedFolder | undefined;
+      if (given !== undefined && given !== "") {
+        const folder = !isAbsolute(given) || isRemoteOrDevicePath(given) ? undefined : realOrUndefined(resolve(given));
+        if (!isAbsolute(given)) proposed = { given, problem: "relative" };
+        else if (isRemoteOrDevicePath(given) || (folder !== undefined && isRemoteOrDevicePath(folder))) proposed = { given, problem: "remote" };
+        else if (folder === undefined) proposed = { given, problem: "missing" };
+        else {
+          const broad = broadFolder(folder);
+          proposed = { given, folder, ...(broad === undefined ? {} : { broad }) };
+        }
+      }
       return developFolderCard({
         cardId: node.conductor.newId("card"),
         at: nowInstant(),
         locale: input.locale ?? ownerLocale(node.runtime),
-        ...(given === undefined || given === "" ? {} : { proposed: { given, ...(folder === undefined ? {} : { folder }), ...(broad === undefined ? {} : { broad }) } }),
-        chosen: chosenFolders(),
+        ...(proposed === undefined ? {} : { proposed }),
+        chosen: markedFolders(),
         sessions: readDevSessions(dataDir()).map(viewOf),
         ...(input.only === undefined ? {} : { only: input.only }),
       });
     },
 
     chosen: chosenFolders,
+
+    marked: markedFolders,
 
     forget(raw) {
       const given = raw.trim();
@@ -964,16 +994,26 @@ export function createWidgetDevSessions(
       const matches = (root: string): boolean => sameRoot(root, given) || (real !== undefined && sameRoot(root, real));
       const sessions = readDevSessions(dataDir());
       const chosen = sessions.find((session) => session.chosenByPerson === true && matches(session.root));
-      if (chosen === undefined) return { ok: true, value: { root: real ?? given, forgotten: false } };
-      writeDevSessions(
-        dataDir(),
-        sessions.map((session) => {
-          if (session.chosenByPerson !== true || !matches(session.root)) return session;
-          const { chosenByPerson: _forgotten, ...rest } = session;
-          return rest;
-        }),
-      );
-      return { ok: true, value: { root: chosen.root, forgotten: true } };
+      if (chosen !== undefined) {
+        writeDevSessions(
+          dataDir(),
+          sessions.map((session) => {
+            if (session.chosenByPerson !== true || !matches(session.root)) return session;
+            const { chosenByPerson: _forgotten, ...rest } = session;
+            return rest;
+          }),
+        );
+      }
+      const root = chosen?.root ?? real ?? given;
+      // Said rather than hidden: a folder inside another one Clark may still develop in stays reachable through that one.
+      const covering = [
+        ...configuredRoots()
+          .map((path) => realOrUndefined(path))
+          .filter((path): path is string => path !== undefined),
+        ...chosenFolders(),
+      ];
+      const stillCoveredBy = containingRoot(ownedResources(covering), root);
+      return { ok: true, value: { root, forgotten: chosen !== undefined, ...(stillCoveredBy === undefined ? {} : { stillCoveredBy }) } };
     },
 
     async resume() {

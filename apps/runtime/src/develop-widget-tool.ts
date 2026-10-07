@@ -14,7 +14,7 @@ import type { WidgetDevSessions } from "./application/widget-dev-sessions.ts";
  * folder on (`folderCard`): their press starts the session as their own, and Clark never does. `choose` shows that card
  * when the person asks to pick a folder in words or by voice, and `folders` the folders they chose, each with a way to
  * take it back: the same cards `/develop` and `/develop forget` answer with. Only a turn the person sent can start,
- * rebuild or place one; a turn a machine surface, an automation or a peer sent cannot.
+ * rebuild or place one, or offer a folder to choose; a turn a machine surface, an automation or a peer sent cannot.
  */
 
 export interface DevelopWidgetToolDeps {
@@ -29,6 +29,11 @@ export interface DevelopWidgetToolDeps {
 const ACTIONS = ["start", "choose", "folders", "status", "rebuild", "stop", "place"] as const;
 type Action = (typeof ACTIONS)[number];
 const INSTALLS: readonly Action[] = ["start", "rebuild", "place"];
+/**
+ * Only the person's own turn may also show them the card that offers a lasting choice of a folder: a machine surface, an
+ * automation or a peer must not get to frame and time that consent. Listing the chosen folders, which only narrows, stays open.
+ */
+const PERSON_ONLY: readonly Action[] = [...INSTALLS, "choose"];
 
 /** What the model is told about a session: facts, short, with the folder's words marked as data. */
 export function describeDevSession(view: WidgetDevSessionView): string {
@@ -112,8 +117,13 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       if (sessions === undefined) return { text: "This node is not running widget dev sessions. Nothing was started." };
       const origin = deps.origin?.();
       // Only the person's own turn installs: a machine surface, an automation or a peer starts nothing here.
-      if (INSTALLS.includes(action as Action) && origin !== undefined && origin !== "person") {
-        return { text: "A widget dev session installs code, so only a turn the person sent can start, rebuild or place one. Nothing was done." };
+      if (PERSON_ONLY.includes(action as Action) && origin !== undefined && origin !== "person") {
+        return {
+          text:
+            action === "choose"
+              ? "Choosing a folder gives Clark lasting access to it, so only a turn the person sent can offer one. No card was shown; the person can type /develop."
+              : "A widget dev session installs code, so only a turn the person sent can start, rebuild or place one. Nothing was done.",
+        };
       }
       const widgetId = typeof params.widgetId === "string" && params.widgetId.trim() !== "" ? params.widgetId.trim() : undefined;
 
@@ -126,7 +136,7 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
         };
       }
       if (action === "folders") {
-        const chosen = sessions.chosen();
+        const chosen = sessions.marked();
         return {
           text:
             chosen.length === 0

@@ -215,14 +215,14 @@ function developAnswer(services: SlashServices, argument: string, locale: Locale
   // `/develop forget`: the folders Clark may develop in because the person chose them, each with a way to take that back.
   // A folder is always an absolute path, so the word never names one.
   if (argument.toLowerCase() === "forget") {
-    const chosen = services.widgetDev.chosen().length;
+    const chosen = services.widgetDev.marked().length;
     return {
       text:
         chosen === 0
           ? say("Bạn chưa chọn thư mục nào cho Clark, nên không có gì để thu hồi.", "You have not chosen any folder for Clark, so there is nothing to forget.")
           : say(
-              "Đây là những thư mục Clark được phát triển vì bạn đã chọn chúng. Bấm “Thu hồi” ở thư mục nào thì Clark không tự bắt đầu phiên ở đó nữa.",
-              "These are the folders Clark may develop in because you chose them. Press \"Forget\" on one and Clark no longer starts sessions there on its own.",
+              "Đây là những thư mục Clark được phát triển vì bạn đã chọn chúng. Bấm “Thu hồi” ở thư mục nào thì Clark không tự bắt đầu phiên ở đó nữa, trừ khi nó nằm trong một thư mục khác Clark vẫn được dùng.",
+              "These are the folders Clark may develop in because you chose them. Press \"Forget\" on one and Clark no longer starts sessions there on its own, unless it lies inside another folder Clark may still use.",
             ),
       card: services.widgetDev.folderCard({ locale, only: "chosen" }),
     };

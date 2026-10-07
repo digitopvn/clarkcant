@@ -16,7 +16,8 @@ import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, 
  *   POST   /widget-dev/sessions/:id/rebuild  build the folder now
  *   POST   /widget-dev/sessions/:id/place    place the running widget in a conversation (`{ conversationId, widgetId? }`)
  *   POST   /widget-dev/chosen-folders/forget take back the person's choice of a folder (`{ root }`): Clark may no longer
- *                                            start sessions in it or in a folder inside it
+ *                                            start sessions in it or in a folder inside it through that choice
+ *                                            (`stillCoveredBy` names a folder that still lets it)
  *
  * Starting, rebuilding and placing install the folder's package, so a machine surface cannot call them: the gateways
  * refuse them (`isPersonOnlyRoute`), and this route refuses them again for any request a machine surface marked
