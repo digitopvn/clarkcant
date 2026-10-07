@@ -94,8 +94,6 @@ function cardCategory(tool: string): EffectCategory {
  * each says that nothing ran and that the model must not claim otherwise.
  */
 export const channelToolWords = {
-  ownerOnly: (tool: string): string =>
-    `Not run: ${tool}. The sender is not this node's owner, and only the owner can do this. Nothing ran. Tell the sender so.`,
   heldNoGate: (tool: string): string =>
     `Not run: ${tool}. The sender is not this node's owner, no grant on this channel allows it, and this node cannot ask ` +
     "the owner. Nothing ran. Do not say it was done.",

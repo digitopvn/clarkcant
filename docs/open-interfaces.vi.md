@@ -217,8 +217,8 @@ này, và việc lượt đó được làm gì tùy vào người đó là ai. 
   nhất như mọi lượt khác, không hỏi thêm.
 - **Người tham gia.** Bất kỳ ai khác. Lượt đó không nhận bộ nhớ, chỉ dẫn cá nhân hay chỉ dẫn dự án, ngữ cảnh màn hình
   hay các tệp ngữ cảnh trên máy của chủ sở hữu, và chạy trên một phiên model riêng (phiên đã phục vụ chủ sở hữu không bao
-  giờ được dùng lại cho nó). Host nói với model rằng người gửi không phải chủ sở hữu. Trò chuyện và trả lời trong cùng
-  luồng vẫn tự chủ; mọi lời gọi công cụ khác chỉ chạy khi một quyền thường trực trên binding bao gồm công cụ đó
+  giờ được dùng lại cho nó). Host nói với model rằng người gửi không phải chủ sở hữu. Trò chuyện (trả lời trong cùng
+  luồng, một khung xem hay một câu hỏi đặt vào đó) vẫn tự chủ; mọi lời gọi công cụ khác chỉ chạy khi một quyền thường trực trên binding bao gồm công cụ đó
   (`grantRefs`, mỗi mục dạng `tool:<tên>`) hoặc chủ sở hữu đã duyệt đúng lời gọi đó. Nếu không, lời gọi bị giữ lại,
   không có gì chạy, và chủ sở hữu được hỏi bằng một thẻ duyệt trong cuộc trò chuyện; duyệt thì lượt tiếp tục dưới tư
   cách người tham gia và cho đúng lời gọi đó chạy một lần. Việc quyết định một yêu cầu duyệt không bao giờ được mở cho

@@ -246,8 +246,9 @@ describe("whose authority a channel turn acts with", () => {
     expect(channelToolStanding(participant(), "search_files")).toBe("needs-owner");
     expect(channelToolStanding(participant(["tool:run_command"]), "run_command")).toBe("run");
     expect(channelToolStanding(participant(["tool:run_command"]), "terminal_run")).toBe("needs-owner");
-    // Approving is the owner's own act: no grant opens it to someone else.
-    expect(channelToolStanding(participant(["tool:decide_approval"]), "decide_approval")).toBe("owner-only");
+    // A question only asks; it is put in the conversation without a card in front of it.
+    expect(channelToolStanding(participant(), "ask_user")).toBe("run");
+    expect(channelToolStanding(participant(), "ask_user_question")).toBe("run");
   });
 
   it("leaves an owner's turn and a turn from no channel to the tools' own policy", () => {

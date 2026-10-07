@@ -37,16 +37,17 @@ export function channelStanding(authorPrincipalId: string | undefined, ownerPrin
 }
 
 /**
- * Host tools that act only on the conversation itself — the reply, a view drawn into it, stopping it — and so read or
- * change nothing of the owner's. A participant's turn may call these without a grant.
+ * Host tools that act only on the conversation itself — the reply, a view drawn into it, a question put in it, stopping
+ * it — and so read or change nothing of the owner's. A participant's turn may call these without a grant: holding a
+ * question behind an approval card would only put a second card in front of the same question.
  */
-export const CHANNEL_CONVERSATION_TOOLS: readonly string[] = ["show_view", "stop_reply", "show_changelog"];
-
-/**
- * Tools no grant opens to a participant: deciding an approval is the owner's own act, and a sender who could do it
- * through Clark would approve their own request.
- */
-export const CHANNEL_OWNER_ONLY_TOOLS: readonly string[] = ["decide_approval"];
+export const CHANNEL_CONVERSATION_TOOLS: readonly string[] = [
+  "show_view",
+  "stop_reply",
+  "show_changelog",
+  "ask_user",
+  "ask_user_question",
+];
 
 /** Whether the binding's standing grants cover one tool. */
 export function channelGrantCoversTool(grants: readonly string[], tool: string): boolean {
@@ -54,15 +55,17 @@ export function channelGrantCoversTool(grants: readonly string[], tool: string):
 }
 
 /**
- * What a participant's tool call may do before anything else is checked: run, be held for the owner, or never run
- * (an owner-only tool). An owner's turn always runs, under the tool's own policy.
+ * What a participant's tool call may do before anything else is checked: run, or be held for the owner. An owner's turn
+ * always runs, under the tool's own policy.
+ *
+ * Deciding an approval is not among the calls: no model tool can decide one, whoever the sender is. Only the approval
+ * route does, and it acts for the owner's principal.
  */
 export function channelToolStanding(
   authority: ChannelTurnAuthority | undefined,
   tool: string,
-): "run" | "needs-owner" | "owner-only" {
+): "run" | "needs-owner" {
   if (authority === undefined || authority.standing === "owner") return "run";
-  if (CHANNEL_OWNER_ONLY_TOOLS.includes(tool)) return "owner-only";
   if (CHANNEL_CONVERSATION_TOOLS.includes(tool)) return "run";
   if (channelGrantCoversTool(authority.grants, tool)) return "run";
   return "needs-owner";

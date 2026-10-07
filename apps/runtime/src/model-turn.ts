@@ -831,7 +831,7 @@ function withActivity(
 /**
  * What a call becomes in a participant's turn when it may not simply run, or undefined to run it.
  *
- * Owner-only tools never run for a participant. Anything else the binding's grants do not cover goes to the gate, which
+ * Anything the conversation tools and the binding's grants do not cover goes to the gate, which
  * lets the one call the owner approved through and holds the rest with a card for the owner. With no gate the call is
  * held without one: a node that cannot ask the owner does not run it on the sender's word.
  */
@@ -846,7 +846,6 @@ function channelHold(
   const authority = turn.channelAuthority;
   const standing = channelToolStanding(authority, tool);
   if (standing === "run" || authority === undefined) return undefined;
-  if (standing === "owner-only") return { text: channelToolWords.ownerOnly(tool) };
   const decided = gate?.({ conversationId: turn.conversationId, authority, tool, label, params, language });
   if (decided === undefined) return { text: channelToolWords.heldNoGate(tool) };
   if (decided.kind === "run") return undefined;
@@ -2368,17 +2367,24 @@ export async function createModelTurn(options: {
        * A session holds whatever its earlier turns were given, so whose turn this is decides which session answers it.
        * A participant's turn never runs on a session made for the owner: it gets one made for a participant, and a
        * participant's turn that cannot get one does not run. The owner's next turn gets a session of the owner's again.
+       *
+       * The owner's turn still runs when its own session cannot be made, on the one it has. What it sends there is the
+       * owner's, so that session is marked as the owner's from now on: the next participant's turn then has to get a
+       * fresh session instead of inheriting the owner's memory, instructions and words.
        */
       const participant = turn.channelAuthority?.standing === "participant";
       const audience: SessionAudience = participant ? "participant" : "owner";
       if (turn.sessionAudience !== audience) {
         const rebuilt = await turn.rebuild(audience).catch(() => false);
-        if (!rebuilt && participant) {
-          throw new Error(
-            language() === "vi"
-              ? "Không mở được phiên riêng cho người gửi không phải chủ node này, nên tin nhắn chưa được gửi tới model."
-              : "Could not open a separate session for a sender who is not this node's owner, so the message was not sent to a model.",
-          );
+        if (!rebuilt) {
+          if (participant) {
+            throw new Error(
+              language() === "vi"
+                ? "Không mở được phiên riêng cho người gửi không phải chủ node này, nên tin nhắn chưa được gửi tới model."
+                : "Could not open a separate session for a sender who is not this node's owner, so the message was not sent to a model.",
+            );
+          }
+          turn.sessionAudience = "owner";
         }
       }
       // Once, on the first turn this session answers: the second turn already has the first in its context,

@@ -212,8 +212,8 @@ sender's account maps to, never from a display name or anything the message says
   turn gets the owner's context and is decided by the one execution policy like any other turn, with no extra prompt.
 - **Participant.** Anyone else. The turn gets none of the owner's memory, personal or project instructions, screen
   context or the machine's context files, and runs on a model session of its own (a session that served the owner is
-  never reused for it). The host tells the model the sender is not the owner. Conversation and the reply to the same
-  thread stay autonomous; any other tool call runs only when a standing grant on the binding covers that tool
+  never reused for it). The host tells the model the sender is not the owner. Conversation (the reply to the same
+  thread, a view or a question put in it) stays autonomous; any other tool call runs only when a standing grant on the binding covers that tool
   (`grantRefs`, each `tool:<name>`) or the owner approved that exact call. Otherwise the call is held, nothing runs,
   and the owner is asked on an approval card in the conversation; approving it carries on as the participant's turn and
   lets that one call through once. Deciding an approval is never opened to a participant.

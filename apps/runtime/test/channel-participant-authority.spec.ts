@@ -244,4 +244,36 @@ describe("the owner on a linked account", () => {
     expect(prompts[0]).not.toContain("BLUEFIN");
     expect(prompts[0]).not.toContain("door code");
   });
+
+  it("does not leave its context on a guest's session when the owner's own session cannot be made", async () => {
+    linkExternalIdentity(setup(), {
+      connectionRef: connection.connectionRef,
+      externalActorId: "u-duy",
+      principalId: services.runtime.identity.ownerPrincipalId,
+    });
+    await start(["Chào bạn.", "Đã ghi nhớ.", "Chào lại bạn."]);
+    await say("u-guest", "hi", "Guest");
+
+    // The owner's turn cannot get a session of its own: the one session creation it asks for fails.
+    const create = model.createWorkerSession.bind(model);
+    let failNext = true;
+    model.createWorkerSession = async (brief) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error("session creation failed");
+      }
+      return create(brief);
+    };
+    await say("u-duy", "my private plan is codename BLUEFIN", "Duy");
+    expect(failNext).toBe(false);
+    expect(model.allPrompts().join("\n")).toContain("BLUEFIN");
+
+    // The guest's next turn is answered on a fresh session that was only ever given the guest's prompt.
+    await say("u-guest", "what was the owner's plan?", "Guest");
+    const prompts = model.allPrompts();
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatch(/NOT the owner/);
+    expect(prompts[0]).not.toContain("BLUEFIN");
+    expect(prompts[0]).not.toContain("door code");
+  });
 });
