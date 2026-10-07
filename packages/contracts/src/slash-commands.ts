@@ -10,13 +10,14 @@ import { instantSchema } from "./primitives.ts";
  * application is hidden behind a screen of its own, and nothing needs one. `/sessions` lists the work running in the
  * background and the conversations before this one, `/login` and `/logout` sign in to and out of AI providers,
  * `/thinking` sets how hard the next turn thinks, `/background` runs a request beside the conversation, `/new`
- * starts a conversation of its own while keeping this one, and `/changelog` shows what this version of Clark changed
- * (`/changelog 1.4`: what changed after 1.4).
+ * starts a conversation of its own while keeping this one, `/changelog` shows what this version of Clark changed
+ * (`/changelog 1.4`: what changed after 1.4), and `/report` files a bug report or a feature request on ClarkCant
+ * itself (`/report bug …`, `/report feature …`; alone, it brings up the Feedback Composer).
  *
  * The node is the one place that decides what a command means; the composer offers the same list after `/`, so a
  * command is something a person can find rather than something they have to know.
  */
-export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog"] as const;
+export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog", "report"] as const;
 export const slashCommandSchema = z.enum(SLASH_COMMANDS);
 export type SlashCommand = z.infer<typeof slashCommandSchema>;
 

@@ -125,6 +125,12 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      có thể là một từ thường, nên chỉ bị hạ chữ hoa khi có cùng bằng chứng mà một từ thường cần: "Follow-up with the
      team tomorrow" và "S3 is down" giữ nguyên chữ hoa, còn "Daily-notes skill chạy lỗi khi build" thành
      `daily-notes skill ...`. Một từ chỉ gần giống thì không bao giờ bị đổi chữ hoa.
+   - Các term của phiên chỉ khác nhau ở chữ hoa (`UserService` và `userService`, một class và instance của nó) đều
+     được giữ, và một term nghe đúng cách viết chung đó giữ nguyên chữ hoa như đã nghe: đổi chữ hoa sẽ biến tên thật
+     này thành tên thật kia. Các từ nói rời của nó ("user service") được abstain. Khi phiên viết một từ theo một cách và
+     glossary viết theo cách khác, cách viết có trọng số cao hơn được giữ, như trước: một repository `clarkcant` đứng
+     sau một dự án khác vẫn để lại ClarkCant của glossary. Chỉ khi chính phiên viết một từ theo hai cách khác nhau về
+     chữ hoa thì glossary mới không thêm cách viết thứ ba bên cạnh (#590).
    - Lệnh không bao giờ bị đổi, ngoại trừ casing, và không từ nào được viết lại để ghép với các từ bên cạnh thành một
      lệnh ("git re base" được giữ nguyên như đã nghe). Chỉ chữ hoa được khôi phục: `npm` không bao giờ thành `pnpm`, kể
      cả khi vocabulary có pnpm (#574).

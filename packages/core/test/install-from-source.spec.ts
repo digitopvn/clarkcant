@@ -205,9 +205,10 @@ describe("installing again after the package stopped running", () => {
     expect(uninstallPackage(legacy, { packageId: "com.example.calendar", widgetIds: [] })).toMatchObject({ ok: true });
     expect(getPlan(legacy, first.planId)?.state).toBe("active");
 
-    // 42 is the migration under test; 43 (the audit log's turn origin) and 44 (external channels) follow it on any
+    // 42 is the migration under test; 43 (the audit log's turn origin), 44 (external channels) and 45 (product
+    // reports) follow it on any
     // upgrade from 41.
-    expect(migrate(legacy.db).applied).toEqual([42, 43, 44]);
+    expect(migrate(legacy.db).applied).toEqual([42, 43, 44, 45]);
     const again = installFromSource(legacy, input({ codeGeneration: "codegen_2" }));
 
     expect(again).toMatchObject({ ok: true, state: "active", joinedExisting: false });

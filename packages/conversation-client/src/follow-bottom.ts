@@ -25,6 +25,19 @@ export function followsBottom(
 }
 
 /**
+ * Whether the reader still follows the bottom when something arrives to follow.
+ *
+ * `followed` is what the last scroll event said, and `reportedTop` the position it said it at. A browser reports a
+ * scroll on its next frame, so an answer can be drawn between a scroll and its report: a reader who has just scrolled
+ * up, or a focus or `scrollIntoView` that brought an earlier row into view, would be taken back down - and the press
+ * they were about to make would land on whatever moved under the pointer. A view that has moved up since the report by
+ * more than the slack has left the bottom, whatever the report said.
+ */
+export function stillFollowsBottom(followed: boolean, reportedTop: number, scrollTop: number, slack = BOTTOM_FOLLOW_SLACK_PX): boolean {
+	return followed && reportedTop - scrollTop <= slack;
+}
+
+/**
  * How the view should travel to the bottom.
  *
  * Following a growing reply moves the view a few lines at a time, and a smooth scroll keeps that easy to read.

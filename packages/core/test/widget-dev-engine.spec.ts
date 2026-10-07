@@ -1,12 +1,34 @@
+import type * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compareDevReach, directoryEntrySchema, type PackageManifest, type WidgetDefinition } from "@clarkcant/contracts";
 
-import { cachedLocalSnapshotPath, devConsentScopeOf, digestOfDirectory, startDevEngine, type DevEngine } from "../src/index.ts";
+import {
+  DEV_ENGINE_WATCH_CATCH_UP_MS,
+  cachedLocalSnapshotPath,
+  devConsentScopeOf,
+  digestOfDirectory,
+  startDevEngine,
+  type DevEngine,
+} from "../src/index.ts";
+
+/** A folder whose `stat` fails with this code, as an antivirus or indexer holding it on Windows makes it fail. */
+const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined, code: "EPERM" }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  const statSync = ((path: fs.PathLike, options?: fs.StatSyncOptions) => {
+    if (statFailure.path !== undefined && resolve(String(path)) === statFailure.path) {
+      throw Object.assign(new Error(`${statFailure.code}: operation not permitted, stat '${String(path)}'`), { code: statFailure.code });
+    }
+    return actual.statSync(path, options);
+  }) as typeof actual.statSync;
+  return { ...actual, statSync, default: { ...actual, statSync } };
+});
 
 /**
  * The dev engine: a folder read as a package on every change, into immutable generations named by their digest, with
@@ -71,6 +93,8 @@ function engineFor(root: string, cacheRoot?: string): DevEngine {
 }
 
 afterEach(() => {
+  statFailure.path = undefined;
+  vi.useRealTimers();
   for (const engine of engines.splice(0)) engine.close();
   for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -287,6 +311,95 @@ describe("the dev engine", () => {
     // Told once: the check stops with the watch.
     await new Promise((done) => setTimeout(done, 150));
     expect(gone).toBe(1);
+  });
+
+  it("notices a watched folder deleted and made again before it looks, which the watcher no longer hears", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    await engine.ready;
+
+    // In one turn of the event loop: no existence check runs between the delete and the new folder.
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    writePackage(root, "<p>new folder</p>");
+    const deadline = Date.now() + 5_000;
+    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(gone).toBe(1);
+    expect(engine.watching()).toBe(false);
+    expect(engine.rootGone()).toBe(true);
+  });
+
+  it("keeps watching through a folder it cannot look at for a moment, rather than taking it as gone", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 20, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    await engine.ready;
+
+    statFailure.path = engine.root;
+    for (const code of ["EPERM", "EBUSY"]) {
+      statFailure.code = code;
+      // Several existence checks run while the folder answers with the error.
+      await new Promise((done) => setTimeout(done, 150));
+      expect(gone).toBe(0);
+      expect(engine.watching()).toBe(true);
+    }
+    expect(engine.rootGone()).toBe(false);
+
+    statFailure.path = undefined;
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved</p>");
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+  });
+
+  it("leaves the last build as it was when the catch-up build finds nothing new", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    // Only the catch-up builds here: a scanner reading the new files can make Windows report changes the watcher would build.
+    const engine = startDevEngine({ root, watch: true, debounceMs: 60_000, onBuild: (event) => built.push(event.kind) });
+    engines.push(engine);
+    await engine.ready;
+    const first = engine.lastBuild();
+    expect(first).toMatchObject({ ok: true, trigger: "start", generation: 1 });
+
+    // Past the catch-up build, which found the files as the first build left them.
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 300));
+    expect(engine.lastBuild()).toBe(first);
+    expect(built).toEqual([]);
+  });
+
+  it("does not report a first build's failure twice when the catch-up runs before that build ends", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    // Only timeouts are paused, so the catch-up can be fired while the first build still waits on the files.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const engine = startDevEngine({
+      root,
+      cacheRoot,
+      watch: true,
+      // Only the catch-up builds here: a scanner reading the new files can make Windows report changes the watcher would build.
+      debounceMs: 60_000,
+      // Too small for the folder, so the first build fails once it has looked at the files.
+      limits: { maxFiles: 1, maxBytes: 1024 },
+      onBuild: (event) => built.push(event.kind),
+    });
+    engines.push(engine);
+    vi.advanceTimersByTime(DEV_ENGINE_WATCH_CATCH_UP_MS);
+    vi.useRealTimers();
+
+    expect((await engine.ready).kind).toBe("failed");
+    const first = engine.lastBuild();
+    // The catch-up build runs after the first one and fails the same way: nothing new to say.
+    await new Promise((done) => setTimeout(done, 300));
+    expect(built).toEqual([]);
+    expect(engine.lastBuild()).toBe(first);
   });
 
   it("names a folder over the size limit, and a link out of it, apart from files that could not be read", async () => {
