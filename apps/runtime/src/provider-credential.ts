@@ -62,7 +62,8 @@ export function resolveProviderCredential(input: ProviderCredentialInput): Resol
  * The same rule, answered from the vault's list of names rather than its values.
  *
  * A diagnostic that only needs to say where the key in effect comes from has no reason to read a secret, so it asks
- * whether the vault holds the name. A stored credential is never blank (the vault refuses a value made only of whitespace), so holding
+ * whether the vault holds the name. A stored credential is never blank (the vault refuses a value made only of
+ * whitespace), so holding
  * the name is holding a key.
  */
 export function providerCredentialSource(input: {

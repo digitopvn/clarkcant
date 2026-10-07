@@ -983,6 +983,7 @@ describe("a secret a person types", () => {
     expect(response.status).toBe(400);
     expect(readCredential(services.runtime.db, owner(), "gemini")).toBeUndefined();
   });
+
   it("refuses a body it cannot use without repeating what it got", async () => {
     const response = await request("POST", "/credentials", {
       body: { fields: [{ name: "", value: "secret-shaped" }] },
