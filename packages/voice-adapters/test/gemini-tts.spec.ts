@@ -9,7 +9,30 @@ import {
   type FetchLike,
 } from "../src/gemini-tts.ts";
 
-const SAMPLE_AUDIO_BASE64 = Buffer.from("fake-clip-bytes").toString("base64");
+/** A PCM16 mono WAV clip at `rate`, with optional chunks placed before `fmt ` the way some encoders write them. */
+function wav(rate: number, samples: Buffer, leadingChunks: Buffer[] = []): Buffer {
+  const fmt = Buffer.alloc(24);
+  fmt.write("fmt ", 0, "ascii");
+  fmt.writeUInt32LE(16, 4);
+  fmt.writeUInt16LE(1, 8);
+  fmt.writeUInt16LE(1, 10);
+  fmt.writeUInt32LE(rate, 12);
+  fmt.writeUInt32LE(rate * 2, 16);
+  fmt.writeUInt16LE(2, 20);
+  fmt.writeUInt16LE(16, 22);
+  const data = Buffer.alloc(8);
+  data.write("data", 0, "ascii");
+  data.writeUInt32LE(samples.length, 4);
+  const body = Buffer.concat([...leadingChunks, fmt, data, samples]);
+  const header = Buffer.alloc(12);
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(body.length + 4, 4);
+  header.write("WAVE", 8, "ascii");
+  return Buffer.concat([header, body]);
+}
+
+const SAMPLE_WAV = wav(24000, Buffer.from("fake-clip-bytes"));
+const SAMPLE_AUDIO_BASE64 = SAMPLE_WAV.toString("base64");
 
 function fetchReturning(payload: unknown, options: { ok?: boolean; status?: number; bodyText?: string } = {}): {
   fetch: FetchLike;
@@ -45,7 +68,8 @@ describe("GeminiTtsClient", () => {
     expect(body["model"]).toBe(DEFAULT_TTS_MODEL);
     expect(DEFAULT_TTS_MODEL).toBe(GEMINI_TTS_FLASH_LITE_MODEL);
     expect(result.mimeType).toBe("audio/wav");
-    expect(Buffer.from(result.audio).toString()).toBe("fake-clip-bytes");
+    expect(result.sampleRateHz).toBe(24000);
+    expect(Buffer.from(result.audio).equals(SAMPLE_WAV)).toBe(true);
   });
 
   it("selects the high-fidelity model, a voice and a style annotation when asked", async () => {
@@ -88,8 +112,8 @@ describe("GeminiTtsClient", () => {
   it("takes the last audio block when the response nests more than one", async () => {
     const { fetch } = fetchReturning({
       steps: [
-        { outputs: [{ type: "audio", data: Buffer.from("first").toString("base64"), mime_type: "audio/wav" }] },
-        { outputs: [{ type: "audio", data: Buffer.from("second").toString("base64"), mime_type: "audio/wav" }] },
+        { outputs: [{ type: "audio", data: Buffer.from("first").toString("base64"), mime_type: "audio/L16;rate=24000" }] },
+        { outputs: [{ type: "audio", data: Buffer.from("second").toString("base64"), mime_type: "audio/L16;rate=24000" }] },
       ],
     });
     const client = new GeminiTtsClient({ fetch });
@@ -97,6 +121,52 @@ describe("GeminiTtsClient", () => {
     const result = await client.synthesize("test-key", { text: "hello" });
 
     expect(Buffer.from(result.audio).toString()).toBe("second");
+  });
+
+  it("returns the rate the provider actually sent when it differs from the one requested", async () => {
+    const { fetch, calls } = fetchReturning({
+      steps: [{ outputs: [{ type: "audio", data: wav(24000, Buffer.alloc(480)).toString("base64"), mime_type: "audio/wav" }] }],
+    });
+    const client = new GeminiTtsClient({ fetch });
+
+    const result = await client.synthesize("test-key", { text: "hello", sampleRateHz: 16000 });
+
+    const body = JSON.parse(calls[0]!.init.body) as { response_format: { sample_rate: number } };
+    expect(body.response_format.sample_rate).toBe(16000);
+    expect(result.sampleRateHz).toBe(24000);
+  });
+
+  it("reads the rate from a raw PCM mime type's rate parameter", async () => {
+    const { fetch } = fetchReturning({
+      steps: [{ outputs: [{ type: "audio", data: Buffer.alloc(320).toString("base64"), mime_type: "audio/L16;codec=pcm;rate=24000" }] }],
+    });
+    const client = new GeminiTtsClient({ fetch });
+
+    const result = await client.synthesize("test-key", { text: "hello", sampleRateHz: 16000 });
+
+    expect(result.mimeType).toBe("audio/L16;codec=pcm;rate=24000");
+    expect(result.sampleRateHz).toBe(24000);
+  });
+
+  it("reads a WAV rate when other chunks precede the format chunk", async () => {
+    const list = Buffer.concat([Buffer.from("LIST", "ascii"), Buffer.from([3, 0, 0, 0]), Buffer.from("abc"), Buffer.alloc(1)]);
+    const { fetch } = fetchReturning({
+      steps: [{ outputs: [{ type: "audio", data: wav(16000, Buffer.alloc(320), [list]).toString("base64"), mime_type: "audio/wav" }] }],
+    });
+    const client = new GeminiTtsClient({ fetch });
+
+    const result = await client.synthesize("test-key", { text: "hello" });
+
+    expect(result.sampleRateHz).toBe(16000);
+  });
+
+  it("refuses audio whose sample rate it cannot read rather than letting a caller guess", async () => {
+    const { fetch } = fetchReturning({
+      steps: [{ outputs: [{ type: "audio", data: Buffer.from("not a wav").toString("base64"), mime_type: "audio/wav" }] }],
+    });
+    const client = new GeminiTtsClient({ fetch });
+
+    await expect(client.synthesize("test-key", { text: "hello" })).rejects.toThrow(/sample rate could not be read/);
   });
 
   it("rejects an empty API key without making a request", async () => {
