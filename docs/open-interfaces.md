@@ -811,7 +811,9 @@ part of the stable description and may change.
 
 `POST /mcp` implements the Streamable HTTP transport with JSON answers (protocol `2025-06-18`, also `2025-03-26` and
 `2024-11-05`). `GET /mcp` answers `405`: the server never speaks first. Methods: `initialize`, `ping`, `tools/list`,
-`tools/call`; notifications get a bare `202`.
+`tools/call`; notifications get a bare `202`. `initialize` names the server `clarkcant` with the Clark version as its
+`serverInfo.version` ([one Clark version](releases.md#one-clark-version)), and when the node connects to a package's MCP
+service it introduces itself the same way in `clientInfo`.
 
 | Tool | Arguments | Route it calls |
 |---|---|---|
