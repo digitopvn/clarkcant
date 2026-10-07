@@ -1,5 +1,6 @@
 import {
   type MessageRecord,
+  type TimelinePageQuery,
 } from "@clarkcant/contracts";
 
 import { type Database, allRows, oneRow, parseJson, toJson } from "../db.ts";
@@ -37,6 +38,91 @@ export function messagesSince(db: Database, conversationId: string, afterSequenc
     limit,
   );
   return rows.map((row) => parseJson<MessageRecord>(row.document, "messages.document"));
+}
+
+/** One page of a conversation's messages, oldest first, with the range of sequences it is the whole truth about. */
+export interface MessagePage {
+  messages: MessageRecord[];
+  /** Each message's sequence, in the order of `messages`. */
+  sequences: number[];
+  /** Every stored message with `fromSequence <= sequence <= toSequence` is in `messages`, and no other is. */
+  fromSequence: number;
+  toSequence: number;
+  hasOlder: boolean;
+  hasNewer: boolean;
+}
+
+/**
+ * One page of a conversation by message sequence: the newest `limit`, the `limit` before a sequence, or the `limit`
+ * after one (`TimelinePageQuery`).
+ *
+ * One row past the page is read to learn whether there is more, and its sequence is what bounds the page's range:
+ * the range reaches up to (or down to) the next message that is not in it, so two pages read one after another meet
+ * exactly, with no gap a reader would have to guess about and no message in both.
+ */
+export function messagePage(db: Database, conversationId: string, query: TimelinePageQuery, limit: number): MessagePage {
+  type Row = { document: string; sequence: number };
+  const page = (rows: Row[]): { messages: MessageRecord[]; sequences: number[] } => ({
+    messages: rows.map((row) => parseJson<MessageRecord>(row.document, "messages.document")),
+    sequences: rows.map((row) => Number(row.sequence)),
+  });
+  const exists = (clause: string, sequence: number): boolean =>
+    oneRow<{ found: number }>(
+      db,
+      `SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ? AND sequence ${clause} ?) AS found`,
+      conversationId,
+      sequence,
+    )?.found === 1;
+
+  if (query.kind === "after") {
+    const rows = allRows<Row>(
+      db,
+      `SELECT document, sequence FROM messages
+        WHERE conversation_id = ? AND sequence > ?
+        ORDER BY sequence ASC LIMIT ?`,
+      conversationId,
+      query.afterSequence,
+      limit + 1,
+    );
+    const more = rows.length > limit;
+    const kept = rows.slice(0, limit);
+    const next = rows[limit];
+    return {
+      ...page(kept),
+      fromSequence: query.afterSequence + 1,
+      toSequence: next !== undefined ? Number(next.sequence) - 1 : Math.max(query.afterSequence, Number(kept.at(-1)?.sequence ?? 0)),
+      hasOlder: query.afterSequence > 0 && exists("<=", query.afterSequence),
+      hasNewer: more,
+    };
+  }
+
+  const rows =
+    query.kind === "latest"
+      ? allRows<Row>(
+          db,
+          `SELECT document, sequence FROM messages
+            WHERE conversation_id = ?
+            ORDER BY sequence DESC LIMIT ?`,
+          conversationId,
+          limit + 1,
+        )
+      : allRows<Row>(
+          db,
+          `SELECT document, sequence FROM messages
+            WHERE conversation_id = ? AND sequence < ?
+            ORDER BY sequence DESC LIMIT ?`,
+          conversationId,
+          query.beforeSequence,
+          limit + 1,
+        );
+  const previous = rows[limit];
+  const kept = rows.slice(0, limit).reverse();
+  const fromSequence = previous === undefined ? 0 : Number(previous.sequence) + 1;
+  if (query.kind === "latest") {
+    return { ...page(kept), fromSequence, toSequence: Number(kept.at(-1)?.sequence ?? 0), hasOlder: previous !== undefined, hasNewer: false };
+  }
+  const toSequence = query.beforeSequence - 1;
+  return { ...page(kept), fromSequence, toSequence, hasOlder: previous !== undefined, hasNewer: exists(">", toSequence) };
 }
 
 /** One message of one conversation by its id, or `undefined` when that conversation holds no such message. */

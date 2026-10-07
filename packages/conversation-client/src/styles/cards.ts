@@ -491,6 +491,15 @@ label.cc-list-main { cursor: pointer; }
 .cc-command-status, .cc-command-row .cc-sign-in { flex-basis: 100%; margin: 0; }
 .cc-command-status { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-command-status[data-result="failed"] { color: var(--cc-danger); }
+/* The changelog: one disclosure per release, its changes grouped by kind; the summary is a 44px target. */
+.cc-changelog-release { border-top: var(--cc-line, 1px solid) var(--cc-border); }
+.cc-changelog-release > summary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-xs) var(--cc-space-sm);
+  min-height: 44px; cursor: pointer; font-size: var(--cc-text-body-sm);
+}
+.cc-changelog-release > summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-changelog-group { margin: var(--cc-space-xs) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); font-weight: 600; }
+.cc-changelog-commit { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-sign-in-code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-body-md); user-select: all; }
 @media (pointer: coarse) { .cc-sign-in .cc-field-input { min-height: 44px; } }
 

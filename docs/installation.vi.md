@@ -153,6 +153,12 @@ node tools/setup.mjs            # giữ nguyên .env, cài lại phụ thuộc h
 docker compose up -d --build    # với Docker
 ```
 
+Đây là cách cập nhật duy nhất hiện nay. Clark chưa có bộ tự cập nhật và chưa có bản phát hành nào. Cách đánh phiên
+bản, kênh stable và beta, và các bản phát hành có ký số đang được lên kế hoạch được mô tả ở [phát hành](releases.vi.md).
+Để xem phiên bản đang cài thay đổi gì, hãy hỏi Clark “có gì mới?”, gõ `/changelog`, hoặc mở Cài đặt → Trải nghiệm →
+Phiên bản & có gì mới. Bản checkout chạy từ mã nguồn mang ghi chú baseline đã được commit, nên Clark nêu commit mà ghi
+chú dừng lại; các thay đổi sau commit đó không được liệt kê, và `git pull` không bổ sung chúng.
+
 ## Xử lý sự cố
 
 | Hiện tượng | Nguyên nhân và cách xử lý |

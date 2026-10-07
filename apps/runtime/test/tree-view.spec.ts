@@ -113,7 +113,7 @@ describe("placing a hierarchy", () => {
       { kind: "view", operation: TREE_SELECT_OPERATION, args: {} },
       { kind: "view", operation: TREE_TOGGLE_OPERATION, args: {} },
     ]);
-    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION });
     expect(timeline.snapshots[0]?.textAlternative).toContain("- ClarkCant");
     expect(timeline.snapshots[0]?.textAlternative).toContain("  - Ứng dụng");
     expect(timeline.snapshots[0]?.textAlternative.length).toBeLessThanOrEqual(4_096);
@@ -135,7 +135,7 @@ describe("selection and expansion state", () => {
     const collapsed = await act(instanceId, TREE_TOGGLE_OPERATION, { nodeId: "client", expanded: false });
     expect(collapsed).toMatchObject({ ok: true, body: { state: { expandedIds: ["project"], selectedId: "composer" } } });
     expect(liveStateOf(services.conductor, instanceId)?.body).toEqual({ expandedIds: ["project"], selectedId: "composer" });
-    const carried = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 }).instances.find((entry) => entry.instanceId === instanceId);
+    const carried = buildTimeline(services, { conversationId: CONVERSATION }).instances.find((entry) => entry.instanceId === instanceId);
     expect(carried?.state).toEqual({ expandedIds: ["project"], selectedId: "composer" });
     expect(buildWidgetSemantic(services.conductor, instanceId)).toMatchObject({
       definitionId: TREE.id,
