@@ -46,23 +46,22 @@ phiên live vẫn là giọng nói. Điều thay đổi là lời người dùng
      tự và chỉ lệch vài ký tự, là phần đầu của những gì cách đọc live có tiếp theo, nên một bản final có thể chỉ phủ phần
      đầu của một utterance live. Bản final ngắn hơn ba từ không bao giờ dời con trỏ, và bản final mà cách đọc live của
      nó không tới sớm sẽ hết hạn. Khi việc đối chiếu không rõ, mọi câu live sau câu cuối cùng đã được phủ trọn đều
-     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Ngoại
-     lệ là câu live tới muộn cho một bản final đã hết hạn: mười sáu bản final hết hạn gần nhất được ghi nhớ và được
-     đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con trỏ, nên mỗi bản final được
-     dùng hết bởi chính cách đọc muộn của nó. Một câu live nghe được trong vòng ba mươi giây quanh bản final, đọc giống
-     trọn bản final đó theo cùng quy tắc ba từ và lệch vài ký tự, là cách đọc ấy và không được trả lời lại; chỉ câu mới
-     nhất, khi phiên live vẫn đang đọc nó, mới được phép đọc giống phần đầu của bản final. Câu live đầu tiên tới lượt
-     bản final mà không đọc giống bản final hết hạn nào được coi là cách đọc sai của nó và dùng hết bản final đó, nên
-     bản final không thể miễn cho một câu sau chỉ nói lại đúng những từ ấy; câu đọc sai đó được trả lời lại. Bản final
-     bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua rồi. Quy tắc
-     này làm việc trên cả câu, nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời nguyên câu. Mọi
-     quy tắc đều ưu tiên trả lời một số từ hai lần hơn là làm mất chúng, với một trường hợp mất được chấp nhận: khi
-     cách đọc live của một hoặc nhiều bản final không bao giờ tới và người dùng nói lại đúng ba từ trở lên của một
-     trong các bản final đó trong vòng ba mươi giây, câu nói lại bị coi là cách đọc muộn của bản final ấy và không được
-     trả lời, trừ khi trước đó phiên live đã nghe được một câu mới cho mỗi bản final như vậy, tính tới cả bản final được
-     nói lại. Không thể phân biệt trường
-     hợp này với transcription live chậm hơn recognizer, và nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi
-     lại.
+     được trả lời, nguyên câu và theo thứ tự, nên một câu bị phiên live tách thành hai utterance không bị mất. Mười sáu
+     bản final hết hạn gần nhất mà chưa có cách đọc live được ghi nhớ, vì cách đọc đó thường chỉ tới sau khi recognizer
+     đã chốt câu kế tiếp; chúng được đối chiếu theo đúng thứ tự đã gửi với mọi câu live còn giữ, kể cả các câu trước con
+     trỏ. Bản final bị một lần khớp của bản final sau vượt qua sẽ không được ghi nhớ, vì cách đọc live của nó đã đi qua
+     rồi. Câu live nào bị giữ lại tuân theo một phép đếm, vì mỗi bản final của recognizer chỉ ứng với nhiều nhất một câu
+     live. Một câu live chỉ bị giữ lại khi có một bản final ứng với nó và không ứng với câu bị giữ lại nào khác: câu mà
+     bản final đó khớp, cách đọc muộn của nó, hoặc câu đầu tiên tới lượt nó mà không đọc giống bản final nào. Câu không
+     ứng với bản final nào sẽ được trả lời, và khi một lần khớp đã vượt qua một câu như vậy thì câu được khớp cũng được
+     trả lời, vì một trong hai câu chưa bao giờ được gửi. Cách đọc live tới theo đúng thứ tự các bản final đã được gửi,
+     nên một câu đọc giống một bản final sau sẽ kết thúc lượt của bản final trước. Quy tắc này làm việc trên cả câu,
+     nên một câu live chứa cả phần đã gửi lẫn phần chưa gửi sẽ được trả lời nguyên câu. Có một trường hợp mất được chấp
+     nhận: một câu đọc giống trọn một bản final mà cách đọc live của nó không bao giờ tới, nghe được trong vòng ba mươi
+     giây quanh bản final đó, bị coi là cách đọc muộn ấy và không được trả lời. Không thể phân biệt nó với transcription
+     live bị chậm, và nếu trả lời nó thì mọi câu của một đoạn bị chậm sẽ bị gửi lại. Một mô phỏng có seed của các phiên
+     bị hỏng (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) kiểm tra quy tắc này: mọi câu chưa được gửi đều
+     được trả lại, theo thứ tự, trừ trường hợp mất ấy, và số câu trùng lặp bị chặn theo mức độ mơ hồ của các cách đọc.
 3. **Một vocabulary phiên có giới hạn, được xếp hạng và đã redact.**
    - Vocabulary được dựng trên node từ:
      - các project;

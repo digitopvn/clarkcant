@@ -22,19 +22,21 @@
  * - when a final never found its live reading, or matched only after passing over a live sentence it did not match,
  *   the alignment is unclear: every live sentence after the last one a final fully covered is answered, whole and in
  *   order, since the live session may have cut the sentence the recognizer was in the middle of into several
- *   utterances; a sentence already delivered whole is not answered again;
+ *   utterances;
  * - a final that expired without finding its live reading is still remembered for a while, because the live reading
- *   often arrives only after the recognizer finalized the next sentence: in unclear mode the remembered finals are
- *   matched in order against every live sentence kept, and the one that reads as the whole of a final, close in time
- *   to it, is its late reading and is not answered again. The first sentence in a final's turn that reads as none of
- *   them is its misread reading: it is answered, and it uses the final up so that a later sentence saying the same
- *   words again is answered too. A final passed over by a later match is not remembered: its reading already went by.
+ *   often arrives only after the recognizer finalized the next sentence. A final passed over by a later match is not
+ *   remembered: its reading already went by.
  *
- * One loss is accepted: when the live readings of one or more finals never arrive, a sentence that says one of them
- * again within the matching time is taken for its late reading and is not answered, unless before it the live session
- * heard one new sentence for each such final, up to and including the one said again. That repeat cannot be told from
- * the late reading of a lagging live transcription, and answering it would answer again every sentence of a lagging
- * stretch.
+ * Which live sentence is withheld follows one count: each recognizer final accounts for at most one live sentence. A
+ * live sentence is withheld only when one final accounts for it and for no other withheld sentence: the sentence it
+ * matched, its late reading, or the first sentence in its turn that reads as nothing. A sentence no final accounts for
+ * is answered, and when a match passed over such a sentence the matched one is answered too, since one of the two was
+ * never delivered. Readings arrive in the order the finals were delivered, so a sentence that reads as a later final
+ * ends an earlier final's turn.
+ *
+ * One loss is accepted: a sentence that reads as the whole of a final whose live reading never arrived, heard within
+ * thirty seconds of it, is taken for that late reading and not answered. It cannot be told from a lagging live
+ * transcription, and answering it would re-send every sentence of a lagging stretch.
  */
 
 const MAX_SENTENCES = 16;
@@ -83,6 +85,16 @@ interface Pending {
   lastOrdinal: number;
 }
 
+/** A match that passed over live sentences it did not match: they may be its reading, and the matched one a repeat. */
+interface Unsure {
+  /** The live sentence the final matched. */
+  matched: number;
+  /** The live sentences it passed over on the way, which may be its misread reading. */
+  passedOver: number[];
+  /** Waiting finals the match discarded, each of which may own one of the passed-over sentences. */
+  explained: number;
+}
+
 interface Word {
   text: string;
   end: number;
@@ -103,12 +115,8 @@ export class LiveShadow {
   #pending: Pending[] = [];
   /** A recognizer final never found its live reading, so what lies after the cursor is not known to be undelivered. */
   #unclear = false;
-  /**
-   * The sentence the cursor stands at the end of was delivered whole. Not so when a final that waited for its reading
-   * matched only after passing over another sentence: the one it passed over may be its reading, and the one it matched
-   * the same words said again.
-   */
-  #cursorSure = true;
+  /** Matches that passed over more live sentences than the waiting finals they discarded, kept until `take()`. */
+  #unsure: Unsure[] = [];
   /** Finals that left the waiting list without finding their live reading, oldest first. */
   #expired: Pending[] = [];
 
@@ -141,7 +149,7 @@ export class LiveShadow {
           aligned: false,
         });
         this.#nextOrdinal += 1;
-        if (this.#sentences.length > MAX_SENTENCES) this.#sentences.shift();
+        if (this.#sentences.length > MAX_SENTENCES) this.#evict(this.#sentences.shift()!.ordinal);
         this.#expire();
       }
     }
@@ -153,7 +161,7 @@ export class LiveShadow {
     this.#expire();
     const said = words(text).map((word) => word.text);
     if (said.length < MIN_MATCH_WORDS) return;
-    if (this.#align(said, Number.POSITIVE_INFINITY)) {
+    if (this.#align(said, Number.POSITIVE_INFINITY, this.#pending.length)) {
       // Finals arrive in order: those still waiting were passed over, and their live reading is settled.
       this.#pending = [];
       return;
@@ -182,14 +190,15 @@ export class LiveShadow {
       if (this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) continue;
       remainders.push({ ordinal: sentence.ordinal, text });
     }
-    const unclear = this.#unclear || this.#pending.length > 0;
+    // A later clean match clears the unclear mark, but not what an earlier unsure match left unaccounted for.
+    const unclear = this.#unclear || this.#pending.length > 0 || this.#unsure.length > 0;
     const answer = (unclear ? this.#uncoveredWhole() : remainders.map((remainder) => remainder.text)).join(" ");
     this.#sentences = [];
     this.#pending = [];
     this.#expired = [];
     this.#cursor = { ordinal: this.#nextOrdinal, offset: 0 };
     this.#unclear = false;
-    this.#cursorSure = true;
+    this.#unsure = [];
     return answer;
   }
 
@@ -199,21 +208,24 @@ export class LiveShadow {
    * The live session may cut the sentence in progress into several utterances, so all of them are answered, in order,
    * not only the newest. The cursor may stand partway into the first of them on the strength of a match that belonged
    * to an earlier sentence, so that one is answered whole rather than its tail. A sentence the cursor stands at the end
-   * of was delivered whole and is not answered again, unless the final that waited for it passed over another sentence
-   * on the way, so that one of the two was never delivered; neither is one the live session is still reading for a final
-   * already delivered, nor the late live reading of a final that expired waiting for it.
+   * of was delivered whole and is not answered again; neither is one the live session is still reading for a final
+   * already delivered, nor the late live reading of a final that expired waiting for it. Sentences a match owes, before
+   * the cursor too, are answered whatever else holds.
    */
   #uncoveredWhole(): string[] {
-    const late = this.#lateReadings();
+    const { late, misread } = this.#lateReadings();
+    const owed = this.#owed(late, misread);
     const answered: string[] = [];
     for (const sentence of this.#sentences) {
+      const text = sentence.text.trim();
+      if (owed.has(sentence.ordinal)) {
+        if (words(text).length > 0) answered.push(text);
+        continue;
+      }
       if (sentence.ordinal < this.#cursor.ordinal) continue;
       const deliveredWhole =
-        this.#cursorSure &&
-        sentence.ordinal === this.#cursor.ordinal &&
-        words(sentence.text, this.#cursor.offset).length === 0;
+        sentence.ordinal === this.#cursor.ordinal && words(sentence.text, this.#cursor.offset).length === 0;
       if (deliveredWhole) continue;
-      const text = sentence.text.trim();
       const heard = words(text).map((word) => word.text);
       if (heard.length === 0 || this.#pending.some((pending) => coveredWords(heard, pending.words) > 0)) continue;
       if (late.has(sentence)) continue;
@@ -223,23 +235,47 @@ export class LiveShadow {
   }
 
   /**
-   * The live sentences that are the late reading of a final which expired waiting for it.
+   * The live sentences an unsure match owes: each final accounts for at most one live sentence, so when a match passed
+   * over more sentences than other finals account for, one of those sentences or the one it matched was never
+   * delivered. All of them are answered, which costs one duplicate and never loses the undelivered one. A passed-over
+   * sentence is accounted for when a final moved the cursor into it, or an expired final took it as its late or misread
+   * reading; each waiting final the match discarded accounts for one more.
+   */
+  #owed(late: ReadonlySet<Sentence>, misread: ReadonlySet<Sentence>): Set<number> {
+    const accounted = new Set<number>();
+    for (const sentence of this.#sentences) {
+      if (sentence.aligned || late.has(sentence) || misread.has(sentence)) accounted.add(sentence.ordinal);
+    }
+    const owed = new Set<number>();
+    for (const unsure of this.#unsure) {
+      const unaccounted = unsure.passedOver.filter((ordinal) => !accounted.has(ordinal));
+      if (unaccounted.length <= unsure.explained) continue;
+      for (const ordinal of unaccounted) owed.add(ordinal);
+      owed.add(unsure.matched);
+    }
+    return owed;
+  }
+
+  /**
+   * The live sentences that are the late reading of a final which expired waiting for it, and those taken for its
+   * misread reading.
    *
    * Live readings arrive in the order the finals were delivered, so the expired finals are matched in that order
    * against every live sentence kept, before the cursor too, so each one is used up by its own reading wherever that
    * lies. A live sentence a final moved the cursor into belongs to that final. One that reads as an earlier expired
    * final is left for it, and one that reads as a later one ends this final's turn: its reading never arrived. The first
    * one that reads as none of them is taken to be this final's reading, misread: it uses the final up without being
-   * excused, so the final cannot excuse a later sentence that only says the same words again.
+   * excused, so the final cannot excuse a later sentence that only says the same words again, and it counts as
+   * accounted for by that final. A sentence heard longer after the final than a late reading can take ends its turn.
    *
    * A sentence reads as a final when it reads as the whole of it, within the time a late reading can take. The newest
    * sentence, while the live session is still reading it, may read as its beginning. Anything less is answered, since a
    * new sentence often starts with the same few words as the one before.
    */
-  #lateReadings(): Set<Sentence> {
+  #lateReadings(): { late: Set<Sentence>; misread: Set<Sentence> } {
     const newest = this.#sentences.at(-1);
     let budget = MAX_LATE_COMPARISONS;
-    // Spends the comparison budget; past it, a pair counts as not reading alike, which only answers more.
+    // Spends the comparison budget; past it, a pair counts as not reading alike, which leans towards answering.
     const affordable = (said: readonly string[], heard: readonly string[]): boolean => {
       const cost = comparisons(said, heard);
       if (cost > budget) return false;
@@ -266,45 +302,54 @@ export class LiveShadow {
       };
     });
     const late = new Set<Sentence>();
+    const misread = new Set<Sentence>();
     let from = 0;
-    this.#expired.forEach((_, final) => {
+    this.#expired.forEach((expired, final) => {
       for (let index = from; index < this.#sentences.length; index += 1) {
-        if (this.#sentences[index]!.aligned) continue;
+        const sentence = this.#sentences[index]!;
+        if (sentence.aligned) continue;
+        // Too long after the final to be its reading, and so is every sentence after it.
+        if (sentence.heardMs - expired.deliveredMs > EXPIRED_MATCH_MS) return;
         const readsAs = reads[index]!;
         if (readsAs(final)) {
-          late.add(this.#sentences[index]!);
+          late.add(sentence);
           from = index + 1;
           return;
         }
         // Readings arrive in order: once a later final's reading came, this final's can no longer come.
         if (this.#expired.some((_, other) => other > final && readsAs(other))) return;
         if (!this.#expired.some((_, other) => other < final && readsAs(other))) {
+          misread.add(sentence);
           from = index + 1;
           return;
         }
       }
     });
-    return late;
+    return { late, misread };
   }
 
-  /** Move the cursor past the live reading of `said`, if one starts at or after it. `waiting`: the final waited for it. */
-  #align(said: readonly string[], lastOrdinal: number, waiting = false): boolean {
-    let passedOver = false;
+  /**
+   * Move the cursor past the live reading of `said`, if one starts at or after it. `explained`: the waiting finals this
+   * match discards, whose readings may be among the sentences it passes over.
+   */
+  #align(said: readonly string[], lastOrdinal: number, explained: number): boolean {
+    const passedOver: number[] = [];
     for (const sentence of this.#sentences) {
       if (sentence.ordinal < this.#cursor.ordinal || sentence.ordinal > lastOrdinal) continue;
       const from = sentence.ordinal === this.#cursor.ordinal ? this.#cursor.offset : 0;
       const heard = words(sentence.text, from);
       const covered = coveredWords(said, heard.map((word) => word.text));
       if (covered === 0) {
-        if (heard.length > 0) passedOver = true;
+        if (heard.length > 0) passedOver.push(sentence.ordinal);
         continue;
       }
       this.#cursor = { ordinal: sentence.ordinal, offset: heard[covered - 1]!.end };
       sentence.aligned = true;
       // Passing over an unmatched live sentence means this final may be that sentence's, read too differently to
       // match, and the one it did match only looks like it: where the cursor now stands is not known for certain.
-      this.#unclear = passedOver;
-      this.#cursorSure = !(passedOver && waiting);
+      this.#unclear = passedOver.length > 0;
+      // A match that passes over no more sentences than the finals it discards can never owe one.
+      if (passedOver.length > explained) this.#unsure.push({ matched: sentence.ordinal, passedOver, explained });
       return true;
     }
     return false;
@@ -314,7 +359,7 @@ export class LiveShadow {
   #settlePending(): void {
     for (let index = 0; index < this.#pending.length; index += 1) {
       const pending = this.#pending[index]!;
-      if (!this.#align(pending.words, pending.lastOrdinal, true)) continue;
+      if (!this.#align(pending.words, pending.lastOrdinal, index)) continue;
       // Earlier finals were passed over: their live reading went by, too different to match, so it cannot arrive late.
       this.#pending.splice(0, index + 1);
       index = -1;
@@ -329,6 +374,12 @@ export class LiveShadow {
     if (kept.length < this.#pending.length) this.#unclear = true;
     this.#forget(this.#pending.filter((pending) => !kept.includes(pending)));
     this.#pending = kept;
+  }
+
+  /** A live sentence no longer kept cannot be answered, nor counted against a match that passed over it. */
+  #evict(ordinal: number): void {
+    this.#unsure = this.#unsure.filter((unsure) => unsure.matched !== ordinal);
+    for (const unsure of this.#unsure) unsure.passedOver = unsure.passedOver.filter((passed) => passed !== ordinal);
   }
 
   /** Remember finals that stopped waiting without their live reading, which may still arrive late. */

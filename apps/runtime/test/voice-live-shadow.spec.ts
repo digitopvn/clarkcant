@@ -75,13 +75,14 @@ describe("the live reading kept while a recognizer is the source", () => {
     expect(shadow.take()).toBe("rồi chạy test");
   });
 
-  it("answers the newest sentence whole when a final matched it only after passing over another", () => {
+  it("answers the sentence a final matched, whole, and the one it passed over on the way", () => {
     const { shadow } = shadowAt();
     // The live reading of the delivered sentence is too far off to match, and the next one looks like it.
     shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
     shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nhé bạn", isFinal: false });
     shadow.delivered("chạy lại test đi nha");
-    expect(shadow.take()).toBe("chạy lại test đi nhé bạn");
+    // Two live sentences against one final: one of them was never delivered, and which one cannot be told.
+    expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nhé bạn");
   });
 
   it("answers every part of a sentence the live session split in two when the alignment is unclear", () => {
@@ -97,15 +98,72 @@ describe("the live reading kept while a recognizer is the source", () => {
     expect(shadow.take()).toBe("rồi chạy test cho voice session nhé");
   });
 
-  it("does not answer again a sentence fully delivered before the unclear stretch", () => {
+  it("answers both command sentences one final faced before the unclear stretch, and the stretch", () => {
     const { shadow } = shadowAt();
     shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
     shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
-    // Matched only after passing over the first sentence, so the alignment is unclear, but this one is fully covered.
+    // Matched only after passing over the first sentence. Two command sentences against one final means one of them
+    // was never delivered: the first may be its misread reading and the second the command said again, or the second
+    // its reading and the first never delivered. Answering both costs one duplicate and never loses the other.
     shadow.delivered("chạy lại test đi nha");
     shadow.hear({ utteranceId: "s:u3", text: "rồi mở file", isFinal: false });
     shadow.hear({ utteranceId: "s:u4", text: "voice session", isFinal: false });
-    expect(shadow.take()).toBe("rồi mở file voice session");
+    expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nha rồi mở file voice session");
+  });
+
+  it("answers a command said again after its misread reading when the final arrives after both", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    // The recognizer delivers one final, which matches the repeat, then fails.
+    shadow.delivered("chạy lại test đi nha");
+    expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nha");
+  });
+
+  it("answers a command said again after a misread reading the live session split in two", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "tét đi mà", isFinal: true });
+    shadow.hear({ utteranceId: "s:u3", text: "chạy lại test đi nha", isFinal: true });
+    shadow.delivered("chạy lại test đi nha");
+    expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nha");
+  });
+
+  it("answers a command said again after its misread reading while an expired final's late reading is kept", () => {
+    const { shadow, advance } = shadowAt();
+    shadow.delivered("mở file voice session giúp tui");
+    advance(6000);
+    // The expired final's late reading accounts for itself, not for the misread sentence after it.
+    shadow.hear({ utteranceId: "s:u1", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại tét đi mà", isFinal: true });
+    shadow.hear({ utteranceId: "s:u3", text: "chạy lại test đi nha", isFinal: true });
+    shadow.delivered("chạy lại test đi nha");
+    expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nha");
+  });
+
+  it("still answers a command said again after its misread reading once a later final matched cleanly", () => {
+    const { shadow } = shadowAt();
+    shadow.hear({ utteranceId: "s:u1", text: "chạy lại tét đi mà", isFinal: true });
+    shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
+    shadow.delivered("chạy lại test đi nha");
+    // A clean match afterwards clears the unclear stretch, but not the sentence the first match owes.
+    shadow.hear({ utteranceId: "s:u3", text: "mở file voice session giúp tui", isFinal: true });
+    shadow.delivered("mở file voice session giúp tui");
+    expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nha");
+  });
+
+  it("does not let an expired final take a sentence heard more than 30 s after it as its misread reading", () => {
+    const { shadow, advance } = shadowAt();
+    // Its live reading never arrives.
+    shadow.delivered("sửa lỗi stale closure trong useEffect");
+    advance(33_000);
+    shadow.delivered("sửa cái hàm đọc cấu hình");
+    advance(1000);
+    shadow.hear({ utteranceId: "s:u1", text: "xử cài ham độc câu hinh", isFinal: true });
+    advance(5000);
+    // The person says the command again; its final's live reading arrived, misread.
+    shadow.hear({ utteranceId: "s:u2", text: "sửa cái hàm đọc cấu hình", isFinal: false });
+    expect(shadow.take()).toBe("xử cài ham độc câu hinh sửa cái hàm đọc cấu hình");
   });
 
   for (const [lag, stepMs] of [[1, 500], [1, 3000], [2, 500], [3, 3000]] as const) {
@@ -288,7 +346,8 @@ describe("the live reading kept while a recognizer is the source", () => {
       advance(gapMs);
       // The person says it again, the waiting final matches the repeat, and the recognizer fails before delivering it.
       shadow.hear({ utteranceId: "s:u2", text: "chạy lại test đi nha", isFinal: true });
-      expect(shadow.take()).toBe("chạy lại test đi nha");
+      // Two live sentences against one final: both are answered, since which one was never delivered cannot be told.
+      expect(shadow.take()).toBe("chạy lại tét đi mà chạy lại test đi nha");
     });
   }
 

@@ -48,21 +48,22 @@ them before they mean anything.
      the beginning of what the live reading holds next, so a final may cover only the first part of a live utterance.
      Finals shorter than three words never move it, and a final whose live reading does not arrive soon expires. When the
      alignment is unclear, every live sentence after the last fully covered one is answered, whole and in order, so a
-     sentence the live session split into two utterances is not lost. The exception is a live sentence that arrives
-     late for a final that already expired: the last sixteen expired finals are remembered and matched in the order
-     they were delivered against every live sentence kept, before the cursor too, so each is used up by its own late
-     reading. A live sentence heard within thirty seconds of the final, that reads as the whole of it under the same
-     three-word and few-character rule, is that reading and is not answered again; only the newest sentence, while the
-     live session is still reading it, may read as its beginning. The first live sentence in the final's turn that
-     reads as no expired final is taken as its misread reading and uses the final up, so the final cannot excuse a
-     later sentence that only says the same words again; that misread sentence is answered again. A final that a later
-     final's match passed over is not remembered, because its live reading already went by. The rule works on whole
-     sentences, so a live sentence that holds a delivered part and an undelivered part is answered whole. Every rule
-     prefers answering words twice to losing them, with one accepted loss: when the live readings of one or more finals
-     never arrive and the person says the same three or more words as one of them again within thirty seconds, the
-     repeat is taken for that final's late reading and is not answered, unless before it the live session heard one new
-     sentence for each such final, up to and including the one said again. It cannot be told apart from a live
-     transcription that lags the recognizer, and answering it would re-send every sentence of a lagging stretch.
+     sentence the live session split into two utterances is not lost. The last sixteen finals that expired without
+     their live reading are remembered, because that reading often arrives only after the recognizer finalized the next
+     sentence; they are matched in the order they were delivered against every live sentence kept, before the cursor
+     too. A final that a later final's match passed over is not remembered, because its live reading already went by.
+     Which live sentence is withheld follows one count, since each recognizer final accounts for at most one live
+     sentence. A live sentence is withheld only when one recognizer final accounts for it and for no other withheld
+     sentence: the sentence it matched, its late reading, or the first sentence in its turn that reads as nothing. A
+     sentence no final accounts for is answered, and when a match passed over such a sentence the matched one is
+     answered too, since one of the two was never delivered. Live readings arrive in the order the finals were
+     delivered, so a sentence that reads as a later final ends an earlier final's turn. The rule works on whole
+     sentences, so a live sentence that holds a delivered part and an undelivered part is answered whole. One loss is
+     accepted: a sentence that reads as the whole of a final whose live reading never arrived, heard within thirty
+     seconds of it, is taken for that late reading and not answered. It cannot be told from a lagging live
+     transcription, and answering it would re-send every sentence of a lagging stretch. A seeded simulation of failing
+     sessions (`apps/runtime/test/voice-live-shadow-simulation.spec.ts`) checks the rule: every undelivered sentence
+     comes back, in order, but for that loss, and the duplicates stay bounded by how ambiguous the readings were.
 3. **A bounded, ranked, redacted session vocabulary.**
    - It is built on the node from:
      - projects;
