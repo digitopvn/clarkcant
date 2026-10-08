@@ -919,6 +919,48 @@ test("the transcript's own scroll to the bottom does not hide a reader's scroll 
   expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
 });
 
+test("a reader who scrolls up inside a live reply taller than the screen stays where they put the view", async ({ page }) => {
+  // Reduced motion: each follow is one instant move, so the reply is followed up to its height without a glide (#701).
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const { conversationId } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  await startReply(page);
+  // The reply grows taller than the screen, followed all the way.
+  const replyIsTaller = (): Promise<boolean> =>
+    scroller(page).evaluate((node) => (node.querySelector("[data-live]")?.getBoundingClientRect().height ?? 0) > node.clientHeight);
+  for (let part = 1; part <= 40 && !(await replyIsTaller()); part += 1) {
+    await growReply(page, `đoạn ${String(part)}`);
+    await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  }
+  expect(await replyIsTaller()).toBe(true);
+
+  // The reader scrolls up inside the reply, and the browser reports it. The transcript's window follows the screen: it
+  // mounts rows above, then the browser stops drawing them off screen and they shrink, which pulls the view up to the
+  // bottom unless the place is held.
+  const replyTop = (): Promise<number> =>
+    scroller(page).evaluate((node) => {
+      const reply = node.querySelector<HTMLElement>("[data-live]");
+      if (reply === null) throw new Error("no reply is being written");
+      return reply.getBoundingClientRect().top - node.getBoundingClientRect().top;
+    });
+  const before = await replyTop();
+  await scrollBy(page, -300);
+  await settle(page);
+  const placed = await replyTop();
+  expect(Math.abs(placed - before - 300)).toBeLessThanOrEqual(2);
+  expect(await distanceToBottom(page)).toBeGreaterThanOrEqual(298);
+
+  // More of the reply lands below the reader: what they are reading does not move.
+  for (const marker of ["phần một", "phần hai"]) {
+    await growReply(page, marker);
+    await settle(page);
+    expect(Math.abs((await replyTop()) - placed)).toBeLessThanOrEqual(2);
+  }
+  expect(await distanceToBottom(page)).toBeGreaterThan(300);
+});
+
 /** Send a question and let the reply start, with the reader following it at the bottom. */
 async function startReply(page: Page): Promise<void> {
   const composer = page.locator("[data-composer]");
