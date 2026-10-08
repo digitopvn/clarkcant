@@ -162,13 +162,70 @@ export function readDevSessions(dataDir: string): StoredDevSession[] {
   return parsed.data.sessions;
 }
 
-export function writeDevSessions(dataDir: string, sessions: readonly StoredDevSession[]): void {
-  const dir = widgetDevStoreDir(dataDir);
-  mkdirSync(dir, { recursive: true });
-  const target = storePath(dataDir);
+/** Write a file of the store whole, through a temporary name renamed into place, so a crash leaves the previous one. */
+function writeWhole(dataDir: string, target: string, document: unknown): void {
+  mkdirSync(widgetDevStoreDir(dataDir), { recursive: true });
   const temp = `${target}.${String(process.pid)}.${String(Date.now())}.tmp`;
-  writeFileSync(temp, JSON.stringify(storeSchema.parse({ version: 1, sessions }), null, 2));
+  writeFileSync(temp, JSON.stringify(document, null, 2));
   renameSync(temp, target);
+}
+
+export function writeDevSessions(dataDir: string, sessions: readonly StoredDevSession[]): void {
+  writeWhole(dataDir, storePath(dataDir), storeSchema.parse({ version: 1, sessions }));
+}
+
+/** The most snapshot digests the node keeps that no session lists any more (`readOrphanedSnapshots`). */
+export const WIDGET_DEV_ORPHANS_MAX = 1024;
+
+/** A snapshot's content digest, the only form that names a folder in the package cache (`cachedLocalSnapshotPath`). */
+const SNAPSHOT_DIGEST = /^sha256:[0-9a-f]{64}$/;
+
+const orphansSchema = z.strictObject({
+  version: z.literal(1),
+  digests: z.array(z.string().regex(SNAPSHOT_DIGEST)).max(WIDGET_DEV_ORPHANS_MAX),
+});
+
+function orphansPath(dataDir: string): string {
+  return join(widgetDevStoreDir(dataDir), "orphaned-snapshots.json");
+}
+
+/**
+ * Snapshots a session made that no session lists any more: the oldest of a session's list past
+ * `WIDGET_DEV_SNAPSHOTS_MAX`, and every snapshot of a session the store forgot to make room. Their folders are still in
+ * the package cache, and only this says a session made them: the cache also holds the snapshots an ordinary install of a
+ * local package takes, which no session may remove. A boot removes the ones nothing uses (`resume`).
+ *
+ * Kept apart from the session store, so the store's own format does not change. A missing file is none; a file that
+ * cannot be read as one is read as none and replaced by the next write, which leaves those folders where they are and
+ * removes nothing.
+ */
+export function readOrphanedSnapshots(dataDir: string): string[] {
+  try {
+    const parsed = orphansSchema.safeParse(JSON.parse(readFileSync(orphansPath(dataDir), "utf8")));
+    if (parsed.success) return parsed.data.digests;
+    process.stderr.write("widget dev: the list of orphaned snapshots does not match its schema; read as empty\n");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(`widget dev: could not read the list of orphaned snapshots: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+    }
+  }
+  return [];
+}
+
+/**
+ * Keeps the newest `WIDGET_DEV_ORPHANS_MAX`, once each. A value that is not a snapshot digest names no folder, and is
+ * left out.
+ *
+ * Past the bound the oldest are dropped, whether or not something still uses them, and a dropped digest's folder is no
+ * longer removed by any boot. That leak is bounded. A digest stays listed while something uses it: a session runs or
+ * waits on it, or a generation still names it, as an installed package or the one a rollback returns to. Only more than
+ * `WIDGET_DEV_ORPHANS_MAX` such digests, or as many orphaned between two boots (each boot removes up to
+ * `WIDGET_DEV_SWEEP_MAX` unused ones), push any off. Each one pushed off leaves at most its own folder behind, and the
+ * list itself never grows past the bound.
+ */
+export function writeOrphanedSnapshots(dataDir: string, digests: readonly string[]): void {
+  const unique = [...new Set(digests.filter((digest) => SNAPSHOT_DIGEST.test(digest)))].slice(-WIDGET_DEV_ORPHANS_MAX);
+  writeWhole(dataDir, orphansPath(dataDir), orphansSchema.parse({ version: 1, digests: unique }));
 }
 
 /**
