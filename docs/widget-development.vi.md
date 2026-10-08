@@ -2948,6 +2948,12 @@ Local isolated host có:
 `clark widget dev [dir] [--port N] [--builtin <id>]`: không có `[dir]` thì lấy thư mục hiện tại, và
 `--builtin <id>` xem một widget của catalog trong **cùng** host đó thay vì một package trên đĩa — chi tiết ở 23.5.
 
+Dev host chỉ lắng nghe trên `127.0.0.1` và không có cờ nào để mở nó ra mạng. Nó chỉ trả lời các yêu cầu gửi tới
+`127.0.0.1:<port>`, `localhost:<port>` hoặc `[::1]:<port>`, và từ chối mọi `Host` khác bằng `403`. Nhờ vậy, một trang
+web trỏ tên miền của chính nó về máy bạn (DNS rebinding) không thể đọc trạng thái của shell hay điều khiển nó. Một yêu
+cầu `POST` hoặc `DELETE` có ghi `Origin` cũng phải đến từ một trong các địa chỉ đó. Hãy mở URL mà dev host in ra. Một
+tên máy tự đặt, một tunnel hay một proxy chuyển tiếp `Host` của riêng nó sẽ bị từ chối.
+
 Với một package, dev host thực hiện bắt tay `init` thật của bridge. Nó gửi props của fixture đang chọn và đưa ra
 `artifacts@1` (§10.1). Control **File picker** của nó giả lập lựa chọn của người dùng. Control này liệt kê các tệp
 trong `fixtures/files/` của package, thêm một mục Huỷ, và lần `pick` kế tiếp trả về mục đang được chọn. Nó chỉ liệt kê

@@ -2961,6 +2961,12 @@ A local isolated host with:
 `clark widget dev [dir] [--port N] [--builtin <id>]`: without `[dir]` it uses the current directory, and
 `--builtin <id>` views a catalog widget in the **same** host instead of a package on disk — details in 23.5.
 
+The dev host listens only on `127.0.0.1` and has no flag to expose it on the network. It answers only requests
+addressed to `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, and refuses any other `Host` with `403`. That
+blocks a website that points its own name at your machine (DNS rebinding) from reading the shell's state or driving
+it. A `POST` or `DELETE` that names an `Origin` must come from one of those addresses too. Open the URL the dev host
+prints. A custom hostname, a tunnel or a proxy that forwards its own `Host` is refused.
+
 For a package, the dev host performs the bridge's real `init` handshake. It sends the selected fixture's props and
 offers `artifacts@1` (§10.1). Its **File picker** control simulates the person's choice. It lists the files in the
 package's `fixtures/files/` and adds Cancel, and the next `pick` returns whichever is selected. It lists only files
