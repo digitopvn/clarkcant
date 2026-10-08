@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -282,6 +282,22 @@ async function stubFrameBridge(page: import("@playwright/test").Page, read: Reco
         calls.push("release");
         return { ok: true };
       },
+      // The file, job and token relays, recorded and refused: this fixture draws the frame and never uses them.
+      artifacts: Object.fromEntries(
+        ["pick", "describe", "create", "read", "write", "finalize", "export", "attach", "discard"].map((verb) => [
+          verb,
+          async (input: unknown) => {
+            calls.push({ [`artifacts.${verb}`]: input });
+            return { ok: false, code: "RELAY_REFUSED", refused: "recorded only" };
+          },
+        ]),
+      ),
+      jobs: Object.fromEntries(
+        ["get", "list", "cancel"].map((verb) => [verb, async () => ({ ok: false, code: "RELAY_REFUSED", refused: "recorded only" })]),
+      ),
+      tokens: Object.fromEntries(
+        ["request", "end"].map((verb) => [verb, async () => ({ ok: false, code: "RELAY_REFUSED", refused: "recorded only" })]),
+      ),
     };
   }, read);
 }
@@ -501,4 +517,201 @@ test("a surface that could not read its widget recovers once a re-claim succeeds
   await page.clock.fastForward(REFRESH_MS);
   await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 10_000 });
   await expect(live.locator("[data-detach-widget='true']")).toBeVisible();
+});
+
+/*
+ * A widget's files from a detached window, end to end against the real node.
+ *
+ * The test process stands in for the desktop host, as `main.mjs` performs each relay: it holds the node's token, calls
+ * the bound instance's routes, picks and saves "in the OS dialog" itself, and tells the conversation window when a file
+ * was attached. The detached page holds no token and names no instance; the conversation page hears only the push.
+ */
+const PICKED_TEXT = "ghi chu tu cua so rieng\n".repeat(40);
+const COPY_TEXT = PICKED_TEXT.slice(0, 2_000).toUpperCase();
+
+function nodeAnswer(status: number, body: Record<string, unknown>): Record<string, unknown> {
+  if (status >= 200 && status < 300) return { ok: true, ...body };
+  return { ok: false, code: String(body["code"] ?? "UNKNOWN"), refused: String(body["message"] ?? `status ${String(status)}`) };
+}
+
+test("a widget in a detached window exports through the host and attaches into the conversation's composer", async ({ browser }, testInfo) => {
+  test.setTimeout(180_000);
+  if (NODE_PORT === undefined || NODE_PORT === "") throw new Error("CC_E2E_NODE_PORT is not set; run this suite through playwright.config.ts");
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const shell = await context.newPage();
+  // The conversation window, with the one desktop push this journey needs.
+  await shell.addInitScript(() => {
+    if (window.top !== window) return;
+    (window as unknown as { clarkcant: unknown }).clarkcant = {
+      onArtifactAttached: (listener: (payload: unknown) => void) => {
+        (window as unknown as { __pushAttached: (payload: unknown) => void }).__pushAttached = listener;
+        return () => undefined;
+      },
+    };
+  });
+  await shell.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(shell.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  await say(shell, "widget tệp");
+  const open = shell.locator("[data-open-live]").last();
+  await expect(open).toBeVisible({ timeout: 20_000 });
+  const instanceId = await open.getAttribute("data-open-live");
+  const conversationId = await shell.evaluate(() => window.sessionStorage.getItem("cc_conversation"));
+  if (instanceId === null || conversationId === null) throw new Error("the conversation did not place the file widget");
+
+  const widget = `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}`;
+  const node = async (path: string, init: { method: string; body?: unknown }) => {
+    const response = await fetch(`${GATEWAY}${path}`, {
+      method: init.method,
+      headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+    return response;
+  };
+  const json = async (path: string, init: { method: string; body?: unknown }) => {
+    const response = await node(path, init);
+    return nodeAnswer(response.status, (await response.json().catch(() => ({}))) as Record<string, unknown>);
+  };
+  const frameRead = async () => {
+    const read = await json(`${widget}/live`, { method: "GET" });
+    if (read.ok !== true) return read;
+    const { ok: _ok, ...live } = read as { ok: true; frame?: { url: string } | null };
+    return { ok: true, live: { ...live, frame: live.frame ? { ...live.frame, url: new URL(live.frame.url, GATEWAY).toString() } : null } };
+  };
+  const asked: Array<{ verb: string; payload: unknown }> = [];
+  let pickedName: string | undefined;
+
+  const detached = await context.newPage();
+  await detached.exposeFunction("__hostRelay", async (verb: string, payload: Record<string, unknown> | null) => {
+    asked.push({ verb, payload });
+    const p = payload ?? {};
+    const artifact = (rest = "") => `${widget}/artifacts/${encodeURIComponent(String(p["artifactId"]))}${rest}`;
+    switch (verb) {
+      case "bootstrap": {
+        const read = await frameRead();
+        return read.ok === true ? { ok: true, bootstrap: { instanceRef: instanceId, title: "widget tệp", widgetKind: "widget", live: read["live"] } } : read;
+      }
+      case "frame.read":
+        return frameRead();
+      case "state.save": {
+        const saved = await json(`${widget}/state`, { method: "POST", body: p });
+        return saved.ok === true ? { ok: true, saved } : saved;
+      }
+      case "semantic.publish":
+        return json(`${widget}/semantic`, { method: "POST", body: { proposal: p["proposal"] } });
+      case "dev.session":
+        return { ok: false, code: "NO_DEV_SESSION", refused: "no dev session" };
+      case "release":
+        return { ok: true };
+      case "artifacts.pick": {
+        // The person's choice in the OS dialog: the bytes go from the host to the node, and only the bare name comes back.
+        pickedName = "ghi-chu.txt";
+        const picked = await json(`${widget}/artifacts/pick`, {
+          method: "POST",
+          body: { accept: p["accept"] ?? [], name: pickedName, mimeType: "text/plain", contentBase64: Buffer.from(PICKED_TEXT).toString("base64") },
+        });
+        return picked.ok === true ? { ok: true, canceled: false, artifactRef: picked["artifactRef"], original: { name: pickedName } } : picked;
+      }
+      case "artifacts.describe":
+        return json(artifact(), { method: "GET" });
+      case "artifacts.create":
+        return json(`${widget}/artifacts`, { method: "POST", body: p });
+      case "artifacts.read":
+        return json(artifact(`/content?offset=${String(p["offset"])}&length=${String(p["length"])}`), { method: "GET" });
+      case "artifacts.write":
+        return json(artifact("/chunks"), { method: "POST", body: { offset: p["offset"], contentBase64: p["chunkBase64"] } });
+      case "artifacts.finalize":
+        return json(artifact("/finalize"), { method: "POST", body: {} });
+      case "artifacts.export": {
+        const described = await json(artifact(), { method: "GET" });
+        if (described.ok !== true) return described;
+        const exported = await node(`/artifacts/${encodeURIComponent(String(p["artifactId"]))}/export`, {
+          method: "POST",
+          body: { suggestedName: p["suggestedName"] },
+        });
+        if (!exported.ok) return nodeAnswer(exported.status, (await exported.json()) as Record<string, unknown>);
+        // Save As, answered: the host writes the bytes where the person chose, and tells the window only that it did.
+        const name = String(p["suggestedName"]);
+        writeFileSync(testInfo.outputPath(name), Buffer.from(await exported.arrayBuffer()));
+        return { ok: true, saved: true, name };
+      }
+      case "artifacts.attach": {
+        const attached = await json(artifact("/attach"), { method: "POST", body: p["name"] === undefined ? {} : { name: p["name"] } });
+        if (attached.ok === true) {
+          const push = { conversationId, attachmentRef: attached["attachmentRef"] };
+          await shell.evaluate((payload) => (window as unknown as { __pushAttached: (value: unknown) => void }).__pushAttached(payload), push);
+        }
+        return attached;
+      }
+      case "artifacts.discard":
+        return json(artifact(), { method: "DELETE" });
+      default:
+        return { ok: false, code: "RELAY_REFUSED", refused: `the stand-in host does not relay ${verb}` };
+    }
+  });
+  await detached.addInitScript(() => {
+    if (window.top !== window) return;
+    const relay = (verb: string, payload?: unknown) =>
+      (window as unknown as { __hostRelay: (verb: string, payload: unknown) => Promise<unknown> }).__hostRelay(verb, payload ?? null);
+    const verbs = (family: string, names: string[]) => Object.fromEntries(names.map((name) => [name, (input?: unknown) => relay(`${family}.${name}`, input)]));
+    (window as unknown as { clarkcantDetached: unknown }).clarkcantDetached = {
+      bootstrap: () => relay("bootstrap"),
+      frameRead: () => relay("frame.read"),
+      saveState: (write: unknown) => relay("state.save", write),
+      publishSemantic: (input: unknown) => relay("semantic.publish", input),
+      devSession: () => relay("dev.session"),
+      intent: (input: unknown) => relay("intent", input),
+      release: () => relay("release"),
+      artifacts: verbs("artifacts", ["pick", "describe", "create", "read", "write", "finalize", "export", "attach", "discard"]),
+      jobs: verbs("jobs", ["get", "list", "cancel"]),
+      tokens: verbs("tokens", ["request", "end"]),
+    };
+  });
+  await detached.goto("/?detached=1");
+
+  const surface = detached.locator("[data-detached-surface='true']");
+  await expect(surface.locator("[data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
+  const frame = detached.frameLocator("[data-widget-frame] iframe");
+  await expect(frame.locator("[data-widget-ready]")).toHaveCount(1, { timeout: 20_000 });
+  await expect(frame.locator("[data-artifact-available='true']")).toHaveCount(1);
+
+  // The pick is the host's: the window's own question, then the "OS dialog" the host opens over it.
+  await frame.locator("[data-artifact-pick]").click();
+  await detached.locator("[data-artifact-prompt='pick'] [data-artifact-choose]").click();
+  await expect(frame.locator("[data-artifact-status='picked']")).toHaveCount(1, { timeout: 20_000 });
+  await frame.locator("[data-artifact-read]").click();
+  await expect(frame.locator("[data-artifact-status='read']")).toHaveCount(1, { timeout: 20_000 });
+  await frame.locator("[data-artifact-create]").click();
+  await expect(frame.locator("[data-artifact-status='finalized']")).toHaveCount(1, { timeout: 20_000 });
+
+  // Save As in the window's own chrome; replacing the file picked in this window is offered, by name.
+  await frame.locator("[data-artifact-export]").click();
+  const savePrompt = detached.locator("[data-artifact-prompt='export']");
+  await expect(savePrompt).toBeVisible();
+  await expect(savePrompt.locator("[data-artifact-replace]")).toContainText("ghi-chu.txt");
+  await expect(savePrompt.locator("[data-artifact-web-original]")).toHaveCount(0);
+  await savePrompt.locator("[data-artifact-save]").click();
+  await expect(frame.locator("[data-artifact-status='saved']")).toHaveCount(1, { timeout: 20_000 });
+  await expect(detached.locator("[data-artifact-notice='info']")).toContainText("ban-viet-hoa.txt");
+  expect(readFileSync(testInfo.outputPath("ban-viet-hoa.txt"), "utf8")).toBe(COPY_TEXT);
+  await detached.screenshot({ path: testInfo.outputPath("detached-artifact-saved.png"), fullPage: true });
+
+  // Attaching puts the copy in the conversation's composer, not the detached window's.
+  await frame.locator("[data-artifact-attach]").click();
+  await expect(frame.locator("[data-artifact-status='attached']")).toHaveCount(1, { timeout: 20_000 });
+  const chip = shell.locator("[data-attachment-chip]").last();
+  await expect(chip).toHaveAttribute("data-attachment-state", "ready", { timeout: 20_000 });
+  await expect(chip).toContainText("ban-viet-hoa.txt");
+  await expect(detached.locator("[data-attachment-chip]")).toHaveCount(0);
+  await shell.screenshot({ path: testInfo.outputPath("shell-attached-chip.png"), fullPage: true });
+
+  // Every relay named only the frame's own request: never the instance, the conversation or a path.
+  const verbsAsked = new Set(asked.map((entry) => entry.verb));
+  for (const verb of ["artifacts.pick", "artifacts.read", "artifacts.create", "artifacts.write", "artifacts.finalize", "artifacts.export", "artifacts.attach"]) {
+    expect(verbsAsked.has(verb), verb).toBe(true);
+  }
+  for (const entry of asked) {
+    expect(JSON.stringify(entry.payload ?? {})).not.toMatch(/instanceId|conversationId|widget_|conv_/);
+  }
+  expect(await detached.evaluate(() => [window.sessionStorage.getItem("cc_token"), window.localStorage.getItem("cc_token")])).toEqual([null, null]);
+  await context.close();
 });

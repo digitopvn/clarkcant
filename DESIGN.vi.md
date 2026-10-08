@@ -195,8 +195,9 @@ Widget chạy trong khung riêng cũng tách ra theo cùng cách. Cửa sổ mou
 lần đọc, ghi state, publish semantic và bấm của frame đều là một relay có giới hạn do host thực hiện cho instance mà nó
 đã mở cửa sổ này. Frame được mount mới, nên state bền được giữ còn view state và vị trí phát bắt đầu lại. Trong lúc
 widget đang tách, hội thoại hiện một ghi chú ở chỗ của nó thay vì một frame thứ hai, và các lần perform của Clark trên
-widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại. Tệp, job và browser token chưa được cung cấp
-trong cửa sổ này ([#616](https://github.com/digitopvn/clarkcant/issues/616)), các lần perform của Clark cũng vậy
+widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại. Tệp, job và browser token hoạt động
+trong cửa sổ giống hệt trong hội thoại: mỗi thứ là một relay của host cho đúng instance đó, nên cửa sổ không bao giờ
+giữ token, và tệp được đính kèm sẽ hiện trong hội thoại. Các lần perform của Clark chưa được cung cấp trong cửa sổ này
 ([#617](https://github.com/digitopvn/clarkcant/issues/617)).
 
 Lease **chuyển** chứ không nhân bản: shell release trước, host claim surface `detached`, và khi cửa sổ đóng thì host

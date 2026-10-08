@@ -6,7 +6,7 @@ import type { FrameArtifactBroker, FrameArtifactOutcome } from "@clarkcant/widge
 import { type GatewayClient, GatewayError } from "./api.ts";
 import { artifactReason, artifactTypesLabel, DesktopFileError, desktopDialogLabels } from "./artifact-messages.ts";
 import { formatFileSize, toBase64 } from "./attachments.ts";
-import { desktopFileBridge, saveForPerson } from "./download.ts";
+import { type DesktopDialogLabels, desktopFileBridge, type SaveOutcome, saveForPerson } from "./download.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -26,16 +26,82 @@ import type { MessageKey } from "./i18n/messages.ts";
  * chosen by the refusal's code (`artifact-messages.ts`).
  */
 
+/**
+ * How one host reaches the node and the person's disk for a widget's files.
+ *
+ * The conversation's window calls the node with its own client (`shellArtifactFiles`); a detached window asks the
+ * desktop host to (`detachedArtifactFiles`). Both answer with the same readers, so a widget sees the same outcomes in
+ * either. Each throws a `GatewayError` for the node's refusal and a `DesktopFileError` for the desktop's.
+ */
+export interface WidgetArtifactFiles {
+  /** Whether picking and saving open the OS dialogs, rather than the browser's file input and download. */
+  desktop: boolean;
+  describe(artifactId: string): Promise<ArtifactRef>;
+  create(input: { mimeType: string; name?: string }): Promise<ArtifactRef>;
+  read(artifactId: string, range: { offset: number; length: number }): Promise<{ artifactRef: ArtifactRef; contentBase64: string; eof: boolean }>;
+  write(artifactId: string, chunk: { offset: number; contentBase64: string }): Promise<ArtifactRef>;
+  finalize(artifactId: string): Promise<ArtifactRef>;
+  attach(artifactId: string, options: { name?: string | undefined }): Promise<{ artifactRef: ArtifactRef; attachmentRef: AttachmentRef }>;
+  discard(artifactId: string): Promise<void>;
+  /** Open the OS picker and give the node the chosen file, granted to this instance. Absent in a browser. */
+  pickOnDesktop?(input: { accept: readonly string[]; title: string; filterName: string }): Promise<
+    { canceled: true } | { canceled: false; ref: ArtifactRef; original: PickedOriginal }
+  >;
+  /** Give the node a file the browser's file input read. Absent where picking is the desktop's. */
+  storePicked?(file: { accept: readonly string[]; name: string; mimeType: string; contentBase64: string }): Promise<ArtifactRef>;
+  /** Export the artifact and put it where the person chooses — over `original` when it is given. */
+  save(input: { ref: ArtifactRef; suggestedName: string; original: PickedOriginal | undefined; labels: DesktopDialogLabels }): Promise<SaveOutcome>;
+}
+
+/** The conversation window's files: its own client against the node, and the desktop bridge or the browser for the person's disk. */
+export function shellArtifactFiles(client: GatewayClient, conversationId: string, instanceId: string): WidgetArtifactFiles {
+  const bridge = desktopFileBridge();
+  const storePicked: NonNullable<WidgetArtifactFiles["storePicked"]> = (file) =>
+    client.pickArtifact({ conversationId, instanceId, ...file });
+  return {
+    desktop: bridge !== undefined,
+    describe: (artifactId) => client.describeWidgetArtifact(conversationId, instanceId, artifactId),
+    create: (input) => client.createArtifact(conversationId, instanceId, input),
+    read: (artifactId, range) => client.readArtifactRange(conversationId, instanceId, artifactId, range),
+    write: (artifactId, chunk) => client.writeArtifactChunk(conversationId, instanceId, artifactId, chunk),
+    finalize: (artifactId) => client.finalizeArtifact(conversationId, instanceId, artifactId),
+    attach: (artifactId, options) => client.attachArtifact(conversationId, instanceId, artifactId, options),
+    discard: (artifactId) => client.discardArtifact(conversationId, instanceId, artifactId),
+    ...(bridge === undefined
+      ? { storePicked }
+      : {
+          pickOnDesktop: async ({ accept, title, filterName }) => {
+            const answer: Awaited<ReturnType<typeof bridge.pickFile>> = await bridge
+              .pickFile({ title, accept, filterName })
+              // A bridge that threw says nothing this page may repeat: only that the desktop did not finish.
+              .catch(() => ({ ok: false, refused: "DESKTOP_FAILED" }));
+            if (answer.ok && answer.canceled === true) return { canceled: true };
+            if (!answer.ok || answer.file === undefined) throw new DesktopFileError(answer.refused ?? "DESKTOP_FAILED", answer.errorCode);
+            const { file } = answer;
+            const ref = await storePicked({ accept, name: file.name, mimeType: file.mimeType, contentBase64: file.contentBase64 });
+            // Remembered as the node typed it, which is what decides whether a later file can be written over it.
+            return { canceled: false, ref, original: { name: file.name, handle: file.handle, mimeType: ref.mimeType } };
+          },
+        }),
+    save: async ({ ref, suggestedName, original, labels }) => {
+      const exported = await client.exportArtifact(ref.artifactId, suggestedName);
+      return saveForPerson(exported.blob, exported.filename, {
+        // The type the node sent the bytes as, which is what the desktop names and checks the file by.
+        mimeType: exported.mimeType === "" ? ref.mimeType : exported.mimeType,
+        replaceHandle: original?.handle,
+        labels,
+      });
+    },
+  };
+}
+
 export interface WidgetArtifactHostInput {
-  client: GatewayClient;
-  conversationId: string;
-  instanceId: string;
+  files: WidgetArtifactFiles;
   /** The widget's title, so the person knows which widget is asking. */
   widgetTitle?: string | undefined;
   /** A finalized artifact the widget attached: it goes into the composer, where the person decides whether to send it. */
   onAttach?: ((attachment: AttachmentRef) => void) | undefined;
 }
-
 type PromptRequest = { kind: "pick"; accept: readonly string[] } | { kind: "export"; ref: ArtifactRef; suggestedName: string };
 type Prompt = PromptRequest & { settle: (outcome: FrameArtifactOutcome) => void };
 
@@ -115,22 +181,19 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
 
   const broker = useCallback<FrameArtifactBroker>(
     async (request) => {
-      const { client, conversationId, instanceId } = latest.current;
+      const { files } = latest.current;
       try {
         switch (request.op) {
           case "pick":
             return await ask({ kind: "pick", accept: request.accept });
           case "read": {
-            const read = await client.readArtifactRange(conversationId, instanceId, request.artifactId, {
-              offset: request.offset,
-              length: request.length,
-            });
+            const read = await files.read(request.artifactId, { offset: request.offset, length: request.length });
             return { status: "ok", ref: read.artifactRef, chunkBase64: read.contentBase64, eof: read.eof };
           }
           case "create":
             return {
               status: "ok",
-              ref: await client.createArtifact(conversationId, instanceId, {
+              ref: await files.create({
                 mimeType: request.mimeType,
                 ...(request.name === undefined ? {} : { name: request.name }),
               }),
@@ -138,26 +201,23 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
           case "write":
             return {
               status: "ok",
-              ref: await client.writeArtifactChunk(conversationId, instanceId, request.artifactId, {
-                offset: request.offset,
-                contentBase64: request.chunkBase64,
-              }),
+              ref: await files.write(request.artifactId, { offset: request.offset, contentBase64: request.chunkBase64 }),
             };
           case "finalize":
-            return { status: "ok", ref: await client.finalizeArtifact(conversationId, instanceId, request.artifactId) };
+            return { status: "ok", ref: await files.finalize(request.artifactId) };
           case "export": {
             // Through the instance's grant first: a widget may offer to save only a file it was given or made.
-            const ref = await client.describeWidgetArtifact(conversationId, instanceId, request.artifactId);
+            const ref = await files.describe(request.artifactId);
             return await ask({ kind: "export", ref, suggestedName: request.suggestedName });
           }
           case "attach": {
-            const attached = await client.attachArtifact(conversationId, instanceId, request.artifactId, { name: request.name });
+            const attached = await files.attach(request.artifactId, { name: request.name });
             latest.current.onAttach?.(attached.attachmentRef);
             setNotice({ tone: "info", text: t("widgets.artifacts.attached").replace("{name}", attached.attachmentRef.filename) });
             return { status: "ok", ref: attached.artifactRef };
           }
           case "discard":
-            await client.discardArtifact(conversationId, instanceId, request.artifactId);
+            await files.discard(request.artifactId);
             return { status: "ok" };
           default: {
             request satisfies never;
@@ -180,11 +240,11 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
   const storePicked = useCallback(
     async (file: { name: string; mimeType: string; contentBase64: string }): Promise<ArtifactRef | undefined> => {
       const current = pending.current;
-      if (current?.kind !== "pick") return undefined;
-      const { client, conversationId, instanceId } = latest.current;
+      const store = latest.current.files.storePicked;
+      if (current?.kind !== "pick" || store === undefined) return undefined;
       setBusy(true);
       try {
-        const ref = await client.pickArtifact({ conversationId, instanceId, accept: current.accept, ...file });
+        const ref = await store({ accept: current.accept, ...file });
         settle({ status: "ok", ref });
         return ref;
       } catch (cause) {
@@ -214,39 +274,36 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
 
   const pickOnDesktop = useCallback(async () => {
     const current = pending.current;
-    const bridge = desktopFileBridge();
-    if (current?.kind !== "pick" || bridge === undefined) return;
+    const pick = latest.current.files.pickOnDesktop;
+    if (current?.kind !== "pick" || pick === undefined) return;
     setBusy(true);
-    const answer: Awaited<ReturnType<typeof bridge.pickFile>> = await bridge
-      .pickFile({ title: pickTitle(t, latest.current.widgetTitle), accept: current.accept, filterName: t("widgets.artifacts.dialog.filterName") })
-      // A bridge that threw says nothing this page may repeat: only that the desktop did not finish.
-      .catch(() => ({ ok: false, refused: "DESKTOP_FAILED" }));
-    if (!answer.ok || answer.file === undefined) {
-      if (answer.ok && answer.canceled === true) {
+    try {
+      const picked = await pick({
+        title: pickTitle(t, latest.current.widgetTitle),
+        accept: current.accept,
+        filterName: t("widgets.artifacts.dialog.filterName"),
+      });
+      if (picked.canceled) {
         settle({ status: "cancelled" });
         return;
       }
-      const cause = new DesktopFileError(answer.refused ?? "DESKTOP_FAILED", answer.errorCode);
+      original.current = picked.original;
+      settle({ status: "ok", ref: picked.ref });
+    } catch (cause) {
       setNotice({ tone: "error", text: t("widgets.artifacts.pickFailed").replace("{reason}", artifactReason(cause, t)) });
       settle(artifactRefusal(cause, "pick"));
-      return;
     }
-    const stored = await storePicked({ name: answer.file.name, mimeType: answer.file.mimeType, contentBase64: answer.file.contentBase64 });
-    // Remembered as the node typed it, which is what decides whether a later file can be written over it.
-    if (stored !== undefined) original.current = { name: answer.file.name, handle: answer.file.handle, mimeType: stored.mimeType };
-  }, [settle, storePicked, t]);
-
+  }, [settle, t]);
   const save = useCallback(
     async (replace: boolean) => {
       const current = pending.current;
       if (current?.kind !== "export") return;
       setBusy(true);
       try {
-        const exported = await latest.current.client.exportArtifact(current.ref.artifactId, current.suggestedName);
-        const saved = await saveForPerson(exported.blob, exported.filename, {
-          // The type the node sent the bytes as, which is what the desktop names and checks the file by.
-          mimeType: exported.mimeType === "" ? current.ref.mimeType : exported.mimeType,
-          replaceHandle: replace ? original.current?.handle : undefined,
+        const saved = await latest.current.files.save({
+          ref: current.ref,
+          suggestedName: current.suggestedName,
+          original: replace ? original.current : undefined,
           labels: desktopDialogLabels(t),
         });
         if (saved.outcome === "cancelled") {
@@ -279,7 +336,7 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
           prompt={prompt}
           busy={busy}
           notice={notice}
-          desktop={desktopFileBridge() !== undefined}
+          desktop={input.files.desktop}
           widgetTitle={input.widgetTitle}
           replaceLabel={prompt?.kind === "export" ? replaceOriginalLabel(t, original.current, prompt.ref, prompt.suggestedName) : undefined}
           onPickFile={(file) => void pickInBrowser(file)}
@@ -297,10 +354,13 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
 
 type Translate = (key: MessageKey) => string;
 
-/** The file a person picked on the desktop: its name, its type as the node stored it, and the handle the shell keeps its path under. */
+/**
+ * The file a person picked on the desktop: its name, its type as the node stored it, and the handle the shell keeps its
+ * path under. A detached window has no handle: its host keeps the path of the last file picked there itself.
+ */
 export interface PickedOriginal {
   name: string;
-  handle: string;
+  handle?: string | undefined;
   mimeType: string;
 }
 

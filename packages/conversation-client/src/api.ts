@@ -757,6 +757,74 @@ export interface TableExportRequest {
   columns?: string[];
 }
 
+/*
+ * How the node's answers to a widget's file, job and token requests are read. Module functions rather than client
+ * methods, so a detached window that receives the same answers through the desktop host's relays reads them the same
+ * way, and refuses the same malformed ones.
+ */
+
+/** The artifact reference an answer carries, or a refusal when it carries none that parses. */
+export function readArtifactRef(body: { artifactRef?: unknown } | undefined): ArtifactRef {
+  const parsed = artifactRefSchema.safeParse(body?.artifactRef);
+  if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable artifact reference");
+  return parsed.data;
+}
+
+/** A read of an artifact's range: its reference, the bytes, and whether the file ended. */
+export function readArtifactRange(body: { artifactRef?: unknown; contentBase64?: unknown; eof?: unknown } | undefined): {
+  artifactRef: ArtifactRef;
+  contentBase64: string;
+  eof: boolean;
+} {
+  if (typeof body?.contentBase64 !== "string" || typeof body.eof !== "boolean") {
+    throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered a read without its bytes");
+  }
+  return { artifactRef: readArtifactRef(body), contentBase64: body.contentBase64, eof: body.eof };
+}
+
+/** An attach: the artifact's reference and the attachment the composer shows. */
+export function readAttachedArtifact(body: { artifactRef?: unknown; attachmentRef?: unknown } | undefined): {
+  artifactRef: ArtifactRef;
+  attachmentRef: AttachmentRef;
+} {
+  // Tolerant of a newer node's field on the reference, which binds nothing; the file is attached either way.
+  const attachment = readNodeView(attachmentRefSchema, body?.attachmentRef);
+  if (!attachment.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node attached the file but returned no attachment");
+  return { artifactRef: readArtifactRef(body), attachmentRef: attachment.data };
+}
+
+/** One job's snapshot, as the frame receives it. */
+export function readWidgetJob(body: { job?: unknown } | undefined): JobSnapshot {
+  // Tolerant of a newer node's top-level field, which is left out before the snapshot reaches the frame; `status`,
+  // `progress` and the result references stay strict.
+  const parsed = readNodeView(jobSnapshotWireSchema, body?.job);
+  if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job snapshot");
+  return parsed.data;
+}
+
+/** The jobs this widget's own bindings started, newest first. */
+export function readWidgetJobs(body: { jobs?: unknown } | undefined): JobSnapshot[] {
+  const parsed = readNodeViewList(jobSnapshotWireSchema, body?.jobs);
+  if (!parsed.success || parsed.data.length > JOB_LIST_LIMIT) {
+    throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job list");
+  }
+  return parsed.data;
+}
+
+/** A browser token the node issued, under the name the frame reads its value by. */
+export function readBrowserToken(body: { token?: unknown } | undefined): BrowserToken {
+  const raw = body?.token;
+  const token = isRecord(raw) ? raw : {};
+  const parsed = browserTokenWireSchema.safeParse({
+    provider: token["provider"],
+    value: token["token"],
+    scopes: token["scopes"],
+    expiresAt: token["expiresAt"],
+  });
+  if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable token");
+  return parsed.data;
+}
+
 /**
  * The file name a `Content-Disposition` header offers, preferring the RFC 5987 UTF-8 form.
  *
@@ -2383,12 +2451,7 @@ export class GatewayClient {
   }
 
   async getWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<JobSnapshot> {
-    const body = await this.#call<{ job?: unknown }>("GET", this.#jobPath(conversationId, instanceId, jobId));
-    // Tolerant of a newer node's top-level field, which is left out before the snapshot reaches the frame; `status`,
-    // `progress` and the result references stay strict.
-    const parsed = readNodeView(jobSnapshotWireSchema, body.job);
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job snapshot");
-    return parsed.data;
+    return readWidgetJob(await this.#call<{ job?: unknown }>("GET", this.#jobPath(conversationId, instanceId, jobId)));
   }
 
   async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
@@ -2397,15 +2460,12 @@ export class GatewayClient {
 
   /** The jobs this widget's own bindings started, newest first, as the node owns them. */
   async listWidgetJobs(conversationId: string, instanceId: string): Promise<JobSnapshot[]> {
-    const body = await this.#call<{ jobs?: unknown }>(
-      "GET",
-      `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs`,
+    return readWidgetJobs(
+      await this.#call<{ jobs?: unknown }>(
+        "GET",
+        `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs`,
+      ),
     );
-    const parsed = readNodeViewList(jobSnapshotWireSchema, body.jobs);
-    if (!parsed.success || parsed.data.length > JOB_LIST_LIMIT) {
-      throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job list");
-    }
-    return parsed.data;
   }
 
   #browserTokenPath(conversationId: string, instanceId: string, rest = ""): string {
@@ -2417,30 +2477,14 @@ export class GatewayClient {
    * mounted the frame asks, and the value goes to that frame and nowhere else.
    */
   async requestBrowserToken(conversationId: string, instanceId: string, session: string, request: TokenRequest): Promise<BrowserToken> {
-    const body = await this.#call<{ token?: { provider?: unknown; token?: unknown; scopes?: unknown; expiresAt?: unknown } }>(
-      "POST",
-      this.#browserTokenPath(conversationId, instanceId),
-      { session, request },
+    return readBrowserToken(
+      await this.#call<{ token?: unknown }>("POST", this.#browserTokenPath(conversationId, instanceId), { session, request }),
     );
-    const parsed = browserTokenWireSchema.safeParse({
-      provider: body.token?.provider,
-      value: body.token?.token,
-      scopes: body.token?.scopes,
-      expiresAt: body.token?.expiresAt,
-    });
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable token");
-    return parsed.data;
   }
 
   /** The frame mounted under `session` has gone: the node revokes what it was given. */
   async endBrowserTokens(conversationId: string, instanceId: string, session: string): Promise<void> {
     await this.#call("DELETE", this.#browserTokenPath(conversationId, instanceId, `/${encodeURIComponent(session)}`));
-  }
-
-  #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {
-    const parsed = artifactRefSchema.safeParse(body.artifactRef);
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable artifact reference");
-    return parsed.data;
   }
 
   /** Store a file the person chose in host chrome, granted to this instance to read. Person-only on the node. */
@@ -2453,16 +2497,16 @@ export class GatewayClient {
     contentBase64: string;
   }): Promise<ArtifactRef> {
     const { conversationId, instanceId, ...body } = input;
-    return this.#artifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId, "/pick"), body));
+    return readArtifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId, "/pick"), body));
   }
 
   /** An artifact as this instance may see it: refused when its grant is missing, expired or revoked. */
   async describeWidgetArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<ArtifactRef> {
-    return this.#artifactRef(await this.#call("GET", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}`)));
+    return readArtifactRef(await this.#call("GET", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}`)));
   }
 
   async createArtifact(conversationId: string, instanceId: string, input: { mimeType: string; name?: string }): Promise<ArtifactRef> {
-    return this.#artifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId), input));
+    return readArtifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId), input));
   }
 
   async readArtifactRange(
@@ -2472,14 +2516,12 @@ export class GatewayClient {
     range: { offset: number; length: number },
   ): Promise<{ artifactRef: ArtifactRef; contentBase64: string; eof: boolean }> {
     const query = `?offset=${String(range.offset)}&length=${String(range.length)}`;
-    const body = await this.#call<{ artifactRef?: unknown; contentBase64?: unknown; eof?: unknown }>(
-      "GET",
-      this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/content${query}`),
+    return readArtifactRange(
+      await this.#call<{ artifactRef?: unknown; contentBase64?: unknown; eof?: unknown }>(
+        "GET",
+        this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/content${query}`),
+      ),
     );
-    if (typeof body.contentBase64 !== "string" || typeof body.eof !== "boolean") {
-      throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered a read without its bytes");
-    }
-    return { artifactRef: this.#artifactRef(body), contentBase64: body.contentBase64, eof: body.eof };
   }
 
   async writeArtifactChunk(
@@ -2488,13 +2530,13 @@ export class GatewayClient {
     artifactId: string,
     chunk: { offset: number; contentBase64: string },
   ): Promise<ArtifactRef> {
-    return this.#artifactRef(
+    return readArtifactRef(
       await this.#call("POST", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/chunks`), chunk),
     );
   }
 
   async finalizeArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<ArtifactRef> {
-    return this.#artifactRef(
+    return readArtifactRef(
       await this.#call("POST", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/finalize`), {}),
     );
   }
@@ -2512,10 +2554,7 @@ export class GatewayClient {
       // The widget's proposed name, passed on as it is: the node sanitizes it.
       options.name === undefined ? {} : { name: options.name },
     );
-    // Tolerant of a newer node's field on the reference, which binds nothing; the file is attached either way.
-    const attachment = readNodeView(attachmentRefSchema, body.attachmentRef);
-    if (!attachment.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node attached the file but returned no attachment");
-    return { artifactRef: this.#artifactRef(body), attachmentRef: attachment.data };
+    return readAttachedArtifact(body);
   }
 
   /** Give back an artifact this instance made. The node refuses one the person chose, or another widget's. */
@@ -2525,7 +2564,7 @@ export class GatewayClient {
 
   /** What the node holds for an artifact this principal owns: its reference, never where its bytes are. */
   async describeArtifact(artifactId: string): Promise<ArtifactRef> {
-    return this.#artifactRef(await this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`));
+    return readArtifactRef(await this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`));
   }
 
   /**
