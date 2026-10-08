@@ -208,7 +208,7 @@ describe("a command typed while a reply is being written", () => {
     await reply;
   });
 
-  it("stays in the new conversation when the node cannot be told about /new, and leaves a trace instead of a remark", async () => {
+  it("stays in the new conversation when the node cannot be told about /new, keeps a trace, and says itself what was kept", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const { render, streams, ran, notices } = harness([], async () => {
@@ -219,7 +219,9 @@ describe("a command typed while a reply is being written", () => {
       await render().send("/new");
       expect(ran).toHaveLength(1);
       await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
-      expect(notices).toEqual([]);
+      // The node's read-back will not come, so the page says what it knows: leaving did not stop that reply, and the
+      // conversation is kept for /sessions. Not "could not ask the node": nothing the person asked for failed.
+      expect(notices).toEqual(["intents.newConversationKeptReplying"]);
 
       streams[0]?.();
       await reply;

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   APP_INTENT_KINDS,
   APP_INTENT_NOT_UNDERSTOOD,
+  SLASH_COMMANDS,
+  SLASH_COMMAND_INTENTS,
   type AppIntentKind,
   describeAppIntent,
 } from "@clarkcant/contracts";
@@ -423,6 +425,21 @@ describe("the slash commands that are app intents", () => {
       expect(newConversationReadBack(locale, false)).toContain("/sessions");
       expect(newConversationReadBack(locale, false)).not.toBe(newConversationReadBack(locale, true));
     }
+  });
+
+  it("reads a command that stands for one intent exactly as the shared copy the page goes home by, whatever follows it", () => {
+    // The page carries `/new` out before the node answers, reading `SLASH_COMMAND_INTENTS`; were the node to read a
+    // command another way, the page would act on a meaning the node does not give it.
+    for (const command of SLASH_COMMANDS) {
+      const shared = SLASH_COMMAND_INTENTS[command];
+      if (shared === undefined) continue;
+      for (const argument of ["", "background", "a title"]) {
+        for (const locale of ["vi", "en"] as const) {
+          expect(slashCommandAppIntent({ command, argument }, locale), `/${command} ${argument}`).toEqual({ kind: "intent", intent: { kind: shared } });
+        }
+      }
+    }
+    expect(SLASH_COMMAND_INTENTS.new).toBe("nav.home");
   });
 
   it("leaves every other command to be answered as a message", () => {

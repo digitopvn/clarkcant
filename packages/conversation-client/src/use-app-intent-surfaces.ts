@@ -110,6 +110,11 @@ export interface AppIntentSurfacesDeps {
   t: (key: MessageKey) => string;
   client: GatewayClient;
   conversationId: string | undefined;
+  /**
+   * Whether a reply is being written in the conversation on screen, read when the logo leaves it: what the page says if
+   * the node cannot be told names that reply (`intents.newConversationKeptReplying`).
+   */
+  replying?: boolean;
   restartSession: () => void;
   attachmentInput: RefObject<HTMLInputElement | null>;
   setVoiceOpen: (open: boolean) => void;
@@ -166,6 +171,7 @@ export interface AppIntentSurfacesDeps {
 export function useAppIntentSurfaces({
   client,
   conversationId,
+  replying = false,
   restartSession,
   attachmentInput,
   setVoiceOpen,
@@ -472,13 +478,19 @@ export function useAppIntentSurfaces({
         ...(conversationId === undefined ? {} : { conversationId }),
         ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
       };
+      // Only the logo is carried out before the node answers. Leaving the start screen for itself leaves nothing behind,
+      // so there is nothing to say when the node could not be told.
+      const leftConversation = kind === "nav.home" && conversationId !== undefined;
       void clickAppIntent(kind, {
         ask: () => client.sendAppIntent(request),
         run: runIntent,
         onLookupFailed: () => setIntentNotice(t("intents.commandLookupFailed")),
+        ...(leftConversation
+          ? { onUnrecorded: () => setIntentNotice(t(replying ? "intents.newConversationKeptReplying" : "intents.newConversationKept")) }
+          : {}),
       });
     },
-    [client, conversationId, runIntent, setIntentNotice, t],
+    [client, conversationId, replying, runIntent, setIntentNotice, t],
   );
 
   // A notice is a remark about something that just happened, not a permanent line of text.

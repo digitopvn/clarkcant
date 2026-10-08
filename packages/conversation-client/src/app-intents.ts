@@ -23,6 +23,7 @@
  */
 
 import {
+  SLASH_COMMAND_INTENTS,
   type AppIntent,
   type AppIntentDecision,
   type AppIntentKind,
@@ -31,7 +32,6 @@ import {
   type NoticeOperationId,
   type OrbProfileName,
   type SettingsTab,
-  type SlashCommand,
   type TypedSlashCommand,
   describeAppIntent,
   intentRequiresConfirmation,
@@ -427,14 +427,18 @@ export function runsAtOnce(kind: AppIntentKind): boolean {
 }
 
 /**
- * The typed commands that stand for an intent the page carries out at once: `/new` is the logo, as the node reads it
- * (`slashCommandAppIntent` in `@clarkcant/core`). Any other command is decided by the node first.
+ * The intent a typed command is carried out as before the node answers, if it is one: `/new` is the logo.
+ *
+ * Read from `SLASH_COMMAND_INTENTS`, the same copy the node resolves a typed command through, so the page never goes
+ * home at once on a command the node would read differently. Any other command is decided by the node first.
+ *
+ * A sentence that means the same thing ("start a new conversation") is not read here: only the node knows what a
+ * sentence means, and a second reading in the page would be a classifier that drifts from it. So typed as a sentence
+ * during a reply, going home waits for the node's answer, and text typed into the composer before that answer lands
+ * is cleared with the restart, as the logo clears it. Accepted: `/new` and the logo are the immediate ways.
  */
-const TYPED_COMMANDS_RUN_AT_ONCE: Readonly<Partial<Record<SlashCommand, AppIntentKind>>> = { new: "nav.home" };
-
-/** The intent a typed command is carried out as before the node answers, if it is one. */
 export function typedCommandRunAtOnce(typed: TypedSlashCommand | undefined): AppIntentKind | undefined {
-  const kind = typed === undefined ? undefined : TYPED_COMMANDS_RUN_AT_ONCE[typed.command];
+  const kind = typed === undefined ? undefined : SLASH_COMMAND_INTENTS[typed.command];
   return kind !== undefined && runsAtOnce(kind) ? kind : undefined;
 }
 
@@ -445,6 +449,11 @@ export interface RunAtOnceDeps {
   run: (decision: AppIntentDecision) => void;
   /** The node's answer naming the same intent, for a caller that says its read-back (`/new` during a reply). */
   onRecorded?: (decision: Extract<AppIntentDecision, { kind: "intent" }>) => void;
+  /**
+   * The node could not be told, so its read-back will not come: the caller says what was kept in its place, from what
+   * the page itself knows (`intents.newConversationKept`).
+   */
+  onUnrecorded?: () => void;
 }
 
 /**
@@ -455,7 +464,8 @@ export interface RunAtOnceDeps {
  * restart again and empty a composer the person has started typing in. Any other answer should not happen (the node
  * resolves a named `nav.home` and never asks to confirm it); were one to come, the page has already done what was asked
  * and saying "refused" over the start screen would contradict what is on it, so it is left as a trace for whoever
- * debugs the node, as is a request that failed: the intent is done and unrecorded, with nothing on screen to correct.
+ * debugs the node. A request that failed is traced too, and `onUnrecorded` lets the caller say what the node's
+ * read-back would have said: the conversation left behind is kept, and `/sessions` reopens it.
  */
 export function runAppIntentAtOnce(kind: AppIntentKind, deps: RunAtOnceDeps): Promise<void> {
   deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
@@ -469,6 +479,7 @@ export function runAppIntentAtOnce(kind: AppIntentKind, deps: RunAtOnceDeps): Pr
     },
     (cause: unknown) => {
       console.warn(`the ${kind} the page carried out could not be recorded by the node`, cause);
+      deps.onUnrecorded?.();
     },
   );
 }
@@ -480,6 +491,8 @@ export interface ClickAppIntentDeps {
   run: (decision: AppIntentDecision) => void;
   /** The node could not be asked, so a click that waits for it did nothing. */
   onLookupFailed: () => void;
+  /** The node could not be told about a click already carried out (`RunAtOnceDeps.onUnrecorded`). */
+  onUnrecorded?: () => void;
 }
 
 /**

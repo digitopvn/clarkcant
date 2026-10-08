@@ -244,7 +244,8 @@ export function useTurnSend({
          * `/new` is the logo: the new conversation starts now, through the same path, and the node is told at the same
          * time. Waiting for its answer left a window in which a message typed next was checked as a command in the
          * conversation being left, and the late restart then emptied the composer. The node's read-back still says
-         * that the reply goes on in the conversation left behind, which /sessions reopens.
+         * that the reply goes on in the conversation left behind, which /sessions reopens; when the node cannot be told,
+         * the page says what it knows itself: leaving did not stop that reply, and the conversation is kept.
          */
         const atOnce = typedCommandRunAtOnce(slash);
         if (atOnce !== undefined) {
@@ -252,6 +253,7 @@ export function useTurnSend({
             ask: () => client.sendAppIntent({ text: trimmed, source: "chat", conversationId }),
             run: runIntent,
             onRecorded: (decision) => onNotice(decision.readBack),
+            onUnrecorded: () => onNotice(t("intents.newConversationKeptReplying")),
           });
           return;
         }

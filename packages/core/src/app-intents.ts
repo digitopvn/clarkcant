@@ -29,6 +29,7 @@
 import {
   SETTINGS_TAB_LABELS,
   SETTINGS_TABS,
+  SLASH_COMMAND_INTENTS,
   type AppIntent,
   type AppIntentDecision,
   type AppIntentEventDocument,
@@ -590,11 +591,14 @@ export function newConversationReadBack(locale: AppIntentLocale, replying: boole
  * written both reach the host's decision through here, so they open the same thing and write the same audit record.
  * A tab that does not exist is refused by name, listing the tabs by the labels the panel shows. Any other command is
  * not an app intent (`undefined`): it is answered in the conversation, as a message.
+ *
+ * A command that stands for one intent whatever follows it (`/new`) is read from `SLASH_COMMAND_INTENTS`, the copy the
+ * page also reads to go home at once on `/new` during a reply, so the two cannot mean different things.
  */
 export function slashCommandAppIntent(typed: TypedSlashCommand, locale: AppIntentLocale): AppIntentMatch | undefined {
+  const fixed = SLASH_COMMAND_INTENTS[typed.command];
+  if (fixed !== undefined) return { kind: "intent", intent: { kind: fixed } };
   switch (typed.command) {
-    case "new":
-      return { kind: "intent", intent: { kind: "nav.home" } };
     case "settings": {
       if (typed.argument === "") return { kind: "intent", intent: { kind: "settings.open" } };
       const tab = settingsTabNamed(typed.argument);

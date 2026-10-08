@@ -340,6 +340,7 @@ export function Conversation({
     t: localeState.t,
     client,
     conversationId,
+    replying: busy,
     restartSession,
     attachmentInput,
     setVoiceOpen,
