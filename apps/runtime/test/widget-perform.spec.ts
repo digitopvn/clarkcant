@@ -2072,7 +2072,7 @@ describe("a spoken sentence that names none of the focused widget's offered acti
     expect(focusedWidgetActionsContext(services, conversationId, placed.instanceId, locateSheet)).toContain("description “Format the selected cells.”");
   });
 
-  it("gives no description to a widget placed before perform bindings recorded their generation", () => {
+  it("gives no description to a widget placed before perform bindings recorded their generation", async () => {
     const placed = placeSheet("format", DEFINITION, null);
     // Its binding holds the definition digest, which names no generation.
     expect(getActionBinding(services.conductor, placed.bindingId)?.packageGeneration).toBe(REF.packageDigest);
@@ -2080,5 +2080,8 @@ describe("a spoken sentence that names none of the focused widget's offered acti
     expect(rendered).not.toContain("description “");
     // The action is still listed, under the label it was bound with, and can still be performed.
     expect(rendered).toContain(`actionBindingId ${placed.bindingId}, action format: label “Định dạng vùng đang chọn”`);
+    const { asked, performer } = page({ status: "done" });
+    expect(await perform(placed, { format: "percent" }, { perform: performer })).toMatchObject({ ok: true, body: { outcome: "done" } });
+    expect(asked).toEqual([expect.objectContaining({ actionBindingId: placed.bindingId, action: "format", input: { format: "percent" } })]);
   });
 });
