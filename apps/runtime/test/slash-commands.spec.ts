@@ -130,6 +130,27 @@ describe("slash commands in a conversation", () => {
     expect(high?.actions).toEqual([]);
   });
 
+  it("names the unset level auto, in the same words as the statusline, without making it a level of its own", async () => {
+    const id = await createConversation("suy nghĩ");
+    const vi = await command(id, "/thinking");
+    expect(vi.text).toContain("tự động");
+    expect(vi.card?.rows.find((row) => row.rowId === "default")?.label).toBe("Tự động (mặc định của model)");
+
+    expect((await call("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    const en = await command(id, "/thinking");
+    expect(en.text).toContain("Thinking level now: auto");
+    const auto = en.card?.rows.find((row) => row.rowId === "default");
+    expect(auto?.label).toBe("Auto (model default)");
+    expect(auto?.current).toBe(true);
+    // The explicit efforts keep their own names, and choosing auto still clears the level rather than sending "auto".
+    expect(en.card?.rows.map((row) => row.rowId)).toEqual(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+    await command(id, "/thinking high");
+    const cleared = await command(id, "/thinking auto");
+    expect(cleared.text).toBe("Thinking is back to auto: from the next turn, the model uses its own default.");
+    expect((await command(id, "/thinking")).card?.rows.find((row) => row.current === true)?.rowId).toBe("default");
+  });
+
   it("refuses an unknown thinking level by naming the ones there are", async () => {
     const id = await createConversation("suy nghĩ");
     const { text, card } = await command(id, "/thinking turbo");

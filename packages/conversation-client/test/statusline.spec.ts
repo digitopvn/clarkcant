@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { formatTokenCount, latestTurnMetrics, statuslineParts } from "../src/statusline.ts";
-import { MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
+import { THINKING_LEVELS } from "@clarkcant/contracts";
+
+import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 
 /** The Vietnamese catalog lookup, standing in for `useT()` since these are plain-function tests. */
 const t = (key: MessageKey): string => MESSAGES_VI[key];
@@ -28,8 +30,20 @@ describe("the statusline under the composer", () => {
         t,
       ),
     ).toEqual(["claude-opus-5-5", "thinking: high", "12k/1.00M (1%)"]);
-    // A node that names no level runs pi's default, and says so rather than inventing one.
-    expect(statuslineParts({ model: { id: "deepseek-v4-flash" } }, t)).toEqual(["deepseek-v4-flash", "thinking: mặc định"]);
+    // A node that names no level lets the model think at its own default, which reads as auto.
+    expect(statuslineParts({ model: { id: "deepseek-v4-flash" } }, t)).toEqual(["deepseek-v4-flash", "thinking: tự động"]);
+  });
+
+  it("reads an absent thinking level as auto in either language, and an explicit one as itself", () => {
+    const en = (key: MessageKey): string => MESSAGES_EN[key];
+
+    expect(statuslineParts({ model: { id: "deepseek-v4-flash" } }, en)).toEqual(["deepseek-v4-flash", "thinking: auto"]);
+    expect(statuslineParts({ model: { id: "deepseek-v4-flash" } }, t)).toEqual(["deepseek-v4-flash", "thinking: tự động"]);
+    // A chosen effort is shown as the effort it is, never folded into auto.
+    for (const level of THINKING_LEVELS) {
+      expect(statuslineParts({ model: { id: "claude-opus-5-5", thinkingLevel: level } }, en)).toEqual(["claude-opus-5-5", `thinking: ${level}`]);
+      expect(statuslineParts({ model: { id: "claude-opus-5-5", thinkingLevel: level } }, t)).toEqual(["claude-opus-5-5", `thinking: ${level}`]);
+    }
   });
 
   it("says how full the context is, first, because it is the number with a ceiling", () => {
