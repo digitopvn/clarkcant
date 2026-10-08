@@ -114,6 +114,7 @@ export function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
     description: tool.description,
     parameters: tool.parameters as never,
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+    ...(tool.promptGuidelines === undefined ? {} : { promptGuidelines: [...tool.promptGuidelines] }),
     // Same reason as `parameters`: a plain JSON Schema where the declaration expects a TypeBox one.
     ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema as never }),
     execute: async (_toolCallId: string, params: Record<string, unknown>) => {

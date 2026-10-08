@@ -169,6 +169,58 @@ export function chartPoints(
   return points;
 }
 
+/** At most this many series side by side in one bar group, as the chart's props allow. */
+export const MAX_BAR_SERIES = 8;
+
+function plottable(raw: unknown): number | undefined {
+  const value = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : Number.NaN;
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * The fields a bar chart draws: the series a surface chose, else the ones `props.series` names that the rows hold as
+ * numbers, else the first numeric field.
+ *
+ * The bar chart used to ignore `props.series` and draw the first numeric field it met, so a comparison asked for as
+ * "score of A and B" came back as one bar per row of whichever field happened to be first. A named field no row holds
+ * as a number is left out rather than drawn as zeros.
+ */
+export function barSeries(
+  props: Record<string, unknown>,
+  rows: readonly Record<string, unknown>[],
+  chosen?: string,
+): string[] {
+  if (chosen !== undefined) return [chosen];
+  const named = Array.isArray(props.series) ? props.series.filter((item): item is string => typeof item === "string") : [];
+  const held = [...new Set(named)].filter((key) => rows.some((row) => plottable(row[key]) !== undefined)).slice(0, MAX_BAR_SERIES);
+  if (held.length > 0) return held;
+  const first = rows[0] ?? {};
+  return [Object.keys(first).find((key) => typeof first[key] === "number") ?? "value"];
+}
+
+/** One category of a grouped bar chart: its label and one value per series, `undefined` where the row has none. */
+export interface BarGroup {
+  label: string;
+  values: (number | undefined)[];
+}
+
+/**
+ * The categories of a grouped bar chart, one per row that has a value for at least one series.
+ *
+ * A missing value stays a gap in its own slot rather than a zero bar or a shift of the next series into its place,
+ * for the same reason `chartPoints` keeps a value with its label.
+ */
+export function barGroups(
+  rows: readonly Record<string, unknown>[],
+  series: readonly string[],
+  labelOf: (row: Record<string, unknown>) => string,
+): BarGroup[] {
+  return rows.flatMap((row) => {
+    const values = series.map((key) => plottable(row[key]));
+    return values.some((value) => value !== undefined) ? [{ label: labelOf(row), values }] : [];
+  });
+}
+
 export const CHART_HEIGHT = 180;
 /** Room for the value axis on the left and the category labels underneath. */
 export const CHART_PAD = { left: 36, right: 12, top: 18, bottom: 24 } as const;

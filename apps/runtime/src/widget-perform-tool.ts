@@ -500,7 +500,8 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
       "label the person sees, then either what Clark should do when it is pressed (intent, optionally with contextRefs such " +
       "as [\"selection\", \"widget\"]) or one of its package's capabilities to call (capabilityRef, with inputs: the arguments " +
       "the widget sends when pressed, and stateInputs: the ones read from the widget's state). A button can only call its " +
-      "own package's capability; the execution policy still decides each press.",
+      "own package's capability; the execution policy still decides each press. To show a chart, a table or a diagram " +
+      "of numbers, use show_view instead.",
     parameters: {
       type: "object",
       additionalProperties: false,

@@ -988,6 +988,34 @@ giải, chọn bằng bàn phím, khung nhìn được giữ sau khi tải lại
 nhãn nói điều đó, tiêu đề trục của biểu đồ phân tán, các lần từ chối vì thiếu trường và vì giá trị không phải số,
 việc từ chối một điểm node không còn giữ được nói bằng tiếng Việt, giảm chuyển động, 390 px có cảm ứng ở theme sáng, và thư viện.
 
+### 8.6.1 Biểu đồ từ các hàng số liệu model thu thập
+
+Biểu đồ vẽ một dataset theo tham chiếu. Khi số liệu là những gì model vừa thu thập (một trang nó đọc, một phép so sánh
+benchmark được yêu cầu), `show_view` nhận chúng trong `data`, dưới một cái tên mà props dùng lại:
+
+    { "view": "canvas.bar@1",
+      "props": { "datasetRef": "bench", "series": ["Model A", "Model B"], "title": "Điểm benchmark" },
+      "data": { "bench": { "rows": [ { "benchmark": "MMLU", "Model A": 88.1, "Model B": 86.4 },
+                                     { "benchmark": "GPQA", "Model A": 61.0, "Model B": 59.2 } ] } } }
+
+- Node giữ mỗi tập được đặt tên thành một dataset thuộc về người dùng, gắn nhãn **dữ liệu đã lưu** (`cached`): không
+  bao giờ là dữ liệu trực tiếp, cũng không phải dữ liệu mẫu. Mọi `datasetRef` trong props dùng cái tên đó, ở bất kỳ độ
+  sâu nào, được trỏ tới dataset này trước khi view được dựng.
+- Tối đa 8 tên, mỗi tên 500 hàng và 32 trường. Một giá trị là chữ (tối đa 500 ký tự), số hữu hạn, true/false hoặc null;
+  số viết dưới dạng chữ (`"12%"`) vẫn là chữ. `columns` có thể liệt kê các trường theo thứ tự hiển thị; trường không hàng
+  nào có sẽ bị từ chối. Thứ gì không vừa đều bị từ chối toàn bộ, kèm lý do, và không view nào được dựng.
+- Model được dặn, bằng một guideline đi kèm tool, hiển thị câu trả lời có cấu trúc thành view ngay trong lượt đó mà không
+  cần được yêu cầu (biểu đồ cho số liệu so sánh, bảng cho nhiều thuộc tính, sơ đồ cho một luồng), truyền số liệu nó đã
+  thu thập thay vì bịa ra, nói rõ nguồn số liệu, và ưu tiên view hơn việc viết một package widget.
+
+`canvas.bar@1` vẽ mọi trường mà `props.series` nêu tên và các hàng giữ dưới dạng số (tối đa 8). Một series vẽ một cột
+cho mỗi hàng; nhiều series vẽ các cột của từng hàng cạnh nhau, mỗi series một tông màu kèm chú giải gọi tên nó, mỗi cột
+có tiêu đề nêu hạng mục, series và giá trị, và các hàng vẫn được giữ thành bảng bên dưới. Một hàng được gắn nhãn bằng
+trường đầu tiên của nó (hoặc trường tên `name`, `label` hay `week`).
+
+Test: [stated-data.spec.ts](../apps/runtime/test/stated-data.spec.ts) và
+[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts).
+
 ### 8.7 Các kiểu xem lịch
 
 `canvas.calendar@1` hiện các sự kiện của một dataset theo ba kiểu xem: tháng, tuần (thứ Hai đến Chủ nhật) và lịch
@@ -2278,6 +2306,11 @@ khác: `CC_APP_ORIGIN` khai báo origin đó (ví dụ `http://127.0.0.1:5173` c
 bước setup local tự ghi giá trị này). Node kiểm tra `CC_APP_ORIGIN` lúc khởi động và từ chối chạy
 nếu nó không phải một origin `http(s)` trần. Header `Host` của request không bao giờ được dùng.
 
+Điều đó bao gồm cả file của chính package: frame không thể `fetch` một file nó mang theo, và import một JSON module cũng
+là một lần fetch. Dữ liệu widget mang theo phải nằm trong một JavaScript module mà nó import (`export const rows = [...]`).
+Widget fetch file của chính nó từng chạy được trong dev host cũ nhưng báo "Failed to fetch" khi được đặt vào cuộc trò
+chuyện; giờ dev host phục vụ đúng chính sách đó (§16).
+
 Token trình duyệt ngắn hạn, có phạm vi, là ngoại lệ duy nhất của quy tắc "widget không bao giờ giữ credential của nhà
 cung cấp", và chỉ khi package khai báo nó (§14.3). Key dài hạn ở lại trong node: service gọi tới nhà cung cấp qua node,
 và chính node gắn key vào (§14.2).
@@ -2867,6 +2900,11 @@ File tối đa 32 KiB và 64 binding. Capability ref chưa khai báo và binding
 kết quả theo schema bridge của widget; kết quả sai schema trở thành một lời từ chối hợp lệ. Fixture này chỉ kiểm tra
 cách widget vẽ trạng thái và xử lý bridge, không chứng minh service hoạt động đúng. Package frame nhận cùng widget SDK
 runtime dùng cho bridge, vẫn nằm trong opaque-origin sandbox, và chỉ tải module package qua dev host.
+
+Tài liệu entry được phục vụ với chính sách của node (§14): một nonce mới cho script runtime, `connect-src` lấy từ
+`networkOrigins` trong manifest (đọc lại mỗi lần tải, nên origin mới khai báo có hiệu lực ở lần tải lại kế tiếp),
+`frame-ancestors 'self'`, `base-uri 'none'` và `sandbox allow-scripts`. Dev host chạy đúng những gì node chạy, nên widget
+truy cập mạng hoặc fetch file của chính nó sẽ lỗi ngay ở đây, nơi còn sửa được, chứ không phải sau khi cài.
 
 Binding tới capability được khai báo với `"execution": { "kind": "job", "version": 1 }` dùng fixture `job` thay cho
 `outcome`, và mọi binding như vậy đều phải có nó:

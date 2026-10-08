@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
+import { type DataClass, type Instant, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
 import { readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -48,6 +48,7 @@ import { ownedResources } from "../preflight.ts";
 import type { RequestSecretDeps } from "../request-secret.ts";
 import type { SessionSearchDeps } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
+import { keepStatedDataset } from "../stated-data.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
@@ -433,6 +434,17 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    // Rows the model gathered for a chart or a table, kept as the person's own dataset so `show_view` can draw them.
+    keepStatedDataset: (input) =>
+      keepStatedDataset(
+        {
+          db: deps.services().runtime.db,
+          nodeId: deps.services().runtime.identity.nodeId,
+          newId: (prefix) => deps.services().conductor.newId(prefix),
+          now: () => new Date().toISOString() as Instant,
+        },
+        input,
+      ),
     // Project guidance whose condition the conversation's work meets (#433): what its tool calls touched and what the
     // message points at. Off with `CLARKCANT_CONDITIONAL_INSTRUCTIONS=off`.
     ...(conditionalInstructionsFromEnv(deps.env) === "off"
