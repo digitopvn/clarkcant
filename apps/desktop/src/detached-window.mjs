@@ -150,14 +150,17 @@ const INTENT_FIELDS = Object.freeze(["instanceRef", "actionBindingId", "expected
  * loads no TypeScript; `detached-window.spec.ts` holds the two equal.
  *
  * Every verb is bounded in time as well (`timeoutMs`): a node that accepts calls and never answers would otherwise hold
- * the in-flight slots until the window closed, and every relay would be refused as busy meanwhile.
+ * the in-flight slots until the window closed, and every relay would be refused as busy meanwhile. A press waits longer
+ * than the node's longest action deadline (a workflow's 300 s, `action-limits.ts` in the runtime), so a press the node
+ * is still running is not given up on; `action-limits.spec.ts` there holds the two apart. A press that still times out
+ * was sent and may take effect, so the window reports it as uncertain, never refused.
  */
 export const RELAY_LIMITS = Object.freeze({
   inFlight: 8,
   "frame.read": Object.freeze({ burst: 10, refillPerSecond: 1, timeoutMs: 30_000 }),
   "state.save": Object.freeze({ maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5, timeoutMs: 30_000 }),
   "semantic.publish": Object.freeze({ maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 }),
-  intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 30_000 }),
+  intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 }),
   "dev.session": Object.freeze({ burst: 5, refillPerSecond: 1, timeoutMs: 30_000 }),
 });
 
@@ -412,7 +415,7 @@ function escapeRegExp(text) {
  * `root` and `placed` are dropped, and every string left — a build message is the reader's own words, and a bundler's
  * names absolute files — has the folder replaced by `.`, so a file under it reads relative to the package, the way a
  * diagnostic's `path` does. The folder is matched in either slash direction, URL-encoded, and ignoring case (a path on
- * Windows or macOS may be spelled in any case), and only as whole names, so `/w/widget` is not taken for `/w/widget2`.
+ * Windows or macOS may be spelled in any case), and only as whole names, so `/w/widget` is not taken for `/w/widget2` or `/w/widget.bak`.
  *
  * @param {Record<string, unknown>} view
  * @returns {Record<string, unknown>}
@@ -425,7 +428,7 @@ export function redactDevSessionView(view) {
   if (trimmed === "") return rest;
   const forward = trimmed.replace(/\\/g, "/");
   const spellings = [...new Set([trimmed, forward, trimmed.replace(/\//g, "\\"), encodeURI(forward)])].sort((a, b) => b.length - a.length);
-  const pattern = new RegExp(`(?<![\\w~-])(?:${spellings.map(escapeRegExp).join("|")})(?![\\w~-])`, "giu");
+  const pattern = new RegExp(`(?<![\\w~-])(?:${spellings.map(escapeRegExp).join("|")})(?![\\w~-]|\\.[\\w~-])`, "giu");
   const redact = (value) => {
     if (typeof value === "string") return value.replace(pattern, REDACTED_ROOT);
     if (Array.isArray(value)) return value.map(redact);

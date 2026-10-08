@@ -126,6 +126,15 @@ export function workflowMessage(t: Translate, report: ActionWorkflowReport): str
   return `${fill(t("widgets.workflow.stoppedAt"), { step: quoted([report.stoppedAt ?? ""]) })} ${why} ${kept}${rest}`;
 }
 
+/**
+ * Whether a press that came back without an answer was sent and may have taken effect, as the node says it of a call
+ * whose answer never came. Such a press is uncertain, never refused: a person told "refused" presses again, and the
+ * effect may happen twice.
+ */
+export function pressMayHaveRun(details: Record<string, unknown>): boolean {
+  return details.outcome === "uncertain";
+}
+
 /** A refused press, from the node's code and details. */
 export function actionRefusalMessage(
   t: Translate,
@@ -135,7 +144,7 @@ export function actionRefusalMessage(
   const workflow = details.workflow as ActionWorkflowReport | undefined;
   if (workflow !== undefined && typeof workflow === "object" && Array.isArray(workflow.steps)) return workflowMessage(t, workflow);
   if (code === "ACTION_INTERRUPTED") return t("widgets.action.uncertain.ACTION_INTERRUPTED");
-  if (details.outcome === "uncertain") {
+  if (pressMayHaveRun(details)) {
     const opening = t(UNCERTAIN_KEYS[code ?? ""] ?? "widgets.action.uncertain");
     return `${opening} ${nextStep(t, details.recorded)}`;
   }

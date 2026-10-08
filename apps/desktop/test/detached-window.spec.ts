@@ -321,7 +321,10 @@ describe("a node that accepts relayed calls and never answers", () => {
   it("bounds every relayed verb in time", () => {
     for (const verb of VERBS) {
       const timeoutMs: unknown = (RELAY_LIMITS[verb] as { timeoutMs?: unknown }).timeoutMs;
-      expect(typeof timeoutMs === "number" && timeoutMs > 0 && timeoutMs <= 60_000, verb).toBe(true);
+      // A press waits out the node's longest action deadline (held in the runtime's `action-limits.spec.ts`); the rest
+      // are single reads and writes.
+      const ceiling = verb === "intent" ? 360_000 : 60_000;
+      expect(typeof timeoutMs === "number" && timeoutMs > 0 && timeoutMs <= ceiling, verb).toBe(true);
     }
   });
 
@@ -394,6 +397,11 @@ describe("the developer's folder path in a relayed dev-session status", () => {
   it("leaves a sibling folder that only starts with the same name alone", () => {
     const view = redactDevSessionView({ root: "/w/widget", ...diagnostics("/w/widget2/a.ts and /w/widget-old/b.ts") });
     expect(messagesOf(view)).toEqual(["/w/widget2/a.ts and /w/widget-old/b.ts"]);
+  });
+
+  it("leaves a sibling whose name continues with a dot alone, and still redacts the folder before a full stop", () => {
+    const view = redactDevSessionView({ root: "/w", ...diagnostics("/w.bak/x, /w/a.ts: and /w.") });
+    expect(messagesOf(view)).toEqual(["/w.bak/x, ./a.ts: and .."]);
   });
 
   it("redacts every string in the view, not only messages", () => {
