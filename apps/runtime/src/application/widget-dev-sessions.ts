@@ -128,11 +128,28 @@ export interface WidgetDevSessions {
   forget(root: string): WidgetDevResult<{ root: string; forgotten: boolean; stillCoveredBy?: string }>;
   /** Start watching again every session that was live when the node stopped. */
   resume(): Promise<void>;
-  close(): void;
+  /**
+   * Stop watching every folder, then wait for the work each session already started (a build being followed, a
+   * superseded snapshot being removed) to finish, for at most `closeWaitMs`, so the caller can let go of the database and
+   * the data folder without pulling them from under a removal. Past the bound it resolves anyway: a shutdown never hangs.
+   */
+  close(): Promise<void>;
 }
 
 /** How often a session waiting on the person's answer looks for it, so an approval in the inbox is followed promptly. */
 const ANSWER_POLL_MS = 2_000;
+
+/**
+ * How a superseded snapshot is removed: the promise form of `rm`, retrying a file still held open (on Windows) after 100,
+ * 200, 300, 400 and 500 ms, about 1.5 s in all.
+ */
+export const SNAPSHOT_REMOVAL = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
+
+/**
+ * The longest `close` waits for work already started: one snapshot's removal with all its retries, with room to spare,
+ * and well inside the node's shutdown grace.
+ */
+export const WIDGET_DEV_CLOSE_WAIT_MS = 2_000;
 
 interface LiveSession {
   sessionId: string;
@@ -202,6 +219,8 @@ export function createWidgetDevSessions(
     answerPollMs?: number;
     /** How long a folder may keep failing to be looked at before its session stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
     rootUnreadableMs?: number;
+    /** The longest `close` waits for work already started (`WIDGET_DEV_CLOSE_WAIT_MS`). */
+    closeWaitMs?: number;
   } = {},
 ): WidgetDevSessions {
   const live = new Map<string, LiveSession>();
@@ -774,7 +793,7 @@ export function createWidgetDevSessions(
         try {
           // The promise form on purpose: on Windows `rmSync` reports a held file as `EBUSY` or `EPERM` at once and never
           // runs its retries. These wait up to about 1.5 s on this session's chain, never on the event loop.
-          await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          await rm(path, SNAPSHOT_REMOVAL);
           removed.push(digest);
         } catch (cause) {
           process.stderr.write(`widget dev: could not remove the superseded snapshot ${digest} yet: ${messageOf(cause)}\n`);
@@ -1111,9 +1130,22 @@ export function createWidgetDevSessions(
       }
     },
 
-    close() {
+    async close() {
       for (const session of live.values()) end(session);
       live.clear();
+      // Each chain already settles rather than rejects; work queued behind a closed session finds it gone and returns.
+      const started = Promise.all([...chains.values()]);
+      let bound: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<boolean>((done) => {
+        bound = setTimeout(() => done(true), options.closeWaitMs ?? WIDGET_DEV_CLOSE_WAIT_MS);
+      });
+      try {
+        if (await Promise.race([started.then(() => false), timedOut])) {
+          process.stderr.write("widget dev: work a session started was still running at close; closing anyway\n");
+        }
+      } finally {
+        clearTimeout(bound);
+      }
     },
   };
 }

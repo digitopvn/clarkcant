@@ -31,7 +31,7 @@ import {
   writeRegisteredPreference,
 } from "@clarkcant/core";
 
-import { createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
+import { SNAPSHOT_REMOVAL, createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
 import { WIDGET_DEV_STORE_MAX, readDevSessions, writeDevSessions } from "../src/application/widget-dev-store.ts";
 import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
@@ -43,8 +43,11 @@ import { holdDirectory } from "./hold-directory.ts";
 /** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
 
-/** Seen as the runtime starts to remove a path, in either form, before the removal itself runs. */
-const removal = vi.hoisted(() => ({ starting: undefined as ((path: string) => void) | undefined }));
+/**
+ * Seen as the runtime starts to remove a path, in either form, before the removal itself runs. The promise form waits
+ * for what it returns, so a test can hold a removal (`options` are the ones the runtime asked for).
+ */
+const removal = vi.hoisted(() => ({ starting: undefined as ((path: string, options?: fs.RmOptions) => void | Promise<void>) | undefined }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -55,7 +58,7 @@ vi.mock("node:fs", async (importOriginal) => {
     return actual.statSync(path, options);
   }) as typeof actual.statSync;
   const rmSync = ((path: fs.PathLike, options?: fs.RmOptions) => {
-    removal.starting?.(resolve(String(path)));
+    void removal.starting?.(resolve(String(path)), options);
     actual.rmSync(path, options);
   }) as typeof actual.rmSync;
   return { ...actual, statSync, rmSync, default: { ...actual, statSync, rmSync } };
@@ -64,11 +67,14 @@ vi.mock("node:fs", async (importOriginal) => {
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof fsPromises>();
   const rm = (async (path: fs.PathLike, options?: fs.RmOptions) => {
-    removal.starting?.(resolve(String(path)));
+    await removal.starting?.(resolve(String(path)), options);
     await actual.rm(path, options);
   }) as typeof actual.rm;
   return { ...actual, rm, default: { ...actual, rm } };
 });
+
+/** The removal itself, past the mock, for a test that tries a path once on its own. */
+const { rm: actualRm } = await vi.importActual<typeof fsPromises>("node:fs/promises");
 
 /** The home folder the node sees, when a test needs it to be one of the test's own folders. */
 const homeOverride = vi.hoisted(() => ({ path: undefined as string | undefined }));
@@ -235,12 +241,14 @@ beforeEach(() => {
   deps = { services, now: () => new Date().toISOString() as never };
 });
 
-afterEach(() => {
+afterEach(async () => {
   statFailure.path = undefined;
   homeOverride.path = undefined;
-  services.widgetDev?.close();
+  removal.starting = undefined;
+  // A snapshot a session is still removing is finished (or given up on) before the database and the folder go.
+  await services.widgetDev?.close();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true });
+  await removeTestDirectory(dir);
 });
 
 describe("a widget dev session", () => {
@@ -968,13 +976,22 @@ describe("a widget dev session", () => {
     if (first === undefined) throw new Error("the first build left no snapshot");
     const firstPath = resolve(local, first);
     // On Windows a directory that is someone's working directory cannot be removed until they let go; elsewhere the
-    // hold changes nothing. It ends 300 ms after the removal starts, so only a removal that really retries finds it free.
+    // hold changes nothing. Not timed against the retries: one attempt without them meets the hold, the holder is let go
+    // and has exited, and only then does the removal the runtime asked for run, so its outcome never depends on load.
     const hold = holdDirectory(firstPath);
     await hold.ready;
     let released: Promise<void> | undefined;
-    removal.starting = (path) => {
+    let asked: fs.RmOptions | undefined;
+    let held: string | undefined;
+    removal.starting = async (path, options) => {
       if (path !== firstPath || released !== undefined) return;
-      released = new Promise<void>((done) => setTimeout(done, 300)).then(() => hold.release());
+      asked = options;
+      held = await actualRm(path, { ...options, maxRetries: 0 }).then(
+        () => undefined,
+        (cause: unknown) => (cause as NodeJS.ErrnoException).code,
+      );
+      released = hold.release();
+      await released;
     };
     try {
       // The second build supersedes the first, which stays as the generation a rollback returns to; the third prunes it.
@@ -983,6 +1000,10 @@ describe("a widget dev session", () => {
         expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).running?.generation).toBeGreaterThan(1);
       }
       expect(released).toBeDefined();
+      // The removal retries a held file (the promise form; `rmSync` would not), for the budget the runtime names.
+      expect(asked).toMatchObject(SNAPSHOT_REMOVAL);
+      expect(SNAPSHOT_REMOVAL.maxRetries).toBeGreaterThan(0);
+      if (process.platform === "win32") expect(held).toMatch(/^(EBUSY|EPERM)$/);
       expect(existsSync(firstPath)).toBe(false);
       // Removed, so no longer on the session's list of snapshots to try again.
       const listed = readDevSessions(join(dir, "node"))[0]?.snapshots ?? [];
@@ -992,6 +1013,67 @@ describe("a widget dev session", () => {
       removal.starting = undefined;
       await (released ?? hold.release());
     }
+  });
+
+  /** Start pruning the first build's snapshot and hold its removal until `finish` is called. */
+  async function holdPrune(): Promise<{ firstPath: string; rebuilding: Promise<GatewayResponse>; finish: () => void; removed: () => boolean }> {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const local = join(dir, "node", "package-cache", "local");
+    const [first] = readdirSync(local);
+    if (first === undefined) throw new Error("the first build left no snapshot");
+    const firstPath = resolve(local, first);
+    let removing = (): void => undefined;
+    const removingStarted = new Promise<void>((done) => {
+      removing = done;
+    });
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => {
+      finish = done;
+    });
+    let removed = false;
+    removal.starting = async (path) => {
+      if (path !== firstPath) return;
+      removing();
+      await gate;
+      // Marked once the removal itself may run; `existsSync` says when it has.
+      removed = true;
+    };
+    writePackage("<!doctype html><p>second</p>\n");
+    await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    // The third build supersedes the second, so the first is pruned, and its removal waits on the gate.
+    writePackage("<!doctype html><p>third</p>\n");
+    const rebuilding = call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    await removingStarted;
+    return { firstPath, rebuilding, finish, removed: () => removed };
+  }
+
+  it("waits on close for a superseded snapshot still being removed", async () => {
+    const { firstPath, rebuilding, finish } = await holdPrune();
+    let closed = false;
+    const closing = Promise.resolve(services.widgetDev?.close()).then(() => {
+      closed = true;
+    });
+    await new Promise((done) => setTimeout(done, 100));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    expect(existsSync(firstPath)).toBe(false);
+    expect((await rebuilding).status).toBe(200);
+  });
+
+  it("stops waiting on close after its bound, so a removal that does not end cannot hold a shutdown", async () => {
+    await services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false, closeWaitMs: 200 });
+    const { firstPath, rebuilding, finish, removed } = await holdPrune();
+    const before = Date.now();
+    await services.widgetDev.close();
+    expect(Date.now() - before).toBeGreaterThanOrEqual(150);
+    expect(removed()).toBe(false);
+    expect(existsSync(firstPath)).toBe(true);
+    // Let it end, so the folder is free before the test's own cleanup.
+    finish();
+    expect((await rebuilding).status).toBe(200);
+    expect(existsSync(firstPath)).toBe(false);
   });
 
   it("forgets the oldest stopped sessions rather than failing when the store is full", async () => {

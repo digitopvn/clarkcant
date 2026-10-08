@@ -116,6 +116,11 @@ export interface RuntimeBootstrapDeps {
 export interface RuntimeHandles {
   /** Stops the periodic update-check timer (§ update-checks.ts). A no-op on a fixture node, which never starts one. */
   stopUpdateChecks: () => void;
+  /**
+   * Stops watching widget dev folders and waits, bounded, for work their sessions already started, such as removing a
+   * superseded snapshot (`WidgetDevSessions.close`). Awaited before the database closes.
+   */
+  closeWidgetDev: () => Promise<void>;
 }
 
 /**
@@ -632,9 +637,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   return {
     stopUpdateChecks: () => {
       updateChecks?.stop();
-      // Beside the update check: both are timers and watchers this function started, ended when the node closes.
-      widgetDev.close();
     },
+    closeWidgetDev: () => widgetDev.close(),
   };
 }
 
