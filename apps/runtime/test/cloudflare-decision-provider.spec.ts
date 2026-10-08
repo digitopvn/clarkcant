@@ -223,7 +223,7 @@ describe("the Workers AI wire shape", () => {
       { config, transport },
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "answered", probability: 0.58, verdict: "uncertain" });
+    expect(outcome).toEqual({ status: "answered", probability: 0.58, verdict: "uncertain", decidedBy: { model: "clef", provider: "cloudflare" } });
   });
 
   it("maps a Score answer to the same System One shape", () => {
@@ -265,7 +265,7 @@ describe("the Workers AI wire shape", () => {
     ];
     for (const response of malformed) {
       const { outcome, calls } = await selectWith(config, [response]);
-      expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
+      expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape", decidedBy: { model: "clef", provider: "cloudflare" } });
       expect(calls).toHaveLength(1);
     }
   });
@@ -307,7 +307,7 @@ describe("the Workers AI wire shape", () => {
       { config, transport: hanging },
       { intent: "x", candidateSet: candidates(), budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "unavailable", reason: "the selector call exceeded the 40 ms deadline for this decision" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "the selector call exceeded the 40 ms deadline for this decision", decidedBy: { model: "clef", provider: "cloudflare" } });
   });
 
   it("sends the token as a bearer header through the shared fetch transport, and nowhere else", async () => {
