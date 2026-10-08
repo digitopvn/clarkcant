@@ -194,11 +194,18 @@ the window can't hand back a digest that the node would accept for a different b
 A widget in its own frame detaches the same way. The window mounts the same sandboxed frame the conversation does, and
 every read, state write, semantic publish and press the frame makes is a bounded relay the host performs against the
 instance it opened the window for. The frame is mounted afresh, so durable state carries over while view state and
-playback position restart. While it is detached, the conversation shows a note in its place rather than a second frame,
-and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached. Files, jobs and browser tokens work in
-the window the same way they do in the conversation: each is a host relay for that one instance, so the window never
-holds a token, and an attached file appears in the conversation. Clark's performs are not offered in the window yet
-([#617](https://github.com/digitopvn/clarkcant/issues/617)).
+playback position restart. While it is detached, the conversation shows a note in its place rather than a second frame.
+Files, jobs and browser tokens work in the window the same way they do in the conversation: each is a host relay for
+that one instance, so the window never holds a token, and an attached file appears in the conversation.
+
+Clark's performs reach the window too
+([#617](https://github.com/digitopvn/clarkcant/issues/617)). Asking Clark in the conversation, by text or by voice, to
+act on a detached widget edits it in its window. The conversation hands the perform to the host. The host pushes the
+window only the perform's id, action and input, and it posts the window's report to the node itself. The host refuses a
+report for a perform it never pushed, a report over 8 KiB, and more than four performs waiting at once. A perform that
+the window does not answer in time, or that is still waiting when the window closes, is reported as not answered. A
+desktop app whose host is older than this still refuses with `FRAME_DETACHED`, which tells the person to reattach the
+widget.
 
 The lease **moves** rather than duplicates: the shell releases first, the host claims the `detached` surface, and when
 the window closes the host releases and the shell claims it back — so there is never a moment with two owners. Closing

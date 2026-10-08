@@ -59,7 +59,9 @@ import {
   BROKER_RELAY_VERBS,
   COMPOSER_SURFACE_HEADER,
   DETACHED_LEASE,
+  DETACHED_PERFORM_LIMITS,
   detachedBootstrap,
+  detachedPerforms,
   detachedWindowOptions,
   redactDevSessionView,
   RELAY_LIMITS,
@@ -73,6 +75,7 @@ import {
   reviewDetachedAppearance,
   reviewDetachedSemanticPublish,
   reviewDetachedStateSave,
+  reviewForwardedPerform,
   runRelay,
   superviseDetachedWindow,
   tokenSessions,
@@ -201,6 +204,7 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "minimizeWindow",
   "notify",
   "notifyPackagesChanged",
+  "forwardWidgetPerform",
   "onArtifactAttached",
   "onNotificationClicked",
   "onWidgetReattached",
@@ -902,6 +906,23 @@ function registerHandlers() {
       tokens: tokenSessions(),
       // The file the person last picked in this window, so a save may write back over it. Never sent to the window.
       picked: undefined,
+      /*
+       * Clark's performs pushed to this window and not yet answered. The host posts each report to the node, under the
+       * id the node sent; a window that cannot be sent anything any more is not pushed to.
+       */
+      performs: detachedPerforms({
+        send: (push) => {
+          if (window.isDestroyed() || window.webContents.isDestroyed()) return false;
+          window.webContents.send("detached:perform", push);
+          return true;
+        },
+        report: (performId, report) =>
+          callNode(`/app-intents/widget-perform/${encodeURIComponent(performId)}`, {
+            method: "POST",
+            body: report,
+            timeoutMs: DETACHED_PERFORM_LIMITS.reportTimeoutMs,
+          }),
+      }),
     };
     detached = opened;
     /*
@@ -930,6 +951,8 @@ function registerHandlers() {
       refreshMs: detachedLeaseRefreshMs,
       onClosed: () => {
         if (detached === opened) detached = undefined;
+        // A perform the window took and never answered is reported now, so the node does not wait out its own bound.
+        opened.performs.abandon();
       },
       onEnded: () => {
         // The conversation window may be the reason this one closed, and a destroyed window has no page to tell.
@@ -1266,6 +1289,27 @@ function registerHandlers() {
     return { ok: true };
   });
 
+  /*
+   * Clark's perform for the detached instance, handed over by the conversation: pushed to the window showing that
+   * instance, which asks its frame. The node decided the perform before either window saw it; the conversation cannot
+   * name any other instance, and is answered at once whether the window took it, so it reports only a refusal.
+   */
+  handle("desktop:forwardWidgetPerform", async (raw) => {
+    const reviewed = reviewForwardedPerform(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason, code: "PERFORM_UNREADABLE" };
+    const open = detached;
+    if (open === undefined || reviewed.request.instanceId !== open.instanceId) {
+      return { ok: false, refused: "no widget window is showing that instance", code: "FRAME_NOT_MOUNTED" };
+    }
+    return open.performs.forward(reviewed.request);
+  });
+
+  // What the detached window's frame answered to a pushed perform, posted to the node by the host.
+  handle("detached:perform.report", async (raw) => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    return detached.performs.settle(raw);
+  });
+
   handle("detached:release", async () => {
     if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
     // The host closes the window rather than letting the renderer remove itself from the ownership story.
@@ -1470,6 +1514,8 @@ async function runSmokeTest() {
           "jobs",
           "tokens",
           "onPackagesChanged",
+          "onPerform",
+          "reportPerform",
         ].includes(name),
       ),
     ],
@@ -1726,8 +1772,10 @@ async function runSmokeTest() {
             "jobs",
             "onAppearance",
             "onPackagesChanged",
+            "onPerform",
             "publishSemantic",
             "release",
+            "reportPerform",
             "saveState",
             "tokens",
           ]),
@@ -1926,6 +1974,89 @@ async function runSmokeTest() {
       "(async () => { const out = []; for (let i = 0; i < 14; i += 1) out.push(await window.clarkcantDetached.frameRead()); return out; })()",
     );
 
+    /*
+     * Clark's perform on the detached frame: the conversation hands it to the host, the host pushes it to the detached
+     * window, the window reports, and the host posts the report to the node under the node's id. This page is the
+     * stand-in's, not the conversation client, so the window's answer is given here by hand.
+     */
+    step = "forward a perform from the conversation to the detached window";
+    await inFrameWindow("window.__performs = []; window.__stopPerforms = window.clarkcantDetached.onPerform((push) => window.__performs.push(push)); true");
+    const performRequest = (performId, instanceId = "widget_frame_smoke") => ({
+      v: 1,
+      performId,
+      instanceId,
+      actionBindingId: "act_smoke",
+      action: "format",
+      input: { format: "percent" },
+    });
+    const forwardPerform = (request) =>
+      detachShell.webContents.executeJavaScript(`window.clarkcant.forwardWidgetPerform(${JSON.stringify(request)})`);
+    const forwarded = await forwardPerform(performRequest("perform_smoke"));
+    const forwardedAgain = await forwardPerform(performRequest("perform_smoke"));
+    const forwardedElsewhere = await forwardPerform(performRequest("perform_smoke_other", "widget_other"));
+    const forwardedExtra = await forwardPerform({ ...performRequest("perform_smoke_extra"), conversationId: "conv_other" });
+    let pushes = [];
+    for (let attempt = 0; attempt < 40 && pushes.length === 0; attempt += 1) {
+      pushes = (await inFrameWindow("window.__performs")) ?? [];
+      if (pushes.length === 0) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    step = "report the perform from the detached window";
+    const reportedPerform = await inFrameWindow(
+      "window.clarkcantDetached.reportPerform({ performId: 'perform_smoke', report: { status: 'done', output: 'formatted' } })",
+    );
+    const reportedTwice = await inFrameWindow(
+      "window.clarkcantDetached.reportPerform({ performId: 'perform_smoke', report: { status: 'done' } })",
+    );
+    const reportedUnknown = await inFrameWindow(
+      "window.clarkcantDetached.reportPerform({ performId: 'perform_never_pushed', report: { status: 'done' } })",
+    );
+    const reportedOversized = await inFrameWindow(
+      `window.clarkcantDetached.reportPerform({ performId: 'perform_smoke', report: { status: 'done', output: ${JSON.stringify("x".repeat(9_000))} } })`,
+    );
+    const performReports = () => node.relays.filter((call) => call.method === "POST" && call.path.startsWith("/app-intents/widget-perform/"));
+    for (let attempt = 0; attempt < 40 && performReports().length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const shellReportVerb = await detachShell.webContents.executeJavaScript("typeof window.clarkcant.reportPerform");
+    await inFrameWindow("window.__stopPerforms(); true");
+    checks.push(
+      [
+        "a perform for the detached instance reaches the detached window as its id, action and input only",
+        forwarded?.ok === true &&
+          pushes.length === 1 &&
+          JSON.stringify(Object.keys(pushes[0] ?? {}).sort()) === JSON.stringify(["action", "input", "performId"]) &&
+          pushes[0]?.performId === "perform_smoke" &&
+          pushes[0]?.input?.format === "percent",
+      ],
+      [
+        "a perform already waiting, one for another instance, and one carrying more than the contract are refused unpushed",
+        forwardedAgain?.ok === false &&
+          forwardedAgain.code === "PERFORM_IN_PROGRESS" &&
+          forwardedElsewhere?.ok === false &&
+          forwardedElsewhere.code === "FRAME_NOT_MOUNTED" &&
+          forwardedExtra?.ok === false &&
+          pushes.length === 1,
+      ],
+      [
+        "the detached window's report is posted to the node by the host, under the node's id, with the host's bearer",
+        reportedPerform?.ok === true &&
+          performReports().length === 1 &&
+          performReports()[0]?.path === "/app-intents/widget-perform/perform_smoke" &&
+          performReports()[0]?.body["output"] === "formatted" &&
+          performReports()[0]?.authorization === `Bearer ${nodeIdentityOverride}`,
+      ],
+      [
+        "a report for a perform the host is not waiting on, or larger than 8 KiB, is refused and never reaches the node",
+        reportedTwice?.ok === false &&
+          reportedUnknown?.ok === false &&
+          reportedUnknown.code === "PERFORM_NOT_EXPECTED" &&
+          reportedOversized?.ok === false &&
+          reportedOversized.code === "RELAY_REFUSED" &&
+          performReports().length === 1,
+      ],
+      ["the conversation window cannot report a perform itself", shellReportVerb === "undefined"],
+    );
+
     const frameRelays = node.relays.filter((call) => call.path.includes("widget_frame_smoke") || call.path.startsWith("/widget-dev/"));
     const relayed = (suffix) => frameRelays.find((call) => call.method === "POST" && call.path.endsWith(suffix));
     const statePosts = frameRelays.filter((call) => call.method === "POST" && call.path.endsWith("/state"));
@@ -2045,11 +2176,18 @@ async function runSmokeTest() {
     step = "close the frame's window";
     const releasesBefore = node.calls.filter((call) => call.method === "DELETE").length;
     const reattachedBefore = (await detachShell.webContents.executeJavaScript("window.__reattachedAt")).length;
+    // A perform the window took and has not answered when it closes.
+    const forwardedBeforeClose = await forwardPerform(performRequest("perform_smoke_closing"));
     frameWindow?.close();
     for (let attempt = 0; attempt < 40 && detached !== undefined; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
+    const closingReport = performReports().find((call) => call.path === "/app-intents/widget-perform/perform_smoke_closing");
+    checks.push([
+      "a perform the window had not answered when it closed is reported to the node as not answered",
+      forwardedBeforeClose?.ok === true && closingReport?.body["status"] === "no-answer",
+    ]);
     const frameRelease = node.calls.filter((call) => call.method === "DELETE")[releasesBefore];
     const reattachedAt = (await detachShell.webContents.executeJavaScript("window.__reattachedAt"))[reattachedBefore];
     const secondEnded = tokenEnds(secondSession)[0];

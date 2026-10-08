@@ -92,6 +92,19 @@ contextBridge.exposeInMainWorld("clarkcantDetached", {
     return () => ipcRenderer.removeListener("detached:packagesChanged", listener);
   },
   /**
+   * Told of each action Clark asks this window's widget to perform: `{ performId, action, input }`, nothing else. The
+   * window asks its frame and answers with `reportPerform`. Returns the unsubscribe.
+   */
+  onPerform(callback) {
+    const listener = (_event, push) => callback(push);
+    ipcRenderer.on("detached:perform", listener);
+    return () => ipcRenderer.removeListener("detached:perform", listener);
+  },
+  /** What the frame answered to a pushed perform: `{ performId, report }`. The host refuses an id it did not push. */
+  reportPerform(answer) {
+    return ipcRenderer.invoke("detached:perform.report", answer);
+  },
+  /**
    * Hands the instance back to the window that owns the conversation.
    *
    * The host performs the ownership handoff in both directions, so closing this window is a request rather than a

@@ -3,7 +3,14 @@ import { describe, expect, it } from "vitest";
 import { WIDGET_PERFORM_VERSION, readWidgetPerformRequest, type WidgetPerformReport, type WidgetPerformRequest } from "@clarkcant/contracts";
 import type { FramePerformOutcome, FrameSession } from "@clarkcant/widget-host/session";
 
-import { answerWidgetPerform, markFrameDetached, performInMountedFrame, registerMountedFrame } from "../src/frame-performs.ts";
+import {
+  answerForwardedPerforms,
+  answerWidgetPerform,
+  type DetachedPerformHandoff,
+  markFrameDetached,
+  performInMountedFrame,
+  registerMountedFrame,
+} from "../src/frame-performs.ts";
 
 /**
  * The page's side of an action Clark asked a widget to perform: finding the frame that shows the widget now, and always
@@ -62,24 +69,10 @@ describe("handing a perform to the mounted frame", () => {
     expect(await performInMountedFrame(request("wi_widget"))).toEqual({ status: "refused", by: "widget", code: "NOTHING_SELECTED", message: "select cells" });
     removeWidget();
   });
-  it("says a widget open in its own window is detached, without asking any frame, until it is reattached", async () => {
-    const shown = frame({ status: "done", output: "inline" });
-    const remove = registerMountedFrame("wi_detached", shown.session);
-    const reattach = markFrameDetached("wi_detached");
-    expect(await performInMountedFrame(request("wi_detached"))).toMatchObject({
-      status: "refused",
-      by: "page",
-      code: "FRAME_DETACHED",
-      message: expect.stringContaining("reattach it to let Clark act on it"),
-    });
-    expect(shown.asked).toHaveLength(0);
-    reattach();
-    expect(await performInMountedFrame(request("wi_detached"))).toEqual({ status: "done", output: "inline" });
-    remove();
-  });
 });
 
-describe("answering a widget-perform event", () => {  it("answers a perform that reached a page whose session moved on, without asking the frame", async () => {
+describe("answering a widget-perform event", () => {
+  it("answers a perform that reached a page whose session moved on, without asking the frame", async () => {
     const shown = frame({ status: "done" });
     const remove = registerMountedFrame("wi_stale", shown.session);
     const sent: [string, WidgetPerformReport][] = [];
@@ -110,5 +103,139 @@ describe("reading a widget-perform event", () => {
     expect(readWidgetPerformRequest({ ...request("wi_1"), action: "" })).toMatchObject({ kind: "unreadable", report: { code: "PERFORM_UNREADABLE" } });
     expect(readWidgetPerformRequest({ ...request("wi_1"), performId: "bad id" })).toEqual({ kind: "none" });
     expect(readWidgetPerformRequest("nonsense")).toEqual({ kind: "none" });
+  });
+});
+
+describe("a perform for a widget open in its own desktop window", () => {
+  /** Answer one event and collect what this page sent the node. */
+  async function answer(event: WidgetPerformRequest, options: { stale?: boolean } = {}): Promise<[string, WidgetPerformReport][]> {
+    const sent: [string, WidgetPerformReport][] = [];
+    await answerWidgetPerform({ type: "widget-perform", request: event }, async (id, report) => {
+      sent.push([id, report]);
+    }, options);
+    return sent;
+  }
+
+  it("is handed to the host for the window, not to a copy of the widget on this page, and this page sends nothing", async () => {
+    const shown = frame({ status: "done", output: "inline" });
+    const remove = registerMountedFrame("wi_window", shown.session);
+    const forwarded: WidgetPerformRequest[] = [];
+    const reattach = markFrameDetached("wi_window", async (request) => {
+      forwarded.push(request);
+      return { ok: true };
+    });
+    expect(await answer(request("wi_window", "perform_window"))).toEqual([]);
+    expect(forwarded).toEqual([request("wi_window", "perform_window")]);
+    expect(shown.asked).toHaveLength(0);
+
+    // Back in the conversation, the frame here is asked again.
+    reattach();
+    expect(await answer(request("wi_window", "perform_back"))).toEqual([["perform_back", { status: "done", output: "inline" }]]);
+    remove();
+  });
+
+  it("answers the host's refusal as the page's own, with nothing sent to any frame", async () => {
+    const answers: DetachedPerformHandoff[] = [
+      { ok: false, code: "PERFORM_BUSY", refused: "the widget's window is answering 4 performs already" },
+      { ok: false, code: "WINDOW_GONE", refused: "no widget window" },
+    ];
+    const reattach = markFrameDetached("wi_busy", async () => answers.shift() ?? { ok: true });
+    expect(await answer(request("wi_busy", "perform_busy"))).toEqual([
+      ["perform_busy", { status: "refused", by: "page", code: "PERFORM_BUSY", message: expect.stringContaining("nothing was sent") }],
+    ]);
+    // A code that is not the page's own is not passed on as one.
+    expect(await answer(request("wi_busy", "perform_gone"))).toEqual([
+      ["perform_gone", expect.objectContaining({ status: "refused", by: "page", code: "FRAME_NOT_MOUNTED" })],
+    ]);
+    reattach();
+
+    const failing = markFrameDetached("wi_throws", async () => {
+      throw new Error("the bridge went away");
+    });
+    expect(await answer(request("wi_throws", "perform_throws"))).toEqual([
+      ["perform_throws", expect.objectContaining({ code: "FRAME_NOT_MOUNTED", message: expect.stringContaining("the bridge went away") })],
+    ]);
+    failing();
+  });
+
+  it("says the widget is detached when this desktop app's host cannot take a perform", async () => {
+    const reattach = markFrameDetached("wi_old_host");
+    expect(await answer(request("wi_old_host", "perform_old"))).toEqual([
+      ["perform_old", expect.objectContaining({ status: "refused", by: "page", code: "FRAME_DETACHED" })],
+    ]);
+    reattach();
+  });
+
+  it("is not handed on from a page whose session moved on", async () => {
+    const forwarded: string[] = [];
+    const reattach = markFrameDetached("wi_stale_window", async (request) => {
+      forwarded.push(request.performId);
+      return { ok: true };
+    });
+    expect(await answer(request("wi_stale_window", "perform_stale_window"), { stale: true })).toEqual([
+      ["perform_stale_window", expect.objectContaining({ code: "SURFACE_GONE" })],
+    ]);
+    expect(forwarded).toEqual([]);
+    reattach();
+  });
+});
+
+describe("the detached window answering the host's performs", () => {
+  function host() {
+    let listener: ((push: unknown) => void) | undefined;
+    const reports: { performId: string; report: WidgetPerformReport }[] = [];
+    let settle: () => void = () => undefined;
+    const reported = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    return {
+      onPerform: (next: (push: unknown) => void) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      reportPerform: async (answer: { performId: string; report: WidgetPerformReport }) => {
+        reports.push(answer);
+        settle();
+        return { ok: true };
+      },
+      push: (value: unknown) => listener?.(value),
+      listening: () => listener !== undefined,
+      reports,
+      reported,
+    };
+  }
+
+  it("asks the frame this window mounts for the instance, and reports what it said under the perform's id", async () => {
+    const shown = frame({ status: "done", output: "edited" });
+    const remove = registerMountedFrame("wi_detached_window", shown.session);
+    const bridge = host();
+    const stop = answerForwardedPerforms({ instanceId: "wi_detached_window", onPerform: bridge.onPerform, reportPerform: bridge.reportPerform });
+    bridge.push({ performId: "perform_pushed", action: "format", input: { format: "percent" } });
+    await bridge.reported;
+    expect(shown.asked).toEqual(["perform_pushed"]);
+    expect(bridge.reports).toEqual([{ performId: "perform_pushed", report: { status: "done", output: "edited" } }]);
+
+    // A push it cannot read is not answered; the host's own wait reports it.
+    bridge.push({ performId: "perform_bad", action: "format", input: "nope" });
+    bridge.push("nonsense");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bridge.reports).toHaveLength(1);
+
+    stop();
+    expect(bridge.listening()).toBe(false);
+    remove();
+  });
+
+  it("reports a perform that arrives before the frame mounts as not mounted", async () => {
+    const bridge = host();
+    const stop = answerForwardedPerforms({ instanceId: "wi_not_yet", onPerform: bridge.onPerform, reportPerform: bridge.reportPerform });
+    bridge.push({ performId: "perform_early", action: "format", input: {} });
+    await bridge.reported;
+    expect(bridge.reports).toEqual([
+      { performId: "perform_early", report: expect.objectContaining({ status: "refused", by: "page", code: "FRAME_NOT_MOUNTED" }) },
+    ]);
+    stop();
   });
 });

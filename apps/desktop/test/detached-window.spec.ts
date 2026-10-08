@@ -2,22 +2,32 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   COMPOSER_SURFACE_HEADER as CONTRACT_COMPOSER_SURFACE_HEADER,
+  WIDGET_PERFORM_REPORT_WITHIN_MS,
   appearanceSnapshotSchema,
   semanticProposalSchema,
+  widgetPerformReportSchema,
+  widgetPerformRequestSchema,
 } from "@clarkcant/contracts";
 import { compileAppearance } from "@clarkcant/design-tokens";
-import { DETACHED_RELAY_LIMITS, FRAME_BROKER_LIMITS, FRAME_MESSAGE_MAX_BYTES } from "@clarkcant/widget-host/session";
+import {
+  DETACHED_RELAY_LIMITS,
+  FRAME_BROKER_LIMITS,
+  FRAME_MESSAGE_MAX_BYTES,
+  FRAME_PERFORM_TIMEOUT_MS,
+} from "@clarkcant/widget-host/session";
 
 import {
   BROKER_RELAY_VERBS,
   COMPOSER_SURFACE_HEADER,
   DETACHED_CHANNELS,
   DETACHED_LEASE,
+  DETACHED_PERFORM_LIMITS,
   PRIVILEGED_FIELDS,
   RELAY_BUCKETS,
   RELAY_LIMITS,
   detachedBootstrap,
   detachedBounds,
+  detachedPerforms,
   detachedWindowOptions,
   holdDetachedLease,
   keepDetachedLease,
@@ -32,6 +42,8 @@ import {
   reviewDetachedBrokerRequest,
   reviewDetachedSemanticPublish,
   reviewDetachedStateSave,
+  reviewForwardedPerform,
+  reviewPerformReport,
   runRelay,
   superviseDetachedWindow,
   tokenSessions,
@@ -1103,5 +1115,154 @@ describe("the token sessions a detached window was issued under", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Clark's performs on a detached frame", () => {
+  const request = (performId: string, extra: Record<string, unknown> = {}) => ({
+    v: 1,
+    performId,
+    instanceId: "wi_detached",
+    actionBindingId: "act_1",
+    action: "format",
+    input: { format: "percent" },
+    ...extra,
+  });
+
+  it("holds the perform request and report schemas equal to the contract", () => {
+    const read = (name: string) => JSON.parse(readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8"));
+    expect(read("widget-perform-request-schema.json")).toEqual(widgetPerformRequestSchema.toJSONSchema());
+    expect(read("widget-perform-report-schema.json")).toEqual(widgetPerformReportSchema.toJSONSchema());
+  });
+
+  it("waits longer than the frame waits for its widget, and less long than the node waits for the report", () => {
+    expect(DETACHED_PERFORM_LIMITS.answerWithinMs).toBeGreaterThan(FRAME_PERFORM_TIMEOUT_MS);
+    expect(DETACHED_PERFORM_LIMITS.answerWithinMs).toBeLessThan(WIDGET_PERFORM_REPORT_WITHIN_MS);
+    expect(DETACHED_PERFORM_LIMITS.reportMaxBytes).toBe(8 * 1024);
+    expect(DETACHED_PERFORM_LIMITS.inFlight).toBe(4);
+  });
+
+  it("takes a perform only as the node words it, and passes on its id, instance, action and input", () => {
+    expect(reviewForwardedPerform(request("perform_1"))).toEqual({
+      ok: true,
+      request: { performId: "perform_1", instanceId: "wi_detached", action: "format", input: { format: "percent" } },
+    });
+    for (const refused of [
+      request("perform_1", { conversationId: "conv_other" }),
+      request("perform_1", { token: "secret" }),
+      request("perform_1", { v: 2 }),
+      request("bad id"),
+      request("perform_1", { action: "" }),
+      request("perform_1", { input: { blob: "x".repeat(DETACHED_PERFORM_LIMITS.requestMaxBytes) } }),
+      "perform_1",
+      undefined,
+    ]) {
+      expect(reviewForwardedPerform(refused)).toMatchObject({ ok: false });
+    }
+  });
+
+  it("takes a report only in the contract's shape, for a well-formed id, within 8 KiB", () => {
+    expect(reviewPerformReport({ performId: "perform_1", report: { status: "done", output: "ok" } })).toEqual({
+      ok: true,
+      performId: "perform_1",
+      report: { status: "done", output: "ok" },
+    });
+    for (const refused of [
+      { performId: "perform_1", report: { status: "done", output: "x".repeat(9_000) } },
+      { performId: "perform_1", report: { status: "maybe" } },
+      { performId: "perform_1", report: { status: "refused", by: "host", code: "X", message: "y" } },
+      { performId: "bad id", report: { status: "done" } },
+      { performId: "perform_1", report: { status: "done" }, instanceId: "wi_other" },
+      { performId: "perform_1", report: { status: "done" }, conversationId: "conv_other" },
+    ]) {
+      expect(reviewPerformReport(refused)).toMatchObject({ ok: false });
+    }
+  });
+
+  function performs(input: { send?: (push: unknown) => boolean } = {}) {
+    const pushed: unknown[] = [];
+    const reported: [string, unknown][] = [];
+    const registry = detachedPerforms({
+      send: input.send ?? ((push: unknown) => (pushed.push(push), true)),
+      report: async (performId: string, report: unknown) => {
+        reported.push([performId, report]);
+      },
+    });
+    return { registry, pushed, reported };
+  }
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const reviewed = (performId: string) => {
+    const checked = reviewForwardedPerform(request(performId));
+    if (!checked.ok) throw new Error("unreachable");
+    return checked.request;
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("pushes the id, action and input to the window, and posts the window's report once, under the node's id", async () => {
+    const { registry, pushed, reported } = performs();
+    expect(registry.forward(reviewed("perform_1"))).toEqual({ ok: true });
+    expect(pushed).toEqual([{ performId: "perform_1", action: "format", input: { format: "percent" } }]);
+    expect(registry.settle({ performId: "perform_1", report: { status: "done", output: "ok" } })).toEqual({ ok: true });
+    await flush();
+    expect(reported).toEqual([["perform_1", { status: "done", output: "ok" }]]);
+    // Answered already: a second report for the same id is not taken.
+    expect(registry.settle({ performId: "perform_1", report: { status: "done" } })).toMatchObject({ ok: false, code: "PERFORM_NOT_EXPECTED" });
+    await flush();
+    expect(reported).toHaveLength(1);
+  });
+
+  it("refuses a report for a perform it never pushed, and never posts it", async () => {
+    const { registry, reported } = performs();
+    expect(registry.settle({ performId: "perform_never", report: { status: "done" } })).toMatchObject({
+      ok: false,
+      code: "PERFORM_NOT_EXPECTED",
+    });
+    await flush();
+    expect(reported).toEqual([]);
+  });
+
+  it("refuses a perform already waiting, and a fifth while four wait, with nothing pushed", () => {
+    const { registry, pushed } = performs();
+    for (const id of ["perform_1", "perform_2", "perform_3", "perform_4"]) expect(registry.forward(reviewed(id))).toEqual({ ok: true });
+    expect(registry.forward(reviewed("perform_1"))).toMatchObject({ ok: false, code: "PERFORM_IN_PROGRESS" });
+    expect(registry.forward(reviewed("perform_5"))).toMatchObject({ ok: false, code: "PERFORM_BUSY" });
+    expect(pushed).toHaveLength(4);
+    expect(registry.settle({ performId: "perform_2", report: { status: "done" } })).toEqual({ ok: true });
+    expect(registry.forward(reviewed("perform_5"))).toEqual({ ok: true });
+  });
+
+  it("refuses a perform it could not send, as not mounted, and waits on nothing", async () => {
+    const { registry, reported } = performs({ send: () => false });
+    expect(registry.forward(reviewed("perform_1"))).toMatchObject({ ok: false, code: "FRAME_NOT_MOUNTED" });
+    expect(registry.settle({ performId: "perform_1", report: { status: "done" } })).toMatchObject({ ok: false });
+    await flush();
+    expect(reported).toEqual([]);
+  });
+
+  it("reports a perform the window does not answer in time as not answered, and takes no late report", async () => {
+    vi.useFakeTimers();
+    const { registry, reported } = performs();
+    registry.forward(reviewed("perform_1"));
+    await vi.advanceTimersByTimeAsync(DETACHED_PERFORM_LIMITS.answerWithinMs - 1);
+    expect(reported).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reported).toEqual([["perform_1", { status: "no-answer", message: expect.any(String) }]]);
+    expect(registry.settle({ performId: "perform_1", report: { status: "done" } })).toMatchObject({ ok: false, code: "PERFORM_NOT_EXPECTED" });
+  });
+
+  it("reports every perform still waiting as not answered when the window closes", async () => {
+    const { registry, reported } = performs();
+    registry.forward(reviewed("perform_1"));
+    registry.forward(reviewed("perform_2"));
+    registry.settle({ performId: "perform_1", report: { status: "done" } });
+    registry.abandon();
+    await flush();
+    expect(reported).toEqual([
+      ["perform_1", { status: "done" }],
+      ["perform_2", { status: "no-answer", message: expect.stringContaining("closed") }],
+    ]);
   });
 });
