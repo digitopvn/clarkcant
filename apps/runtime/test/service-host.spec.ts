@@ -130,7 +130,7 @@ function start(
   return host;
 }
 
-function activate(generationId = GENERATION, version = "1.0.0"): void {
+function activate(generationId = GENERATION, version = "1.0.0", extra: Record<string, unknown> = {}): void {
   const at = new Date(Date.UTC(2026, 8, 29, 6, 0, counter++)).toISOString();
   db.prepare("UPDATE package_generations SET superseded_at = ? WHERE package_id = ? AND superseded_at IS NULL").run(at, PACKAGE);
   const generation = {
@@ -143,6 +143,7 @@ function activate(generationId = GENERATION, version = "1.0.0"): void {
     activatedAt: at,
     uiOnlyFacets: [],
     grantedCapabilities: [],
+    ...extra,
   };
   db.prepare(
     `INSERT INTO package_generations
@@ -355,6 +356,23 @@ describe("the effect a service call is decided under", () => {
     expect(serviceEffectCategory("local-write", { name: "t", inputSchema: {}, annotations: { destructiveHint: true } })).toBe("destructive");
     // A read-only claim does not lower what the manifest declared.
     expect(serviceEffectCategory("external-write", { name: "t", inputSchema: {}, annotations: { readOnlyHint: true } })).toBe("external-write");
+  });
+});
+
+describe("a service its install skipped", () => {
+  it("does not start a tools facet the generation recorded as skipped, nor any facet when that record cannot be read", async () => {
+    for (const [index, skippedFacets] of [[{ kind: "tools", id: "com.example.notes.service", isolation: "service" }], [{ kind: "Tools" }]].entries()) {
+      activate(`${PACKAGE}@1.0.0:skipped_${String(index)}`, "1.0.0", { skippedFacets });
+      const serviceHost = start();
+      await serviceHost.reconcile();
+      expect(serviceHost.status(), JSON.stringify(skippedFacets)).toEqual([]);
+      expect(readiness(ADD)).toBeUndefined();
+      await serviceHost.stopAll();
+      uninstall();
+    }
+    // The same generation without the record starts it, so the record is what held it back.
+    activate();
+    await running(start());
   });
 });
 

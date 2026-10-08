@@ -172,7 +172,7 @@ giả (bên dưới), trong `clarkcant instructions check`, trong các trường
 của package trong `GET /packages`; câu trả lời khi cài và thẻ cài đặt hiện chưa hiển thị nó. Node không bao giờ chạy,
 liệt kê hay cấp gì cho facet đó. Generation ghi lại facet (loại, id và isolation đã khai báo), và mọi nơi đọc một package
 đã cài đều để facet đó ra ngoài trong generation ấy, nên một host sau này được cập nhật để hiểu loại đó vẫn giữ facet
-không hoạt động cho tới khi package được cài lại hoặc cập nhật với sự đồng ý mới.
+không hoạt động. Cài lại cùng version khi nó đang chạy sẽ nhập vào lần cài đó và giữ bản ghi, còn khôi phục một package đã gỡ thì mang bản ghi của nó trở lại; chỉ một lần cập nhật lên version khác, hoặc gỡ cài đặt rồi cài mới, mới cài package lại từ đầu với sự đồng ý mới (cài lại một package được liệt kê bằng đường dẫn mà tệp đã thay đổi cũng vậy). Bản ghi mà node không phân tích được sẽ giữ lại mọi facet của package, và package khi đó được coi là không đọc được.
 
 `isolation` mà facet khai báo được tính vào lane dùng để cấp các capability package yêu cầu, và facet không nêu lane nào
 host biết thì được tính là `trusted-native`, nên facet này chỉ có thể làm việc cấp quyền khó hơn. Lane quyết định cách

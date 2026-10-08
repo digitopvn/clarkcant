@@ -7,7 +7,7 @@ import {
   readProjectInstructions,
   type PackageSource,
   type ProjectInstructionRule,
-  type RecordedSkippedFacet,
+  type SkippedFacetsRecord,
 } from "@clarkcant/contracts";
 
 import { readPackageFile } from "./package-files.ts";
@@ -59,7 +59,7 @@ const CLIPPED = "\n[…đã cắt bớt]";
 export function installedInstructions(input: {
   source: PackageSource;
   /** The facets the generation's install skipped, kept inert (`InstalledReadOptions`). */
-  skippedAtInstall?: readonly RecordedSkippedFacet[] | undefined;
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
 }): InstalledInstructionsOutcome {
   if (input.source.kind !== "local") {
     return {

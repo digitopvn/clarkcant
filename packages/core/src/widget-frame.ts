@@ -2,7 +2,7 @@ import type {
   BrowserTokenDeclaration,
   DirectoryEntry,
   IsolationClass,
-  RecordedSkippedFacet,
+  SkippedFacetsRecord,
   ResourceRequest,
   WidgetDefinition,
 } from "@clarkcant/contracts";
@@ -121,7 +121,7 @@ export function findIsolatedFrame(input: {
    * The facets an entry's installed generation skipped at install (`PackageGeneration.skippedFacets`), which stay inert
    * for that generation: a widget among them is not served or given tokens even once this build understands its kind.
    */
-  skippedAtInstallOf?: (entry: DirectoryEntry) => readonly RecordedSkippedFacet[] | undefined;
+  skippedAtInstallOf?: (entry: DirectoryEntry) => SkippedFacetsRecord | undefined;
 }): IsolatedFrameLookup {
   let unreadable = 0;
 

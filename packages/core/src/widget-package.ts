@@ -8,14 +8,16 @@ import {
   fixtureDatasetSchema,
   manifestProblems,
   networkOriginSchema,
+  UNREADABLE_SKIPPED_FACETS,
   readPackageManifest,
+  readSkippedFacetsRecord,
   unsafeSchemaPattern,
   widgetDefinitionSchema,
   type FixtureDataset,
   withoutFacetsSkippedAtInstall,
   type PackageManifest,
-  type RecordedSkippedFacet,
   type SkippedFacet,
+  type SkippedFacetsRecord,
   type WidgetDefinition,
 } from "@clarkcant/contracts";
 import { z } from "zod";
@@ -170,6 +172,16 @@ export function parseManifest(
   value: unknown,
   options: InstalledReadOptions = {},
 ): { ok: true; manifest: PackageManifest; skippedFacets: SkippedFacet[] } | { ok: false; problems: string[] } {
+  // Checked again here, whoever read the generation: a record that is there but unreadable holds back every facet.
+  const recorded = options.skippedAtInstall === undefined ? undefined : readSkippedFacetsRecord(options.skippedAtInstall);
+  if (recorded === UNREADABLE_SKIPPED_FACETS) {
+    return {
+      ok: false,
+      problems: [
+        "the record of the facets this package's install skipped cannot be read, so none of its facets is used; update the package, or uninstall it and install it again",
+      ],
+    };
+  }
   const schemaVersion = typeof value === "object" && value !== null ? (value as { schemaVersion?: unknown }).schemaVersion : undefined;
   let candidate = value;
   if (schemaVersion === 1) {
@@ -195,17 +207,18 @@ export function parseManifest(
   }
   const problems = manifestProblems(parsed.data);
   if (problems.length > 0) return { ok: false, problems };
-  return { ok: true, manifest: withoutFacetsSkippedAtInstall(parsed.data, options.skippedAtInstall), skippedFacets: parsed.skippedFacets };
+  return { ok: true, manifest: withoutFacetsSkippedAtInstall(parsed.data, recorded), skippedFacets: parsed.skippedFacets };
 }
 
 /**
  * How an installed package is read: without the facets its generation's install skipped
  * (`PackageGeneration.skippedFacets`), which stay inert for that generation even once this build understands their
  * kind. A reader of an installed package passes its generation's record; an author's tool, which reads a folder rather
- * than an install, passes nothing.
+ * than an install, passes nothing. A record that does not parse (`UNREADABLE_SKIPPED_FACETS` or any malformed value)
+ * makes the package unreadable rather than read with nothing held back.
  */
 export interface InstalledReadOptions {
-  skippedAtInstall?: readonly RecordedSkippedFacet[] | undefined;
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
 }
 
 export function readPackage(root: string, options: InstalledReadOptions = {}): WidgetPackage {

@@ -843,7 +843,7 @@ A package whose manifest declares a facet of a kind this node does not know inst
 `skippedFacets` (`[{ kind, id?, isolation? }]`), which `GET /packages` repeats on the package, and the package's `lane`
 there counts the facet's declared lane, or `trusted-native` when it names none, as the capability grants did. Every
 reader of the installed package leaves a recorded facet out for that generation, also on a node updated later to
-understand its kind, until the package is installed or updated again. The install refuses with `400 HOST_API_MISMATCH`
+understand its kind. Installing the same running version again joins that install and restoring an uninstalled package brings the record back; only an update to another version, or an uninstall followed by a fresh install, clears it. A record the node cannot parse is reported as `"unreadable"`, counts as `trusted-native`, and makes every reader treat the package as unreadable. The install refuses with `400 HOST_API_MISMATCH`
 a manifest whose own `hostApi` leaves this node out, and its `409 DECLARED_REACH_MISMATCH` message says when a listed
 reach may count facets the node could not read.
 

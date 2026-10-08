@@ -2,7 +2,7 @@ import type {
   FixtureDataset,
   PackageManifest,
   PackageSource,
-  RecordedSkippedFacet,
+  SkippedFacetsRecord,
   WidgetDefinition,
   WidgetFixture,
 } from "@clarkcant/contracts";
@@ -52,7 +52,7 @@ export function installedWidgets(input: {
   version: string;
   source: PackageSource;
   /** The facets the generation's install skipped, kept inert (`InstalledReadOptions`). */
-  skippedAtInstall?: readonly RecordedSkippedFacet[] | undefined;
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
 }): InstalledWidgetsOutcome {
   if (input.source.kind !== "local") {
     return {

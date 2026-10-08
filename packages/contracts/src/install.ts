@@ -374,6 +374,25 @@ export function withoutFacetsSkippedAtInstall<M extends { facets: readonly { kin
 }
 
 /**
+ * A generation's record of skipped facets that is there but cannot be read. Nobody can tell which facets it held back,
+ * so a reader holds back the whole package rather than run a facet the person never consented to.
+ */
+export const UNREADABLE_SKIPPED_FACETS = "unreadable";
+export type SkippedFacetsRecord = readonly RecordedSkippedFacet[] | typeof UNREADABLE_SKIPPED_FACETS;
+
+/** A generation's `skippedFacets` as stored: absent is nothing skipped, anything that does not parse is unreadable. */
+export function readSkippedFacetsRecord(value: unknown): RecordedSkippedFacet[] | typeof UNREADABLE_SKIPPED_FACETS {
+  if (value === undefined) return [];
+  const read = z.array(recordedSkippedFacetSchema).max(MAX_PACKAGE_FACETS).safeParse(value);
+  return read.success ? read.data : UNREADABLE_SKIPPED_FACETS;
+}
+
+/** The lanes a record counts in; an unreadable one counts as the strongest, since it may hold anything. */
+export function skippedFacetsRecordLanes(record: SkippedFacetsRecord): IsolationClass[] {
+  return record === UNREADABLE_SKIPPED_FACETS ? ["trusted-native"] : record.map(skippedFacetLane);
+}
+
+/**
  * A facet a reader left out because this build does not know its kind: declared, but not understood here. Only what
  * can be shown as written is carried (the kind, an id that is a valid facet id, a known isolation class); the rest of
  * the facet is never read, so nothing in it reaches a consumer.

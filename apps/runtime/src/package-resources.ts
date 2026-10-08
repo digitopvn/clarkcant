@@ -8,7 +8,7 @@ import {
   describeResourceProfile,
   type DeclaredReach,
   type PackageManifest,
-  type RecordedSkippedFacet,
+  type SkippedFacetsRecord,
   type ResourceGrant,
   type ResourceProfile,
   type ResourceProfileName,
@@ -102,7 +102,7 @@ export function installedManifest(
     digest: string;
     snapshotDigest?: string | undefined;
     /** What its generation's install skipped, which stays out of the manifest read here (`InstalledReadOptions`). */
-    skippedFacets?: readonly RecordedSkippedFacet[] | undefined;
+    skippedFacets?: SkippedFacetsRecord | undefined;
   },
   dataDir: string,
   index: DirectoryIndexState,

@@ -172,7 +172,7 @@ as declared but not understood by the author's tools (below), by `clarkcant inst
 fields, and as `skippedFacets` on the package in `GET /packages`; the install answer and the install card do not show it
 yet. The node never runs, lists or grants anything for that facet. The generation records it (its kind, id and declared
 isolation), and every reader of an installed package leaves it out for that generation, so a host updated later to
-understand the kind still keeps the facet inert until the package is installed or updated again under new consent.
+understand the kind still keeps the facet inert. Installing the same version again while it runs joins that install and keeps the record, and restoring an uninstalled package brings its record back; only an update to another version, or an uninstall followed by a fresh install, installs the package anew under new consent (as does reinstalling a package listed by a path whose files changed). A record the node cannot parse holds back every facet of the package, which is then read as unreadable.
 
 The facet's declared `isolation` counts toward the lane the package's requested capabilities are granted in, and a
 facet that names no known lane counts as `trusted-native`, so the facet can only make a grant harder. The lane decides

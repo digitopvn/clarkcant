@@ -850,7 +850,7 @@ Gói có manifest khai báo một facet thuộc loại mà node này không bi�
 `skippedFacets` (`[{ kind, id?, isolation? }]`), `GET /packages` lặp lại trường này trên gói, và `lane` của gói ở đó tính
 cả lane mà facet khai báo, hoặc `trusted-native` khi facet không nêu lane nào, giống như lúc cấp capability. Mọi nơi đọc
 gói đã cài đều để facet đã ghi ra ngoài trong generation đó, kể cả trên một node sau này được cập nhật để hiểu loại ấy,
-cho tới khi gói được cài lại hoặc cập nhật. Bước cài từ chối với `400 HOST_API_MISMATCH` manifest mà chính `hostApi` của
+Cài lại cùng version đang chạy sẽ nhập vào lần cài đó, còn khôi phục một gói đã gỡ thì mang bản ghi trở lại; chỉ một lần cập nhật lên version khác, hoặc gỡ rồi cài mới, mới xoá bản ghi. Bản ghi mà node không phân tích được được báo là `"unreadable"`, được tính là `trusted-native`, và khiến mọi nơi đọc coi gói là không đọc được. Bước cài từ chối với `400 HOST_API_MISMATCH` manifest mà chính `hostApi` của
 nó không bao gồm node này, và thông báo `409 DECLARED_REACH_MISMATCH` nói rõ khi phạm vi tiếp cận trong listing có thể
 tính cả những facet node không đọc được.
 

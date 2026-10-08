@@ -3,7 +3,7 @@ import {
   formatThemeRef,
   parseThemeRef,
   type PackageSource,
-  type RecordedSkippedFacet,
+  type SkippedFacetsRecord,
   type ThemeDocument,
 } from "@clarkcant/contracts";
 
@@ -57,7 +57,7 @@ export type InstalledThemesOutcome =
 export function installedThemes(input: {
   source: PackageSource;
   /** The facets the generation's install skipped, kept inert (`InstalledReadOptions`). */
-  skippedAtInstall?: readonly RecordedSkippedFacet[] | undefined;
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
 }): InstalledThemesOutcome {
   if (input.source.kind !== "local") {
     return {

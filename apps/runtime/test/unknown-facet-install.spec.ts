@@ -180,6 +180,18 @@ describe("installing a package with a facet kind this node does not know", () =>
     expect(pkg?.skippedFacets).toEqual([{ kind: "agents", id: "com.example.later.agents", isolation: "trusted-native" }]);
   });
 
+  it("holds back every facet of a package whose record of skipped facets cannot be read", async () => {
+    expect((await install(AGENTS, "declarative")).status).toBe(200);
+    services.runtime.db.prepare("UPDATE package_generations SET document = json_set(document, '$.skippedFacets', 'agents')").run();
+    const [pkg] = ((await get("/packages")).body as { packages: { lane: string; skippedFacets?: unknown }[] }).packages;
+    expect(pkg?.skippedFacets).toBe("unreadable");
+    expect(pkg?.lane).toBe("trusted-native");
+    // Its theme, which the install did not skip, is not drawn either: nobody can tell what the record held back.
+    const themes = (await get("/themes")).body as { themes: unknown[]; unchecked: { packageId: string }[] };
+    expect(JSON.stringify(themes.themes)).not.toContain("Dusk");
+    expect(themes.unchecked.map((entry) => entry.packageId)).toEqual([ID]);
+  });
+
   it("keeps a facet skipped at install inert on a host that later understands its kind, until the package is installed again", async () => {
     expect((await install(AGENTS, "declarative")).status).toBe(200);
     const [generation] = services.runtime.db.prepare("SELECT document FROM package_generations").all() as { document: string }[];

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_PACKAGE_FACETS,
+  UNREADABLE_SKIPPED_FACETS,
   describeSkippedFacet,
+  readSkippedFacetsRecord,
+  skippedFacetsRecordLanes,
   manifestProblems,
   packageGenerationSchema,
   packageManifestSchema,
@@ -150,6 +153,16 @@ describe("facets skipped at install", () => {
     // Every facet of a kind the installing host did not know was skipped, whatever its id.
     expect(withoutFacetsSkippedAtInstall(read, [{ kind: "themes" }]).facets).toEqual([UI, TOOLS]);
     expect(withoutFacetsSkippedAtInstall(read, undefined)).toBe(read);
+  });
+
+  it("reads a stored record as nothing skipped only when it is absent, and as unreadable when it does not parse", () => {
+    expect(readSkippedFacetsRecord(undefined)).toEqual([]);
+    expect(readSkippedFacetsRecord([{ kind: "agents" }])).toEqual([{ kind: "agents" }]);
+    for (const broken of [null, "agents", { kind: "agents" }, [{ kind: "Agents" }], [{ kind: "agents", index: 1 }]]) {
+      expect(readSkippedFacetsRecord(broken), JSON.stringify(broken)).toBe(UNREADABLE_SKIPPED_FACETS);
+    }
+    expect(skippedFacetsRecordLanes(UNREADABLE_SKIPPED_FACETS)).toEqual(["trusted-native"]);
+    expect(skippedFacetsRecordLanes([{ kind: "agents", isolation: "declarative" }])).toEqual(["declarative"]);
   });
 
   it("counts a skipped facet in its declared lane, or the strongest when it declares none", () => {
