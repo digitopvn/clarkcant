@@ -139,7 +139,17 @@ function CommandRow({
           t={t}
           onAnswer={(value) => actions?.onSignInAnswer?.({ key: rowKey, signInId: signIn.signInId, value })}
           onCancel={() => actions?.onSignInCancel?.({ key: rowKey, signInId: signIn.signInId })}
-          after={<AfterSignIn t={t} signInKey={rowKey} providerId={signIn.providerId} providerName={row.label} port={actions} />}
+          after={
+            <AfterSignIn
+              key={signIn.signInId}
+              t={t}
+              signInKey={rowKey}
+              signInId={signIn.signInId}
+              providerId={signIn.providerId}
+              providerName={row.label}
+              port={actions}
+            />
+          }
         />
       )}
       {live

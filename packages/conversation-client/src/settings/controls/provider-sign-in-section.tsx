@@ -279,7 +279,17 @@ export function ProviderSignInList({
                     t={t}
                     onAnswer={(value) => onAnswer(provider.providerId, signIn.signInId, value)}
                     onCancel={() => onCancel(provider.providerId, signIn.signInId)}
-                    after={<AfterSignIn t={t} signInKey={`settings/${provider.providerId}`} providerId={provider.providerId} providerName={provider.name} port={modelPicker} />}
+                    after={
+                      <AfterSignIn
+                        key={signIn.signInId}
+                        t={t}
+                        signInKey={`settings/${provider.providerId}`}
+                        signInId={signIn.signInId}
+                        providerId={provider.providerId}
+                        providerName={provider.name}
+                        port={modelPicker}
+                      />
+                    }
                   />
                 )}
               </li>

@@ -54,10 +54,12 @@ function lastCard(page: Page, command: string) {
 
 /** The reply the fixture gives to "which model answers", naming the model the turn ran on. */
 async function nextTurnModel(page: Page): Promise<string> {
+  const replies = page.locator('.cc-row[data-role="assistant"]', { hasText: "Fixture: lượt này chạy trên" });
+  // Waits for this turn's own reply: an earlier one in the same conversation would otherwise be read in its place.
+  const before = await replies.count();
   await send(page, "model nào đang trả lời");
-  const reply = page.locator('.cc-row[data-role="assistant"]', { hasText: "Fixture: lượt này chạy trên" }).last();
-  await expect(reply).toBeVisible({ timeout: 20_000 });
-  const text = (await reply.textContent()) ?? "";
+  await expect(replies).toHaveCount(before + 1, { timeout: 20_000 });
+  const text = (await replies.last().textContent()) ?? "";
   return /chạy trên (\S+?)\.?$/u.exec(text.trim())?.[1] ?? text;
 }
 
@@ -314,4 +316,130 @@ test("a sign-in from Settings offers the same next step: that provider's models,
 
   await page.keyboard.press("Escape");
   expect(await nextTurnModel(page)).toBe("fake-other/fake-other-model");
+});
+
+test("with the sign-ins unreadable in the page, the node itself refuses a signed-out provider's model and says why", async ({ page }) => {
+  await page.route("**/providers/auth", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ status: 503, json: { code: "INTERNAL_ERROR", message: "offline" } }) : route.fallback(),
+  );
+  await openApp(page);
+  await send(page, "/model fake-other");
+  const picker = lastCard(page, "model").locator(".cc-model-picker[data-state='ready']");
+  await expect(picker).toBeVisible({ timeout: 20_000 });
+  // The page cannot tell the provider is signed out, so it lets the choice through; the node is where it stops.
+  await picker.locator('[data-model="fake-other/fake-other-model"] input[type="radio"]').check();
+  await picker.getByRole("button", { name: "Dùng model này" }).click();
+  await picker.getByRole("button", { name: "Đổi model" }).click();
+  const failed = picker.locator(".cc-command-status[data-result='failed']");
+  await expect(failed).toHaveText(
+    "Không đổi được sang fake-other/fake-other-model: chưa dùng được fake-other/fake-other-model vì chưa đăng nhập Fake Other; đăng nhập bằng /login rồi chọn lại. Model đang dùng vẫn giữ nguyên.",
+    { timeout: 10_000 },
+  );
+  expect(await nextTurnModel(page)).toBe("fake/fake-model");
+});
+
+test("Settings says a saved model answers this conversation from the next message, and says why a signed-out one is refused", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  await page.locator('[data-settings="true"]').click();
+  await page.locator("#cc-tab-ai").click();
+
+  const model = page.locator('[data-search-input="model"]');
+  await expect(model).toBeVisible({ timeout: 15_000 });
+  await model.click();
+  await model.fill("large");
+  await model.press("Enter");
+  await page.locator('[data-model-save="true"]').click();
+  const status = page.locator('[data-model-status="true"]');
+  await expect(status).toHaveText("Đã lưu fake/fake-model-large. Áp dụng cho hội thoại này từ tin nhắn tiếp theo.", { timeout: 10_000 });
+
+  const provider = page.locator('[data-search-input="provider"]');
+  await provider.click();
+  await provider.fill("fake-other");
+  await provider.press("Enter");
+  await model.click();
+  await model.fill("fake-other-model");
+  await model.press("Enter");
+  await page.locator('[data-model-save="true"]').click();
+  await expect(status).toHaveText(
+    "Không lưu được lựa chọn: chưa dùng được fake-other/fake-other-model vì chưa đăng nhập Fake Other; đăng nhập bằng /login rồi chọn lại.",
+    { timeout: 10_000 },
+  );
+
+  await page.keyboard.press("Escape");
+  expect(await nextTurnModel(page)).toBe("fake/fake-model-large");
+});
+
+test("by keyboard, focus lands on the next step after Cancel and Switch model, never on the page", async ({ page }) => {
+  await openApp(page);
+  await send(page, "/model large");
+  const picker = lastCard(page, "model").locator(".cc-model-picker[data-state='ready']");
+  await expect(picker).toBeVisible({ timeout: 20_000 });
+
+  await picker.getByRole("searchbox", { name: "Tìm model" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(picker.getByRole("combobox", { name: "Provider" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  const radio = picker.locator('[data-model="fake/fake-model-large"] input[type="radio"]');
+  await expect(radio).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(radio).toBeChecked();
+  await page.keyboard.press("Tab");
+  const use = picker.getByRole("button", { name: "Dùng model này" });
+  await expect(use).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  const confirm = picker.getByRole("button", { name: "Đổi model" });
+  await expect(confirm).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(picker.getByRole("button", { name: "Hủy" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  // Cancel goes back to the button that asked the question.
+  await expect(use).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(confirm).toBeFocused();
+  await page.keyboard.press("Enter");
+  // Switch model hands focus to the line that says what the choice came to.
+  const done = picker.locator(".cc-command-status[data-result='done']");
+  await expect(done).toHaveText("Đã đổi sang fake/fake-model-large. Model này trả lời từ tin nhắn tiếp theo.", { timeout: 10_000 });
+  await expect(done).toBeFocused();
+
+  expect(await nextTurnModel(page)).toBe("fake/fake-model-large");
+});
+
+test("a second sign-in on the same row is a fresh step, and by keyboard Keep and Choose each leave focus on what comes next", async ({ page }) => {
+  await openApp(page);
+  const row = await signInOther(page, "key");
+  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  const keep = row.getByRole("button", { name: "Giữ model hiện tại" });
+  await expect(keep).toBeVisible({ timeout: 10_000 });
+  await keep.focus();
+  await page.keyboard.press("Enter");
+  const kept = row.locator(".cc-after-sign-in .cc-command-status[data-result='done']");
+  await expect(kept).toHaveText("Vẫn dùng fake/fake-model. Không có gì thay đổi.");
+  await expect(kept).toBeFocused();
+
+  // Signed out elsewhere, then signed in again on the very same row.
+  await gateway("POST", "/providers/fake-other/sign-out", {});
+  await row.getByRole("button", { name: "Dùng API key" }).click();
+  const field = row.locator('.cc-sign-in input[type="password"]');
+  await expect(field).toBeVisible({ timeout: 10_000 });
+  await field.fill("e2e-picker-key-again");
+  await row.getByRole("button", { name: "Gửi" }).click();
+  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+
+  // The step asks again rather than opening on what was chosen after the first sign-in.
+  const after = row.locator("[data-after-sign-in='ready']");
+  await expect(after).toContainText("Fake Other có 1 model", { timeout: 10_000 });
+  await expect(row.getByRole("button", { name: "Giữ model hiện tại" })).toBeVisible();
+  await expect(row.locator(".cc-after-sign-in")).not.toContainText("Vẫn dùng");
+
+  const choose = after.getByRole("button", { name: "Chọn model của Fake Other" });
+  await choose.focus();
+  await page.keyboard.press("Enter");
+  const picker = row.locator(".cc-model-picker[data-state='ready']");
+  await expect(picker).toBeVisible({ timeout: 10_000 });
+  await expect(picker.getByRole("searchbox", { name: "Tìm model" })).toBeFocused();
+  await expect(page.locator("body")).not.toContainText("e2e-picker-key-again");
 });

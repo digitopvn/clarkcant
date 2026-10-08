@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactElement, type Ref } from "react";
 
 import type { ProviderAuthEntryView } from "@clarkcant/contracts";
 
@@ -54,7 +54,7 @@ export interface ModelPickerPort {
   onModelChoose?: (input: { key: string; provider: string; id: string }) => void;
   /** What each picker's confirmed choice came to, keyed as `onModelChoose` was. */
   modelChoice?: Readonly<Record<string, ModelChoiceState>>;
-  /** What the person chose after a sign-in, keyed by where it was signed in: open the picker, or keep the model. */
+  /** What the person chose after a sign-in, keyed by where and by which sign-in: open the picker, or keep the model. */
   afterSignIn?: Readonly<Record<string, "choosing" | "kept">>;
   onAfterSignIn?: (input: { key: string; choice: "choosing" | "kept" }) => void;
 }
@@ -154,6 +154,11 @@ export interface ModelPickerViewProps {
   onConfirm: () => void;
   onCancel: () => void;
   onRetry: () => void;
+  /**
+   * Where the live picker puts focus when the control that had it goes away: the search field, the apply button, and
+   * the line that says what a choice came to. Absent in a drawing.
+   */
+  focusRefs?: { search?: Ref<HTMLInputElement>; choose?: Ref<HTMLButtonElement>; outcome?: Ref<HTMLParagraphElement> };
 }
 
 /** The picker as drawn from what it is given: no reads, no state. */
@@ -221,6 +226,7 @@ export function ModelPickerView(props: ModelPickerViewProps): ReactElement {
               <span className="cc-list-subtitle">{t("modelPicker.search")}</span>
               <input
                 id={searchId}
+                ref={props.focusRefs?.search}
                 className="cc-field-input"
                 type="search"
                 autoComplete="off"
@@ -308,34 +314,51 @@ export function ModelPickerView(props: ModelPickerViewProps): ReactElement {
           <p className="cc-list-subtitle" id={statusId}>
             {blockedReason ?? (selected === undefined ? "" : fillMessage(t("modelPicker.selected"), { model: modelLabel(selected) }))}
           </p>
-          <button type="button" className="cc-action" data-emphasis="primary" disabled={!canChoose} aria-describedby={statusId} onClick={props.onChoose}>
+          <button
+            type="button"
+            ref={props.focusRefs?.choose}
+            className="cc-action"
+            data-emphasis="primary"
+            disabled={!canChoose}
+            aria-describedby={statusId}
+            onClick={props.onChoose}
+          >
             {t("modelPicker.choose")}
           </button>
         </div>
       )}
-      <ModelChoiceOutcome t={t} outcome={props.outcome} />
+      <ModelChoiceOutcome t={t} outcome={props.outcome} outcomeRef={props.focusRefs?.outcome} />
     </div>
   );
 }
 
-function ModelChoiceOutcome({ t, outcome }: { t: T; outcome: ModelChoiceState | undefined }): ReactElement | null {
+/** One line, kept as the same element from "applying" to its answer, so focus moved onto it stays there. */
+function ModelChoiceOutcome({
+  t,
+  outcome,
+  outcomeRef,
+}: {
+  t: T;
+  outcome: ModelChoiceState | undefined;
+  outcomeRef: Ref<HTMLParagraphElement> | undefined;
+}): ReactElement | null {
   if (outcome === undefined) return null;
   if (outcome.status === "pending") {
     return (
-      <p className="cc-command-status" role="status">
+      <p className="cc-command-status" role="status" tabIndex={-1} ref={outcomeRef}>
         {t("modelPicker.applying")}
       </p>
     );
   }
   if (outcome.status === "failed") {
     return (
-      <p className="cc-command-status" role="alert" data-result="failed">
+      <p className="cc-command-status" role="alert" data-result="failed" tabIndex={-1} ref={outcomeRef}>
         {fillMessage(t("modelPicker.applyFailed"), { model: outcome.model, reason: outcome.message })}
       </p>
     );
   }
   return (
-    <p className="cc-command-status" role="status" data-result="done">
+    <p className="cc-command-status" role="status" data-result="done" tabIndex={-1} ref={outcomeRef}>
       {fillMessage(t(outcome.applies === "next-session" ? "modelPicker.appliedNextTurn" : "modelPicker.appliedNextStart"), { model: outcome.model })}
     </p>
   );
@@ -379,12 +402,15 @@ export function ModelPicker({
   pickerKey,
   initialQuery = "",
   initialProvider = "",
+  focusSearch = false,
   port,
 }: {
   t: T;
   pickerKey: string;
   initialQuery?: string;
   initialProvider?: string;
+  /** Put focus in the search field once the picker can be used: it was opened by a button that is now gone. */
+  focusSearch?: boolean;
   port: ModelPickerPort | undefined;
 }): ReactElement {
   const idPrefix = useId();
@@ -394,6 +420,22 @@ export function ModelPicker({
   const [selected, setSelected] = useState<ModelRef | undefined>(undefined);
   const [confirming, setConfirming] = useState(false);
   const outcome = port?.modelChoice?.[pickerKey];
+  /*
+   * Switch model and Cancel unmount the button that was pressed, which would drop keyboard focus to the page. Focus
+   * goes where the person's next step is instead: the line that says what the choice came to, or back to the apply
+   * button that opened the question.
+   */
+  const searchRef = useRef<HTMLInputElement>(null);
+  const chooseRef = useRef<HTMLButtonElement>(null);
+  const outcomeRef = useRef<HTMLParagraphElement>(null);
+  const [focusNext, setFocusNext] = useState<"search" | "choose" | "outcome" | undefined>(focusSearch ? "search" : undefined);
+  useEffect(() => {
+    if (focusNext === undefined) return;
+    const target = { search: searchRef, choose: chooseRef, outcome: outcomeRef }[focusNext].current;
+    if (target === null) return;
+    target.focus();
+    setFocusNext(undefined);
+  }, [focusNext, data, outcome, confirming]);
   // A provider filter for a provider the catalogue no longer holds would hide every row; it falls back to all of them.
   const providerShown = data.status === "ready" && provider !== "" && !data.choices.catalogue.some((entry) => entry.id === provider) ? "" : provider;
   return (
@@ -413,15 +455,20 @@ export function ModelPicker({
         setConfirming(false);
       }}
       onChoose={() => setConfirming(true)}
-      onCancel={() => setConfirming(false)}
+      onCancel={() => {
+        setConfirming(false);
+        setFocusNext("choose");
+      }}
       onConfirm={() => {
         setConfirming(false);
         if (selected === undefined) return;
+        setFocusNext("outcome");
         port?.onModelChoose?.({ key: pickerKey, provider: selected.provider, id: selected.id });
       }}
       onRetry={() => {
         reload();
       }}
+      focusRefs={{ search: searchRef, choose: chooseRef, outcome: outcomeRef }}
     />
   );
 }
@@ -446,6 +493,7 @@ export function AfterSignInPanelView({
   onChoose,
   onKeep,
   onRefresh,
+  keptRef,
 }: {
   t: T;
   providerName: string;
@@ -454,6 +502,8 @@ export function AfterSignInPanelView({
   onChoose: () => void;
   onKeep: () => void;
   onRefresh: () => void;
+  /** The "kept" line, which takes focus from the Keep button it replaces. */
+  keptRef?: Ref<HTMLParagraphElement>;
 }): ReactElement {
   const named = { provider: providerName };
   if (view.status === "checking") {
@@ -479,7 +529,7 @@ export function AfterSignInPanelView({
   return (
     <div className="cc-card-stack" data-after-sign-in="ready">
       {choice === "kept" ? (
-        <p className="cc-command-status" role="status" data-result="done">
+        <p className="cc-command-status" role="status" data-result="done" tabIndex={-1} ref={keptRef}>
           {view.current === undefined ? t("modelPicker.after.keptNone") : fillMessage(t("modelPicker.after.kept"), { model: modelLabel(view.current) })}
         </p>
       ) : (
@@ -505,22 +555,32 @@ export function AfterSignInPanelView({
  * After a provider signs in on a `/login` card: re-read the sign-in list and the catalogue rather than assume the
  * sign-in made models available, then offer the picker for that provider in the same card, or keeping the model in use.
  * Nothing here changes the model; only the picker's own confirmed choice does.
+ *
+ * The step belongs to one sign-in, not to the row or the provider: a later sign-in on the same row is a fresh step, and
+ * never opens on what the person chose after an earlier one. Callers also key the element by `signInId`, so nothing
+ * drawn for the earlier sign-in is carried over.
  */
 export function AfterSignIn({
   t,
   signInKey,
+  signInId,
   providerId,
   providerName,
   port,
 }: {
   t: T;
+  /** Where the sign-in was made: a `/login` card's row, or Settings. */
   signInKey: string;
+  signInId: string;
   providerId: string;
   providerName: string;
   port: ModelPickerPort | undefined;
 }): ReactElement | null {
+  const stepKey = `${signInKey}/${signInId}`;
   const { data, reload } = useModelChoices(port);
   const [retries, setRetries] = useState(0);
+  const keptRef = useRef<HTMLParagraphElement>(null);
+  const [focusKept, setFocusKept] = useState(false);
   const readiness = data.status === "ready" ? afterSignInReadiness(data.choices, providerId) : undefined;
   // The node can take a moment to list a fresh sign-in; read again a few times before saying it is not there yet.
   const waiting = readiness?.status === "not-yet" && retries < AFTER_SIGN_IN_RETRIES;
@@ -532,7 +592,6 @@ export function AfterSignIn({
     }, AFTER_SIGN_IN_RETRY_MS);
     return () => clearTimeout(timer);
   }, [waiting, reload, data]);
-  if (port?.readModelChoices === undefined) return null;
   const view: AfterSignInView =
     data.status === "loading" || waiting
       ? { status: "checking" }
@@ -541,7 +600,14 @@ export function AfterSignIn({
         : readiness === undefined || readiness.status !== "ready"
           ? { status: readiness?.status ?? "no-models" }
           : { status: "ready", count: readiness.count, current: currentModel(data.choices) };
-  const choice = port.afterSignIn?.[signInKey];
+  const choice = port?.afterSignIn?.[stepKey];
+  // The Keep button is gone once pressed; its answer takes focus rather than the page.
+  useEffect(() => {
+    if (!focusKept || choice !== "kept" || keptRef.current === null) return;
+    keptRef.current.focus();
+    setFocusKept(false);
+  }, [focusKept, choice]);
+  if (port?.readModelChoices === undefined) return null;
   return (
     <div className="cc-card-stack cc-after-sign-in">
       <AfterSignInPanelView
@@ -549,14 +615,20 @@ export function AfterSignIn({
         providerName={providerName}
         view={view}
         choice={choice}
-        onChoose={() => port.onAfterSignIn?.({ key: signInKey, choice: "choosing" })}
-        onKeep={() => port.onAfterSignIn?.({ key: signInKey, choice: "kept" })}
+        onChoose={() => port.onAfterSignIn?.({ key: stepKey, choice: "choosing" })}
+        onKeep={() => {
+          setFocusKept(true);
+          port.onAfterSignIn?.({ key: stepKey, choice: "kept" });
+        }}
         onRefresh={() => {
           setRetries(0);
           reload();
         }}
+        keptRef={keptRef}
       />
-      {view.status === "ready" && choice === "choosing" ? <ModelPicker t={t} pickerKey={`${signInKey}/model`} initialProvider={providerId} port={port} /> : null}
+      {view.status === "ready" && choice === "choosing" ? (
+        <ModelPicker t={t} pickerKey={`${stepKey}/model`} initialProvider={providerId} focusSearch port={port} />
+      ) : null}
     </div>
   );
 }
