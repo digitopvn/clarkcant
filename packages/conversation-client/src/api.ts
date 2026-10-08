@@ -860,17 +860,30 @@ export class GatewayError extends Error {
    * one, carries the state the node holds, which is what lets the caller show it instead of guessing.
    */
   readonly details: Record<string, unknown>;
-  /** The node's sentence without the code in front of it, for a line a person reads rather than a log. */
+  /**
+   * The node's sentence, the same text as `message`. The code is never part of either: it is a fact for the program
+   * (`code`), and a sentence a person reads must not start with it, so any surface that shows `message` shows words.
+   * A wire that hands the refusal on with its code in front, as a widget is told, writes it itself (`codedMessage`).
+   */
   readonly reason: string;
 
   constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
-    super(`${code}: ${message}`);
+    super(message);
     this.name = "GatewayError";
     this.status = status;
     this.code = code;
     this.details = details;
     this.reason = message;
   }
+}
+
+/**
+ * A refusal as a widget's wire carries it, with the node's code in front (`CODE: why`), which is how a widget tells
+ * one refusal from another. Only for a program to read; a person reads `message`.
+ */
+export function codedMessage(cause: unknown): string {
+  if (cause instanceof GatewayError) return `${cause.code}: ${cause.reason}`;
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /** The code a `NodeViewUnreadable` carries. */

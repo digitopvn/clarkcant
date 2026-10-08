@@ -6,6 +6,7 @@ import { actionRefusalMessage, pressMayHaveRun } from "./action-messages.ts";
 import {
   type ActionInvocationResult,
   type GatewayClient,
+  codedMessage,
   GatewayError,
   type IsolatedFrameLiveResponse,
   readArtifactRange,
@@ -58,7 +59,7 @@ export function stateRefusalOutcome(cause: unknown): FrameStateOutcome {
     return {
       ok: false,
       code: cause.code,
-      message: typeof cause.details["message"] === "string" ? cause.details["message"] : cause.message,
+      message: typeof cause.details["message"] === "string" ? cause.details["message"] : codedMessage(cause),
       ...(typeof revision === "number" ? { stateRevision: revision } : {}),
       ...(typeof committed === "object" && committed !== null && !Array.isArray(committed)
         ? { state: committed as Record<string, unknown> }
@@ -249,7 +250,7 @@ export function frameJobBroker(transport: FrameJobTransport): FrameJobBroker {
       return {
         status: "refused",
         code: cause instanceof GatewayError ? cause.code : "JOB_UNAVAILABLE",
-        message: cause instanceof Error ? cause.message : "the job is unavailable to this widget",
+        message: cause instanceof Error ? codedMessage(cause) : "the job is unavailable to this widget",
       };
     }
   };
@@ -297,7 +298,7 @@ export function frameTokenBroker(transport: FrameTokenTransport): {
         return {
           status: "refused",
           code: cause instanceof GatewayError ? cause.code : "TOKEN_UNAVAILABLE",
-          message: cause instanceof Error ? cause.message : "no token is available to this widget",
+          message: cause instanceof Error ? codedMessage(cause) : "no token is available to this widget",
         };
       }
     },
@@ -456,11 +457,11 @@ export function frameHostCallbacks(input: {
           const message =
             cause.code === "NODE_TIMEOUT"
               ? actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details })
-              : cause.message;
+              : codedMessage(cause);
           return { status: "uncertain", message };
         }
         input.onPressRefused?.();
-        return { status: "refused", message: cause instanceof Error ? cause.message : t("shell.live.actionRefusedGeneric") };
+        return { status: "refused", message: cause instanceof Error ? codedMessage(cause) : t("shell.live.actionRefusedGeneric") };
       }
     },
   };

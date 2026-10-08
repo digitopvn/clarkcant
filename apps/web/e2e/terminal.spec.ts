@@ -104,7 +104,9 @@ test("closing the terminal says the shell ended instead of leaving a dead prompt
   await expect(card.locator("[data-terminal-kill='true']")).toHaveCount(0);
 });
 
-test("a shell ended by a press is said aloud, and the same card after a reload shows it without saying it again", async ({ page }) => {
+test("a shell ended by a press is said aloud, the same card after a reload shows it quietly, and a terminal asked for next is said", async ({
+  page,
+}) => {
   await openApp(page);
   const card = await openTerminal(page);
   const terminalId = (await card.getAttribute("data-terminal-id")) ?? "";
@@ -114,12 +116,35 @@ test("a shell ended by a press is said aloud, and the same card after a reload s
   await expect(card.locator("[data-terminal-notice='exited']")).toBeVisible({ timeout: 10_000 });
   await expect(stateNote(card)).toHaveAttribute("data-surface-live", "polite");
 
+  // Routed before the reload, since a route reaches only sockets of a page loaded after it; passed through until the
+  // terminal asked for after the reload, whose socket is then closed before its shell is attached.
+  let refuseTerminalSockets = false;
+  await page.routeWebSocket(
+    (url) => url.pathname === "/terminal",
+    (socket) => {
+      if (refuseTerminalSockets) socket.close();
+      else socket.connectToServer();
+    },
+  );
   await page.reload();
   await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const again = page.locator(`[data-host-card='terminal-session'][data-terminal-id='${terminalId}']`);
   await expect(again).toBeVisible({ timeout: 20_000 });
   // Exited, or gone once the node let it go: either way it was true before the card was drawn again.
   await expect(again.locator("[data-terminal-notice='exited'], [data-terminal-notice='gone']")).toBeVisible({ timeout: 15_000 });
+  await expect(stateNote(again)).toHaveAttribute("data-surface-live", "off");
+
+  // A terminal asked for after the reload is news: its card's first state, a failure to connect here, interrupts, while
+  // the card drawn again from history stays quiet.
+  refuseTerminalSockets = true;
+  const composer = page.locator("textarea[aria-label='Nhập tin nhắn']");
+  await composer.click();
+  await composer.fill("mở terminal giúp tôi");
+  await composer.press("Enter");
+  const asked = page.locator(`[data-host-card='terminal-session']:not([data-terminal-id='${terminalId}'])`).last();
+  await expect(asked).toHaveAttribute("data-terminal-mode", "live", { timeout: 20_000 });
+  await expect(asked.locator("[data-terminal-notice='disconnected']")).toBeVisible({ timeout: 15_000 });
+  await expect(stateNote(asked)).toHaveAttribute("data-surface-live", "assertive");
   await expect(stateNote(again)).toHaveAttribute("data-surface-live", "off");
 });
 

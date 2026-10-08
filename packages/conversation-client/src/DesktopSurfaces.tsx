@@ -12,6 +12,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 import {
   type FrameStateStatus,
   type GatewayClient,
+  GatewayError,
   type IsolatedFrameLiveResponse,
   type LiveWidgetResponse,
   type Timeline,
@@ -432,7 +433,7 @@ export function PinnedLiveSurface({
         // Refused means another surface holds it. This one still renders, read-only, and says so.
         setOwnership("elsewhere");
         setNotice(
-          cause instanceof Error && cause.message.includes("ALREADY_OWNED")
+          cause instanceof GatewayError && cause.code === "ALREADY_OWNED"
             ? t("shell.live.ownedElsewhere")
             : cause instanceof Error
               ? cause.message

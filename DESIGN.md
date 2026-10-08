@@ -867,7 +867,10 @@ whether it can be retried, and whether it is still current.
   mount (a reload, a scroll back) is not announced.
 - **A cancel is not a failure.** A sign-in the person cancelled reads
   `cancelled`, a reply this app cannot read reads `partial`, and a refusal says
-  the node's reason in the person's words, never `CODE: message`.
+  the node's reason in the person's words, never `CODE: message`. The client
+  keeps the node's code apart from its sentence, so a built-in surface that
+  shows a refusal shows words; only a widget's wire puts the code in front, for
+  the widget's program to read.
 - **Late answers and retry.** The contract's `settleSurfaceStatus` drops an
   answer for an earlier attempt and keeps the first outcome of an attempt, so
   neither a late "still working" nor a later outcome replaces it. Command-card

@@ -4,6 +4,7 @@ import type { ProviderAuthEntryView } from "@clarkcant/contracts";
 
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { refusalReason } from "./node-view-refusal.ts";
 
 /**
  * The model picker: what `/model` answers with, and what a `/login` card offers once a provider is signed in.
@@ -381,7 +382,7 @@ export function useModelChoices(port: ModelPickerPort | undefined): { data: Mode
         if (mine === generation.current) setData({ status: "ready", choices });
       },
       (error: unknown) => {
-        if (mine === generation.current) setData({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+        if (mine === generation.current) setData({ status: "failed", message: refusalReason(error) });
       },
     );
   }, [read]);

@@ -4,17 +4,20 @@ import { describe, expect, it } from "vitest";
 
 import { COMMAND_BADGE_PHASE, type CommandCard, type ProviderSignInView, SIGN_IN_PHASE, instantSchema } from "@clarkcant/contracts";
 
-import { GatewayError, type Timeline } from "../src/api.ts";
+import { GatewayError, type Timeline, codedMessage } from "../src/api.ts";
 import { type BlockActions, type CommandActionState, CredentialCardBlock, type CredentialSaveStatus, type FolderEntryReason } from "../src/blocks.tsx";
 import { COMMAND_ACTION_PHASE, CommandCardBlock, latestCommandAction, settleCommandAction } from "../src/command-card.tsx";
 import { LocaleProvider } from "../src/i18n/locale-context.tsx";
 import type { LocaleChoice } from "../src/i18n/locale.ts";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
+import { refusalSentence } from "../src/node-view-refusal.ts";
 import { SignInPanel, signInStatusText } from "../src/provider-sign-in-panel.tsx";
 import { TERMINAL_NOTICE_PHASE, TERMINAL_SHELL_PHASE, terminalNotice } from "../src/terminal-card.tsx";
 import {
   type CommandPressDeps,
   type ConversationOpening,
+  TerminalAnnouncements,
+  approvalRefusalText,
   artifactOpenRefused,
   browserSessionRefused,
   commandPresses,
@@ -24,6 +27,7 @@ import {
   freshTerminalIds,
   installRefusalState,
   nextConversationOpening,
+  questionRefusalText,
   settleCredentialSave,
   submitCredentialSave,
   taskStopRefused,
@@ -167,7 +171,9 @@ describe("settling a press's late answers", () => {
 describe("the /logout card's sign-out", () => {
   it("says a refused sign-out in the person's words with the node's reason, never 'CODE: message'", () => {
     const refusal = new GatewayError(409, "SIGN_OUT_NOT_HERE", "the key comes from the environment");
-    expect(refusal.message).toBe("SIGN_OUT_NOT_HERE: the key comes from the environment");
+    // The code is the program's fact, apart from the sentence: no surface that shows `message` can show it.
+    expect(refusal.message).toBe("the key comes from the environment");
+    expect(refusal.code).toBe("SIGN_OUT_NOT_HERE");
     for (const t of [en, vi]) {
       const settled = signOutRefused(refusal, t);
       expect(settled.status).toBe("failed");
@@ -270,6 +276,92 @@ describe("which terminal cards the person just asked for", () => {
     const opening = nextConversationOpening({ kind: "loading", conversationId: "c1" }, undefined, undefined);
     expect(opening).toEqual({ kind: "new" });
     expect(freshTerminalIds(timelineOf("c2", [old]), nextConversationOpening(opening, "c2", timelineOf("c2", [old])))).toEqual(["term_old"]);
+  });
+
+  it("announces a terminal asked for after a reload, once, and keeps a card drawn again by a scroll back quiet", () => {
+    // The page opens an existing conversation: nothing has arrived yet, then its first page is history.
+    const announcements = new TerminalAnnouncements("c1");
+    expect(announcements.advance("c1", undefined)).toEqual([]);
+    expect(announcements.advance("c1", timelineOf("c1", [old]))).toEqual([]);
+    expect(announcements.isNews("term_old")).toBe(false);
+    // The person asks for a new terminal: its card is news, the reloaded one still is not.
+    announcements.advance("c1", timelineOf("c1", [old, later]));
+    expect(announcements.isNews("term_new")).toBe(true);
+    expect(announcements.isNews("term_old")).toBe(false);
+    // A render with the same timeline (StrictMode, a parent re-render) changes nothing.
+    announcements.advance("c1", timelineOf("c1", [old, later]));
+    expect(announcements.isNews("term_new")).toBe(true);
+    // Its card settles and is heard; the same card mounted again later (scrolled out and back) is quiet.
+    announcements.settled("term_new");
+    expect(announcements.isNews("term_new")).toBe(false);
+    const another = terminalMessage("m3", "2026-10-08T10:06:00.000Z", "term_third");
+    expect(announcements.advance("c1", timelineOf("c1", [old, later, another]))).toEqual(["term_third"]);
+    expect(announcements.isNews("term_new")).toBe(false);
+  });
+
+  it("still announces a terminal whose card left before it settled, since nobody heard it", () => {
+    const announcements = new TerminalAnnouncements(undefined);
+    announcements.advance("c1", timelineOf("c1", [later]));
+    expect(announcements.isNews("term_new")).toBe(true);
+    // Unmounted while still connecting: nothing told, so the card drawn again is still news.
+    expect(announcements.isNews("term_new")).toBe(true);
+  });
+});
+
+describe("a refused approval or question answer", () => {
+  it("says a request that changed under the person as a sentence in their language, never the node's code", () => {
+    for (const code of ["APPROVAL_FORGED", "APPROVAL_DIGEST_MISMATCH", "APPROVAL_STALE"]) {
+      const refusal = new GatewayError(409, code, "the call changed after it was shown");
+      for (const t of [en, vi]) {
+        expect(approvalRefusalText(refusal, t)).toBe(t("blocks.approval.changed"));
+        expect(approvalRefusalText(refusal, t)).not.toContain(code);
+      }
+    }
+    expect(approvalRefusalText(new GatewayError(409, "APPROVAL_EXPIRED", "approval expired at 2026-10-08"), vi)).toBe(vi("inbox.decideFailed.expired"));
+    expect(approvalRefusalText(new GatewayError(409, "APPROVAL_ALREADY_DECIDED", "approval was already granted"), en)).toBe(
+      en("inbox.decideFailed.alreadyDecided"),
+    );
+  });
+
+  it("says any other approval refusal with the node's reason inside the reader's sentence", () => {
+    const refusal = new GatewayError(409, "APPROVAL_PAYLOAD_MISSING", "the approved call is gone");
+    for (const t of [en, vi]) {
+      expect(approvalRefusalText(refusal, t)).toBe(t("blocks.approval.decideRefused").replace("{reason}", "the approved call is gone"));
+    }
+    expect(approvalRefusalText("offline", vi)).toBe(vi("blocks.approval.decideFailed"));
+  });
+
+  it("says a refused answer to a question in the reader's language", () => {
+    const closed = new GatewayError(409, "QUESTION_CLOSED", "Câu hỏi này đã hết hạn.");
+    const gone = new GatewayError(404, "QUESTION_NOT_FOUND", "Không có câu hỏi nào với id đó trong hội thoại này.");
+    const invalid = new GatewayError(409, "INVALID_ANSWER", "Lựa chọn không có trong câu hỏi.");
+    for (const t of [en, vi]) {
+      expect(questionRefusalText(closed, t)).toBe(t("inbox.refused.questionClosed"));
+      expect(questionRefusalText(gone, t)).toBe(t("inbox.refused.questionGone"));
+      expect(questionRefusalText(invalid, t)).toBe(t("blocks.question.invalidAnswer"));
+      expect(questionRefusalText(new GatewayError(500, "INTERNAL", "the store is busy"), t)).toBe(
+        t("blocks.question.answerRefused").replace("{reason}", "the store is busy"),
+      );
+      expect(questionRefusalText(undefined, t)).toBe(t("blocks.question.answerFailed"));
+    }
+  });
+
+  it("says a refused terminal close in the reader's words with the node's reason", () => {
+    const refusal = new GatewayError(409, "TERMINAL_UNAVAILABLE", "Terminal này không còn chạy.");
+    for (const t of [en, vi]) {
+      const said = refusalSentence(refusal, t, "blocks.terminal.killRefused", "blocks.terminal.killFailed");
+      expect(said).toBe(t("blocks.terminal.killRefused").replace("{reason}", "Terminal này không còn chạy."));
+      expect(said).not.toContain("TERMINAL_UNAVAILABLE");
+    }
+  });
+});
+
+describe("a node refusal handed on to a widget", () => {
+  it("keeps the code in front on the widget's wire, where a program reads it, and only there", () => {
+    const refusal = new GatewayError(409, "STALE_REVISION", "the widget changed");
+    expect(codedMessage(refusal)).toBe("STALE_REVISION: the widget changed");
+    expect(refusal.message).toBe("the widget changed");
+    expect(codedMessage(new Error("offline"))).toBe("offline");
   });
 });
 

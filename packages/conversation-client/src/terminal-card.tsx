@@ -8,6 +8,7 @@ import { monoFontStack } from "@clarkcant/design-tokens";
 
 import type { GatewayClient } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { refusalReason, refusalSentence } from "./node-view-refusal.ts";
 import { LiveNote, PhaseBadge } from "./surface-status.tsx";
 import { subscribeToDocumentTheme } from "./theme.ts";
 import {
@@ -39,10 +40,18 @@ import {
  * and the card says so beside the screen.
  */
 
+/** What a terminal card asks when it mounts, and says once it first settles (`TerminalAnnouncements`). */
+export interface TerminalFirstState {
+  /** True when a card for this terminal, mounting now, should announce the state it first settles on. */
+  isNews(terminalId: string): boolean;
+  /** The card settled, so its first state was told (or shown, for history): a card drawn again for it stays quiet. */
+  settled(terminalId: string): void;
+}
+
 export interface TerminalCardActions {
   onTerminalShare?: (input: { text: string }) => void;
-  /** Terminals opened by a message that arrived while the person was here (`BlockActions.freshTerminalIds`). */
-  freshTerminalIds?: readonly string[];
+  /** Whether this card's first state is news (`BlockActions.terminalFirstState`). */
+  terminalFirstState?: TerminalFirstState;
 }
 
 type Viewing = { kind: "own" } | { kind: "terminal"; terminalId: string; title: string } | { kind: "session"; ref: string; title: string };
@@ -206,8 +215,17 @@ export function TerminalCardBlock({
     );
   }
 
-  const fresh = actions?.freshTerminalIds?.includes(terminalId) === true;
-  return <LiveTerminal terminalId={terminalId} title={title} cwd={cwd} client={client} share={share} fresh={fresh} t={t} />;
+  return (
+    <LiveTerminal
+      terminalId={terminalId}
+      title={title}
+      cwd={cwd}
+      client={client}
+      share={share}
+      firstState={actions?.terminalFirstState}
+      t={t}
+    />
+  );
 }
 
 function LiveTerminal({
@@ -216,7 +234,7 @@ function LiveTerminal({
   cwd,
   client,
   share,
-  fresh,
+  firstState,
   t,
 }: {
   terminalId: string;
@@ -224,8 +242,8 @@ function LiveTerminal({
   cwd: string;
   client: GatewayClient;
   share: (input: { text: string }) => void;
-  /** The person asked for this terminal while here, so the state it first settles on is news. */
-  fresh: boolean;
+  /** Whether the state this card first settles on is news, asked once as it mounts and told once it settles. */
+  firstState: TerminalFirstState | undefined;
   t: (key: MessageKey) => string;
 }): ReactElement {
   const screenRef = useRef<HTMLDivElement | null>(null);
@@ -252,14 +270,17 @@ function LiveTerminal({
    * For a card drawn again from history (a reload, a conversation opened again, a scroll back), true until it first
    * settles after it mounts: whatever the shell is in then — gone, exited, unreachable, the terminal code that failed to
    * load — was already true before this card was drawn, so it is shown and not announced. A terminal the person just
-   * asked for (`fresh`) announces its first state too, a failure to load or connect included. Every later change is
-   * announced, a load that fails after Reconnect included.
+   * asked for on this page (`firstState.isNews`) announces its first state too, a failure to load or connect included,
+   * but only once: settling tells `firstState`, so the card drawn again when its row scrolls back is quiet. Every later
+   * change is announced, a load that fails after Reconnect included.
    */
-  const [restoring, setRestoring] = useState(!fresh);
+  const [restoring, setRestoring] = useState(() => firstState?.isNews(terminalId) !== true);
   const settling = phase.kind === "loading" || phase.kind === "connecting";
   useEffect(() => {
-    if (!settling) setRestoring(false);
-  }, [settling]);
+    if (settling) return;
+    setRestoring(false);
+    firstState?.settled(terminalId);
+  }, [settling, firstState, terminalId]);
 
   driverRef.current = driver;
   viewingRef.current = viewing;
@@ -551,7 +572,7 @@ function LiveTerminal({
     setNotice(undefined);
     client.killTerminal(target).catch((error: unknown) => {
       setKilling(false);
-      setNotice(error instanceof Error ? error.message : String(error));
+      setNotice(refusalSentence(error, t, "blocks.terminal.killRefused", "blocks.terminal.killFailed"));
     });
   };
 
@@ -765,7 +786,7 @@ function ProcessPanel({
           setError(undefined);
         })
         .catch((reason: unknown) => {
-          if (!stopped) setError(reason instanceof Error ? reason.message : String(reason));
+          if (!stopped) setError(refusalReason(reason));
         });
     };
     load();

@@ -16,6 +16,7 @@ import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { nodeViewRefusalText, refusalReason, refusalSentence } from "./node-view-refusal.ts";
+import type { TerminalFirstState } from "./terminal-card.tsx";
 import { signInStartRefused, signOutRefused, signOutSettled, useProviderSignIns } from "./use-provider-sign-ins.ts";
 import { useModelPickerPort } from "./use-model-picker-port.ts";
 import type {
@@ -100,6 +101,51 @@ export function browserSessionRefused(error: unknown, t: (key: MessageKey) => st
  */
 export function feedbackRefusalReason(error: unknown, t: (key: MessageKey) => string): string {
   return error instanceof Error ? refusalReason(error) : t("commandCard.failed");
+}
+
+/**
+ * Approval refusals this client words itself, by the node's code. The node's own sentence for these is English, and
+ * each has a fact the person can act on: the request changed under them (`APPROVAL_FORGED` is what `decideApproval`
+ * answers when the digest the approver saw no longer matches), it expired, someone else decided it, or its task moved on.
+ */
+const APPROVAL_REFUSAL_KEYS: Readonly<Record<string, MessageKey>> = {
+  APPROVAL_FORGED: "blocks.approval.changed",
+  APPROVAL_DIGEST_MISMATCH: "blocks.approval.changed",
+  APPROVAL_STALE: "blocks.approval.changed",
+  APPROVAL_EXPIRED: "inbox.decideFailed.expired",
+  APPROVAL_ALREADY_DECIDED: "inbox.decideFailed.alreadyDecided",
+  TASK_NOT_WAITING: "inbox.decideFailed.taskNotWaiting",
+  TASK_NOT_FOUND: "inbox.decideFailed.taskNotFound",
+};
+
+/** Question refusals this client words itself, by the node's code; the node's own sentence is in one language only. */
+const QUESTION_REFUSAL_KEYS: Readonly<Record<string, MessageKey>> = {
+  QUESTION_NOT_FOUND: "inbox.refused.questionGone",
+  QUESTION_CLOSED: "inbox.refused.questionClosed",
+  INVALID_ANSWER: "blocks.question.invalidAnswer",
+};
+
+function wordedRefusal(
+  error: unknown,
+  t: (key: MessageKey) => string,
+  keys: Readonly<Record<string, MessageKey>>,
+  withReason: MessageKey,
+  fallback: MessageKey,
+): string {
+  const unreadable = nodeViewRefusalText(error, t, "shell.nodeView.answered");
+  if (unreadable !== undefined) return unreadable;
+  if (error instanceof GatewayError && Object.hasOwn(keys, error.code)) return t(keys[error.code] as MessageKey);
+  return refusalSentence(error, t, withReason, fallback);
+}
+
+/** What a refused Allow or Deny on an approval card says, in the reader's language and never as `CODE: message`. */
+export function approvalRefusalText(error: unknown, t: (key: MessageKey) => string): string {
+  return wordedRefusal(error, t, APPROVAL_REFUSAL_KEYS, "blocks.approval.decideRefused", "blocks.approval.decideFailed");
+}
+
+/** What a refused answer to a question card says, in the reader's language and never as `CODE: message`. */
+export function questionRefusalText(error: unknown, t: (key: MessageKey) => string): string {
+  return wordedRefusal(error, t, QUESTION_REFUSAL_KEYS, "blocks.question.answerRefused", "blocks.question.answerFailed");
 }
 
 /**
@@ -220,6 +266,38 @@ export function freshTerminalIds(timeline: Timeline | undefined, opening: Conver
     }
   }
   return fresh;
+}
+
+/**
+ * Which terminal cards announce their first state, over one page life of a conversation.
+ *
+ * A terminal the person asked for while here (`freshTerminalIds`) is news the first time its card settles. After that,
+ * a card drawn again for it, as when its row scrolls out of the transcript and back, mounts quiet like any other history:
+ * the person was already told. A card that left before it settled was never heard, so it is still news when it returns.
+ */
+export class TerminalAnnouncements implements TerminalFirstState {
+  #opening: ConversationOpening;
+  #fresh: readonly string[] = [];
+  readonly #told = new Set<string>();
+
+  constructor(conversationId: string | undefined) {
+    this.#opening = conversationId === undefined ? { kind: "new" } : { kind: "loading", conversationId };
+  }
+
+  /** Moves on with the present timeline; gives the terminals still to be announced. */
+  advance(conversationId: string | undefined, timeline: Timeline | undefined): readonly string[] {
+    this.#opening = nextConversationOpening(this.#opening, conversationId, timeline);
+    this.#fresh = freshTerminalIds(timeline, this.#opening).filter((terminalId) => !this.#told.has(terminalId));
+    return this.#fresh;
+  }
+
+  isNews(terminalId: string): boolean {
+    return !this.#told.has(terminalId) && this.#fresh.includes(terminalId);
+  }
+
+  settled(terminalId: string): void {
+    this.#told.add(terminalId);
+  }
 }
 
 type RowStates<T> = Readonly<Record<string, T>>;
@@ -436,14 +514,12 @@ export function useBlockActions({
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
 
   /**
-   * Which terminals the person asked for while here (`freshTerminalIds`). Kept across renders and advanced during render:
-   * the next value is a pure function of the last one and the present timeline, and gives itself back once settled.
+   * Which terminals the person asked for while here, and which of those were already told (`TerminalAnnouncements`).
+   * Kept for the page life of this conversation and advanced during render: the opening it holds is a pure function of
+   * the last one and the present timeline, and gives itself back once settled, so a repeated render changes nothing.
    */
-  const opening = useRef<ConversationOpening>(conversationId === undefined ? { kind: "new" } : { kind: "loading", conversationId });
-  const freshTerminals = useMemo(() => {
-    opening.current = nextConversationOpening(opening.current, conversationId, timeline);
-    return freshTerminalIds(timeline, opening.current);
-  }, [conversationId, timeline]);
+  const [terminalAnnouncements] = useState(() => new TerminalAnnouncements(conversationId));
+  useMemo(() => terminalAnnouncements.advance(conversationId, timeline), [terminalAnnouncements, conversationId, timeline]);
 
   const decideApproval = useCallback(
     (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => {
@@ -453,10 +529,10 @@ export function useBlockActions({
       void client
         .decideApproval(conversationId, input.approvalId, { decision: input.decision, digest: input.digest })
         .then((result) => applyTimeline(result.timeline))
-        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+        .catch((cause: unknown) => setError(approvalRefusalText(cause, t)))
         .finally(() => setDecidingApprovalId(undefined));
     },
-    [applyTimeline, client, conversationId, setError],
+    [applyTimeline, client, conversationId, setError, t],
   );
 
   /**
@@ -484,10 +560,10 @@ export function useBlockActions({
         .catch((cause: unknown) => {
           // The answer never reached the node, so the card may be tried again rather than staying disabled.
           setQuestionPendingId(undefined);
-          setError(cause instanceof Error ? cause.message : String(cause));
+          setError(questionRefusalText(cause, t));
         });
     },
-    [applyTimeline, client, conversationId, setError],
+    [applyTimeline, client, conversationId, setError, t],
   );
 
   /**
@@ -898,7 +974,7 @@ export function useBlockActions({
       controlSession,
       // A terminal's result goes back the way a typed reply does, for the reason forms do.
       onTerminalShare: ({ text }) => void send(text),
-      freshTerminalIds: freshTerminals,
+      terminalFirstState: terminalAnnouncements,
       onCommandAction: presses.press,
       commandAction,
       signIns,
@@ -928,7 +1004,7 @@ export function useBlockActions({
       cancelSignIn,
       reattachSignIn,
       folderEntries,
-      freshTerminals,
+      terminalAnnouncements,
       commandAction,
       presses,
       signIns,

@@ -851,7 +851,9 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
 - **Hủy không phải là thất bại.** Một lần đăng nhập do người dùng hủy được đọc
   là `cancelled`, một câu trả lời mà ứng dụng này không đọc được là `partial`, và
   một lời từ chối nói lý do của node bằng lời của người dùng, không bao giờ ở
-  dạng `CODE: message`.
+  dạng `CODE: message`. Client giữ mã của node tách khỏi câu của nó, nên một
+  bề mặt có sẵn hiện lời từ chối thì chỉ hiện lời; chỉ đường truyền tới widget
+  mới đặt mã ở đầu, để chương trình của widget đọc.
 - **Câu trả lời đến muộn và thử lại.** `settleSurfaceStatus` của hợp đồng bỏ
   qua câu trả lời cho một lần thử trước và giữ kết quả đầu tiên của một lần thử,
   nên cả một "vẫn đang chạy" đến muộn lẫn một kết quả đến sau đều không thay được

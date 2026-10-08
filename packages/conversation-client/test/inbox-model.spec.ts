@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { type Instant, type Notice, type NoticeSuppression, type WaitingItem, findHiddenCharacter } from "@clarkcant/contracts";
 
+import { GatewayError } from "../src/api.ts";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
   canOpenOtherConversation,
@@ -33,12 +34,9 @@ import {
   waitingKey,
 } from "../src/inbox/inbox-model.ts";
 
-/** A minimal stand-in for `GatewayError` (`api.ts`): a `code` and a `"CODE: message"` shaped `Error.message`. */
-function gatewayError(code: string, message: string): Error & { code: string } {
-  const error = new Error(`${code}: ${message}`) as Error & { code: string };
-  error.name = "GatewayError";
-  error.code = code;
-  return error;
+/** A refusal from the node as the client throws it: the code apart from the sentence. */
+function gatewayError(code: string, message: string): GatewayError {
+  return new GatewayError(409, code, message);
 }
 
 /**

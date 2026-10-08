@@ -36,7 +36,7 @@ import { type ObjectUrls, useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { useSurfaceViewState } from "./surface-view-state.tsx";
-import { TerminalCardBlock } from "./terminal-card.tsx";
+import { TerminalCardBlock, type TerminalFirstState } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
 import type { ModelPickerPort } from "./model-picker.tsx";
 import { ChangelogCardBlock } from "./changelog-card.tsx";
@@ -692,11 +692,11 @@ export interface BlockActions extends ModelPickerPort {
    */
   onTerminalShare?: (input: { text: string }) => void;
   /**
-   * Terminals a message that arrived while the person was here opened (`freshTerminalIds`): such a card announces the
-   * state it first settles on, a failure included. Any other terminal card was drawn again from history, so its first
-   * state is shown and not announced.
+   * Whether a terminal card mounting now announces the state it first settles on (`TerminalAnnouncements`): only for a
+   * terminal a message that arrived while the person was here opened, and only until that state has been told once. Any
+   * other terminal card was drawn again (from history, or by a scroll back), so its first state is shown and not said.
    */
-  freshTerminalIds?: readonly string[];
+  terminalFirstState?: TerminalFirstState;
   /**
    * A button on a slash command's card (`command-card`): open a conversation, choose a thinking level, sign in to or
    * out of a provider. Carried out through the capability the rest of the app uses for the same thing; absent in a
