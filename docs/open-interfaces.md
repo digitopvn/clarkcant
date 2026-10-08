@@ -1161,7 +1161,7 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 ## CLI
 
 `apps/cli` (`@clarkcant/cli`) is a client of the gateway. The only exception is `instructions check`, which contacts
-no node and checks a local file against an open contract. The CLI is not published to npm yet; run it from a checkout
+no node and checks local files against an open contract. The CLI is not published to npm yet; run it from a checkout
 with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 
 | Command | |
@@ -1173,7 +1173,7 @@ with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision or installing a package |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
-| `clarkcant instructions check [file\|folder]` | checks a project's `.clarkcant/instructions.json` offline (see below) |
+| `clarkcant instructions check [file\|folder]` | checks a project's `.clarkcant/instructions.json`, or a package's `instructions` facets, offline (see below) |
 
 Connection: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, else `identity.json` in `--data-dir` /
 `CLARKCANT_DATA_DIR` (default `~/.clarkcant`). The identity file is only read for a node on this machine
@@ -1226,9 +1226,38 @@ it, and `clarkcant instructions check` validates it with the same schema. How a 
   are each reported on their own line, and the exit code is 1. A rule that includes a name with no
   `instructions/<name>.md` beside the file is a warning; the exit code stays 0. `--json` prints
   `{ path, ok, problems, warnings }`. The default file is `.clarkcant/instructions.json` in the current folder, and a
-  project folder can be given instead of the file.
+  project folder can be given instead of the file. A package folder (one with a `clarkcant.json`), or that
+  `clarkcant.json`, is checked as a package: see below.
 - An instruction grants nothing. The node reads it only from a project inside a root the person granted, and every
-  effect still goes through the execution policy. A package cannot contribute rules yet.
+  effect still goes through the execution policy.
+
+### Package instructions
+
+A package can carry rules in the same contract through an `instructions` facet, declarative content that needs
+`"schemaVersion": 3` ([widget development §4](widget-development.md#4-package-manifest)). The facet's `entry` is the
+rules file, and a snippet is `instructions/<name>.md` beside it inside the package.
+
+- **Off until the person turns it on, per project.** The node preference `instructions.packages` (scope `node`) lists
+  `{ "project": "<absolute folder>", "packageId": "<id>" }` pairs, at most 64
+  (`packages/contracts/src/package-instructions.ts`). Writing or undoing it on `/preferences/instructions.packages`
+  is person-only: no AI client, widget or remote machine surface reaches it. Clark changes it only through
+  `manage_package` `enable_instructions` / `disable_instructions`, an effect the execution policy decides as a local
+  write: it runs, or becomes a host-owned approval card, or is refused. Enabling needs the project to be a folder inside
+  a granted root and the package to be installed with a readable `instructions` facet; it grants no root.
+- **Where they apply.** Only for work inside an enabled project that is, links resolved, still inside a granted root.
+  `path` globs are relative to that project and `when.project` names its folder. A rule can include only its own
+  facet's snippets.
+- **Precedence and budget.** The project's own instructions are stated first. A package's snippets use what they left,
+  and at most 2,000 characters a turn among all packages; one snippet is clipped at 1,500 characters. A package's `pin`
+  is ignored, so a snippet is stated once per session.
+- **Trust.** A package snippet is data: framed with the session's code, its tags defused, and withheld above the
+  receiving model's data classes. Its block carries `package="<id>@<version>"` and `source="<id>@<version>/<name>"`, and
+  a host note says such blocks rank after the project's own. Each snippet stated or withheld is written to the audit
+  log as kind `instructions` with the package id, version and snippet name, never its text.
+- **Removal.** Turning a pair off, or uninstalling the package, removes its rules from the next turn. The pair stays
+  until the person turns it off, so restoring the package brings its rules back.
+- `clarkcant instructions check <package folder>` validates the manifest against `packageManifestSchema` and each
+  `instructions` facet's rules file and snippets, and warns about a `pin`.
 
 ## Changing a surface
 

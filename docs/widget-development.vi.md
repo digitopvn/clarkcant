@@ -78,7 +78,8 @@ Một package có thể có nhiều facets:
 - tools/services;
 - skills;
 - recipes;
-- themes.
+- themes;
+- hướng dẫn dự án.
 
 UI facet phải update/activate độc lập khỏi Pi worker khi không có facet Pi thay đổi.
 
@@ -145,6 +146,7 @@ Mỗi loại facet chỉ chạy trong đúng một lane, và schema từ chối 
 | `ui` | `isolated-ui` | Widget vẽ trong frame riêng. `id` phải trùng với id nằm trong `definition`. |
 | `tools` | `service` | Một service mà node chạy trong container, nói MCP qua stdio và khai báo mọi capability nó cung cấp. |
 | `skills`, `prompts`, `themes`, `setup` | `declarative` | Dữ liệu mà host đọc, không bao giờ chạy. |
+| `instructions` | `declarative` | Hướng dẫn dự án có điều kiện, chỉ được nêu như dữ liệu trong những dự án mà người dùng đã bật. Cần `schemaVersion` 3. |
 | `driver`, `voice` | `service` hoặc `trusted-native` | Có trong bộ từ vựng để listing hiển thị được lane. Hiện chưa host nào chạy loại này từ package. |
 
 Reader cũng từ chối manifest khi:
@@ -155,7 +157,13 @@ Reader cũng từ chối manifest khi:
   hoặc nằm dưới namespace mà capability của chính node dùng (`canvas`, `clarkcant`, `dev`, `mcp`, `project`);
 - `entry` hoặc `definition` của facet nằm ngoài package (`..`, đường dẫn tuyệt đối, ký tự ổ đĩa) hoặc là URL;
 - `ref` của một capability trong facet `tools` không nằm dưới package id (`<package id>.<name>@<major>`), hoặc một
-  tool hay capability bị khai báo hai lần.
+  tool hay capability bị khai báo hai lần;
+- một facet `instructions` được khai báo với `"schemaVersion": 2`.
+
+**Schema version 3.** `schemaVersion` là 2 cho mọi package, trừ package có facet `instructions`, vốn cần 3; công cụ
+luôn ghi version thấp nhất mà package cần, nên package không có facet đó vẫn cài được trên host chỉ đọc version 2. Host
+như vậy từ chối toàn bộ package version 3, kèm thông báo nêu rõ version, chứ không cài nó mà bỏ qua facet. Host đọc được
+version 3 kiểm tra facet này như mọi facet khác.
 
 Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ
 đoạn code nào của package chạy. Việc cài package chính là sự đồng ý với những gì package khai báo; mỗi lời gọi vẫn do
@@ -199,6 +207,23 @@ chạm tới nút Phê duyệt và Từ chối của một yêu cầu, các câu
 từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
+
+**Node đọc facet hướng dẫn như thế nào.** `entry` của một facet `instructions` là một tệp quy tắc theo cùng hợp đồng mở
+với `.clarkcant/instructions.json` của dự án (`projectInstructionRuleSchema` trong
+`packages/contracts/src/project-instructions.ts`; xem [giao diện mở](open-interfaces.vi.md#package-instructions)), ví dụ
+`{ "kind": "instructions", "id": "rules", "entry": "rules/instructions.json", "isolation": "declarative" }`. Đoạn hướng
+dẫn mà một quy tắc đưa vào là `instructions/<name>.md` nằm cạnh tệp đó (ở đây là `rules/instructions/<name>.md`), gọi
+bằng một tên đơn, nên quy tắc không thể chạm tới tệp của host, của dự án hay của gói khác. Node đọc cả hai từ các byte
+đã cài, qua cùng cơ chế giới hạn như tệp của widget, theo các giới hạn của tệp dự án, và cắt đoạn hướng dẫn ở 1.500 ký
+tự (`packages/core/src/installed-instructions.ts`). Cài gói không nêu gì cả. Các quy tắc chỉ áp dụng trong dự án mà
+người dùng đã bật hướng dẫn của gói, bằng cách nhờ Clark (`manage_package` `enable_instructions`, do execution policy
+quyết định), và chỉ khi dự án đó nằm trong một thư mục gốc người dùng đã cấp. Trong dự án, đường dẫn tính tương đối từ
+dự án và `when.project` là tên thư mục của nó. Đoạn hướng dẫn của gói được nêu sau hướng dẫn riêng của dự án, trong
+phần ngân sách riêng của lượt, được bọc bằng mã của session, bị giữ lại khi vượt mức dữ liệu model nhận được, được ghi
+nhãn và ghi audit kèm id và phiên bản của gói, và không bao giờ được ghim: `pin` của quy tắc bị bỏ qua. Đoạn hướng dẫn
+không cấp quyền nào. Cài đặt → Tiện ích & widget liệt kê các dự án đang bật hướng dẫn của từng gói, kèm nút Tắt; gỡ gói
+thì từ lượt sau các quy tắc của nó không còn nữa. `clarkcant instructions check <thư mục gói>` kiểm tra manifest cùng
+quy tắc và đoạn hướng dẫn của từng facet.
 
 **Gói tham chiếu.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) và
 [Neo Brutalism](../examples/themes/neo-brutalism/README.md) là gói tổng quát chỉ chứa dữ liệu, cài qua vòng đời
