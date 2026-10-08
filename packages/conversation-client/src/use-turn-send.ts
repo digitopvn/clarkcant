@@ -85,7 +85,7 @@ export interface TurnSendDeps {
   timeline: Timeline | undefined;
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
-  dispatchChips: (action: { type: "sent" } | { type: "cleared" }) => void;
+  dispatchChips: (action: { type: "sent"; attachmentIds: readonly string[] } | { type: "cleared" }) => void;
   /**
    * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
    * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
@@ -313,11 +313,12 @@ export function useTurnSend({
         // so the person can press send again rather than attaching the same file a second time. A command the host
         // answered carries no files, so they stay for the next message, and the composer says why they are still there.
         // A reply from a session the person already restarted away from touches nothing here: the restart dropped that
-        // session's chips, and the ones on screen now belong to the new conversation.
+        // session's chips, and the ones on screen now belong to the new conversation. Only the files this message
+        // carried leave: one attached while the reply was being written belongs to the next message.
         if (!standalone && sessionGeneration.current === generation) {
           const keep = attachmentIds.length > 0 && answered !== undefined && chipsAfterAnswer(answered) === "kept";
           if (keep) setChipsKept(true);
-          else dispatchChips({ type: "sent" });
+          else dispatchChips({ type: "sent", attachmentIds });
           onReferencesSent();
         }
       } catch (cause) {
@@ -331,7 +332,9 @@ export function useTurnSend({
         // so the start screen comes back with the text, rather than an empty page with the composer at its foot.
         if ((timeline?.messages.length ?? 0) === 0) resetHero();
       } finally {
-        setBusy(false);
+        // A send from a session the person already left has no say over this one: the restart ended its busy state,
+        // and a newer send may be running in the new conversation.
+        if (sessionGeneration.current === generation) setBusy(false);
       }
     },
     [

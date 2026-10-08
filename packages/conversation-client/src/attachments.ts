@@ -40,7 +40,7 @@ export type AttachmentAction =
   | { type: "remove"; id: string }
   | { type: "stored"; id: string; attachmentId: string }
   | { type: "failed"; id: string; reason: string }
-  | { type: "sent" }
+  | { type: "sent"; attachmentIds: readonly string[] }
   | { type: "cleared" };
 
 /**
@@ -48,7 +48,7 @@ export type AttachmentAction =
  *
  * A reducer rather than state spread across handlers because the transitions have to hold together: an
  * upload that finishes after its chip was removed must not resurrect it, and `sent` must clear only the
- * chips whose bytes are actually stored.
+ * chips the message actually carried.
  */
 export function attachmentReducer(
   state: readonly AttachmentChip[],
@@ -67,10 +67,13 @@ export function attachmentReducer(
       return state.map((chip) =>
         chip.id === action.id ? { ...chip, state: "failed" as const, reason: action.reason } : chip,
       );
-    case "sent":
-      // Ready chips are gone because the message now owns them; a failed one stays, because nothing was
-      // sent for it and its explanation is the only place the person can read what went wrong.
-      return state.filter((chip) => chip.state === "failed");
+    case "sent": {
+      // The chips the message carried are gone because the message now owns them, matched by the ids it was sent
+      // with. Everything else stays: a file attached while the reply was being written was not in that message, and
+      // a failed one was never sent, so its explanation is the only place the person can read what went wrong.
+      const carried = new Set(action.attachmentIds);
+      return state.filter((chip) => !(chip.state === "ready" && chip.attachmentId !== undefined && carried.has(chip.attachmentId)));
+    }
     case "cleared":
       // The conversation they were attached for is gone from the screen, so none of them belongs to the next one.
       return [];
