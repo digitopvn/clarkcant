@@ -10,6 +10,7 @@ import { keyVariableFor } from "@clarkcant/pi-adapter";
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
+import { auditPackageInstructions, enabledPackageInstructionSets, packageInstructionsDepsOf } from "../application/package-instructions.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../attachments.ts";
 import { createChannelToolGate } from "../channels/channel-tool-gate.ts";
@@ -184,6 +185,15 @@ export function nodeConditionalInstructions(env: NodeJS.ProcessEnv, services: No
       // The reason says what to do: fix the file, or update ClarkCant for a version it does not read yet.
       onInvalid: ({ project, reason }) => {
         process.stderr.write(`${JSON.stringify({ event: "instructions-invalid", project, reason })}\n`);
+      },
+      // Installed packages' instructions, only in the projects the person turned them on for. Read on every ask, so a
+      // package turned off or uninstalled is gone from the next turn; one that cannot be read states nothing.
+      packages: () => {
+        try {
+          return enabledPackageInstructionSets(packageInstructionsDepsOf(services));
+        } catch {
+          return [];
+        }
       },
     });
     instructionReaders.set(services, reader);
@@ -444,6 +454,10 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
             // stored after it.
             referenced: (conversationId, messageId) =>
               referencedWork(deps.services().projects, referenceBlocksOf(conversationId, messageId)),
+            // Each package snippet stated or withheld is audited with the package id and version it came from.
+            onPackages: ({ conversationId, outcomes }) => {
+              auditPackageInstructions(packageInstructionsDepsOf(deps.services()), outcomes, `conversation ${conversationId}`);
+            },
           }),
         }),
     /*
@@ -577,6 +591,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: packageInstallDepsOf(deps.services()),
+          instructions: () => packageInstructionsDepsOf(deps.services()),
           connections: deps.services().connections,
           conversationId: turn.conversationId,
           channel: turn.channel,

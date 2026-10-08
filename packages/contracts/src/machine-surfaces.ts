@@ -1,4 +1,5 @@
 import { MAP_TILE_POLICY_PREFERENCE } from "./map-view.ts";
+import { PACKAGE_INSTRUCTIONS_PREFERENCE } from "./package-instructions.ts";
 import { COMPOSER_SURFACE_HEADER } from "./surfaces.ts";
 
 /**
@@ -22,7 +23,9 @@ import { COMPOSER_SURFACE_HEADER } from "./surfaces.ts";
  * reason: it is the consent that lets the package act on that account. Writing the node's map tile policy directly, or
  * undoing a write, is the person's too: a machine surface that wants it changed asks Clark, whose `set_map_tiles` is
  * decided by the execution policy like any other effect. Entering or removing the map tile key is the person's alone:
- * it binds the key to the one origin the node will send it to, and nothing else can move it to another.
+ * it binds the key to the one origin the node will send it to, and nothing else can move it to another. Writing which
+ * projects a package's instructions apply in, or undoing a write, is the person's too: a machine surface that wants one
+ * enabled asks Clark, whose `manage_package` is decided by the execution policy.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
@@ -35,7 +38,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
   const [first, second, third, fourth, fifth, sixth] = segments;
   // PUT /preferences/maps.tilePolicy and POST /preferences/maps.tilePolicy/undo: which host every map on the node may
   // fetch tiles from, and so tell what it shows. An AI client that could name that host could widen the node's reach.
-  if (first === "preferences" && second === MAP_TILE_POLICY_PREFERENCE) {
+  if (first === "preferences" && (second === MAP_TILE_POLICY_PREFERENCE || second === PACKAGE_INSTRUCTIONS_PREFERENCE)) {
     return (verb === "PUT" && segments.length === 2) || (verb === "POST" && segments.length === 3 && third === "undo");
   }
   // PUT and DELETE /map-tiles/key: the tile provider's key, and the origin it is bound to. Reading whether one is saved,

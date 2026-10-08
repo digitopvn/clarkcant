@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
-import { APPEARANCE_API_VERSION, PACKAGE_MANIFEST_SCHEMA_VERSION } from "@clarkcant/contracts";
+import { APPEARANCE_API_VERSION, packageManifestSchemaVersionFor } from "@clarkcant/contracts";
 
 import type { ConformanceReport } from "./conformance.ts";
 import { runThemeConformance } from "./theme-conformance.ts";
@@ -21,7 +21,7 @@ export function initTheme(root: string): void {
   const facetId = `${id}.main`;
   mkdirSync(join(root, "themes"), { recursive: true });
   const manifest = {
-    schemaVersion: PACKAGE_MANIFEST_SCHEMA_VERSION, id, version: "0.1.0", displayName: "My Theme",
+    schemaVersion: packageManifestSchemaVersionFor([{ kind: "themes" }]), id, version: "0.1.0", displayName: "My Theme",
     description: "A data-only appearance theme.", hostApi: { min: 1, max: 1 },
     facets: [{ kind: "themes", id: facetId, entry: "themes/main.json", isolation: "declarative" }], requestedCapabilities: [],
     permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },

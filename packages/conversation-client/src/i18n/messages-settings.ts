@@ -481,7 +481,10 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.extensions.installed.uninstall": "Gỡ",
   "settings.extensions.installed.rollback": "Quay về {version}",
   "settings.extensions.installed.working": "Đang thực hiện…",
-  "settings.extensions.installed.uninstalled":
+  "settings.extensions.instructions.label": "Hướng dẫn dự án đang bật cho",
+  "settings.extensions.instructions.turnOff": "Tắt",
+  "settings.extensions.instructions.turnedOff": "Đã tắt hướng dẫn của {package} cho {project}; từ lượt sau không còn nêu nữa.",
+  "settings.extensions.instructions.failed": "Chưa tắt được hướng dẫn của {package}: {reason}",  "settings.extensions.installed.uninstalled":
     "Đã gỡ {package}. {offline} widget chuyển sang chỉ xem, hiển thị bản văn bản; dữ liệu và lịch sử được giữ. Có thể khôi phục ở mục Đã gỡ bên dưới.",
   "settings.extensions.installed.rolledBack":
     "Đã quay {package} về {version}. Dữ liệu widget giữ nguyên; widget có dữ liệu do bản mới hơn ghi sẽ mở ở chế độ chỉ xem.",
@@ -1007,7 +1010,10 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.extensions.installed.uninstall": "Uninstall",
   "settings.extensions.installed.rollback": "Roll back to {version}",
   "settings.extensions.installed.working": "Working…",
-  "settings.extensions.installed.uninstalled":
+  "settings.extensions.instructions.label": "Project instructions on for",
+  "settings.extensions.instructions.turnOff": "Turn off",
+  "settings.extensions.instructions.turnedOff": "Turned off {package}'s instructions for {project}; they are not stated from the next turn.",
+  "settings.extensions.instructions.failed": "Could not turn off {package}'s instructions: {reason}",  "settings.extensions.installed.uninstalled":
     "Uninstalled {package}. {offline} widget(s) are now read-only and show their text version; their data and history are kept. You can restore it under Uninstalled below.",
   "settings.extensions.installed.rolledBack":
     "Rolled {package} back to {version}. Widget data is unchanged; a widget whose data a newer version wrote opens read-only.",

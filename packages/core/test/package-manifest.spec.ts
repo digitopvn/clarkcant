@@ -234,8 +234,20 @@ describe("reading a package", () => {
   });
 
   it("names the versions it reads when the file claims another", () => {
-    const pkg = readPackage(writePackage({ ...canonical(), schemaVersion: 3 }));
+    const pkg = readPackage(writePackage({ ...canonical(), schemaVersion: 0 }));
     expect(pkg.facets).toEqual([]);
-    expect(pkg.problems).toEqual([expect.stringContaining("schemaVersion must be 2 (or 1, the widget-only format still read)")]);
+    expect(pkg.problems).toEqual([expect.stringContaining("schemaVersion must be 2 or 3 (or 1, the widget-only format still read)")]);
+  });
+
+  it("asks for an update when the file claims a version newer than this build reads", () => {
+    const pkg = readPackage(writePackage({ ...canonical(), schemaVersion: 4 }));
+    expect(pkg.facets).toEqual([]);
+    expect(pkg.problems).toEqual([expect.stringContaining("schemaVersion 4 is newer than this build reads (2 or 3); update ClarkCant")]);
+  });
+
+  it("reads a version 3 manifest, which may carry an instructions facet", () => {
+    const pkg = readPackage(writePackage({ ...canonical(), schemaVersion: 3 }));
+    expect(pkg.problems).toEqual([]);
+    expect(pkg.facets).not.toEqual([]);
   });
 });

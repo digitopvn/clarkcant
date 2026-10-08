@@ -23,6 +23,7 @@ import { z } from "zod";
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
 import { MAP_TILE_POLICY_PREFERENCE, mapTilePolicySchema } from "./map-view.ts";
 import { orbPalettePreferenceSchema } from "./orb-palette.ts";
+import { PACKAGE_INSTRUCTIONS_PREFERENCE, packageInstructionsPreferenceSchema } from "./package-instructions.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 import {
   BUILTIN_CLARK_THEME_REF,
@@ -826,6 +827,18 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: null,
     schema: mapTilePolicySchema,
+  },
+  /*
+   * The projects where an installed package's conditional instructions apply (`package-instructions.ts`). Per node,
+   * because the projects are this machine's folders. Written by the person in Settings, or by Clark as the execution
+   * policy decides; a machine surface cannot write it directly (`isPersonOnlyRoute`), and a package never does.
+   */
+  [PACKAGE_INSTRUCTIONS_PREFERENCE]: {
+    key: PACKAGE_INSTRUCTIONS_PREFERENCE,
+    scope: "node",
+    applies: "next-turn",
+    default: [],
+    schema: packageInstructionsPreferenceSchema,
   },
 } as const satisfies Record<string, PreferenceDefinition>;
 
