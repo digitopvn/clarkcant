@@ -53,9 +53,9 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ của nó trong Cài đặt (thẻ TypeSafe của decision provider, hoặc danh sách Thông tin xác thực; cả hai lưu cùng tên `typesafe`). Khi cả hai nơi đều có,
-key lưu trong thẻ được ưu tiên, theo quy tắc chung cho mọi credential của nhà cung cấp; key trong môi
-trường chỉ được dùng khi thẻ chưa có key. Lưu hoặc xoá key trong thẻ có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. 
+referenced from code. Key của TypeSafe cũng có thể được lưu trong Cài đặt, ở đúng một chỗ: danh sách Thông tin xác thực trong AI & Định tuyến, dưới tên `typesafe`. Thẻ TypeSafe của decision provider cho biết key đến từ đâu và có nút Mở Thông tin xác thực thay vì một ô nhập thứ hai. Khi cả hai nơi đều có,
+key lưu trong Cài đặt được ưu tiên, theo quy tắc chung cho mọi credential của nhà cung cấp; key trong môi
+trường chỉ được dùng khi Cài đặt chưa có key. Lưu hoặc xoá key ở đó có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. 
 
 Key của Cloudflare và OpenRouter theo cùng quy tắc, nhưng được lưu dưới các tên vault do host sở hữu
 (`decision:cloudflare`, `decision:openrouter`) mà chỉ thẻ riêng của decision provider được ghi
@@ -77,8 +77,12 @@ TypeSafe Jev vẫn là mặc định. Có hai cách chọn provider khác, và c
    một lần lưu bị từ chối cũng được diễn đạt như vậy. Người dùng chọn
    "Theo môi trường", TypeSafe Jev, Cloudflare Clef hoặc OpenRouter; Cloudflare có hai model và một ô
    account id, còn OpenRouter có một ô model slug, chỉ được lưu khi đã nhập slug. Mỗi provider có một thẻ
-   key cho biết key đến từ đâu (lưu ở đây, môi trường, hoặc chưa có) cùng nút Lưu và Gỡ; key đã nhập được
-   xoá khỏi ô sau khi lưu và không bao giờ hiện lại. Mọi thay đổi đều nói rõ là áp dụng từ quyết định
+   key cho biết key đến từ đâu (lưu ở đây, môi trường, hoặc chưa có). Thẻ của Cloudflare và OpenRouter có
+   một ô mật khẩu cùng nút Lưu và Gỡ; key đã nhập được xoá khỏi ô sau khi lưu và không bao giờ hiện lại.
+   Thẻ TypeSafe không có ô riêng: key của nó là credential `typesafe`, nên thẻ chỉ tới danh sách Thông tin
+   xác thực, nơi duy nhất để lưu, thay hoặc gỡ key này, kèm nút Mở Thông tin xác thực để chuyển focus tới
+   đó. Một mã lý do mới hơn những gì client biết được diễn đạt thành câu chung "node không nêu lý do theo
+   cách ứng dụng này hiển thị được", không bao giờ hiện mã thô. Mọi thay đổi đều nói rõ là áp dụng từ quyết định
    tiếp theo. Lựa chọn được lưu thành preference
    `ai.decisionProvider`, nên có revision và có thể hoàn tác. Chọn "theo môi trường" sẽ lưu `null` và
    trả quyền chọn về cho các biến bên dưới. Cùng lựa chọn đó cũng có qua API của node:

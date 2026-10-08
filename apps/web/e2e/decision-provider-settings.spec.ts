@@ -152,30 +152,58 @@ test("each provider is chosen, Cloudflare says what it is missing, and its key i
 
 test("a key is saved and removed with the keyboard alone", async ({ page }) => {
   const section = await openDecisionProvider(page);
-  const typesafe = section.locator('[data-decision-key-card="typesafe"]');
-  const field = typesafe.locator('[data-decision-key-input="typesafe"]');
+  const openrouter = section.locator('[data-decision-key-card="openrouter"]');
+  const field = openrouter.locator('[data-decision-key-input="openrouter"]');
 
   await field.focus();
-  await page.keyboard.type(TYPESAFE_KEY);
+  await page.keyboard.type(OPENROUTER_KEY);
   await page.keyboard.press("Enter");
-  await expect(typesafe).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
-  await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-status", "ready");
+  await expect(openrouter).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
   await expect(field).toHaveValue("");
-  expect(await page.content()).not.toContain(TYPESAFE_KEY);
+  expect(await page.content()).not.toContain(OPENROUTER_KEY);
 
   // With the field empty its Save is disabled, so Tab goes straight to Remove.
   await field.focus();
   await page.keyboard.press("Tab");
-  const remove = typesafe.locator('[data-decision-key-remove="typesafe"]');
+  const remove = openrouter.locator('[data-decision-key-remove="openrouter"]');
   await expect(remove).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(typesafe).toHaveAttribute("data-decision-key-source", "none", { timeout: 10_000 });
+  await expect(openrouter).toHaveAttribute("data-decision-key-source", "none", { timeout: 10_000 });
 
   // The selector is reachable and pressable from the keyboard too.
   const segment = section.locator('[data-segmented="decision-provider"] [data-segment="typesafe"]');
   await segment.focus();
   await page.keyboard.press("Enter");
   await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-selected-by", "settings", { timeout: 10_000 });
+});
+
+test("the TypeSafe key has one control: its card points to the Credentials list, which the card then reads", async ({ page, request }) => {
+  const section = await openDecisionProvider(page);
+  const typesafe = section.locator('[data-decision-key-card="typesafe"]');
+  await expect(typesafe).toHaveAttribute("data-decision-key-source", "none");
+  await expect(typesafe.locator("input")).toHaveCount(0);
+  await expect(typesafe.locator("[data-decision-key-in-credentials='typesafe']")).toContainText("Thông tin xác thực");
+
+  // The pointer moves focus to the TypeSafe row of the Credentials list, the one place its key is saved.
+  const row = page.locator("[data-credentials-section='true'] [data-credential-row='typesafe']");
+  await expect(row).toBeVisible();
+  const go = typesafe.locator("[data-decision-key-go-to-credentials='typesafe']");
+  await go.focus();
+  await page.keyboard.press("Enter");
+  await expect(row.locator(":focus")).toHaveCount(1);
+
+  // A key stored where the Credentials list stores it is the key the decision provider reads.
+  const stored = await request.post(`${GATEWAY}/credentials`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { fields: [{ name: "typesafe", value: TYPESAFE_KEY }] },
+  });
+  expect(stored.ok()).toBe(true);
+  await page.reload();
+  const reopened = await openDecisionProvider(page);
+  await expect(reopened.locator('[data-decision-key-card="typesafe"]')).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
+  await expect(reopened.locator("[data-decision-current]")).toHaveAttribute("data-decision-status", "ready");
+  expect(await page.content()).not.toContain(TYPESAFE_KEY);
+  expect(await nodeView(request)).not.toContain(TYPESAFE_KEY);
 });
 
 test("on a phone, in English, the card fits the screen and every control is reachable", async ({ browser, request }) => {

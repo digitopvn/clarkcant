@@ -1359,8 +1359,10 @@ Don't show contrast debugging to consumers; put it in the Developer section.
   environment, TypeSafe Jev, Cloudflare Clef and OpenRouter; Cloudflare adds its model choice and an account-id field,
   OpenRouter a pinned model-slug field that is saved only once a slug is entered (a router such as `openrouter/auto`
   is refused with the node's reason). Each provider has a key card that says where its key comes from (saved here, the
-  environment, or none), with a password field, Save/Replace and Remove for a key saved here; a typed key is cleared
-  once stored and never shown back. Every write goes to the node's decision-provider routes and the card redraws from
+  environment, or none); Cloudflare's and OpenRouter's have a password field, Save/Replace and Remove for a key saved
+  here, and a typed key is cleared once stored and never shown back. The TypeSafe key has one control, its `typesafe`
+  row in the Credentials list (11.6), so the TypeSafe card points there with Go to Credentials instead of a second
+  field. A reason code the client does not know is worded as a translated generic reason, never as a raw code. Every write goes to the node's decision-provider routes and the card redraws from
   the answer; each change says it applies from the next decision, and nothing asks for a restart.
 - Favorites/recent models.
 - Shortcut order for model cycling.

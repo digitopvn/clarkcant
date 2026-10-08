@@ -14,6 +14,7 @@ import {
   decisionReasonText,
   decisionWriteFailure,
   isPinnedOpenrouterSlug,
+  keyLivesInCredentials,
   lastCallLine,
   selectionFor,
 } from "../src/settings/controls/decision-provider-section.tsx";
@@ -148,8 +149,50 @@ describe("the decision provider section", () => {
     expect(typesafe).toContain('data-decision-key-source="none"');
     expect(typesafe).not.toContain("data-decision-key-remove");
     // Every key field is a password field that starts empty: the card has no key to show, and never renders one.
-    expect(html.match(/type="password"/g)).toHaveLength(3);
+    expect(html.match(/type="password"/g)).toHaveLength(2);
     for (const field of html.match(/<input[^>]*type="password"[^>]*>/g) ?? []) expect(field).toContain('value=""');
+  });
+
+  it("gives the TypeSafe key one control: its card points to the Credentials list instead of holding a second field", () => {
+    // TypeSafe's key is the plain `typesafe` credential the Credentials list edits; the other two are host-owned names
+    // only their own cards can write, so they keep their fields.
+    expect(keyLivesInCredentials("typesafe")).toBe(true);
+    expect(keyLivesInCredentials("cloudflare")).toBe(false);
+    expect(keyLivesInCredentials("openrouter")).toBe(false);
+
+    for (const [t, messages] of [
+      [english, MESSAGES_EN],
+      [vietnamese, MESSAGES_VI],
+    ] as const) {
+      const html = draw({}, t);
+      const typesafe = card(html, "typesafe");
+      expect(typesafe).not.toContain("data-decision-key-input");
+      expect(typesafe).not.toContain("data-decision-key-save");
+      expect(typesafe).not.toContain('type="password"');
+      expect(typesafe).toContain('data-decision-key-in-credentials="typesafe"');
+      expect(typesafe).toContain('data-decision-key-go-to-credentials="typesafe"');
+      expect(typesafe).toContain(messages["settings.decision.key.goToCredentials"]);
+      expect(typesafe).toContain(messages["settings.decision.key.inCredentials"].replace("{provider}", "TypeSafe Jev"));
+      for (const provider of ["cloudflare", "openrouter"]) {
+        expect(card(html, provider)).toContain(`data-decision-key-input="${provider}"`);
+        expect(card(html, provider)).not.toContain("data-decision-key-go-to-credentials");
+      }
+    }
+    // With no TypeSafe key, the hint sends the person to Credentials rather than to a card with no field.
+    expect(decisionHint(DEFAULT_NO_KEY, english)).toBe(
+      "There is no key for TypeSafe Jev. Save one in Credentials below; until then Clark uses its built-in rules.",
+    );
+    expect(decisionHint(DEFAULT_NO_KEY, vietnamese)).toContain("danh sách Thông tin xác thực");
+    expect(decisionHint({ ...DEFAULT_NO_KEY, provider: "openrouter" }, english)).toContain("Save one in its card below");
+    // A TypeSafe key from the environment is replaced in Credentials, not "here".
+    const fromEnvironment = draw({
+      listing: {
+        status: "ready",
+        view: { ...READY, providers: [{ id: "typesafe", models: null, credential: { name: "typesafe", source: "environment" } }, ...PROVIDERS.slice(1)] },
+      },
+    });
+    expect(card(fromEnvironment, "typesafe")).toContain("Save one in Credentials to replace it.");
+    expect(card(fromEnvironment, "openrouter")).toContain("Save one here to replace it.");
   });
 
   it("draws every state with its reason and what to do about it", () => {
@@ -264,6 +307,32 @@ describe("the decision provider section", () => {
     const { reasonCode: _dropped, ...withoutCode } = misconfigured;
     expect(decisionHint(withoutCode, vietnamese)).not.toContain(misconfigured.reason);
     expect(decisionReasonText(undefined, vietnamese)).toBe(MESSAGES_VI["settings.decision.reason.unknown"]);
+  });
+
+  it("words a reason code from a newer node that this client does not know with the generic reason, never a raw key", () => {
+    // A newer node can send a code this client was built without; the wire value is not narrowed to the known codes.
+    const newer = "provider-quota-paused";
+    expect((DECISION_REASON_CODES as readonly string[]).includes(newer)).toBe(false);
+    expect(decisionReasonText(newer, english)).toBe(MESSAGES_EN["settings.decision.reason.unknown"]);
+    expect(decisionReasonText(newer, vietnamese)).toBe(MESSAGES_VI["settings.decision.reason.unknown"]);
+    const view = {
+      ...READY,
+      status: "misconfigured",
+      reason: "a reason only a newer node words",
+      reasonCode: newer,
+      lastCall: { event: "error", status: "unavailable", model: "clef-flash", durationMs: 12, reason: "a newer failure", reasonCode: newer },
+    } as unknown as DecisionProviderView;
+    for (const t of [english, vietnamese]) {
+      const hint = decisionHint(view, t);
+      const line = lastCallLine(view, t);
+      expect(hint).toContain(t("settings.decision.reason.unknown"));
+      expect(line).toContain(t("settings.decision.reason.unknown"));
+      for (const text of [hint, line]) {
+        expect(text).not.toContain("settings.decision.reason.");
+        expect(text).not.toContain("undefined");
+        expect(text).not.toContain(newer);
+      }
+    }
   });
 
   it("words a refused write in the person's language, not the node's English", () => {

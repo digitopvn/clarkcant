@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactElement } from "react";
 
 import {
+  DECISION_CREDENTIAL_NAMES,
   DECISION_PROVIDER_IDS,
+  DECISION_REASON_CODES,
+  HOST_OWNED_DECISION_CREDENTIALS,
   OPENROUTER_DECISION_MODEL_PATTERN,
   isOpenrouterRouterSlug,
   type DecisionCredentialSource,
@@ -62,6 +65,28 @@ const KEY_SOURCE_NOTE: Record<DecisionCredentialSource, MessageKey> = {
   none: "settings.decision.key.note.none",
 };
 
+/**
+ * Whether a provider's key is held in the Credentials list rather than on its own key card.
+ *
+ * Only Cloudflare's and OpenRouter's keys sit under host-owned vault names that the generic credential store refuses, so
+ * their cards are the one place to enter them. TypeSafe's key is the plain `typesafe` credential the Credentials list
+ * already saves, replaces and removes; a second field here would be two controls for one key, so its card points there.
+ */
+export function keyLivesInCredentials(provider: DecisionProviderId): boolean {
+  return !HOST_OWNED_DECISION_CREDENTIALS.includes(DECISION_CREDENTIAL_NAMES[provider]);
+}
+
+/** Moves focus to a credential's row in the Credentials list, or brings the list into view when the row has nothing to focus. */
+function focusCredentialRow(name: string): void {
+  const row = document.querySelector(`[data-credential-row="${CSS.escape(name)}"]`);
+  const target = row?.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])");
+  if (target) {
+    target.focus();
+    return;
+  }
+  (row ?? document.querySelector("[data-credentials-section='true']"))?.scrollIntoView({ block: "nearest" });
+}
+
 const SELECTED_BY: Record<DecisionProviderView["selectedBy"], MessageKey> = {
   settings: "settings.decision.selectedBy.settings",
   environment: "settings.decision.selectedBy.environment",
@@ -78,10 +103,15 @@ function reasonOf(error: unknown): string {
  * Why the decider is in its state, or why its last call got no answer, in the person's language.
  *
  * The node sends a code beside its English sentence; the card words the code and never inserts the sentence, so a
- * Vietnamese card does not carry English. A node too old to send a code gets the generic wording.
+ * Vietnamese card does not carry English. A node too old to send a code, or newer and sending a code this client does
+ * not know yet, gets the generic wording rather than a raw message key.
  */
-export function decisionReasonText(code: DecisionReasonCode | undefined, t: (key: MessageKey) => string): string {
-  return t(code === undefined ? "settings.decision.reason.unknown" : `settings.decision.reason.${code}`);
+export function decisionReasonText(code: string | undefined, t: (key: MessageKey) => string): string {
+  return t(isKnownReasonCode(code) ? `settings.decision.reason.${code}` : "settings.decision.reason.unknown");
+}
+
+function isKnownReasonCode(code: string | undefined): code is DecisionReasonCode {
+  return code !== undefined && (DECISION_REASON_CODES as readonly string[]).includes(code);
 }
 
 /**
@@ -141,7 +171,10 @@ export function decisionHint(view: DecisionProviderView, t: (key: MessageKey) =>
         { reason },
       );
     case "no-credential":
-      return fillMessage(t("settings.decision.hint.no-credential"), { provider });
+      return fillMessage(
+        t(keyLivesInCredentials(view.provider) ? "settings.decision.hint.no-credential.credentials" : "settings.decision.hint.no-credential"),
+        { provider },
+      );
     case "disabled":
       return t("settings.decision.hint.disabled");
   }
@@ -553,10 +586,10 @@ function DecisionKeyCard({
   onSaveKey: (provider: DecisionProviderId, value: string) => Promise<boolean>;
   onRemoveKey: (provider: DecisionProviderId) => void;
 }): ReactElement {
-  // The draft lives only in this field and is cleared once the node has stored it; it is never rendered anywhere else.
-  const [draft, setDraft] = useState("");
   const name = t(PROVIDER_NAME[provider]);
   const busy = outcome?.status === "pending";
+  const inCredentials = keyLivesInCredentials(provider);
+  const note = inCredentials && source === "environment" ? "settings.decision.key.note.environment.credentials" : KEY_SOURCE_NOTE[source];
   return (
     <li
       className="cc-list-item cc-command-row"
@@ -567,12 +600,61 @@ function DecisionKeyCard({
       <div className="cc-list-main">
         <div className="cc-list-text">
           <span className="cc-list-title">{name}</span>
-          <span className="cc-list-subtitle">{fillMessage(t(KEY_SOURCE_NOTE[source]), { variable: KEY_VARIABLE[provider] })}</span>
+          <span className="cc-list-subtitle">{fillMessage(t(note), { variable: KEY_VARIABLE[provider] })}</span>
         </div>
         <span className="cc-badge" data-tone={source === "none" ? undefined : "ok"}>
           {t(KEY_SOURCE_BADGE[source])}
         </span>
       </div>
+      {inCredentials ? (
+        <div className="cc-command-actions" data-decision-key-in-credentials={provider}>
+          <p className="cc-panel-note">{fillMessage(t("settings.decision.key.inCredentials"), { provider: name })}</p>
+          <button
+            type="button"
+            className="cc-action"
+            data-decision-key-go-to-credentials={provider}
+            onClick={() => focusCredentialRow(DECISION_CREDENTIAL_NAMES[provider])}
+          >
+            {t("settings.decision.key.goToCredentials")}
+          </button>
+        </div>
+      ) : (
+        <DecisionKeyForm
+          t={t}
+          provider={provider}
+          name={name}
+          source={source}
+          busy={busy}
+          onSaveKey={onSaveKey}
+          onRemoveKey={onRemoveKey}
+        />
+      )}
+      <OutcomeLine outcome={outcome} t={t} slot={`key:${provider}`} />
+    </li>
+  );
+}
+
+function DecisionKeyForm({
+  t,
+  provider,
+  name,
+  source,
+  busy,
+  onSaveKey,
+  onRemoveKey,
+}: {
+  t: (key: MessageKey) => string;
+  provider: DecisionProviderId;
+  name: string;
+  source: DecisionCredentialSource;
+  busy: boolean;
+  onSaveKey: (provider: DecisionProviderId, value: string) => Promise<boolean>;
+  onRemoveKey: (provider: DecisionProviderId) => void;
+}): ReactElement {
+  // The draft lives only in this field and is cleared once the node has stored it; it is never rendered anywhere else.
+  const [draft, setDraft] = useState("");
+  return (
+    <>
       <form
         className="cc-search-row"
         onSubmit={(event) => {
@@ -618,7 +700,6 @@ function DecisionKeyCard({
           </button>
         </div>
       ) : null}
-      <OutcomeLine outcome={outcome} t={t} slot={`key:${provider}`} />
-    </li>
+    </>
   );
 }

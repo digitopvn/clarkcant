@@ -1343,8 +1343,10 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
   segmented control cho chọn Theo môi trường, TypeSafe Jev, Cloudflare Clef và OpenRouter; Cloudflare có thêm lựa
   chọn model và ô account id, OpenRouter có ô model slug được ghim, chỉ được lưu khi đã nhập slug (router như
   `openrouter/auto` bị từ chối kèm lý do của node). Mỗi provider có một thẻ key cho biết key đến từ đâu (lưu ở đây,
-  môi trường, hoặc chưa có), với ô mật khẩu, Lưu/Thay và Gỡ cho key lưu ở đây; key đã nhập được xoá khỏi ô sau khi
-  lưu và không bao giờ hiện lại. Mọi thao tác ghi đều đi qua các route decision-provider của node và thẻ vẽ lại từ
+  môi trường, hoặc chưa có); thẻ Cloudflare và OpenRouter có ô mật khẩu, Lưu/Thay và Gỡ cho key lưu ở đây; key đã
+  nhập được xoá khỏi ô sau khi lưu và không bao giờ hiện lại. Key TypeSafe chỉ có một control: dòng `typesafe` trong
+  danh sách Thông tin xác thực (mục 11.6), nên thẻ TypeSafe chỉ tới đó bằng nút Mở Thông tin xác thực thay vì có ô
+  thứ hai. Mã lý do mà client chưa biết được diễn đạt thành lý do chung đã dịch, không bao giờ là mã thô. Mọi thao tác ghi đều đi qua các route decision-provider của node và thẻ vẽ lại từ
   câu trả lời; mỗi thay đổi nói rõ là áp dụng từ quyết định tiếp theo, và không có gì đòi khởi động lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.
