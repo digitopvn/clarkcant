@@ -82,7 +82,9 @@ import {
   type VoiceCapabilities,
   type WidgetDevFolderForgetResult,
   type WidgetDevSessionCreate,
+  type UnreadListingFields,
   type WidgetDevSessionView,
+  readNodeView,
   widgetDevFolderForgetResultSchema,
   widgetDevSessionViewSchema,
 } from "@clarkcant/contracts";
@@ -103,6 +105,18 @@ import {
   connectTerminalSocket,
   terminalSocketUrl,
 } from "./terminal-socket.ts";
+
+/**
+ * A widget dev session as this client read it. `unreadFields` is set when the node sent top-level fields this client does
+ * not know (a newer node): they were left out, and the surface says so rather than showing the session as complete.
+ */
+export type WidgetDevSessionRead = WidgetDevSessionView & { unreadFields?: UnreadListingFields };
+
+function readDevSession(body: unknown): WidgetDevSessionRead {
+  const read = readNodeView(widgetDevSessionViewSchema, body);
+  if (!read.success) throw read.error;
+  return read.unreadFields === undefined ? read.data : { ...read.data, unreadFields: read.unreadFields };
+}
 
 /** Where the key in effect for one credential comes from: the key saved in the node, its environment, or neither. */
 export type CredentialSource = "vault" | "environment" | "none";
@@ -2063,13 +2077,13 @@ export class GatewayClient {
   }
 
   /** A live widget authoring session: its newest build, what runs, and whether that is the last good build. */
-  async widgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("GET", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
+  async widgetDevSession(sessionId: string): Promise<WidgetDevSessionRead> {
+    return readDevSession(await this.#call("GET", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
   }
 
   /** Start developing the package in a folder on the node, placed in `conversationId` once a build of it runs. */
-  async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("POST", "/widget-dev/sessions", input));
+  async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionRead> {
+    return readDevSession(await this.#call("POST", "/widget-dev/sessions", input));
   }
 
   /** Take back the person's choice of a folder: Clark may no longer start sessions in it. Person-only on the node. */
@@ -2078,13 +2092,13 @@ export class GatewayClient {
   }
 
   /** Build the session's folder now, rather than on its next save. */
-  async rebuildWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("POST", `/widget-dev/sessions/${encodeURIComponent(sessionId)}/rebuild`));
+  async rebuildWidgetDevSession(sessionId: string): Promise<WidgetDevSessionRead> {
+    return readDevSession(await this.#call("POST", `/widget-dev/sessions/${encodeURIComponent(sessionId)}/rebuild`));
   }
 
   /** Stop watching the folder. What runs keeps running where it was placed. */
-  async stopWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("DELETE", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
+  async stopWidgetDevSession(sessionId: string): Promise<WidgetDevSessionRead> {
+    return readDevSession(await this.#call("DELETE", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
   }
 
   claimLiveOwner(

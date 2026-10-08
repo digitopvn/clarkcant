@@ -902,6 +902,14 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
 | `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Thu hồi lựa chọn một thư mục của người dùng (`widgetDevFolderForgetSchema`): lựa chọn đó không còn cho Clark bắt đầu phiên trong thư mục đó, hay trong các thư mục bên trong nó, nữa. Trả `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` khi thư mục chưa được chọn, nên bấm hai lần cũng không sao. `stillCoveredBy` nêu một thư mục Clark vẫn được phát triển và chứa thư mục này (một thư mục khác đã chọn, hoặc một giá trị `workspace.roots` người dùng đã ghi), nên Clark vẫn có quyền ở đó cho tới khi thư mục đó cũng bị thu hồi. Các phiên và những gì chúng chạy vẫn giữ nguyên. Chỉ người dùng được gọi. |
 
+**Đọc view của phiên.** Ứng dụng desktop và một node trên máy khác được cập nhật riêng, nên ứng dụng đọc view của phiên
+(`readNodeView` trong `packages/contracts/src/node-view-read.ts`) một cách khoan dung: một trường ở cấp trên cùng mà
+nó không biết, do một node mới hơn ứng dụng gửi, bị bỏ qua và không bao giờ được chuyển tiếp, còn dòng trạng thái cạnh
+widget và thẻ `develop` nói rằng node mới hơn và một số điều node gửi không được hiển thị. Mọi trường ứng dụng biết vẫn
+giữ nguyên các giới hạn của nó. Một trường lạ nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`
+vẫn làm view bị từ chối, vì các đối tượng đó mang trạng thái kích hoạt, phê duyệt và phạm vi truy cập mà ứng dụng
+không được hành động dựa trên một phần của chúng. Các yêu cầu gửi tới node, và các phiên node ghi và lưu, vẫn chặt.
+
 Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
 `404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
 `409 NOT_PLACED` và `503 WIDGET_DEV_UNAVAILABLE`:
@@ -1040,11 +1048,13 @@ vẫn hiện là đang chạy:
     dự án khác trên máy rồi phát triển từ đó.
 
   `stopCode` không bắt buộc. Một phiên dừng từ trước khi node giữ trường này thì không có nó, và một mã client không
-  biết chỉ được nói bằng lý do, kèm lời khuyên đúng cho mọi trường hợp. Client đọc view của phiên bằng một schema chặt,
-  nên nó từ chối một view có trường nó không biết, chẳng hạn `stopCode` gửi tới một client cũ hơn trường đó. Hãy giữ
-  ứng dụng desktop ở cùng bản dựng với node mà nó kết nối tới, kể cả một node trên máy khác; việc cho client đọc các
-  view như vậy mà bỏ qua trường lạ được theo dõi ở issue #673. Mã này là điều bước kiểm tìm thấy ở lần khởi động lại đó
-  và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu kiểm thư mục như nó đang có lúc ấy.
+  biết chỉ được nói bằng lý do, kèm lời khuyên đúng cho mọi trường hợp. Một trường ở cấp trên cùng mới hơn ứng dụng thì
+  bị bỏ qua và ứng dụng nói rằng node mới hơn (xem **Đọc view của phiên** ở trên). Một ứng dụng dựng trước cách đọc
+  khoan dung đó, bao gồm mọi ứng dụng cũ hơn `stopCode`, thì từ chối cả view, và mọi ứng dụng đều từ chối một view có
+  trường mới hơn nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`; chỉ trong những trường hợp đó,
+  hãy giữ ứng dụng desktop ở cùng bản dựng với node mà nó kết nối tới, kể cả một node trên máy khác. Mã này là điều
+  bước kiểm tìm thấy ở lần khởi động lại đó và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu kiểm thư mục như
+  nó đang có lúc ấy.
 
   **Hạ phiên bản.** `sessions.json` cũng được đọc bằng một schema chặt. Một bản dựng cũ hơn một trường mà kho đang giữ,
   chẳng hạn `stopCode` hay `chosenFolderId`, thấy cả tệp không khớp, chuyển nó sang

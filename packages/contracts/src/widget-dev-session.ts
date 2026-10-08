@@ -236,7 +236,11 @@ export function widgetDevRootRefusedCode(view: { stopReason?: WidgetDevStopReaso
   return view.stopReason === "root-refused" ? WIDGET_DEV_ROOT_REFUSED_CODES.find((code) => code === view.stopCode) : undefined;
 }
 
-/** A session as the node reports it. */
+/**
+ * A session as the node reports it. The node writes it with this strict schema; a client reads it with `readNodeView`,
+ * which drops a top-level field this schema does not know (a newer node's) and says so, and keeps every nested object
+ * strict.
+ */
 export const widgetDevSessionViewSchema = z.strictObject({
   sessionId: z.string().min(1).max(200),
   /** `live` exactly while the node watches the folder; a watcher that failed reads as `stopped` with its reason. */

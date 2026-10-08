@@ -1,0 +1,38 @@
+import type { z } from "zod";
+
+import { UNREAD_FIELD_PATH_PATTERN, unreadListingFields, type UnreadEntryFields, type UnreadListingFields } from "./directory.ts";
+
+/**
+ * Read a view a node answered with the way a client reads it: tolerant of top-level fields it does not know, strict
+ * about every field it does.
+ *
+ * A desktop app may talk to a node on another machine, and the two are updated separately. A view gains optional fields
+ * over time (the widget dev session view gained `stopCode`), and refusing the whole answer for a field this client has
+ * never heard of made an older client lose the view altogether, not just the field. So a top-level field outside the
+ * schema is dropped and reported in `unreadFields`; it is never passed on, so nothing downstream carries a value nobody
+ * validated. Every known field is still checked against the schema with all its bounds, and every object inside a known
+ * field stays as strict as the schema says: those carry approval, reach and activation state, which a client must not act
+ * on with part of it left out. A newer field inside one of them still refuses the view.
+ *
+ * `unreadFields` exists so what was dropped is said rather than hidden, the same rule a directory entry follows
+ * (`readDirectoryEntry`). Requests a client sends, and what a node writes and stores, keep their strict schemas.
+ */
+export function readNodeView<Schema extends z.ZodObject>(
+  schema: Schema,
+  candidate: unknown,
+): { success: true; data: z.infer<Schema>; unreadFields: UnreadListingFields | undefined } | { success: false; error: z.ZodError } {
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+    const result = schema.safeParse(candidate);
+    return result.success ? { success: true, data: result.data, unreadFields: undefined } : { success: false, error: result.error };
+  }
+  const known: Record<string, unknown> = {};
+  const unread: UnreadEntryFields = { names: [], unnamed: 0 };
+  for (const [key, field] of Object.entries(candidate)) {
+    if (Object.hasOwn(schema.shape, key)) known[key] = field;
+    // A key is the node's text; one that is not a plain identifier is counted without being named.
+    else if (!key.includes(".") && UNREAD_FIELD_PATH_PATTERN.test(key)) unread.names.push(key);
+    else unread.unnamed += 1;
+  }
+  const result = schema.safeParse(known);
+  return result.success ? { success: true, data: result.data, unreadFields: unreadListingFields(unread) } : { success: false, error: result.error };
+}

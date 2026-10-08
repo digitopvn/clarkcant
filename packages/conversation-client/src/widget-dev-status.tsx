@@ -2,7 +2,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 
 import { WIDGET_DEV_DIAGNOSTIC_CODES, widgetDevRootRefusedCode, type WidgetDevSessionView } from "@clarkcant/contracts";
 
-import type { GatewayClient } from "./api.ts";
+import type { GatewayClient, WidgetDevSessionRead } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -95,7 +95,7 @@ export interface WidgetDevStatusProps {
 
 export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDevStatusProps): ReactElement | null {
   const t = useT();
-  const [view, setView] = useState<WidgetDevSessionView | undefined>(undefined);
+  const [view, setView] = useState<WidgetDevSessionRead | undefined>(undefined);
   const [unreachable, setUnreachable] = useState(false);
   const seenRunning = useRef<string | undefined>(undefined);
   const changed = useRef(onRunningChange);
@@ -148,9 +148,15 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
       data-widget-dev-status={view.status}
       data-widget-dev-generation={view.running?.generation ?? ""}
       data-showing-last-good={view.showingLastKnownGood ? "true" : "false"}
-      data-live-notice={line.notice ? "true" : undefined}
+      data-live-notice={line.notice || view.unreadFields !== undefined ? "true" : undefined}
     >
       <p style={{ margin: 0 }}>{line.text}</p>
+      {/* A newer node sent more than this app reads: said, so the line is never taken for the whole session. */}
+      {view.unreadFields !== undefined && (
+        <p style={{ margin: 0 }} data-widget-dev-node-newer={String(view.unreadFields.count)}>
+          {t("shell.dev.nodeNewer")}
+        </p>
+      )}
       {wider && <p style={{ margin: 0 }} data-widget-dev-wider="true">{t("shell.dev.wider")}</p>}
       {problems.length > 0 && (
         <details data-widget-dev-problems="true">
