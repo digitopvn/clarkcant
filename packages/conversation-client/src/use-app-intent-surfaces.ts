@@ -116,6 +116,11 @@ export interface AppIntentSurfacesDeps {
    */
   replying?: boolean;
   restartSession: () => void;
+  /**
+   * Whether the page is still on the new conversation the logo started, with nothing sent in it, when the node's late
+   * answer lands (`TurnSendState.watchNewStart`). Without it, what the page says is never held back.
+   */
+  watchNewStart?: () => () => boolean;
   attachmentInput: RefObject<HTMLInputElement | null>;
   setVoiceOpen: (open: boolean) => void;
   /**
@@ -173,6 +178,7 @@ export function useAppIntentSurfaces({
   conversationId,
   replying = false,
   restartSession,
+  watchNewStart,
   attachmentInput,
   setVoiceOpen,
   openVoice,
@@ -488,9 +494,10 @@ export function useAppIntentSurfaces({
         ...(leftConversation
           ? { onUnrecorded: () => setIntentNotice(t(replying ? "intents.newConversationKeptReplying" : "intents.newConversationKept")) }
           : {}),
+        ...(watchNewStart === undefined ? {} : { watchStart: watchNewStart }),
       });
     },
-    [client, conversationId, replying, runIntent, setIntentNotice, t],
+    [client, conversationId, replying, runIntent, setIntentNotice, t, watchNewStart],
   );
 
   // A notice is a remark about something that just happened, not a permanent line of text.

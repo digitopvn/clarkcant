@@ -405,6 +405,39 @@ describe("a click on the page's own controls", () => {
     expect(node.ran).toHaveLength(1);
   });
 
+  it("says the read-back or what was kept only while the page is still on the start it made", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      for (const answer of [() => HOME, () => new Error("Failed to fetch")]) {
+        for (const movedOn of [false, true]) {
+          const said: string[] = [];
+          let mark = 0;
+          const node = slowNode(answer);
+          const going = runAppIntentAtOnce("nav.home", {
+            ...node.deps,
+            onRecorded: () => said.push("recorded"),
+            onUnrecorded: () => said.push("unrecorded"),
+            // Read right after the click ran, as the page's own mark is.
+            watchStart: () => {
+              const at = mark;
+              return () => mark === at;
+            },
+          });
+          // The person sent a message, or left again, before the node answered.
+          if (movedOn) mark += 1;
+          node.release();
+          await going;
+          expect(said, `${answer() instanceof Error ? "failed" : "answered"}, moved on: ${String(movedOn)}`).toHaveLength(movedOn ? 0 : 1);
+        }
+      }
+      expect(info).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
   it("waits for the node's decision on any other click, and says when it could not ask", async () => {
     const settings = slowNode(() => ({ kind: "intent", intent: { kind: "settings.open" }, requiresConfirmation: false, readBack: "" }));
     const opening = clickAppIntent("settings.open", settings.deps);
