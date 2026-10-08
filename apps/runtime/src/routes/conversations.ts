@@ -133,6 +133,11 @@ import {
 } from "../application/capability-invoke.ts";
 import { isMapTilePolicyPayload, runApprovedMapTilePolicy } from "../application/map-tile-policy.ts";
 import {
+  isPackageInstructionsPayload,
+  packageInstructionsDepsOf,
+  runApprovedPackageInstructions,
+} from "../application/package-instructions.ts";
+import {
   deniedWidgetArtifactWriteLabel,
   isWidgetArtifactWritePayload,
   recordDeniedWidgetArtifactWrite,
@@ -2176,6 +2181,7 @@ export async function decideApprovalForNode(
 
   const capabilityCall = isCapabilityPayload(payload);
   const tilePolicyChange = isMapTilePolicyPayload(payload);
+  const instructionsChange = isPackageInstructionsPayload(payload);
   const artifactWrite = isWidgetArtifactWritePayload(payload);
   const widgetPerform = isWidgetPerformPayload(payload);
   const channelTool = parseChannelToolPayload(payload);
@@ -2189,6 +2195,8 @@ export async function decideApprovalForNode(
       ? hostText(locale).channels.toolRefused
       : tilePolicyChange
       ? say.refusedTilePolicy
+      : instructionsChange
+      ? say.refusedPackageInstructions
       : artifactWrite
         ? deniedWidgetArtifactWriteLabel(services, input.at)
         : widgetPerform
@@ -2241,6 +2249,29 @@ export async function decideApprovalForNode(
         approvalId: input.approvalId,
         principalId: services.runtime.identity.ownerPrincipalId,
       },
+    );
+    if (!written.ok) return { ok: false, code: written.code, message: written.message };
+    appendHostReply(services, { conversationId: input.conversationId, blocks: written.blocks, at: input.at });
+    appendAuditEvent(services.runtime.db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "approval",
+      summary: written.description,
+      outcome: "done",
+      ref: input.approvalId,
+      ...askedByRecord,
+      at: input.at,
+    });
+    return { ok: true, outcome: written.description };
+  }
+
+  if (instructionsChange) {
+    // A package's instructions turned on or off for one project, which Clark may only propose: the grant writes it
+    // through the same preference Settings shows, after the payload is hashed again and the change checked again.
+    const written = runApprovedPackageInstructions(
+      { ...packageInstructionsDepsOf(services), now: () => input.at },
+      { payload, expectedDigest: decided.approval.operationDigest, approvalId: input.approvalId },
     );
     if (!written.ok) return { ok: false, code: written.code, message: written.message };
     appendHostReply(services, { conversationId: input.conversationId, blocks: written.blocks, at: input.at });

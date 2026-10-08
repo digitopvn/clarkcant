@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import {
   PACKAGE_MANIFEST_SCHEMA_VERSION,
+  PACKAGE_MANIFEST_SCHEMA_VERSIONS,
   describeUnsafePattern,
   fixtureDatasetSchema,
   manifestProblems,
@@ -78,7 +79,8 @@ export type WidgetManifestV1 = z.infer<typeof widgetManifestV1Schema>;
  */
 export function upgradeWidgetManifestV1(manifest: WidgetManifestV1): unknown {
   return {
-    schemaVersion: PACKAGE_MANIFEST_SCHEMA_VERSION,
+    // The version that carries exactly what v1 could: widgets.
+    schemaVersion: 2,
     id: manifest.id,
     version: manifest.version,
     displayName: manifest.displayName,
@@ -163,10 +165,15 @@ export function parseManifest(value: unknown): { ok: true; manifest: PackageMani
     const v1 = widgetManifestV1Schema.safeParse(value);
     if (!v1.success) return { ok: false, problems: [firstIssue(v1.error, "does not match the schemaVersion 1 manifest")] };
     candidate = upgradeWidgetManifestV1(v1.data);
-  } else if (schemaVersion !== PACKAGE_MANIFEST_SCHEMA_VERSION) {
+  } else if (!(PACKAGE_MANIFEST_SCHEMA_VERSIONS as readonly unknown[]).includes(schemaVersion)) {
+    const known = PACKAGE_MANIFEST_SCHEMA_VERSIONS.join(" or ");
     return {
       ok: false,
-      problems: [`schemaVersion must be ${String(PACKAGE_MANIFEST_SCHEMA_VERSION)} (or 1, the widget-only format still read)`],
+      problems: [
+        typeof schemaVersion === "number" && schemaVersion > PACKAGE_MANIFEST_SCHEMA_VERSION
+          ? `schemaVersion ${String(schemaVersion)} is newer than this build reads (${known}); update ClarkCant`
+          : `schemaVersion must be ${known} (or 1, the widget-only format still read)`,
+      ],
     };
   }
   const parsed = packageManifestSchema.safeParse(candidate);

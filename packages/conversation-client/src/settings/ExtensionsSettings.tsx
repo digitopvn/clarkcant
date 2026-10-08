@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
-import type { ConnectionStatus } from "@clarkcant/contracts";
+import {
+  type ConnectionStatus,
+  PACKAGE_INSTRUCTIONS_PREFERENCE,
+  type PackageInstructionsEnablement,
+  packageInstructionsPreferenceSchema,
+} from "@clarkcant/contracts";
 
 import { useLocale, useT } from "../i18n/locale-context.tsx";
 import { readableInstant } from "../blocks.tsx";
@@ -480,6 +485,22 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
   const [busy, setBusy] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<{ tone: "done" | "failed"; text: string } | undefined>(undefined);
   const statusLine = useRef<HTMLParagraphElement>(null);
+  /*
+   * The projects each package's instructions are on in. Turned on by asking Clark, which the execution policy decides;
+   * here the person can see them and turn one off with their own click.
+   */
+  const [instructions, setInstructions] = useState<PackageInstructionsEnablement[]>([]);
+
+  const readInstructions = useCallback(async (): Promise<PackageInstructionsEnablement[]> => {
+    try {
+      const answer = await client.preferences();
+      const stored = answer.preferences.find((entry) => entry.key === PACKAGE_INSTRUCTIONS_PREFERENCE)?.value;
+      const parsed = packageInstructionsPreferenceSchema.safeParse(stored ?? []);
+      return parsed.success ? parsed.data : [];
+    } catch {
+      return [];
+    }
+  }, [client]);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -492,7 +513,8 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
       setPackages([]);
       setRestorable([]);
     }
-  }, [client]);
+    setInstructions(await readInstructions());
+  }, [client, readInstructions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -506,10 +528,42 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
       .catch(() => {
         if (!cancelled) setPackages([]);
       });
+    void readInstructions().then((entries) => {
+      if (!cancelled) setInstructions(entries);
+    });
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, readInstructions]);
+
+  const turnOffInstructions = (packageId: string, project: string): void => {
+    if (busy !== undefined) return;
+    setBusy(`${packageId}:instructions:${project}`);
+    setStatus(undefined);
+    // The node removes this one pair from what it stores now; the list on screen is never written back.
+    void client
+      .turnOffPackageInstructions(packageId, project)
+      .then(() => {
+        setStatus({
+          tone: "done",
+          text: t("settings.extensions.instructions.turnedOff").replace("{package}", packageId).replace("{project}", project),
+        });
+      })
+      .catch((cause: unknown) => {
+        setStatus({
+          tone: "failed",
+          text: t("settings.extensions.instructions.failed")
+            .replace("{package}", packageId)
+            .replace("{reason}", cause instanceof Error ? cause.message : String(cause)),
+        });
+      })
+      .finally(() => {
+        setBusy(undefined);
+        void load().then(() => {
+          statusLine.current?.focus();
+        });
+      });
+  };
 
   const change = (packageId: string, action: PackageChangeResponse["action"]): void => {
     if (busy !== undefined) return;
@@ -604,6 +658,35 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                   <>
                     <dt>{t("settings.extensions.connection.label")}</dt>
                     <PackageConnection client={client} packageId={entry.packageId} initial={entry.connection} />
+                  </>
+                )}
+                {instructions.some((enabled) => enabled.packageId === entry.packageId) && (
+                  <>
+                    <dt>{t("settings.extensions.instructions.label")}</dt>
+                    <dd data-package-instructions={entry.packageId}>
+                      <ul className="cc-installed-list">
+                        {instructions
+                          .filter((enabled) => enabled.packageId === entry.packageId)
+                          .map((enabled) => (
+                            <li key={enabled.project} data-package-instructions-project={enabled.project}>
+                              <code>{enabled.project}</code>{" "}
+                              <button
+                                type="button"
+                                data-package-instructions-off={enabled.project}
+                                aria-label={t("settings.extensions.instructions.turnOffFor")
+                                  .replace("{package}", entry.packageId)
+                                  .replace("{project}", enabled.project)}
+                                disabled={busy !== undefined}
+                                onClick={() => turnOffInstructions(entry.packageId, enabled.project)}
+                              >
+                                {busy === `${entry.packageId}:instructions:${enabled.project}`
+                                  ? t("settings.extensions.installed.working")
+                                  : t("settings.extensions.instructions.turnOff")}
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    </dd>
                   </>
                 )}
               </dl>

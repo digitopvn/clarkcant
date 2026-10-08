@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "when": { "path": "src/**" },
+      "include": ["style"]
+    }
+  ]
+}

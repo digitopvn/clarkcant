@@ -1,6 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   isPersonOnlyRoute,
@@ -9,6 +9,9 @@ import {
   messageBlocksAsText,
   instructionNameSchema,
   isHostWrittenMessage,
+  manifestProblems,
+  PACKAGE_INSTRUCTION_LIMITS,
+  packageManifestSchema,
   PERSON_ONLY_REFUSAL,
   PROJECT_INSTRUCTION_LIMITS,
   PROJECT_INSTRUCTIONS_PATH,
@@ -22,8 +25,8 @@ import {
  *
  * A client of a node's open gateway: every command is a request to a route any other app could make with the same
  * token, so what the terminal can do is exactly what HTTP, MCP and the WebSocket can do. It never opens the node's
- * database or starts a node of its own. The one exception, `instructions check`, talks to no node at all: it checks a
- * local file against an open contract.
+ * database or starts a node of its own. The one exception, `instructions check`, talks to no node at all: it checks
+ * local files against an open contract.
  *
  * Kept free of `process` so a test can drive it: the entry point hands in the environment, the streams and `fetch`.
  */
@@ -57,7 +60,8 @@ Commands:
   api <METHOD> <path> [jsonBody]       Call any REST route except a person's decision
   mcp                                  Serve MCP over stdio, bridged to the node's /mcp
   discover                             Print the node's discovery document
-  instructions check [file|folder]     Check a project's ${PROJECT_INSTRUCTIONS_PATH} offline
+  instructions check [file|folder]     Check a project's ${PROJECT_INSTRUCTIONS_PATH}, or a package's
+                                       instructions facets (its clarkcant.json), offline
 
 Options:
   --url <url>          Node URL (CLARKCANT_URL, default ${DEFAULT_URL})
@@ -317,61 +321,42 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
 }
 
 /**
- * `clarkcant instructions check [file|project-folder]`: a project's conditional instructions against the open contract
+ * `clarkcant instructions check [file|folder]`: conditional instructions against the open contract
  * (`project-instructions.ts` in `@clarkcant/contracts`), the same schema the node reads with. Checked as a file is
- * written now, so a missing `version` is reported even though a node still reads such a file as version 1. A folder is
- * read as a project, so its `.clarkcant/instructions.json` is checked. A rule that includes a snippet with no `.md` file
- * beside it is a warning, not a problem: the file is still valid, and the node states nothing for that name.
+ * written now, so a missing `version` is reported even though a node still reads such a file as version 1.
+ *
+ * - A project folder is read as a project, so its `.clarkcant/instructions.json` is checked.
+ * - A package folder (one with a `clarkcant.json`), or that `clarkcant.json` itself, is read as a package: the manifest is
+ *   checked against the package contract, and each `instructions` facet's rules file and snippets as a project's are.
+ *   A rule's `pin` is a warning there, since a node ignores it for a package.
+ *
+ * A rule that includes a snippet with no `.md` file beside it is a warning, not a problem: the file is still valid, and
+ * the node states nothing for that name.
  */
 function checkInstructions(rest: string[], io: CliIo, asJson: boolean): number {
   const [action, given = PROJECT_INSTRUCTIONS_PATH, extra] = rest;
   if (action !== "check" || extra !== undefined) {
-    io.stderr(`clarkcant: instructions has one command: clarkcant instructions check [file|project-folder]\n`);
+    io.stderr(`clarkcant: instructions has one command: clarkcant instructions check [file|folder]\n`);
     return 1;
   }
   let path = given;
-  let size: number;
   try {
-    let stat = statSync(path);
+    const stat = statSync(path);
     if (stat.isDirectory()) {
-      path = join(path, ...PROJECT_INSTRUCTIONS_PATH.split("/"));
-      stat = statSync(path);
+      const manifest = join(path, "clarkcant.json");
+      path = isFile(manifest) ? manifest : join(path, ...PROJECT_INSTRUCTIONS_PATH.split("/"));
     }
-    if (!stat.isFile()) throw new Error("not a file");
-    size = stat.size;
+    if (!statSync(path).isFile()) throw new Error("not a file");
   } catch (cause) {
     io.stderr(`clarkcant: could not read ${path} (${cause instanceof Error ? cause.message : String(cause)})\n`);
     return 1;
   }
-  let problems: string[] = [];
-  let warnings: string[] = [];
-  let rules = 0;
-  if (size > PROJECT_INSTRUCTION_LIMITS.fileBytes) {
-    // Not read at all: a node does not read it either.
-    problems = [`file: larger than ${String(PROJECT_INSTRUCTION_LIMITS.fileBytes)} bytes, so a node does not read it`];
-  } else {
-    const read = io.readFile ?? ((file: string) => readFileSync(file, "utf8"));
-    let text: string;
-    try {
-      text = read(path);
-    } catch (cause) {
-      io.stderr(`clarkcant: could not read ${path} (${cause instanceof Error ? cause.message : String(cause)})\n`);
-      return 1;
-    }
-    let value: unknown;
-    let parsed = true;
-    try {
-      value = JSON.parse(text);
-    } catch {
-      parsed = false;
-      problems = ["file: not valid JSON"];
-    }
-    if (parsed) {
-      problems = projectInstructionsProblems(value);
-      const listed = (value as { rules?: unknown } | null)?.rules;
-      rules = Array.isArray(listed) ? listed.length : 0;
-      warnings = missingSnippets(path, listed);
-    }
+  const read = io.readFile ?? ((file: string) => readFileSync(file, "utf8"));
+  const checked = basename(path) === "clarkcant.json" ? checkPackageInstructions(path, read) : checkRulesFile(path, read, false);
+  const { problems, warnings, rules } = checked;
+  if (checked.unreadable !== undefined) {
+    io.stderr(`clarkcant: could not read ${checked.unreadable}\n`);
+    return 1;
   }
   if (asJson) {
     io.stdout(`${JSON.stringify({ path, ok: problems.length === 0, problems, warnings }, null, 2)}\n`);
@@ -386,6 +371,106 @@ function checkInstructions(rest: string[], io: CliIo, asJson: boolean): number {
   return problems.length === 0 ? 0 : 1;
 }
 
+interface InstructionsCheck {
+  problems: string[];
+  warnings: string[];
+  rules: number;
+  /** A file that exists but could not be read, with why: the command fails rather than reporting on nothing. */
+  unreadable?: string;
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** One rules file: its size, its JSON, the contract, and its snippets beside it; `pinIgnored` warns about each `pin`. */
+function checkRulesFile(path: string, read: (file: string) => string, pinIgnored: boolean): InstructionsCheck {
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch (cause) {
+    return { problems: [], warnings: [], rules: 0, unreadable: `${path} (${cause instanceof Error ? cause.message : String(cause)})` };
+  }
+  // Not read at all: a node does not read it either.
+  if (size > PROJECT_INSTRUCTION_LIMITS.fileBytes) {
+    return { problems: [`file: larger than ${String(PROJECT_INSTRUCTION_LIMITS.fileBytes)} bytes, so a node does not read it`], warnings: [], rules: 0 };
+  }
+  let text: string;
+  try {
+    text = read(path);
+  } catch (cause) {
+    return { problems: [], warnings: [], rules: 0, unreadable: `${path} (${cause instanceof Error ? cause.message : String(cause)})` };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { problems: ["file: not valid JSON"], warnings: [], rules: 0 };
+  }
+  const listed = (value as { rules?: unknown } | null)?.rules;
+  const pins = pinIgnored && Array.isArray(listed)
+    ? listed.flatMap((rule, index) =>
+        (rule as { pin?: unknown } | null)?.pin === true ? [`rules[${String(index)}].pin: ignored for a package's rules; the rule is stated once per session`] : [],
+      )
+    : [];
+  return {
+    problems: projectInstructionsProblems(value),
+    warnings: [...missingSnippets(path, listed), ...pins],
+    rules: Array.isArray(listed) ? listed.length : 0,
+  };
+}
+
+/** A package: its manifest against the package contract, then each `instructions` facet's rules file. */
+function checkPackageInstructions(path: string, read: (file: string) => string): InstructionsCheck {
+  let text: string;
+  try {
+    text = read(path);
+  } catch (cause) {
+    return { problems: [], warnings: [], rules: 0, unreadable: `${path} (${cause instanceof Error ? cause.message : String(cause)})` };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { problems: ["clarkcant.json: not valid JSON"], warnings: [], rules: 0 };
+  }
+  const parsed = packageManifestSchema.safeParse(value);
+  if (!parsed.success) {
+    return {
+      problems: parsed.error.issues.map((issue) => `clarkcant.json: ${issue.path.join(".") || "manifest"}: ${issue.message}`),
+      warnings: [],
+      rules: 0,
+    };
+  }
+  const result: InstructionsCheck = {
+    problems: manifestProblems(parsed.data).map((problem) => `clarkcant.json: ${problem}`),
+    warnings: [],
+    rules: 0,
+  };
+  const facets = parsed.data.facets.filter((facet) => facet.kind === "instructions");
+  if (facets.length === 0) result.warnings.push("clarkcant.json: declares no instructions facet");
+  for (const facet of facets) {
+    const where = `facet ${facet.id} (${facet.entry})`;
+    // Already reported above, and never opened: a rules file outside the package is not the package's.
+    if (result.problems.includes(`clarkcant.json: facet ${facet.id}: ${facet.entry} escapes the package root`)) continue;
+    const entry = join(dirname(path), ...facet.entry.split("/"));
+    if (!isFile(entry)) {
+      result.problems.push(`${where}: no such file in the package`);
+      continue;
+    }
+    const checked = checkRulesFile(entry, read, true);
+    if (checked.unreadable !== undefined) return checked;
+    result.problems.push(...checked.problems.map((problem) => `${where}: ${problem}`));
+    result.warnings.push(...checked.warnings.map((warning) => `${where}: ${warning}`), ...longSnippets(entry, read).map((warning) => `${where}: ${warning}`));
+    result.rules += checked.rules;
+  }
+  return result;
+}
+
 /** Each `include` name, in a rule shaped well enough to have one, whose snippet file is not beside the instructions file. */
 function missingSnippets(path: string, rules: unknown): string[] {
   if (!Array.isArray(rules)) return [];
@@ -396,13 +481,7 @@ function missingSnippets(path: string, rules: unknown): string[] {
     for (const [at, name] of include.entries()) {
       if (!instructionNameSchema.safeParse(name).success) continue;
       const snippet = projectInstructionSnippetPath(name as string);
-      let found: boolean;
-      try {
-        found = statSync(join(dirname(path), ...snippet.split("/"))).isFile();
-      } catch {
-        found = false;
-      }
-      if (!found) {
+      if (!isFile(join(dirname(path), ...snippet.split("/")))) {
         warnings.push(
           `rules[${String(index)}].include[${String(at)}]: no ${snippet} beside this file, so the rule states nothing for it`,
         );
@@ -411,6 +490,33 @@ function missingSnippets(path: string, rules: unknown): string[] {
   }
   return warnings;
 }
+
+/** Each snippet beside a package's rules file that a node clips to the package slice, so its end is never stated. */
+function longSnippets(path: string, read: (file: string) => string): string[] {
+  const folder = join(dirname(path), "instructions");
+  let names: string[];
+  try {
+    names = readdirSync(folder).filter((name) => name.endsWith(".md")).sort();
+  } catch {
+    return [];
+  }
+  const warnings: string[] = [];
+  for (const name of names) {
+    let text: string;
+    try {
+      text = read(join(folder, name)).trim();
+    } catch {
+      continue;
+    }
+    if (text.length > PACKAGE_INSTRUCTION_LIMITS.snippetChars) {
+      warnings.push(
+        `instructions/${name}: ${String(text.length)} characters; a node states only the first ${String(PACKAGE_INSTRUCTION_LIMITS.snippetChars)} of a package's snippet`,
+      );
+    }
+  }
+  return warnings;
+}
+
 interface AskContext {
   connection: Connection;
   io: CliIo;

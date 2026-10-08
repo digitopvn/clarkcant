@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
-  PACKAGE_MANIFEST_SCHEMA_VERSION,
+  packageManifestSchemaVersionFor,
   directoryEntrySchema,
   type DirectoryEntry,
   type PackageManifest,
@@ -220,7 +220,8 @@ function init(root: string, template: Template): void {
   mkdirSync(join(root, "test"), { recursive: true });
 
   const manifest = {
-    schemaVersion: PACKAGE_MANIFEST_SCHEMA_VERSION,
+    // The oldest version that carries a widget, so the package installs on every host that reads widgets.
+    schemaVersion: packageManifestSchemaVersionFor([{ kind: "ui" }]),
     id,
     version: "0.1.0",
     displayName: "My Widget",

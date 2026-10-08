@@ -37,6 +37,7 @@ import {
 } from "@clarkcant/widget-host";
 
 import { bindingAvailability } from "./application/action-bindings.ts";
+import { forgetUninstalledPackageInstructions } from "./application/package-instructions.ts";
 import { withCalendarViewBinding } from "./calendar-binding.ts";
 import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { readModelPool } from "./model-registry.ts";
@@ -522,6 +523,18 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     newId,
   } satisfies WidgetDeps & { db: Runtime["db"]; nodeId: string };
 
+  /*
+   * A package's instructions pairs are forgotten right after it is uninstalled; one that stopped or failed in between
+   * left pairs for a package that is no longer here. They go now, before any turn, so installing or restoring that id
+   * later never states its rules again without a new decision. A failure here is said, and the node still starts.
+   */
+  try {
+    forgetUninstalledPackageInstructions({ ...base, principalId: runtime.identity.ownerPrincipalId });
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "package-instructions-boot-cleanup-failed", reason: error instanceof Error ? error.message : String(error) })}\n`,
+    );
+  }
   // Where a turn and a composed surface learn the person's interface language: Settings' `experience.language`, read
   // when they are written, so the words the host puts in a conversation are in the language the person reads.
   const localeOf = (principalId: string): AppIntentLocale => preferredAppIntentLocale({ db: runtime.db, now: base.now }, principalId);

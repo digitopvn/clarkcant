@@ -1204,7 +1204,7 @@ socket `/voice` và `/terminal`:
 ## CLI
 
 `apps/cli` (`@clarkcant/cli`) là client của gateway. Ngoại lệ duy nhất là `instructions check`: lệnh này không liên
-lạc với node nào mà kiểm tra một tệp cục bộ theo một hợp đồng mở. CLI chưa được publish lên npm; chạy từ checkout bằng
+lạc với node nào mà kiểm tra các tệp cục bộ theo một hợp đồng mở. CLI chưa được publish lên npm; chạy từ checkout bằng
 `node apps/cli/src/main.ts` hoặc `pnpm clarkcant`.
 
 | Lệnh | |
@@ -1216,7 +1216,7 @@ lạc với node nào mà kiểm tra một tệp cục bộ theo một hợp đ�
 | `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người và việc cài gói |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
-| `clarkcant instructions check [file\|folder]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án (xem bên dưới) |
+| `clarkcant instructions check [file\|folder]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án, hoặc các facet `instructions` của một gói (xem bên dưới) |
 
 Kết nối: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, nếu không thì đọc `identity.json` trong
 `--data-dir` / `CLARKCANT_DATA_DIR` (mặc định `~/.clarkcant`). File identity chỉ được đọc cho node trên chính máy
@@ -1270,9 +1270,48 @@ này, và `clarkcant instructions check` cũng dùng đúng schema đó để ki
   không hợp lệ đều được báo trên một dòng riêng, và mã thoát là 1. Một quy tắc include một tên không có
   `instructions/<name>.md` nằm cạnh tệp chỉ là cảnh báo; mã thoát vẫn là 0. `--json` in
   `{ path, ok, problems, warnings }`. Tệp mặc định là `.clarkcant/instructions.json` trong thư mục hiện tại, và có thể
-  truyền thư mục dự án thay cho tệp.
+  truyền thư mục dự án thay cho tệp. Một thư mục gói (thư mục có `clarkcant.json`), hoặc chính tệp `clarkcant.json`
+  đó, được kiểm tra như một gói: xem bên dưới.
 - Một hướng dẫn không cấp quyền gì. Node chỉ đọc nó từ một dự án nằm trong root mà người dùng đã cấp, và mọi tác động
-  vẫn đi qua chính sách thực thi. Hiện một gói chưa thể đóng góp quy tắc.
+  vẫn đi qua chính sách thực thi.
+
+### Package instructions
+
+Một gói có thể mang quy tắc theo cùng hợp đồng này qua một facet `instructions`, là nội dung khai báo và cần
+`"schemaVersion": 3` ([widget development §4](widget-development.vi.md#4-package-manifest)). Một gói khai báo tối đa một
+facet như vậy. `entry` của facet là tệp quy tắc, và mỗi đoạn hướng dẫn là `instructions/<name>.md` nằm cạnh tệp đó, bên
+trong gói.
+
+- **Tắt cho tới khi người dùng bật, theo từng dự án.** Preference của node `instructions.packages` (scope `node`) liệt
+  kê các cặp `{ "project": "<thư mục tuyệt đối>", "packageId": "<id>" }`, tối đa 64 cặp
+  (`packages/contracts/src/package-instructions.ts`). Việc ghi hoặc hoàn tác preference này trên
+  `/preferences/instructions.packages` chỉ dành cho con người: không AI client, widget hay bề mặt máy từ xa nào chạm
+  tới được. Clark chỉ thay đổi nó qua `manage_package` `enable_instructions` / `disable_instructions`, một tác động mà
+  chính sách thực thi quyết định như một thao tác ghi cục bộ: nó chạy, hoặc trở thành một thẻ phê duyệt do host sở hữu,
+  hoặc bị từ chối. Một thẻ chỉ bao gói ở đúng phiên bản và digest mà nó đã hiển thị; gói được cập nhật hoặc quay lui
+  trong lúc thẻ chờ sẽ bị từ chối (`PACKAGE_CHANGED`). Để bật, dự án phải là một thư mục nằm trong root đã cấp và gói
+  phải được cài với một facet `instructions` đọc được; việc bật không cấp root nào.
+- **Tắt cho một dự án.** `POST /packages/instructions/turn-off` `{ "packageId", "project" }` bỏ đúng cặp đó khỏi những
+  gì node đang giữ và trả về `{ packageId, project, removed }`; một cặp đã tắt trả về `removed: false` và không ghi gì,
+  và route này không bao giờ thêm lại một cặp. Route chỉ dành cho con người, như preference; Cài đặt → Tiện ích & widget
+  dùng nó cho nút Tắt.
+- **Nơi áp dụng.** Chỉ cho công việc bên trong một dự án đã bật mà, sau khi phân giải liên kết, vẫn nằm trong root đã
+  cấp. Glob `path` tính tương đối với dự án đó và `when.project` là tên thư mục của nó. Một quy tắc chỉ include được các
+  đoạn hướng dẫn của chính facet của nó.
+- **Thứ tự ưu tiên và ngân sách.** Hướng dẫn riêng của dự án được nêu trước. Các đoạn hướng dẫn của gói dùng phần còn
+  lại, và tối đa 2.000 ký tự mỗi lượt cho tất cả các gói; một đoạn bị cắt ở 1.500 ký tự. `pin` của một gói bị bỏ qua,
+  nên mỗi đoạn được nêu một lần mỗi session.
+- **Tin cậy.** Đoạn hướng dẫn của gói là dữ liệu: được bao bằng mã của session, các thẻ của nó bị vô hiệu hoá, và bị giữ
+  lại khi vượt quá các lớp dữ liệu của model nhận. Khối của nó mang `package="<id>@<version>"` và
+  `source="<id>@<version>/<name>"`, và một ghi chú của host nói rằng các khối như vậy xếp sau hướng dẫn riêng của dự án.
+  Mỗi đoạn được nêu đều được ghi vào nhật ký audit với kind `instructions`, kèm id gói, phiên bản và tên đoạn, không
+  bao giờ kèm nội dung; một đoạn bị giữ lại được ghi một lần mỗi hội thoại.
+- **Gỡ bỏ.** Tắt một cặp sẽ bỏ các quy tắc của nó khỏi lượt kế tiếp. Gỡ cài đặt gói sẽ xoá mọi cặp của gói ngay sau khi
+  gỡ cài đặt, và khôi phục gói hoặc cài gói khi nó chưa được cài sẽ xoá mọi cặp còn sót lại cho id đó, nên gói bắt đầu
+  với hướng dẫn tắt ở mọi nơi cho tới khi người dùng bật lại. Khi khởi động, node cũng bỏ mọi cặp có gói không được cài.
+  Nâng cấp hoặc quay lui giữ nguyên các cặp, vì gói vẫn được cài.
+- `clarkcant instructions check <thư mục gói>` kiểm tra manifest theo `packageManifestSchema`, cùng tệp quy tắc và các
+  đoạn hướng dẫn của facet `instructions`, cảnh báo khi có `pin` và khi một đoạn dài hơn mức node nêu.
 
 ## Thay đổi một bề mặt
 

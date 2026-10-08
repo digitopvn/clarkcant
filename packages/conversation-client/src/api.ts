@@ -1927,6 +1927,14 @@ export class GatewayClient {
   }
 
   /**
+   * Turn one package's instructions off in one project. The node removes exactly that pair from what it stores now, so
+   * a list this screen read earlier never overwrites a change made since; a pair already off answers `removed: false`.
+   */
+  turnOffPackageInstructions(packageId: string, project: string): Promise<{ packageId: string; project: string; removed: boolean }> {
+    return this.#call("POST", "/packages/instructions/turn-off", { packageId, project });
+  }
+
+  /**
    * Start connecting a package's account. Answers the provider's authorization URL, which the caller opens in the system
    * browser; the provider sends that browser back to the node, which finishes the connection itself. Only from this
    * node's own machine, because the browser has to come back over loopback.

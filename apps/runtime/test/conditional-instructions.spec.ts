@@ -566,7 +566,7 @@ describe("what is stated", () => {
       `<project-instruction nonce="n1" source="clark/.clarkcant/instructions/b.md">\nnội dung b\n</project-instruction nonce="n1">`,
     );
     expect(instructionSection({ active, stated: new Set(["a", "b"]) }).stated).toEqual(["a"]);
-    expect(instructionSection({ active, stated: new Set(["a", "b"]), newOnly: true })).toEqual({ text: "", stated: [], withheld: 0 });
+    expect(instructionSection({ active, stated: new Set(["a", "b"]), newOnly: true })).toEqual({ text: "", stated: [], withheld: 0, packages: [] });
   });
 
   it("withholds one above what the model may receive, and counts it", () => {

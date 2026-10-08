@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { PACKAGE_INSTRUCTION_LIMITS } from "@clarkcant/contracts";
 import { bootNodeServices, createNodeServer, type NodeServices } from "@clarkcant/runtime";
 
 import { type CliIo, resolveConnection, runCli } from "../src/cli.ts";
@@ -206,6 +207,83 @@ describe("instructions check", () => {
     expect(none.err.join("")).toContain(`could not read ${instructions(empty)}`);
     const wrong = io();
     expect(await runCli(["instructions", "fix"], wrong)).toBe(1);
+  });
+
+  /** A package folder whose manifest declares one instructions facet at `rules/instructions.json`. */
+  const pkg = (rules: unknown, overrides: Record<string, unknown> = {}, snippets: string[] = ["migrations"]): string => {
+    const folder = mkdtempSync(join(dir, "package-"));
+    mkdirSync(join(folder, "rules", "instructions"), { recursive: true });
+    writeFileSync(
+      join(folder, "clarkcant.json"),
+      JSON.stringify({
+        schemaVersion: 3,
+        id: "com.example.rules",
+        version: "1.0.0",
+        displayName: "Rules",
+        description: "Project instructions as a package.",
+        hostApi: { min: 1, max: 1 },
+        facets: [{ kind: "instructions", id: "rules", entry: "rules/instructions.json", isolation: "declarative" }],
+        requestedCapabilities: [],
+        permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+        platforms: ["web"],
+        ...overrides,
+      }),
+    );
+    writeFileSync(join(folder, "rules", "instructions.json"), JSON.stringify(rules));
+    for (const name of snippets) writeFileSync(join(folder, "rules", "instructions", `${name}.md`), "words");
+    return folder;
+  };
+
+  it("checks a package's instructions facet, from its folder or its clarkcant.json", async () => {
+    const folder = pkg({ version: 1, rules: [RULE] });
+    const manifest = join(folder, "clarkcant.json");
+    const run = io();
+    expect(await runCli(["instructions", "check", folder], run)).toBe(0);
+    expect(run.out.join("")).toBe(`${manifest}: ok (1 rule)\n`);
+    expect(await runCli(["instructions", "check", manifest], io())).toBe(0);
+  });
+
+  it("reports a facet's invalid rules and missing snippets, warns about a pin, and needs schemaVersion 3", async () => {
+    const folder = pkg({ version: 1, rules: [{ ...RULE, pin: true }, { when: {}, include: ["../x"] }] }, {}, []);
+    const run = io();
+    expect(await runCli(["instructions", "check", folder], run)).toBe(1);
+    const out = run.out.join("");
+    expect(out).toContain("facet rules (rules/instructions.json): rules[1]");
+    expect(out).toContain("facet rules (rules/instructions.json): rules[0].include[0]: no instructions/migrations.md");
+    expect(out).toContain("rules[0].pin: ignored for a package's rules");
+
+    const old = io();
+    expect(await runCli(["instructions", "check", pkg({ version: 1, rules: [RULE] }, { schemaVersion: 2 })], old)).toBe(1);
+    expect(old.out.join("")).toContain('an instructions facet needs "schemaVersion": 3');
+
+    const gone = pkg({ version: 1, rules: [RULE] }, { facets: [{ kind: "instructions", id: "rules", entry: "rules/none.json", isolation: "declarative" }] });
+    const missing = io();
+    expect(await runCli(["instructions", "check", gone], missing)).toBe(1);
+    expect(missing.out.join("")).toContain("facet rules (rules/none.json): no such file in the package");
+  });
+
+  it("allows one instructions facet, never opens a rules file outside the package, and warns about a snippet a node clips", async () => {
+    const two = pkg({ version: 1, rules: [RULE] }, {
+      facets: [
+        { kind: "instructions", id: "rules", entry: "rules/instructions.json", isolation: "declarative" },
+        { kind: "instructions", id: "more", entry: "rules/instructions.json", isolation: "declarative" },
+      ],
+    });
+    const twice = io();
+    expect(await runCli(["instructions", "check", two], twice)).toBe(1);
+    expect(twice.out.join("")).toContain("at most one instructions facet");
+
+    const escapes = pkg({ version: 1, rules: [RULE] }, { facets: [{ kind: "instructions", id: "rules", entry: "../outside.json", isolation: "declarative" }] });
+    const outside = io();
+    expect(await runCli(["instructions", "check", escapes], outside)).toBe(1);
+    expect(outside.out.join("")).toContain("escapes the package root");
+    expect(outside.out.join("")).not.toContain("no such file in the package");
+
+    const long = pkg({ version: 1, rules: [RULE] });
+    writeFileSync(join(long, "rules", "instructions", "migrations.md"), "x".repeat(PACKAGE_INSTRUCTION_LIMITS.snippetChars + 1));
+    const clipped = io();
+    expect(await runCli(["instructions", "check", long], clipped)).toBe(0);
+    expect(clipped.out.join("")).toContain(`instructions/migrations.md: ${String(PACKAGE_INSTRUCTION_LIMITS.snippetChars + 1)} characters`);
   });
 });
 describe("commands", () => {

@@ -78,7 +78,8 @@ A package can have several facets:
 - tools/services;
 - skills;
 - recipes;
-- themes.
+- themes;
+- project instructions.
 
 A UI facet must update/activate independently of the Pi worker when no Pi facet has changed.
 
@@ -144,6 +145,7 @@ Each facet kind runs in exactly one lane, and the schema refuses any other pairi
 | `ui` | `isolated-ui` | A widget drawn in its own frame. `id` must equal the id inside `definition`. |
 | `tools` | `service` | A service the node runs in a container, speaking MCP over stdio, that declares every capability it provides. |
 | `skills`, `prompts`, `themes`, `setup` | `declarative` | Data a host reads and never runs. |
+| `instructions` | `declarative` | Conditional project instructions, stated as data only in projects the person enabled them for. Needs `schemaVersion` 3. |
 | `driver`, `voice` | `service` or `trusted-native` | Part of the vocabulary, so a listing can show the lane. No host runs one from a package yet. |
 
 The reader also refuses a manifest when:
@@ -155,7 +157,13 @@ The reader also refuses a manifest when:
   `project`);
 - a facet's `entry` or `definition` is outside the package (`..`, an absolute path, a drive letter) or is a URL;
 - a `tools` capability `ref` is not named under the package id (`<package id>.<name>@<major>`), or a tool or
-  capability is declared twice.
+  capability is declared twice;
+- an `instructions` facet is declared with `"schemaVersion": 2`.
+
+**Schema version 3.** `schemaVersion` is 2 for every package except one that carries an `instructions` facet, which
+needs 3; the tools write the lowest version a package needs, so a package without that facet stays installable on a
+host that reads only version 2. Such a host refuses a version 3 package as a whole, with a message that names the
+version, rather than install it without the facet. A host that reads version 3 validates the facet like any other.
 
 A `tools` facet declares its capabilities in the manifest, so consent can show them before any of the package's code
 runs. Installing the package is the consent to what it declares; each call is still decided by the execution policy.
@@ -193,6 +201,24 @@ disabled controls, the host's own cards (their edge, plain surface and buttons: 
 approval's Approve and Deny, the inbox's answers or Stop) and reduced motion, from the system or from
 Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
+
+**How the node reads an instructions facet.** A package declares at most one `instructions` facet. Its `entry` is a rules file in the same open
+contract as a project's `.clarkcant/instructions.json` (`projectInstructionRuleSchema` in
+`packages/contracts/src/project-instructions.ts`; see [open interfaces](open-interfaces.md#package-instructions)), such
+as `{ "kind": "instructions", "id": "rules", "entry": "rules/instructions.json", "isolation": "declarative" }`. A snippet a
+rule includes is `instructions/<name>.md` beside that file (`rules/instructions/<name>.md` here), named by a plain name,
+so a rule cannot reach the host's files, a project's or another package's. The node reads both from the installed
+bytes through the same containment as a widget's files, under the project file's limits, and clips a snippet at 1,500
+characters (`packages/core/src/installed-instructions.ts`). Installing the package states nothing. The rules apply only
+in a project the person turned the package's instructions on for, by asking Clark (`manage_package`
+`enable_instructions`, which the execution policy decides) and only while that project is inside a root the person
+already granted. Within it, paths are relative to the project and `when.project` names its folder. A package's
+snippets are stated after the project's own, within their own slice of the turn's budget, framed with the session's
+code, withheld above the receiving model's data classes, labelled and audited with the package id and version, and
+never pinned: a rule's `pin` is ignored. A snippet grants nothing. Settings → Extensions & widgets lists the projects
+each package's instructions are on in, with Turn off. Uninstalling the package turns its instructions off everywhere, so
+installing or restoring it again starts with them off; an upgrade or rollback keeps them on where they were.
+`clarkcant instructions check <package folder>` validates the manifest and each facet's rules and snippets.
 
 **Reference packages.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) and
 [Neo Brutalism](../examples/themes/neo-brutalism/README.md) are generalized data-only packages, installed through

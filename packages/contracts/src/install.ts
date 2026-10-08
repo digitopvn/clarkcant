@@ -29,6 +29,7 @@ export const facetKindSchema = z.enum([
   "setup",
   "driver",
   "voice",
+  "instructions",
 ]);
 export type FacetKind = z.infer<typeof facetKindSchema>;
 
@@ -169,11 +170,29 @@ export const nativeFacetSchema = z.strictObject({
   isolation: z.enum(["service", "trusted-native"]),
 });
 
+/**
+ * Conditional instruction rules a package contributes, written in the same open contract a project's
+ * `.clarkcant/instructions.json` is (`project-instructions.ts`): `entry` is the rules file in the package, and each
+ * snippet a rule includes is `instructions/<name>.md` in the folder that holds it.
+ *
+ * Data the host reads and never runs, in the declarative lane with themes. A rule grants nothing, and it applies only in
+ * a project where the person enabled this package's instructions (`package-instructions.ts`); installing the package
+ * does not enable it. Needs `schemaVersion` 3.
+ */
+export const instructionsFacetSchema = z.strictObject({
+  kind: z.literal("instructions"),
+  id: facetIdSchema,
+  entry: packagePathSchema,
+  isolation: z.literal("declarative"),
+});
+export type InstructionsFacet = z.infer<typeof instructionsFacetSchema>;
+
 export const facetDeclarationSchema = z.discriminatedUnion("kind", [
   uiFacetSchema,
   toolsFacetSchema,
   declarativeFacetSchema,
   nativeFacetSchema,
+  instructionsFacetSchema,
 ]);
 export type FacetDeclaration = z.infer<typeof facetDeclarationSchema>;
 
@@ -183,8 +202,24 @@ export type FacetDeclaration = z.infer<typeof facetDeclarationSchema>;
  * `1` was the widget-only manifest `clark widget` scaffolded before a package could carry anything but widgets. It is
  * still read — a package installed under it keeps working — but only by `normalizeWidgetManifestV1` in core, which
  * presents it in this shape. Nothing writes `1` any more.
+ *
+ * `3` is `2` plus the `instructions` facet, and is the newest. A host that reads only `2` refuses a `3` manifest as a
+ * whole rather than misreading a facet it does not know, so a package declares `3` only when it carries instructions
+ * (`packageManifestSchemaVersionFor`), and every other package stays installable on those hosts.
  */
-export const PACKAGE_MANIFEST_SCHEMA_VERSION = 2;
+export const PACKAGE_MANIFEST_SCHEMA_VERSION = 3;
+
+/** The canonical manifest versions this build reads; `1` is read only through core's upgrade. */
+export const PACKAGE_MANIFEST_SCHEMA_VERSIONS = [2, 3] as const;
+export type PackageManifestSchemaVersion = (typeof PACKAGE_MANIFEST_SCHEMA_VERSIONS)[number];
+
+/** The facet kinds that need a newer manifest version than `2`, with the version each needs. */
+const FACET_SCHEMA_VERSIONS: Partial<Record<FacetKind, PackageManifestSchemaVersion>> = { instructions: 3 };
+
+/** The lowest manifest version that can carry these facets: what a writer puts in `schemaVersion`. */
+export function packageManifestSchemaVersionFor(facets: readonly { kind: FacetKind }[]): PackageManifestSchemaVersion {
+  return facets.some((facet) => FACET_SCHEMA_VERSIONS[facet.kind] === 3) ? 3 : 2;
+}
 
 /** The most facets one package manifest may declare. */
 export const MAX_PACKAGE_FACETS = 64;
@@ -196,7 +231,7 @@ export const MAX_PACKAGE_FACETS = 64;
  * lifecycle: a UI facet updates without touching a service, a skill reloads without restarting a worker.
  */
 export const packageManifestSchema = z.strictObject({
-  schemaVersion: z.literal(PACKAGE_MANIFEST_SCHEMA_VERSION),
+  schemaVersion: z.union([z.literal(2), z.literal(3)]),
   id: z.string().min(1).max(160),
   version: semverSchema,
   displayName: z.string().min(1).max(200),
@@ -270,6 +305,19 @@ const CAPABILITY_NAMESPACE_PATTERN = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+$/;
 
 export function manifestProblems(manifest: PackageManifest): string[] {
   const problems: string[] = [];
+
+  for (const facet of manifest.facets) {
+    const needs = FACET_SCHEMA_VERSIONS[facet.kind];
+    if (needs !== undefined && manifest.schemaVersion < needs) {
+      problems.push(`facet ${facet.id}: an ${facet.kind} facet needs "schemaVersion": ${String(needs)}`);
+    }
+  }
+  // One rules file per package: every instructions facet is matched against every touched path on every ask, so more
+  // than one would multiply that work without adding anything one file cannot say.
+  const instructionFacets = manifest.facets.filter((facet) => facet.kind === "instructions");
+  if (instructionFacets.length > 1) {
+    problems.push(`facets: a package may declare at most one instructions facet; this one declares ${String(instructionFacets.length)} (${instructionFacets.map((facet) => facet.id).join(", ")})`);
+  }
 
   const ids = manifest.facets.map((facet) => facet.id);
   for (const id of new Set(ids)) {

@@ -79,3 +79,18 @@ describe("the browser suite's forecast package, in two versions", () => {
     expect(entry?.declaredReach ?? { origins: [], secrets: [], browserTokens: [] }).toEqual(declaredReachOf(pkg.manifest));
   });
 });
+
+/*
+ * The package-instructions journey installs a package that carries only an instructions facet, listed like the theme
+ * packages by the digest of its bytes, and checked the way `clarkcant instructions check` checks a package.
+ */
+describe("the browser suite's instructions package", () => {
+  const entries = JSON.parse(readFileSync(join(ROOT, "apps/web/e2e/fixtures/directory.json"), "utf8")) as FixtureEntry[];
+
+  it("lists it under the digest of its bytes, as a readable v3 package", () => {
+    const path = "apps/web/e2e/fixtures/instructions-package";
+    const entry = entries.find((candidate) => candidate.source.kind === "local" && candidate.source.path === path);
+    expect(digestOfDirectory(join(ROOT, path))).toEqual({ ok: true, digest: entry?.digest });
+    expect(readPackage(join(ROOT, path)).problems).toEqual([]);
+  });
+});

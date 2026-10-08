@@ -69,6 +69,7 @@ export interface HostText {
   /** Receipts for decisions and for tasks. */
   tasks: {
     refusedTilePolicy: string;
+    refusedPackageInstructions: string;
     refusedCapability: string;
     refusedCommand: string;
     /** `markers` is the project's markers already joined, or empty. */
@@ -225,6 +226,8 @@ export interface HostText {
     didNotStart: (cause: string) => string;
     /** The map tile policy as the card and its row describe it, and the receipt once it is written. */
     mapTiles: MapTileWords;
+    /** Turning a package's instructions on or off in one project, as the card and the receipt say it. */
+    packageInstructions: PackageInstructionWords;
   };
   /**
    * The start screen's suggestions. `label` is the chip, `text` what pressing it sends, `source` the line under it.
@@ -311,6 +314,16 @@ export interface MapTileWords {
   turnedOn: (origin: string) => string;
   setButKeyElsewhere: (origin: string, keyOrigin: string | undefined) => string;
   setButNoKey: (origin: string) => string;
+}
+
+/** A package's instructions enabled or disabled in one project, in the person's words. */
+export interface PackageInstructionWords {
+  /** The card: `name` and `version` are the package's, `project` the folder. */
+  enable: (name: string, version: string, project: string) => string;
+  disable: (name: string, project: string) => string;
+  /** The receipts once the change Clark asked for was written. */
+  enabled: (name: string, project: string) => string;
+  disabled: (name: string, project: string) => string;
 }
 
 /** Where a person enters the tile key, as the settings screen names it in each language. */
@@ -444,6 +457,7 @@ const VI: HostText = {
   duration: (ms) => (ms < 60_000 ? `${String(Math.max(1, Math.round(ms / 1_000)))} giây` : `${String(Math.round(ms / 60_000))} phút`),
   tasks: {
     refusedTilePolicy: "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi.",
+    refusedPackageInstructions: "Đã từ chối: hướng dẫn của gói không thay đổi.",
     refusedCapability: "Đã từ chối gọi capability đó. Không có gì được chạy.",
     refusedCommand: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
     projectSessionOpened: (project, relPath, kind, markers) =>
@@ -616,6 +630,13 @@ const VI: HostText = {
         `Đã đặt nhà cung cấp ô ${origin}, nhưng chưa có khóa dùng được nên bản đồ vẫn chỉ dùng nền ngoại tuyến cho tới khi ` +
         `người dùng nhập khóa trong ${VI_MAP_KEY_PLACE}`,
     },
+    packageInstructions: {
+      enable: (name, version, project) =>
+        `Bật hướng dẫn của gói ${name} ${version} cho dự án ${project}: các quy tắc của gói được nêu khi việc chạm tới dự án này, sau hướng dẫn riêng của dự án, và không cấp quyền nào`,
+      disable: (name, project) => `Tắt hướng dẫn của gói ${name} cho dự án ${project}`,
+      enabled: (name, project) => `Đã bật hướng dẫn của gói ${name} cho dự án ${project}; áp dụng từ lượt sau`,
+      disabled: (name, project) => `Đã tắt hướng dẫn của gói ${name} cho dự án ${project}; từ lượt sau không còn nêu nữa`,
+    },
   },
   suggestions: {
     recency: { unknown: "gần đây", today: "hôm nay", yesterday: "hôm qua", thisWeek: "trong tuần này", earlier: "trước đó" },
@@ -757,6 +778,7 @@ const EN: HostText = {
   },
   tasks: {
     refusedTilePolicy: "Refused the map tile policy change. Nothing changed.",
+    refusedPackageInstructions: "Refused: the package's instructions were not changed.",
     refusedCapability: "Refused to call that capability. Nothing ran.",
     refusedCommand: "Refused to run that command. Nothing ran.",
     projectSessionOpened: (project, relPath, kind, markers) =>
@@ -928,6 +950,13 @@ const EN: HostText = {
       setButNoKey: (origin) =>
         `Set the tile provider to ${origin}, but there is no usable key, so the map still uses only its offline base until ` +
         `the person enters a key in ${EN_MAP_KEY_PLACE}`,
+    },
+    packageInstructions: {
+      enable: (name, version, project) =>
+        `Turn on ${name} ${version}'s instructions for the project ${project}: its rules are stated when the work touches this project, after the project's own instructions, and grant nothing`,
+      disable: (name, project) => `Turn off ${name}'s instructions for the project ${project}`,
+      enabled: (name, project) => `Turned on ${name}'s instructions for the project ${project}; they apply from the next turn`,
+      disabled: (name, project) => `Turned off ${name}'s instructions for the project ${project}; they are not stated from the next turn`,
     },
   },
   suggestions: {

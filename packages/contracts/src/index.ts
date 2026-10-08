@@ -14,6 +14,7 @@ export * from "./turn-origin.ts";
 export * from "./redaction.ts";
 export * from "./data-class.ts";
 export * from "./project-instructions.ts";
+export * from "./package-instructions.ts";
 export * from "./themes.ts";
 export * from "./preferences.ts";
 export * from "./protocol.ts";

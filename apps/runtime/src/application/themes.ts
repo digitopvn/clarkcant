@@ -85,7 +85,7 @@ const CLARK_LISTING: ThemeListingView = {
  * The digest has to match too: an entry that now lists different bytes under the same version is not what was
  * installed, and drawing it would show a theme nobody consented to.
  */
-function entryFor(entries: readonly DirectoryEntry[], installed: InstalledPackageView): DirectoryEntry | undefined {
+export function entryFor(entries: readonly DirectoryEntry[], installed: InstalledPackageView): DirectoryEntry | undefined {
   return entries.find(
     (candidate) =>
       candidate.digest === installed.digest &&
