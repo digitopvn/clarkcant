@@ -381,6 +381,13 @@ describe("the orb on a machine without a GPU", () => {
     expect(isSoftwareRenderer(undefined)).toBe(false);
   });
 
+  it("matches the Apple software renderer by its full name, not any name that says software", () => {
+    // The word alone is not a rasteriser: a hardware adapter or a driver note may carry it.
+    expect(isSoftwareRenderer("ANGLE (Vendor, Hardware Adapter (Software Compatible) Direct3D11 vs_5_0 ps_5_0, D3D11)")).toBe(false);
+    expect(isSoftwareRenderer("Software")).toBe(false);
+    expect(isSoftwareRenderer("apple software renderer")).toBe(true);
+  });
+
   it("holds nothing back on a GPU, and draws less often at a lower resolution without one", () => {
     expect(orbFrameBudget(false)).toBe(ORB_GPU_BUDGET);
     expect(ORB_GPU_BUDGET.minFrameIntervalMs).toBe(0);
@@ -516,7 +523,7 @@ describe("the orb on a machine without a GPU", () => {
       if (pendingFrames() > 0) framesAskedWhileWaiting += 1;
       tick();
     }
-    // At most twenty a second, and still moving.
+    // About fifteen a second (a 50 ms wait lands on every fourth 60 Hz display frame), and still moving.
     expect(drawn).toBeGreaterThanOrEqual(15);
     expect(drawn).toBeLessThanOrEqual(20);
     expect(framesAskedWhileWaiting).toBeLessThan(drawn);
