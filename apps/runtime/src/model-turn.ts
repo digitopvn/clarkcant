@@ -1198,8 +1198,8 @@ export async function createModelTurn(options: {
    *
    * The choice comes first because it is the more specific statement and the one the UI collects. Without this the
    * picker was a control that stored a value nothing read unless the environment had already given the node a model —
-   * which is the same as a control that does nothing. `options.model` is still called per session below, so a pick
-   * made while the node is running reaches the next conversation.
+   * which is the same as a control that does nothing. `options.model` is still read on every turn below, so a pick
+   * made while the node is running reaches an open conversation from its next message.
    */
   const selection = options.model?.() ?? modelFromEnv(options.env);
   if (selection === undefined) return undefined;
