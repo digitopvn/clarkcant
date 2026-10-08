@@ -73,6 +73,11 @@ function slotById(list: HTMLElement, id: string): HTMLElement | undefined {
   return undefined;
 }
 
+/** Whether the browser has pulled the view up to the bottom since the place was held at `anchoredTop`. */
+function pulledToBottom(scroller: HTMLElement, anchoredTop: number): boolean {
+  return scroller.scrollTop <= anchoredTop - 1 && distanceFromBottom(scroller) < 1;
+}
+
 /** The first row on screen, and where its top is: what the reader is reading, which must not move under them. */
 function captureAnchor(scroller: HTMLElement, list: HTMLElement): Anchor | undefined {
   const top = scroller.getBoundingClientRect().top;
@@ -215,19 +220,38 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     const node = scroller.current;
     const rows = list.current;
     if (node === null || rows === null) return;
+    const pulled = pulledToBottom(node, anchoredTop.current);
     if (Math.abs(node.scrollTop - anchoredTop.current) >= 1) {
+      if (!pulled) {
+        anchor.current = captureAnchor(node, rows);
+        anchoredTop.current = node.scrollTop;
+        return;
+      }
       /*
        * Pulled up to a bottom that came closer: the browser's move, because less is below the view, not the reader's.
        *
        * Counted once because of the order a browser keeps: it reports a scroll (the report) and then runs the frame's
        * callbacks (`sync`, which moves `anchoredTop` to the new position) before any later task can draw the transcript
        * again. A report taken after this pull but before `anchoredTop` caught up would hold the pull twice, once in its
-       * position and once here, and leave the check lenient by its size.
+       * position and once here, and leave the check lenient by its size. A pull first heard as a scroll is held in that
+       * scroll's own event, before it is reported (`onScroll` below), so it is counted once there too.
+       *
+       * For a reader who had left the bottom, the pull is not where they were reading, though. When rows above the screen
+       * shrink under them - the window mounting rows that the browser then stops drawing off screen, say - the browser
+       * takes the view up only as far as the new bottom, not by all that shrank: the row being read lands further up the
+       * screen by the reader's distance from the bottom, and the view sits at the bottom as if they had never left it. So
+       * the place is held from the anchor as for any change of layout, below: the row goes back where it was, which takes
+       * the view back up to where the reader put it. Where nothing above shrank - a taller screen, less of the reply
+       * below - the row has not moved up, there is no room below to put it back down, and the pull stands.
+       *
+       * A reader following the bottom stays at it: the pull is where they want to be.
        */
-      if (node.scrollTop < anchoredTop.current && distanceFromBottom(node) < 1) noteLayoutScroll(node, node.scrollTop - anchoredTop.current);
-      anchor.current = captureAnchor(node, rows);
-      anchoredTop.current = node.scrollTop;
-      return;
+      noteLayoutScroll(node, node.scrollTop - anchoredTop.current);
+      if (latest.current.props.followsBottomNow()) {
+        anchor.current = captureAnchor(node, rows);
+        anchoredTop.current = node.scrollTop;
+        return;
+      }
     }
     const held = anchor.current;
     const slot = held === undefined ? undefined : slotById(rows, held.id);
@@ -235,6 +259,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       const delta = slot.getBoundingClientRect().top - node.getBoundingClientRect().top - held.offset;
       if (Math.abs(delta) >= 1) scrollAsTranscript(node, { top: node.scrollTop + delta, behavior: "instant" });
     }
+    if (pulled) anchor.current = captureAnchor(node, rows);
     anchoredTop.current = node.scrollTop;
   }, [scroller]);
 
@@ -264,9 +289,17 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       nearTop();
     };
     const onScroll = (): void => {
+      /*
+       * A pull up to a bottom that came closer can land with nothing of the transcript's running first: a row the browser
+       * stops drawing once it is off screen (`content-visibility`) shrinks between frames, and the first thing to hear of
+       * it is this scroll. The place is held here, before the scroll is reported (this listener captures, so it runs
+       * before the ones that read where the reader is), rather than on the next frame, when the report would already
+       * have read a reader taken to the bottom as one who went there.
+       */
+      if (pulledToBottom(node, anchoredTop.current)) holdPlace();
       if (frame === 0) frame = requestAnimationFrame(sync);
     };
-    node.addEventListener("scroll", onScroll, { passive: true });
+    node.addEventListener("scroll", onScroll, { passive: true, capture: true });
     /*
      * The screen changing height. A screen that got taller - a docked panel closing, a soft keyboard going away - pulls a
      * view at the bottom up, and nothing else draws the transcript to see it before more of a reply can land below and
@@ -278,7 +311,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     });
     resize.observe(node);
     return () => {
-      node.removeEventListener("scroll", onScroll);
+      node.removeEventListener("scroll", onScroll, { capture: true });
       resize.disconnect();
       if (frame !== 0) cancelAnimationFrame(frame);
     };
