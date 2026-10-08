@@ -2183,8 +2183,10 @@ uncertain.
 
 A widget that is open in its own desktop window is asked there: the page hands the perform to the desktop host, which
 forwards it to that window and reports its answer (see [Pin / detach lifecycle](#11-pin--detach-lifecycle)). If the host refuses
-the hand-off, the page answers with the host's code and nothing is sent to either frame. A desktop app whose host
-predates this hand-off answers `FRAME_DETACHED`: reattach the widget to let Clark act on it.
+the hand-off, nothing is sent to either frame. The page answers with the host's code when it is one of the page's own
+(`PERFORM_IN_PROGRESS`, `PERFORM_BUSY`, `PERFORM_UNREADABLE`, `FRAME_NOT_MOUNTED`), and with `FRAME_NOT_MOUNTED` for any
+other refusal. A desktop app whose host predates this hand-off answers `FRAME_DETACHED`: reattach the widget to let
+Clark act on it.
 
 A page whose conversation changed before it could ask answers `SURFACE_GONE`. A page that cannot read the event
 answers `PERFORM_UNREADABLE`, or `PERFORM_VERSION_UNSUPPORTED` for another version. Nothing is queued for later and
@@ -2324,12 +2326,16 @@ answers through `detached:perform.report` with the id and the widget's report. T
 (`POST /app-intents/widget-perform/:performId`) with its own token, so the window never holds one. The host refuses:
 
 - a report for a perform it never pushed, or one it already reported (`PERFORM_NOT_EXPECTED`);
-- a report larger than 8 KiB, or in any other shape (`RELAY_REFUSED`);
+- a report larger than 8 KiB of UTF-8 JSON, or in any other shape (`RELAY_REFUSED`);
 - a perform already waiting (`PERFORM_IN_PROGRESS`), and a fifth while four wait (`PERFORM_BUSY`).
 
 The window has 7 seconds to answer, longer than the frame's own wait for the widget and shorter than the node's 8
 seconds. A perform it does not answer in time, or one still waiting when the window closes, is reported as not
-answered. A desktop app whose host predates this answers `FRAME_DETACHED` instead. A widget whose package is gone
+answered. A perform pushed before the window's page listens is held until it does, within those 7 seconds, and then
+answered, as not mounted if the frame is not open yet. The contract allows an `output` of 4,000 characters, which can
+encode to more than 8 KiB in Vietnamese or emoji, so the window cuts a long `output` between whole characters until
+its report fits. If the host still refuses a report, the window at once reports that the widget's answer could not be
+passed on, as not answered. A desktop app whose host predates this answers `FRAME_DETACHED` instead. A widget whose package is gone
 (`frame: null`) is not offered Detach; it shows its text alternative in the conversation.
 
 Audio/call/player must not duplicate playback when moving between surfaces.

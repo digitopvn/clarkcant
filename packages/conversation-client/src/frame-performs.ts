@@ -1,4 +1,9 @@
-import { PAGE_PERFORM_REFUSAL_CODES, type WidgetPerformReport, type WidgetPerformRequest } from "@clarkcant/contracts";
+import {
+  DETACHED_PERFORM_REPORT_MAX_BYTES,
+  PAGE_PERFORM_REFUSAL_CODES,
+  type WidgetPerformReport,
+  type WidgetPerformRequest,
+} from "@clarkcant/contracts";
 import type { FramePerformOutcome, FrameSession } from "@clarkcant/widget-host/session";
 
 /**
@@ -193,10 +198,54 @@ function readForwardedPerform(value: unknown): ForwardedPerform | undefined {
   return { performId: record["performId"], action: record["action"], input: input as Record<string, unknown> };
 }
 
+const encoder = new TextEncoder();
+
+function reportBytes(performId: string, report: WidgetPerformReport): number {
+  return encoder.encode(JSON.stringify({ performId, report })).length;
+}
+
+/**
+ * The report as the desktop host will take it: `{ performId, report }` within `DETACHED_PERFORM_REPORT_MAX_BYTES` of
+ * UTF-8 JSON. The contract bounds `output` in characters, and 4,000 of them can encode to more than that, so a long
+ * answer keeps the longest start that fits. The cut falls between whole characters (code points): never inside a
+ * surrogate pair, so never inside a UTF-8 sequence.
+ */
+export function fitDetachedReport(performId: string, report: WidgetPerformReport): WidgetPerformReport {
+  if (reportBytes(performId, report) <= DETACHED_PERFORM_REPORT_MAX_BYTES) return report;
+  if (report.status !== "done" || report.output === undefined) return report;
+  const characters = Array.from(report.output);
+  const kept = (count: number): WidgetPerformReport =>
+    count === 0 ? { status: "done" } : { status: "done", output: characters.slice(0, count).join("") };
+  // The most characters that fit: the report grows with each one, so the boundary is found by halving.
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (reportBytes(performId, kept(middle)) <= DETACHED_PERFORM_REPORT_MAX_BYTES) low = middle;
+    else high = middle - 1;
+  }
+  return kept(low);
+}
+
+/** The host's answer to a report, when it says it did not take it. */
+function refusedReport(answer: unknown): { code: string | undefined; refused: string } | undefined {
+  if (answer === null || typeof answer !== "object") return undefined;
+  const record = answer as Record<string, unknown>;
+  if (record["ok"] !== false) return undefined;
+  return {
+    code: typeof record["code"] === "string" ? record["code"] : undefined,
+    refused: typeof record["refused"] === "string" && record["refused"] !== "" ? record["refused"] : "the desktop app refused it",
+  };
+}
+
 /**
  * The detached window's side: answer every perform the host pushes, by asking the frame this window mounts for its
  * instance, and report what it said to the host under the perform's id. The host checked the request and refuses a
  * report for an id it did not push; the node checks it again.
+ *
+ * A report the host does not take, while it still waits on the perform, is followed at once by a short "no answer"
+ * saying the widget's answer could not be passed on: the widget may have acted, and the node hears that now rather
+ * than when the host's own wait ends. A host no longer waiting on the perform has answered the node already.
  *
  * Returns the unsubscribe, for the window's cleanup. A perform that arrives before the frame mounts is refused as not
  * mounted, as it would be on the conversation's page.
@@ -206,12 +255,27 @@ export function answerForwardedPerforms(input: {
   onPerform(listener: (push: unknown) => void): () => void;
   reportPerform(answer: { performId: string; report: WidgetPerformReport }): Promise<unknown>;
 }): () => void {
+  const answer = async (perform: ForwardedPerform): Promise<void> => {
+    const report = fitDetachedReport(perform.performId, await performInMountedFrame({ instanceId: input.instanceId, ...perform }));
+    let refusal: { code: string | undefined; refused: string } | undefined;
+    try {
+      refusal = refusedReport(await input.reportPerform({ performId: perform.performId, report }));
+    } catch (cause) {
+      refusal = { code: undefined, refused: cause instanceof Error ? cause.message : String(cause) };
+    }
+    if (refusal === undefined || refusal.code === "PERFORM_NOT_EXPECTED") return;
+    await input.reportPerform({
+      performId: perform.performId,
+      report: {
+        status: "no-answer",
+        message: `the widget answered, but its answer could not be passed on: ${refusal.refused}`.slice(0, 600),
+      },
+    });
+  };
   return input.onPerform((push) => {
     const perform = readForwardedPerform(push);
     if (perform === undefined) return;
-    void performInMountedFrame({ instanceId: input.instanceId, ...perform })
-      .then((report) => input.reportPerform({ performId: perform.performId, report }))
-      // A report the host could not take is one it answers no-answer for when its own wait ends.
-      .catch(() => undefined);
+    // A follow-up the host could not take either is one it answers no-answer for when its own wait ends.
+    void answer(perform).catch(() => undefined);
   });
 }

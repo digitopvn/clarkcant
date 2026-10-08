@@ -2178,8 +2178,10 @@ có handler bị từ chối với `ACTION_NOT_OFFERED`. Output mang token bị 
 
 Widget đang mở trong cửa sổ desktop riêng thì được hỏi ngay tại đó: trang giao lần perform cho host desktop, host chuyển
 nó tới cửa sổ đó và báo lại câu trả lời (xem [Vòng đời pin / detach](#11-pin--detach-lifecycle)). Nếu host từ chối
-nhận, trang trả lời bằng mã của host và không có gì được gửi tới frame nào. Ứng dụng desktop có host cũ hơn cơ chế này
-trả lời `FRAME_DETACHED`: hãy gắn widget lại để Clark thao tác được.
+nhận thì không có gì được gửi tới frame nào. Trang trả lời bằng mã của host khi đó là một mã của chính trang
+(`PERFORM_IN_PROGRESS`, `PERFORM_BUSY`, `PERFORM_UNREADABLE`, `FRAME_NOT_MOUNTED`), và bằng `FRAME_NOT_MOUNTED` với mọi
+lời từ chối khác. Ứng dụng desktop có host cũ hơn cơ chế này trả lời `FRAME_DETACHED`: hãy gắn widget lại để Clark
+thao tác được.
 
 Trang mà hội thoại đã đổi trước khi kịp hỏi thì trả `SURFACE_GONE`. Trang không đọc được sự kiện thì trả
 `PERFORM_UNREADABLE`, hoặc `PERFORM_VERSION_UNSUPPORTED` với phiên bản khác. Không có gì được xếp hàng để làm sau và
@@ -2320,12 +2322,16 @@ của lần perform (`detached:perform`), cửa sổ hỏi frame của nó giố
 chối:
 
 - báo cáo cho một lần perform nó chưa từng đẩy, hoặc đã báo rồi (`PERFORM_NOT_EXPECTED`);
-- báo cáo lớn hơn 8 KiB, hoặc có bất kỳ hình dạng nào khác (`RELAY_REFUSED`);
+- báo cáo lớn hơn 8 KiB JSON dạng UTF-8, hoặc có bất kỳ hình dạng nào khác (`RELAY_REFUSED`);
 - một lần perform đang chờ (`PERFORM_IN_PROGRESS`), và lần thứ năm khi đã có bốn lần đang chờ (`PERFORM_BUSY`).
 
 Cửa sổ có 7 giây để trả lời, lâu hơn thời gian frame tự chờ widget và ngắn hơn 8 giây của node. Lần perform mà cửa sổ
-không trả lời kịp, hoặc vẫn đang chờ khi cửa sổ đóng, được báo là không có trả lời. Ứng dụng desktop có host cũ hơn cơ
-chế này thì trả lời `FRAME_DETACHED`. Widget mà package đã mất (`frame: null`) không có nút detach; nó hiện văn bản thay
+không trả lời kịp, hoặc vẫn đang chờ khi cửa sổ đóng, được báo là không có trả lời. Lần perform được đẩy tới trước khi
+trang của cửa sổ bắt đầu lắng nghe sẽ được giữ lại cho tới lúc đó, trong phạm vi 7 giây ấy, rồi được trả lời, là chưa
+mount nếu frame chưa mở. Hợp đồng cho phép `output` dài 4.000 ký tự, mà với tiếng Việt hay emoji thì có thể mã hóa thành
+hơn 8 KiB, nên cửa sổ cắt `output` dài giữa các ký tự trọn vẹn cho tới khi báo cáo vừa. Nếu host vẫn từ chối báo cáo,
+cửa sổ lập tức báo rằng câu trả lời của widget không chuyển đi được, là không có trả lời. Ứng dụng desktop có host cũ hơn
+cơ chế này thì trả lời `FRAME_DETACHED`. Widget mà package đã mất (`frame: null`) không có nút detach; nó hiện văn bản thay
 thế trong hội thoại.
 
 Audio/call/player không được duplicate playback khi chuyển surface.

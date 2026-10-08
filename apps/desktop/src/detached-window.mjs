@@ -1042,11 +1042,13 @@ export function detachedWindowOptions(preloadPath, parentBounds, workArea) {
 /**
  * The bounds on performs in the detached window.
  *
- * At most four wait at once. A request is the node's own, bounded as a frame message is; a report is at most 8 KiB, far
- * above the largest the contract allows. The host waits `answerWithinMs` for the window's report: longer than the frame's
+ * At most four wait at once, as many as a frame's own session takes (`FRAME_PERFORMS_IN_FLIGHT`). A request is the
+ * node's own, bounded as a frame message is (`FRAME_MESSAGE_MAX_BYTES`). A report is at most 8 KiB of UTF-8 JSON
+ * (`DETACHED_PERFORM_REPORT_MAX_BYTES`): ample for ASCII, but a contract-valid `output` of 4,000 Vietnamese, emoji or
+ * control characters encodes to more, so the window cuts the output to fit before it reports. The host waits `answerWithinMs` for the window's report: longer than the frame's
  * own wait for its widget (`FRAME_PERFORM_TIMEOUT_MS`), so a widget that does not answer is reported as such by the
  * window, and shorter than the node's (`WIDGET_PERFORM_REPORT_WITHIN_MS`), so the host's "no answer" reaches the node
- * before it gives up. `detached-window.spec.ts` holds both orderings.
+ * before it gives up. `detached-window.spec.ts` holds both orderings and each copied bound to its source.
  */
 export const DETACHED_PERFORM_LIMITS = Object.freeze({
   inFlight: 4,

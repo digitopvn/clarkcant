@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   BROWSER_TOKEN_LIMITS,
   COMPOSER_SURFACE_HEADER as CONTRACT_COMPOSER_SURFACE_HEADER,
+  DETACHED_PERFORM_REPORT_MAX_BYTES,
   WIDGET_PERFORM_REPORT_WITHIN_MS,
   appearanceSnapshotSchema,
   browserTokenSessionSchema,
@@ -15,6 +16,7 @@ import {
   DETACHED_RELAY_LIMITS,
   FRAME_BROKER_LIMITS,
   FRAME_MESSAGE_MAX_BYTES,
+  FRAME_PERFORMS_IN_FLIGHT,
   FRAME_PERFORM_TIMEOUT_MS,
 } from "@clarkcant/widget-host/session";
 import {
@@ -1285,8 +1287,25 @@ describe("Clark's performs on a detached frame", () => {
   it("waits longer than the frame waits for its widget, and less long than the node waits for the report", () => {
     expect(DETACHED_PERFORM_LIMITS.answerWithinMs).toBeGreaterThan(FRAME_PERFORM_TIMEOUT_MS);
     expect(DETACHED_PERFORM_LIMITS.answerWithinMs).toBeLessThan(WIDGET_PERFORM_REPORT_WITHIN_MS);
-    expect(DETACHED_PERFORM_LIMITS.reportMaxBytes).toBe(8 * 1024);
-    expect(DETACHED_PERFORM_LIMITS.inFlight).toBe(4);
+  });
+
+  it("holds each copied perform bound to its source", () => {
+    // As many waiting as a frame's own session takes, so the window never refuses what the frame would accept.
+    expect(DETACHED_PERFORM_LIMITS.inFlight).toBe(FRAME_PERFORMS_IN_FLIGHT);
+    // A request is bounded as any frame message is.
+    expect(DETACHED_PERFORM_LIMITS.requestMaxBytes).toBe(FRAME_MESSAGE_MAX_BYTES);
+    // The window cuts a report to the bound the contract names; the host must take every report so cut.
+    expect(DETACHED_PERFORM_LIMITS.reportMaxBytes).toBe(DETACHED_PERFORM_REPORT_MAX_BYTES);
+  });
+
+  it("measures a report in UTF-8 bytes of its JSON, so a non-ASCII report cut to the bound is taken whole", () => {
+    const answer = (output: string) => ({ performId: "perform_1", report: { status: "done", output } });
+    const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+    const overhead = bytes(answer(""));
+    // "ộ" is three bytes: the longest output that fits, and one character more.
+    const fits = "ộ".repeat(Math.floor((DETACHED_PERFORM_REPORT_MAX_BYTES - overhead) / 3));
+    expect(reviewPerformReport(answer(fits))).toMatchObject({ ok: true });
+    expect(reviewPerformReport(answer(`${fits}ộ`))).toMatchObject({ ok: false });
   });
 
   it("takes a perform only as the node words it, and passes on its id, instance, action and input", () => {

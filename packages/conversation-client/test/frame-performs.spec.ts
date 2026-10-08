@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { WIDGET_PERFORM_VERSION, readWidgetPerformRequest, type WidgetPerformReport, type WidgetPerformRequest } from "@clarkcant/contracts";
+import {
+  DETACHED_PERFORM_REPORT_MAX_BYTES,
+  WIDGET_PERFORM_VERSION,
+  readWidgetPerformRequest,
+  widgetPerformReportSchema,
+  type WidgetPerformReport,
+  type WidgetPerformRequest,
+} from "@clarkcant/contracts";
 import type { FramePerformOutcome, FrameSession } from "@clarkcant/widget-host/session";
 
 import {
@@ -181,7 +188,7 @@ describe("a perform for a widget open in its own desktop window", () => {
 });
 
 describe("the detached window answering the host's performs", () => {
-  function host() {
+  function host(answer: (call: number) => unknown = () => ({ ok: true })) {
     let listener: ((push: unknown) => void) | undefined;
     const reports: { performId: string; report: WidgetPerformReport }[] = [];
     let settle: () => void = () => undefined;
@@ -195,10 +202,10 @@ describe("the detached window answering the host's performs", () => {
           listener = undefined;
         };
       },
-      reportPerform: async (answer: { performId: string; report: WidgetPerformReport }) => {
-        reports.push(answer);
+      reportPerform: async (report: { performId: string; report: WidgetPerformReport }) => {
+        reports.push(report);
         settle();
-        return { ok: true };
+        return answer(reports.length);
       },
       push: (value: unknown) => listener?.(value),
       listening: () => listener !== undefined,
@@ -237,5 +244,87 @@ describe("the detached window answering the host's performs", () => {
       { performId: "perform_early", report: expect.objectContaining({ status: "refused", by: "page", code: "FRAME_NOT_MOUNTED" }) },
     ]);
     stop();
+  });
+
+  const reportBytes = (answer: { performId: string; report: WidgetPerformReport }) => new TextEncoder().encode(JSON.stringify(answer)).length;
+  const until = async (done: () => boolean) => {
+    for (let attempt = 0; attempt < 50 && !done(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  it("cuts a long non-ASCII answer on a character boundary so the whole report fits what the host takes", async () => {
+    const answers = {
+      vietnamese: "ộ".repeat(4_000),
+      // 2,000 emoji alone encode to 8,000 bytes and fit; after Vietnamese text the cut lands among surrogate pairs.
+      emoji: `${"ộ".repeat(1_500)}${"😀".repeat(1_250)}`,
+      control: "\u0001".repeat(4_000),
+      mixed: `a${"👍🏽ữ".repeat(1_000)}`.slice(0, 4_000),
+    };
+    for (const [name, output] of Object.entries(answers)) {
+      expect(widgetPerformReportSchema.safeParse({ status: "done", output }).success).toBe(true);
+      const instanceId = `wi_long_${name}`;
+      const remove = registerMountedFrame(instanceId, frame({ status: "done", output }).session);
+      const bridge = host();
+      const stop = answerForwardedPerforms({ instanceId, onPerform: bridge.onPerform, reportPerform: bridge.reportPerform });
+      bridge.push({ performId: "perform_long", action: "format", input: {} });
+      await bridge.reported;
+      stop();
+      remove();
+      const sent = bridge.reports[0];
+      if (sent === undefined || sent.report.status !== "done") throw new Error(`${name}: no done report`);
+      const kept = sent.report.output ?? "";
+      expect(reportBytes(sent), name).toBeLessThanOrEqual(DETACHED_PERFORM_REPORT_MAX_BYTES);
+      // As much as fits: one more character would not.
+      expect(reportBytes(sent), name).toBeGreaterThan(DETACHED_PERFORM_REPORT_MAX_BYTES - 16);
+      expect(output.startsWith(kept), name).toBe(true);
+      // Never half a surrogate pair: the cut ends on a whole character, so it encodes back to exactly what was kept.
+      expect(/[\uD800-\uDBFF]$/.test(kept), name).toBe(false);
+      expect(new TextDecoder().decode(new TextEncoder().encode(kept)), name).toBe(kept);
+      expect(widgetPerformReportSchema.safeParse(sent.report).success, name).toBe(true);
+    }
+  });
+
+  it("leaves an answer that fits as the frame gave it", async () => {
+    const output = "ộ".repeat(1_000);
+    const remove = registerMountedFrame("wi_short", frame({ status: "done", output }).session);
+    const bridge = host();
+    const stop = answerForwardedPerforms({ instanceId: "wi_short", onPerform: bridge.onPerform, reportPerform: bridge.reportPerform });
+    bridge.push({ performId: "perform_short", action: "format", input: {} });
+    await bridge.reported;
+    stop();
+    remove();
+    expect(bridge.reports).toEqual([{ performId: "perform_short", report: { status: "done", output } }]);
+  });
+
+  it("tells the host the answer could not be passed on when it refuses the report, rather than leaving it to time out", async () => {
+    for (const refusal of [
+      () => ({ ok: false, code: "RELAY_REFUSED", refused: "a perform report is limited to 8192 bytes" }),
+      () => {
+        throw new Error("the IPC call failed");
+      },
+    ]) {
+      const remove = registerMountedFrame("wi_refused_report", frame({ status: "done", output: "edited" }).session);
+      const bridge = host((call) => (call === 1 ? refusal() : { ok: true }));
+      const stop = answerForwardedPerforms({ instanceId: "wi_refused_report", onPerform: bridge.onPerform, reportPerform: bridge.reportPerform });
+      bridge.push({ performId: "perform_refused", action: "format", input: {} });
+      await until(() => bridge.reports.length >= 2);
+      stop();
+      remove();
+      expect(bridge.reports).toEqual([
+        { performId: "perform_refused", report: { status: "done", output: "edited" } },
+        { performId: "perform_refused", report: { status: "no-answer", message: expect.stringContaining("could not be passed on") } },
+      ]);
+    }
+  });
+
+  it("does not report again when the host is no longer waiting on the perform", async () => {
+    const remove = registerMountedFrame("wi_late", frame({ status: "done" }).session);
+    const bridge = host(() => ({ ok: false, code: "PERFORM_NOT_EXPECTED", refused: "the host is not waiting on a report for that perform" }));
+    const stop = answerForwardedPerforms({ instanceId: "wi_late", onPerform: bridge.onPerform, reportPerform: bridge.reportPerform });
+    bridge.push({ performId: "perform_late", action: "format", input: {} });
+    await bridge.reported;
+    await until(() => bridge.reports.length >= 2);
+    stop();
+    remove();
+    expect(bridge.reports).toHaveLength(1);
   });
 });

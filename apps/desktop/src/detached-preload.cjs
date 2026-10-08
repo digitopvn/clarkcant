@@ -11,6 +11,28 @@
 
 const { contextBridge, ipcRenderer } = require("electron");
 
+/*
+ * Clark's performs can reach this window as soon as it loads, and the page subscribes only once its frame's component
+ * mounts. A perform pushed in between is held here rather than dropped, and handed to the page when it subscribes: the
+ * page answers it, as not mounted if its frame is not open yet, so the node hears what happened instead of a silence the
+ * host reports as "not answered". One held as long as the host waits for an answer (`DETACHED_PERFORM_LIMITS.
+ * answerWithinMs`, which `preload-subscriptions.spec.ts` holds this to) is dropped: the host has answered the node for
+ * it already, and the widget must not act on it after that.
+ */
+const PERFORM_HELD_MS = 7_000;
+const performListeners = new Set();
+let heldPerforms = [];
+const unexpiredPerforms = () => {
+  const now = Date.now();
+  return heldPerforms.filter((held) => now - held.at < PERFORM_HELD_MS);
+};
+ipcRenderer.on("detached:perform", (_event, push) => {
+  if (performListeners.size === 0) {
+    heldPerforms = [...unexpiredPerforms(), { push, at: Date.now() }];
+    return;
+  }
+  for (const listener of [...performListeners]) listener(push);
+});
 contextBridge.exposeInMainWorld("clarkcantDetached", {
   /**
    * The instance this window is a view of.
@@ -93,12 +115,18 @@ contextBridge.exposeInMainWorld("clarkcantDetached", {
   },
   /**
    * Told of each action Clark asks this window's widget to perform: `{ performId, action, input }`, nothing else. The
-   * window asks its frame and answers with `reportPerform`. Returns the unsubscribe.
+   * window asks its frame and answers with `reportPerform`. A perform pushed while nothing listened is handed over on
+   * subscribing, unless the host has stopped waiting on it. Returns the unsubscribe.
    */
   onPerform(callback) {
-    const listener = (_event, push) => callback(push);
-    ipcRenderer.on("detached:perform", listener);
-    return () => ipcRenderer.removeListener("detached:perform", listener);
+    const listener = (push) => callback(push);
+    performListeners.add(listener);
+    const held = unexpiredPerforms();
+    heldPerforms = [];
+    for (const { push } of held) listener(push);
+    return () => {
+      performListeners.delete(listener);
+    };
   },
   /** What the frame answered to a pushed perform: `{ performId, report }`. The host refuses an id it did not push. */
   reportPerform(answer) {

@@ -35,6 +35,13 @@ export const WIDGET_PERFORM_HEADER = "x-clarkcant-widget-perform";
  */
 export const WIDGET_PERFORM_REPORT_WITHIN_MS = 8_000;
 
+/**
+ * The most a detached desktop window may hand its host for one report: `{ performId, report }` as JSON, in UTF-8 bytes.
+ * A contract-valid `output` can encode to more than that (4,000 characters of Vietnamese, emoji or control characters),
+ * so the window cuts the output on a character boundary to fit before it reports.
+ */
+export const DETACHED_PERFORM_REPORT_MAX_BYTES = 8 * 1024;
+
 export const widgetPerformIdSchema = z
   .string()
   .min(1)
