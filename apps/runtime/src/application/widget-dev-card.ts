@@ -57,8 +57,8 @@ export function developFolderCard(input: {
     note: found
       ? say("Clark được phát triển trong thư mục này và mọi thư mục bên trong nó.", "Clark may develop in this folder and every folder inside it.")
       : say(
-          "Hiện không tìm thấy thư mục này ở đường dẫn đó (đã bị chuyển, xoá hoặc thay bằng một liên kết), nên nó không cho Clark quyền gì; nếu nó trở lại đúng chỗ này, quyền sẽ có lại. Thu hồi để bỏ hẳn.",
-          "This folder is not found at this path now (moved, removed or replaced by a link), so it gives Clark nothing; if it comes back here, so does the access. Forget it to drop it for good.",
+          "Hiện không tìm thấy thư mục này ở đường dẫn đó (đã bị chuyển, xoá, hoặc thay bằng một liên kết hay một thư mục khác), nên nó không cho Clark quyền gì; nếu chính thư mục này trở lại đúng chỗ này, quyền sẽ có lại, còn một thư mục khác được tạo ở đó thì không. Thu hồi để bỏ hẳn.",
+          "This folder is not found at this path now (moved, removed, or replaced by a link or by another folder), so it gives Clark nothing; if this same folder comes back here, so does the access, but another folder made here does not get it. Forget it to drop it for good.",
         ),
     badge: found ? { text: say("bạn đã chọn", "you chose"), tone: "success" } : { text: say("không tìm thấy", "not found now"), tone: "warning" },
     actions: [{ actionId: "forget", label: say("Thu hồi", "Forget"), action: { kind: "develop-folder-forget", root } }],

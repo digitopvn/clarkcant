@@ -710,6 +710,65 @@ describe("a widget dev session", () => {
     expect(services.widgetDev?.marked()).toEqual([]);
   });
 
+  it("holds a chosen folder's mark to that folder: another folder made at its path does not count, the chosen one moved back does", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    expect(services.widgetDev?.chosen()).toEqual([elsewhere]);
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+
+    // The chosen folder is moved away, and a new real folder (no link) is made at its path.
+    const moved = join(dir, "elsewhere", "moved");
+    renameSync(elsewhere, moved);
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.another" });
+    writePackage("<!doctype html><p>inner</p>\n", [], join(elsewhere, "inner"), { id: "com.example.inner" });
+
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+    expect(services.widgetDev?.folderCard({ locale: "en", only: "chosen" }).rows[0]).toMatchObject({ badge: { text: "not found now" } });
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Not started");
+    expect((await toolFor(conversationId).execute({ action: "start", root: join(elsewhere, "inner") })).text).toContain("Not started");
+
+    // The chosen folder itself back at its path counts again.
+    renameSync(elsewhere, join(dir, "elsewhere", "another"));
+    renameSync(moved, elsewhere);
+    expect(services.widgetDev?.chosen()).toEqual([elsewhere]);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: true }]);
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Running generation 1.");
+  });
+
+  it("gives a mark stored without a folder id the id of the folder first found at its path, and holds it to that folder", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    const store = join(dir, "node");
+    const recorded = readDevSessions(store)[0]?.chosenFolderId;
+    expect(recorded).toBeDefined();
+    // As a store written before folder ids were kept: the mark, with no id.
+    writeDevSessions(
+      store,
+      readDevSessions(store).map(({ chosenFolderId: _id, ...rest }) => rest),
+    );
+
+    // Missing at the first look, it is not found and takes no id.
+    const moved = join(dir, "elsewhere", "moved");
+    renameSync(elsewhere, moved);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+    expect(readDevSessions(store)[0]?.chosenFolderId).toBeUndefined();
+
+    // Found at its path, it counts and takes that folder's id, which is the one the person's start recorded.
+    renameSync(moved, elsewhere);
+    expect(services.widgetDev?.chosen()).toEqual([elsewhere]);
+    expect(readDevSessions(store)[0]?.chosenFolderId).toEqual(recorded);
+
+    // From then on, another folder made at the path is not it.
+    renameSync(elsewhere, moved);
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.another" });
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+  });
+
   it("warns that a whole drive or the home folder is watched for the session only, and keeps no choice of it", async () => {
     const drive = parse(dir).root;
     const driveRow = services.widgetDev?.folderCard({ proposed: drive, locale: "en" }).rows[0];

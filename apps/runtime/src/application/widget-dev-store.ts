@@ -62,6 +62,13 @@ export const storedDevSessionSchema = z.strictObject({
    * inside it). Only a start the person made sets it; nothing Clark, a widget or a machine surface does can.
    */
   chosenByPerson: z.literal(true).optional(),
+  /**
+   * Which folder the person chose (`chosenByPerson`): its device and file id when they chose it, as decimal strings. The
+   * choice counts only while that same folder is at `root`, so a folder made at the path later, after the chosen one was
+   * moved or removed, is not taken for it. A mark stored before this was kept has none; it takes the id of the folder
+   * found at its path the first time it is looked at (`markedFolders`).
+   */
+  chosenFolderId: z.strictObject({ dev: z.string().regex(/^\d{1,40}$/), ino: z.string().regex(/^\d{1,40}$/) }).optional(),
   /** Snapshot digests this session made in the package cache, so the ones nothing runs or waits on can be removed. */
   snapshots: z.array(z.string().min(1).max(120)).max(WIDGET_DEV_SNAPSHOTS_MAX).optional(),
   startedAt: z.iso.datetime({ offset: false }),
