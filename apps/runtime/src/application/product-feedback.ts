@@ -624,14 +624,7 @@ export async function publishFeedback(
 
   // Take the report before anything is awaited, so a press that overlaps this one finds it publishing and only checks.
   const before = record;
-  const claim: FeedbackPublication = {
-    status: "unknown",
-    reportId: record.reportId,
-    reason: say(
-      "Báo cáo đang được gửi. Kiểm tra lại sau giây lát; nó không được gửi hai lần.",
-      "This report is being sent now. Check again in a moment; it is not sent twice.",
-    ),
-  };
+  const claim = beingSent(record.reportId, say);
   const claimedAt = ledgerNow();
   if (!claimFeedbackReport(services.runtime.db, { reportId: record.reportId, from: record.status, publication: claim, at: claimedAt })) {
     // Another press took it first: what it stands as now is the answer.
@@ -664,6 +657,21 @@ export async function publishFeedback(
   } finally {
     inFlight.delete(record.reportId);
   }
+}
+
+/**
+ * What a report taken for one send says until that send settles, in the owner's language: a press that overlaps the
+ * send, before or while GitHub is written to, reads this rather than an internal word.
+ */
+function beingSent(reportId: string, say: (vi: string, en: string) => string): FeedbackPublication {
+  return {
+    status: "unknown",
+    reportId,
+    reason: say(
+      "Báo cáo đang được gửi. Kiểm tra lại sau giây lát; nó không được gửi hai lần.",
+      "This report is being sent now. Check again in a moment; it is not sent twice.",
+    ),
+  };
 }
 
 /** Reports a send is running for, per node database: an overlapping press reads them, never sends them. */
@@ -729,7 +737,7 @@ async function sendAndReadBack(
     services,
     record,
     "publishing",
-    { status: "unknown", reportId: record.reportId, reason: "sending" },
+    beingSent(record.reportId, say),
     { effectId: opened.effect.effectId, ...(login === undefined ? {} : { login }) },
   );
 

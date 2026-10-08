@@ -651,6 +651,51 @@ describe("two presses on one report that overlap", () => {
     expect(getFeedbackReport(services.runtime.db, draft.reportId)?.status).toBe("published");
   });
 
+  it.each([
+    ["en", "This report is being sent now. Check again in a moment; it is not sent twice."],
+    ["vi", "Báo cáo đang được gửi. Kiểm tra lại sau giây lát; nó không được gửi hai lần."],
+  ] as const)("say a send that is writing to GitHub as being sent, in the person's language (%s), never an internal word", async (language, sentence) => {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: at },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", value: language, source: "user" },
+    );
+    if (!written.ok) throw new Error(written.message);
+    const { draft } = await prepared(bug("Composer loses focus after a paste"));
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let writing: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      writing = resolve;
+    });
+    const base = github;
+    services.feedbackGithub = {
+      ...base,
+      withWriter: (use) =>
+        base.withWriter((client) =>
+          use({
+            ...client,
+            createIssue: async (issue) => {
+              writing();
+              await held;
+              return client.createIssue(issue);
+            },
+          }),
+        ),
+    };
+
+    const first = press(draft.reportId);
+    await reached;
+    const second = await press(draft.reportId);
+    release();
+    const one = await first;
+
+    expect(second.ok && second.publication).toMatchObject({ status: "unknown", reason: sentence });
+    expect(one.ok && one.publication.status).toBe("published");
+    expect(github.writes()).toHaveLength(1);
+  });
+
   it("file a report beyond checking once more at most, however many Send anyway presses overlap", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.parse(AT));
