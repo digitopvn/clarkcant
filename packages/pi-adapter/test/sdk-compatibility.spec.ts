@@ -246,6 +246,8 @@ describe("the public tool surface the adapter relies on instead of the session's
           description: name,
           // What puts a tool in the prompt's "Available tools" list; unique so the prompt can be searched for it.
           promptSnippet: `snippet-of-${name}`,
+          // What tells the model when to prefer the tool; unique for the same reason.
+          promptGuidelines: [`guideline-of-${name}`],
           parameters: { type: "object", properties: {} },
           execute: async () => ({ text: name }),
         }),
@@ -307,6 +309,9 @@ describe("the public tool surface the adapter relies on instead of the session's
       expect(live.getCallableToolNames()).toEqual(["a"]);
       expect(live.systemPrompt).toContain("snippet-of-a");
       expect(live.systemPrompt).not.toContain("snippet-of-b");
+      // A guideline travels with its tool: stated while the tool is active, gone once it is narrowed away.
+      expect(live.systemPrompt).toContain("guideline-of-a");
+      expect(live.systemPrompt).not.toContain("guideline-of-b");
 
       live.setActiveToolsByName(["a", "b"]);
       expect(live.getActiveToolNames()).toEqual(["a", "b"]);

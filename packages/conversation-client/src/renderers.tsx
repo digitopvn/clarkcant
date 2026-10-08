@@ -164,6 +164,8 @@ import {
 } from "./map-layout.ts";
 import type { SaveOutcome } from "./download.ts";
 import {
+  barGroups,
+  barSeries,
   CHART_HEIGHT,
   CHART_PAD,
   type ChartGeometry,
@@ -579,8 +581,9 @@ function BarChart({ props, dataset, state }: RendererProps): ReactElement {
   }
 
   const choice = chosenSeries(state, dataset.rows);
-  const seriesKey =
-    choice.series ?? Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
+  const series = barSeries(props, dataset.rows, choice.series);
+  if (series.length > 1) return <GroupedBarChart title={title} dataset={dataset} series={series} choice={choice} measure={measure} width={width} />;
+  const seriesKey = series[0] ?? "value";
   const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
   const values = points.map((point) => point.value);
   const geometry = chartGeometry(width, values);
@@ -628,6 +631,100 @@ function BarChart({ props, dataset, state }: RendererProps): ReactElement {
         </div>
         <span className="cc-sr-only" data-chart-summary="true">
           {chartSummary(points)}
+        </span>
+        <TextAlternative rows={dataset.rows} />
+      </>
+    </Frame>
+  );
+}
+
+/**
+ * Bars for several series side by side in each category: "A and B on each benchmark" drawn as one chart.
+ *
+ * Each series keeps its slot in every group, so a missing value is a gap rather than the next series sliding into its
+ * place. The legend names each series beside its tone, every bar's title says its category, series and value, and the
+ * rows stay a table underneath, so no value is known by colour alone.
+ */
+function GroupedBarChart({
+  title,
+  dataset,
+  series,
+  choice,
+  measure,
+  width,
+}: {
+  title: string;
+  dataset: NonNullable<RendererProps["dataset"]>;
+  series: readonly string[];
+  choice: { requested?: string; series?: string; label?: string };
+  measure: (element: HTMLElement | null) => void;
+  width: number;
+}): ReactElement {
+  const t = useT();
+  const groups = barGroups(dataset.rows, series, (row) => label(row, CATEGORY_KEYS));
+  const values = groups.flatMap((group) => group.values.filter((value): value is number => value !== undefined));
+  const geometry = chartGeometry(width, values);
+  const slot = geometry.plotWidth / Math.max(groups.length, 1);
+  const groupWidth = Math.min(slot * 0.8, 56 * series.length);
+  const barWidth = Math.max(groupWidth / series.length - 2, 2);
+  const stride = labelStride(groups.length, geometry.plotWidth);
+  const zero = geometry.zero;
+  const summary = groups
+    .map((group) => `${group.label}: ${series.map((key, index) => `${key} ${group.values[index] ?? "-"}`).join(", ")}`)
+    .join("; ");
+
+  return (
+    <Frame title={title} dataset={dataset} role="chart">
+      <>
+        <SeriesNote choice={choice} />
+        <ul className="cc-xy-legend" aria-label={fillMessage(t("widgets.xyChart.legend"), { title })} data-bar-legend="true">
+          {series.map((key, index) => (
+            <li key={key} className="cc-bar-legend-item">
+              <svg className="cc-xy-key cc-bar-key" viewBox="0 0 12 12" aria-hidden="true" data-slice-tone={index % DONUT_TONES}>
+                <rect className="swatch" x={1} y={1} width={10} height={10} rx={2} />
+              </svg>
+              <span className="cc-xy-legend-name">{key}</span>
+            </li>
+          ))}
+        </ul>
+        <div ref={measure} className="cc-chart-box">
+          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${series.join(", ")}`} data-bar-series={series.length}>
+            <ChartGrid geometry={geometry} />
+            {groups.map((group, groupIndex) => {
+              const center = geometry.left + groupIndex * slot + slot / 2;
+              const start = center - groupWidth / 2;
+              return (
+                <g key={groupIndex} className="datum">
+                  {group.values.map((value, index) => {
+                    if (value === undefined) return null;
+                    const y = geometry.scaleY(value);
+                    return (
+                      <rect
+                        key={series[index]}
+                        className="bar"
+                        data-slice-tone={index % DONUT_TONES}
+                        x={start + index * (groupWidth / series.length) + 1}
+                        y={Math.min(y, zero)}
+                        width={barWidth}
+                        height={Math.abs(zero - y)}
+                        rx={2}
+                      >
+                        <title>{`${group.label} · ${series[index] ?? ""}: ${value}`}</title>
+                      </rect>
+                    );
+                  })}
+                  {groupIndex % stride === 0 && (
+                    <text className="label" x={center} y={CHART_HEIGHT - 6} textAnchor="middle">
+                      {group.label}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        <span className="cc-sr-only" data-chart-summary="true">
+          {summary}
         </span>
         <TextAlternative rows={dataset.rows} />
       </>

@@ -68,6 +68,7 @@ import { attachmentBrief } from "./attachments.ts";
 import { wordsBesideReferences } from "./composer-references.ts";
 import { channelToolWords } from "./channels/channel-tool-gate.ts";
 import { hostText } from "./host-text.ts";
+import { type StatedDatasetInput, STATED_DATA_SCHEMA, bindStatedRefs, readStatedData } from "./stated-data.ts";
 import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
 import {
   type InstructionTouch,
@@ -866,9 +867,15 @@ function pathOf(params: Record<string, unknown>): string | undefined {
 function showViewParameters(
   views: readonly ViewDescriptor[],
   datasetRefs: readonly string[],
+  takesData: boolean,
 ): Record<string, unknown> {
-  const datasetNote =
+  const held =
     datasetRefs.length === 0
+      ? "This node holds no other datasets."
+      : `Other dataset references that exist: ${datasetRefs.join(", ")} (sample data: never present it as real).`;
+  const datasetNote = takesData
+    ? `A view that draws rows (a chart, a table, a calendar) takes props.datasetRef: name the rows you pass in data. ${held}`
+    : datasetRefs.length === 0
       ? "This node holds no datasets, so pass no dataset reference."
       : `Dataset references that exist: ${datasetRefs.join(", ")}. Use one of these or the view will render nothing.`;
   return {
@@ -893,11 +900,30 @@ function showViewParameters(
       },
       props: {
         type: "object",
-        description: `Values for the view. These are rendered as sample data, not as live data. ${datasetNote}`,
+        description: `Values for the view. They are shown as what you stated, never as live data. ${datasetNote}`,
       },
+      ...(takesData ? { data: STATED_DATA_SCHEMA } : {}),
     },
   };
 }
+
+/**
+ * When to reach for `show_view`, in the system prompt's guidelines.
+ *
+ * The product promise is that a structured answer comes back as a small app, not a wall of text, and that the person
+ * never has to ask for it. A tool the model merely knows exists is not used for that: it answered a comparison as a
+ * markdown table and only drew a chart when told "as charts". This is the "when", stated once beside the tool.
+ */
+export const SHOW_VIEW_GUIDELINES: readonly string[] = [
+  "When an answer has structure, show it with show_view in the same turn without being asked: a bar or line chart for " +
+    "numbers compared across items or over time, canvas.table@1 for items compared on several attributes, a diagram for " +
+    "a flow or an architecture, a timeline for dated events. Call it once per view when an answer needs several. Keep " +
+    "the written reply to the takeaway; do not repeat every number the view shows.",
+  "Pass the numbers you gathered in show_view's data and name them in props.datasetRef. Never invent or round values " +
+    "to fill a chart, and say where the numbers come from in the caption or the reply.",
+  "Prefer show_view over place_widget or develop_widget for charts, tables and diagrams. Write a widget package only " +
+    "when no view can show what is needed.",
+];
 
 /**
  * A turn limit in the unit a person says it in: "5 phút" or "1 s", never "300000 ms".
@@ -1034,6 +1060,14 @@ export async function createModelTurn(options: {
    * nothing — which looks like a broken widget rather than a missing fact.
    */
   datasetRefs?: () => readonly string[];
+  /**
+   * Keep rows the model gathered as a dataset the person owns, and say what it is called.
+   *
+   * Without it every chart and table could only draw a dataset the node already held, so the numbers a model had just
+   * researched could not be drawn at all: it answered in prose, or authored a whole widget package to show a bar chart.
+   * Absent, `show_view` takes no `data`.
+   */
+  keepStatedDataset?: (input: StatedDatasetInput) => string;
   /**
    * Where a worker transcript is written.
    *
@@ -1617,19 +1651,23 @@ export async function createModelTurn(options: {
     viewById: ReadonlyMap<string, ViewDescriptor>,
     datasetRefs: readonly string[],
   ): ToolDefinition {
+    const keepDataset = options.keepStatedDataset;
     return {
       name: SHOW_VIEW_TOOL,
       label: "Hiển thị một khung nhìn",
       description:
-        `Show a visual view in the conversation. Use the exact view name from the list. ` +
-        `The values you pass are shown as sample data, so never describe them as live. ` +
-        (datasetRefs.length === 0
-          ? "This node holds no datasets."
-          : `Available dataset references: ${datasetRefs.join(", ")}.`),
-      parameters: showViewParameters(views, datasetRefs),
+        `Show a visual view in the conversation: a chart, a table, a diagram, a card. Use the exact view name from the list. ` +
+        `What you pass is shown as what you stated, never as live data. ` +
+        (keepDataset === undefined
+          ? datasetRefs.length === 0
+            ? "This node holds no datasets."
+            : `Available dataset references: ${datasetRefs.join(", ")}.`
+          : "Rows you gathered go in data, under a name that props.datasetRef then uses."),
+      parameters: showViewParameters(views, datasetRefs, keepDataset !== undefined),
       // Without this the SDK omits the tool from the system prompt's "Available tools" list, and a
       // model that cannot see its tools answers with invented tool syntax instead of calling one.
-      promptSnippet: "show_view — show a chart or table in the conversation",
+      promptSnippet: "show_view — show a chart, table, diagram or card in the conversation",
+      promptGuidelines: SHOW_VIEW_GUIDELINES,
       execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
         const requested = typeof params.view === "string" ? params.view : "";
         const descriptor = viewById.get(requested);
@@ -1643,10 +1681,34 @@ export async function createModelTurn(options: {
           // instead of a view that would be captured against nothing.
           return { text: `The view "${requested}" could not be captured: the turn has no message yet.` };
         }
-        const props =
+        const stated = readStatedData(keepDataset === undefined ? undefined : params.data);
+        if (!stated.ok) return { text: `The view "${requested}" was not shown: ${stated.problem}.` };
+        if (keepDataset === undefined && params.data !== undefined) {
+          return { text: `The view "${requested}" was not shown: this node keeps no stated data, so pass no data.` };
+        }
+        const given =
           typeof params.props === "object" && params.props !== null
             ? (params.props as Record<string, unknown>)
             : {};
+        if (stated.datasets.length > 0 && given.layout !== undefined) {
+          // A composed layout's leaves draw the host's own rows, so stated rows there would be silently ignored.
+          return {
+            text: `The view "${requested}" was not shown: stated data draws only in a view shown on its own, not in a composed layout. Show each chart or table with its own show_view call.`,
+          };
+        }
+        // Kept before the view is built, because the build reads the rows by reference; a view that is then refused leaves
+        // only a dataset nothing points at, which is the person's own data and harmless.
+        let kept: Map<string, string>;
+        try {
+          kept = new Map(
+            stated.datasets.map((dataset) => [dataset.name, keepDataset?.({ principalId: principal.principalId, dataset }) ?? dataset.name]),
+          );
+        } catch (cause) {
+          return {
+            text: `The view "${requested}" was not shown: the rows could not be kept: ${cause instanceof Error ? cause.message : String(cause)}.`,
+          };
+        }
+        const props = kept.size === 0 ? given : (bindStatedRefs(given, kept) as Record<string, unknown>);
         const caption = typeof params.caption === "string" ? params.caption : descriptor.label;
         try {
           const block = await descriptor.build({
@@ -1666,7 +1728,13 @@ export async function createModelTurn(options: {
             text: `The view "${requested}" could not be built: ${cause instanceof Error ? cause.message : String(cause)}.`,
           };
         }
-        return { text: descriptor.shownText ?? `Shown: ${requested}. It is sample data and is labelled that way.` };
+        return {
+          text:
+            descriptor.shownText ??
+            (kept.size > 0
+              ? `Shown: ${requested}, drawn from the rows you passed, labelled as saved data rather than live.`
+              : `Shown: ${requested}. It is labelled as what you stated, not as live data.`),
+        };
       },
     };
   }

@@ -225,6 +225,7 @@ export function buildViewCatalog(
     (definition): ViewDescriptor => ({
     id: definition.id,
     label: definition.semanticDescription,
+    ...(SIMPLE_VIEW_NOTES[definition.id] === undefined ? {} : { notes: SIMPLE_VIEW_NOTES[definition.id] }),
 
     /**
      * Create a real instance and capture it.
@@ -648,6 +649,29 @@ function artifactViews(deps: WidgetDeps): ViewDescriptor[] {
     },
   }));
 }
+
+/**
+ * What the model is told about the plainer charts' and the table's props.
+ *
+ * They had no notes, so a model that knew a bar chart existed did not know it could name the fields to draw, and a
+ * comparison of two models across benchmarks had no way to become one chart.
+ */
+const SIMPLE_VIEW_NOTES: Readonly<Record<string, string>> = {
+  "canvas.bar@1":
+    `props.datasetRef names the rows; each row is a category, labelled by its first field (or a field called name, ` +
+    `label or week). props.series lists 1-8 numeric fields as the rows spell them: one draws a bar per row, several ` +
+    `draw each row's bars side by side with a legend (e.g. one series per model, one row per benchmark). Optional ` +
+    `props.title and props.unit.`,
+  "canvas.line@1":
+    `props.datasetRef names the rows, in order along x; each row is labelled by its first field. props.series[0] is ` +
+    `the numeric field drawn as the line; for several lines over the same x use canvas.area@1. Optional props.title and props.unit.`,
+  "canvas.donut@1":
+    `props.datasetRef names the rows; each row is a slice, named by its first field and sized by its first numeric field. ` +
+    `Optional props.title.`,
+  "canvas.table@1":
+    `props.datasetRef names the rows. Optional props.columns (the fields in display order, or {key,label,type} objects) ` +
+    `and props.title.`,
+};
 
 /** What the model is told about each chart's props. */
 const XY_CHART_NOTES: Readonly<Record<string, string>> = {

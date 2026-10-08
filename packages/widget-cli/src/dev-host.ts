@@ -1,14 +1,14 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 
 import type { ViteDevServer } from "vite";
 import { closeDevModuleServer, createDevModuleServer, widgetModuleAllowList } from "./dev-module-server.ts";
 import { browserRuntime, sendPrebundledRuntime } from "./package-assets.ts";
 
 import type { BrowserTokenDeclaration, ResourceRequest, WidgetDevBuild } from "@clarkcant/contracts";
-import { readPackage, startDevEngine, type DevEngine } from "@clarkcant/core";
+import { readPackage, startDevEngine, widgetDocumentPolicy, type DevEngine } from "@clarkcant/core";
 import { widgetToHostSchema } from "@clarkcant/widget-sdk";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
 import {
@@ -676,6 +676,18 @@ interface ShellSource {
 }
 
 /** The widget-cli package directory, which is Vite's root when the frame is a catalog widget. */
+
+/**
+ * The origins the manifest lets the widget reach, read per request so a newly declared origin takes effect on the next
+ * reload. A manifest that cannot be read mid-edit declares nothing, which narrows the policy rather than widening it.
+ */
+function declaredOrigins(root: string): readonly string[] {
+  try {
+    return readPackage(root).manifest.permissions?.networkOrigins ?? [];
+  } catch {
+    return [];
+  }
+}
 
 function packageSource(requested: string): ShellSource {
   const root = resolve(requested);
@@ -1386,19 +1398,28 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     }
     try {
       if (!statSync(candidate).isFile()) throw new Error("not a file");
-      response.writeHead(200, { "content-type": contentType(candidate) });
       const contents = readFileSync(candidate);
       if (candidate === resolve(root, source.entryUrl.slice(1)) && extname(candidate) === ".html") {
+        /*
+         * The node's own policy, so a widget that works here works where it is installed. Without it the dev host ran
+         * what the node refuses: a widget that fetched a file from its own package drew here and failed with "Failed
+         * to fetch" once installed, where `connect-src` reaches only the origins the manifest declares. No `<base>`
+         * either, which the policy's `base-uri 'none'` would refuse: the frame is already served from the entry's own
+         * directory, so relative paths resolve the same without one.
+         */
+        const nonce = randomBytes(16).toString("hex");
         const html = contents.toString("utf8");
-        const entryDirectory = `${framePrefix}${dirname(source.entryUrl)}/`;
-        const base = `<base href="${entryDirectory}">`;
-        const runtime = `<script type="module" src="${framePrefix}/widget-runtime.js"></script>`;
-        const injection = `${base}\n  ${runtime}`;
+        const runtime = `<script type="module" nonce="${nonce}" src="${framePrefix}/widget-runtime.js"></script>`;
         const prepared = /<head\b[^>]*>/i.test(html)
-          ? html.replace(/<head\b[^>]*>/i, (head) => `${head}\n  ${injection}`)
-          : `${injection}\n${html}`;
+          ? html.replace(/<head\b[^>]*>/i, (head) => `${head}\n  ${runtime}`)
+          : `${runtime}\n${html}`;
+        response.writeHead(200, {
+          "content-type": contentType(candidate),
+          "content-security-policy": widgetDocumentPolicy({ frameAncestors: "'self'", nonce, allowedOrigins: declaredOrigins(root) }),
+        });
         response.end(prepared);
       } else {
+        response.writeHead(200, { "content-type": contentType(candidate) });
         response.end(contents);
       }
     } catch {

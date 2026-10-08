@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  barGroups,
+  barSeries,
   CHART_HEIGHT,
   CHART_PAD,
   chartGeometry,
@@ -381,5 +383,33 @@ describe("the series a line chart draws when nothing chose one", () => {
 
   it("prefers the series the props name", () => {
     expect(defaultLineSeries({ series: ["failures"], unit: "runs" }, sampleRows)).toBe("failures");
+  });
+});
+
+describe("the series a bar chart draws", () => {
+  const rows = [
+    { benchmark: "MMLU", a: 88.1, b: 86, note: "x" },
+    { benchmark: "GPQA", a: 61, b: null },
+    { benchmark: "SWE", a: null, b: null },
+  ];
+
+  it("draws every series the props name that the rows hold as numbers, in their order", () => {
+    expect(barSeries({ series: ["b", "a", "missing", "note", "a"] }, rows)).toEqual(["b", "a"]);
+  });
+
+  it("draws the series a surface chose over the props", () => {
+    expect(barSeries({ series: ["a", "b"] }, rows, "b")).toEqual(["b"]);
+  });
+
+  it("falls back to the first numeric field when the props name none it can draw", () => {
+    expect(barSeries({}, rows)).toEqual(["a"]);
+    expect(barSeries({ series: ["missing"] }, rows)).toEqual(["a"]);
+  });
+
+  it("keeps a missing value as a gap in its own slot, and leaves out a row with none", () => {
+    expect(barGroups(rows, ["a", "b"], (row) => String(row.benchmark))).toEqual([
+      { label: "MMLU", values: [88.1, 86] },
+      { label: "GPQA", values: [61, undefined] },
+    ]);
   });
 });

@@ -273,6 +273,11 @@ ${PHASE_MARK_CSS}
 .cc-chart .bar { fill: var(--cc-accent); }
 .cc-chart .datum:hover .point { fill: var(--cc-accent); }
 .cc-chart .datum:hover .bar { fill: color-mix(in oklab, var(--cc-accent) 80%, var(--cc-text)); }
+/* Grouped bars: each series in its own tone, named beside the same tone in the legend above the plot. */
+.cc-chart .bar[data-slice-tone], .cc-bar-key .swatch { fill: var(--cc-slice, var(--cc-accent)); }
+.cc-chart .datum:hover .bar[data-slice-tone] { fill: color-mix(in oklab, var(--cc-slice, var(--cc-accent)) 80%, var(--cc-text)); }
+.cc-bar-legend-item { display: inline-flex; align-items: center; gap: var(--cc-space-xs); min-height: 24px; max-width: 100%; font-size: var(--cc-text-label); }
+.cc-bar-key { width: 12px; }
 /*
  * Area and scatter charts. Each series reads its tone from data-slice-tone and is told apart by its line pattern and
  * point shape too, so no series is known by colour alone. A point is a button: the focused one takes the focus colour,

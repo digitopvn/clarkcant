@@ -150,6 +150,13 @@ export interface ToolDefinition {
    */
   promptSnippet?: string;
   /**
+   * Rules for when to reach for this tool, added to the system prompt's guidelines while the tool is active.
+   *
+   * The snippet says what a tool does; a guideline says when to prefer it. A model that knows a tool exists but not that
+   * it is the expected answer to a kind of question keeps answering that question in prose.
+   */
+  promptGuidelines?: readonly string[];
+  /**
    * JSON Schema of the result's `structuredContent`, declared to Pi as the tool's `outputSchema`.
    *
    * Pi hands a structured value to a program that calls the tool (a codemode script) only when the tool declares one;

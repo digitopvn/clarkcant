@@ -328,6 +328,42 @@ describe("the dev host server", () => {
     }
   });
 
+  it("serves the entry under the node's own policy, so what works here works once installed", async () => {
+    /*
+     * The dev host once served the entry with no policy, so a widget that fetched a file from its own package drew
+     * here and failed with "Failed to fetch" once placed, where `connect-src` reaches only what the manifest declares.
+     */
+    const { url, root, stop } = await started();
+    try {
+      const framePath = /<iframe[^>]+src="([^"]+)"/.exec(await (await fetch(url)).text())?.[1] ?? "";
+      const entry = await fetch(new URL(framePath, url));
+      const policy = entry.headers.get("content-security-policy") ?? "";
+      const nonce = /'nonce-([0-9a-f]+)'/.exec(policy)?.[1];
+      expect(nonce).toBeDefined();
+      expect(policy).toContain("connect-src 'none'");
+      expect(policy).toContain("sandbox allow-scripts");
+      expect(policy).toContain("frame-ancestors 'self'");
+      const html = await entry.text();
+      expect(html).toContain(`nonce="${nonce ?? ""}"`);
+      // `base-uri 'none'` would refuse one, and the entry's own URL already resolves its relative paths.
+      expect(html).not.toContain("<base");
+      // A file next to the entry is served without a document policy, as the node serves it.
+      const fixture = await fetch(new URL("../../fixtures/default.json", new URL(framePath, url)));
+      expect(fixture.headers.get("content-security-policy")).toBeNull();
+
+      const manifestPath = join(root, "clarkcant.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { permissions: Record<string, unknown> };
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({ ...manifest, permissions: { ...manifest.permissions, networkOrigins: ["https://api.example.com"] } }),
+      );
+      const declared = await fetch(new URL(framePath, url));
+      expect(declared.headers.get("content-security-policy")).toContain("connect-src https://api.example.com");
+    } finally {
+      await stop();
+    }
+  });
+
   it("refuses a path outside the package", async () => {
     const { url, stop } = await started();
     try {

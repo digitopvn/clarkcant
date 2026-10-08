@@ -102,7 +102,10 @@ export function createDevelopWidgetTool(deps: DevelopWidgetToolDeps): ToolDefini
       " and folders the person chose for widget development, including the folders inside them. For any other folder, start shows the person a card to " +
       "choose it themselves; when they do, the session starts and its widget appears here, so do not ask them to copy " +
       "the project anywhere. Only widgets that render in the frame or are data are developed this way: a package with " +
-      "a service, tools or a native part is refused.",
+      "a service, tools or a native part is refused. To show a chart, a table or a diagram, use show_view instead: a " +
+      "package is for what no view can show. A widget's frame reaches no network unless its manifest declares the " +
+      "origin, and that includes its own package's files: data it ships goes in a .js module it imports (export const " +
+      "rows = [...]), never a file it fetches, or the widget fails with \"Failed to fetch\" once placed.",
     parameters: {
       type: "object",
       additionalProperties: false,

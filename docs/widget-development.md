@@ -1080,6 +1080,36 @@ the scatter plot's axis titles, refusals for a missing field and a value that is
 the node no longer holds said in Vietnamese, reduced
 motion, 390 px with touch in the light theme, and the library.
 
+### 8.6.1 Charts over rows a model gathered
+
+A chart draws a dataset by reference. When the numbers are ones a model has just gathered (a page it read, a
+benchmark comparison it was asked for), `show_view` takes them in `data`, under a name the props then use:
+
+    { "view": "canvas.bar@1",
+      "props": { "datasetRef": "bench", "series": ["Model A", "Model B"], "title": "Benchmark scores" },
+      "data": { "bench": { "rows": [ { "benchmark": "MMLU", "Model A": 88.1, "Model B": 86.4 },
+                                     { "benchmark": "GPQA", "Model A": 61.0, "Model B": 59.2 } ] } } }
+
+- The node keeps each named set as a dataset the person owns, labelled **saved data** (`cached`): never live, never
+  sample. Every `datasetRef` in the props that uses the name, at any depth, is pointed at it before the view is built.
+- At most 8 names, 500 rows and 32 fields each. A value is text (up to 500 characters), a finite number, true/false
+  or null; a number written as text (`"12%"`) stays text. `columns` may list fields in display order; one no row has is
+  refused, and so is a field named `__proto__`. Anything that does not fit is refused whole, with the reason, and
+  nothing is built.
+- Rows passed with a composed layout (`props.layout`) are refused and nothing is kept: its leaves draw the host's own
+  data, so the rows would not be drawn. Each chart or table over stated rows is shown with its own `show_view` call.
+- The model is told, as a guideline beside the tool, to show a structured answer as a view in the same turn without
+  being asked (a chart for compared numbers, a table for several attributes, a diagram for a flow), to pass the numbers
+  it gathered rather than invent them, to say where they come from, and to prefer a view over writing a widget package.
+
+`canvas.bar@1` draws every field `props.series` names that the rows hold as numbers (up to 8). One series draws a bar
+per row; several draw each row's bars side by side, each series in its own tone with a legend naming it, every bar
+titled with its category, series and value, and the rows kept as a table underneath. A row is labelled by its first
+field (or a field called `name`, `label` or `week`).
+
+Tests: [stated-data.spec.ts](../apps/runtime/test/stated-data.spec.ts) and
+[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts).
+
 ### 8.7 Calendar views
 
 `canvas.calendar@1` shows the events of a dataset in three views: a month, a week (Monday to Sunday) and an agenda,
@@ -2434,6 +2464,11 @@ it (`frame-ancestors 'self'`), plus the interface's origin when that is somewher
 writes this). The node checks `CC_APP_ORIGIN` at startup and refuses to start when it is not a
 bare `http(s)` origin. The request's `Host` header is never used.
 
+That includes the package's own files: a frame cannot `fetch` a file it ships, and a JSON module import is a fetch
+too. Data a widget ships goes in a JavaScript module it imports (`export const rows = [...]`). A widget that fetched
+its own file worked in an older dev host and failed with "Failed to fetch" once placed; the dev host now serves the
+same policy (§16).
+
 A short-lived, scoped browser token is the one exception to "a widget never holds a provider credential", and only
 where a package declares it (§14.3). Long-lived keys stay in the node: a service reaches its provider through the
 node, which adds the key itself (§14.2).
@@ -3050,6 +3085,11 @@ validates every outcome against the widget bridge schema; malformed outcomes bec
 widget rendering and bridge handling only. It does not prove the service implementation works. The package frame gets
 the same widget SDK runtime used by the bridge, stays in an opaque-origin sandbox, and can load package modules only
 through the dev host.
+
+The entry document is served with the node's own policy (§14): a fresh nonce on the runtime script, `connect-src`
+from the manifest's `networkOrigins` (read on every load, so a newly declared origin takes effect on the next reload),
+`frame-ancestors 'self'`, `base-uri 'none'` and `sandbox allow-scripts`. What the dev host runs is what the node runs,
+so a widget that reaches the network or fetches its own files fails here, where it can be fixed, not after install.
 
 A binding to a capability declared with `"execution": { "kind": "job", "version": 1 }` takes a `job` fixture instead
 of an `outcome`, and every such binding needs one:
