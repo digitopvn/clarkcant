@@ -2962,8 +2962,13 @@ the path is still that folder itself when you press, so a link put in its place 
 asking again, until you take that back: type `/develop forget` (or ask Clark which folders it may use) and press
 **Forget** beside the folder. Forgetting does not stop a session that is running, and a folder inside another folder
 you chose stays reachable through that one (the answer says so). A chosen folder that is moved away is listed as not
-found, so you can still forget it; it counts again only if that same folder is moved back, not when another folder is
-made at its path. Only a message you sent can make Clark show a folder to choose. A whole drive or your home folder can
+found, so you can still forget it; it counts again if that same folder is moved back, and a new folder at its path is
+chosen when you start developing it yourself. One limit: on Linux (ext4 and similar), a folder deleted (not moved) and
+made again at once at the same path can get the deleted folder's file id and then still count as the one you chose, so
+forget a folder before deleting it if a folder made there later must not inherit the choice. If a session Clark started
+stops after a restart because its folder is no longer one Clark may watch on its own (for example, it was deleted and
+made again), what it built keeps running; press **Develop again** on its row in the `/develop` card to choose the
+folder again. Only a message you sent can make Clark show a folder to choose. A whole drive or your home folder can
 be developed for one session, but Clark never keeps access to it. The node's own data folder is never developed, and neither
 is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
 a native part is refused with a problem saying so; install that package the ordinary way.

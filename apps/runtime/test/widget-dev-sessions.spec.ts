@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type * as fs from "node:fs";
 import type * as fsPromises from "node:fs/promises";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type * as os from "node:os";
 import type * as core from "@clarkcant/core";
@@ -235,6 +235,11 @@ function askEveryInstall(): void {
 }
 
 const session = (response: GatewayResponse): WidgetDevSessionView => response.body as WidgetDevSessionView;
+/** The device and file id of the folder at `path` itself, as the session store keeps a chosen folder's. */
+const idOf = (path: string): { dev: string; ino: string } => {
+  const stat = lstatSync(path, { bigint: true });
+  return { dev: String(stat.dev), ino: String(stat.ino) };
+};
 const live = async (conversationId: string, instanceId: string) => {
   const response = await call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
   expect(response.status).toBe(200);
@@ -734,6 +739,11 @@ describe("a widget dev session", () => {
     const row = services.widgetDev?.folderCard({ locale: "en", only: "chosen" }).rows[0];
     expect(row).toMatchObject({ label: elsewhere, badge: { text: "not found now", tone: "warning" }, actions: [{ action: { kind: "develop-folder-forget", root: elsewhere } }] });
     expect(row?.note).toContain("not found at this path now");
+    // Starting a new folder there is how it is chosen, said in both languages.
+    expect(row?.note).toContain("A new folder at this path is chosen when you start developing it yourself");
+    expect(services.widgetDev?.folderCard({ locale: "vi", only: "chosen" }).rows[0]?.note).toContain(
+      "Một thư mục mới ở đường dẫn này được chọn khi chính bạn bắt đầu phát triển nó",
+    );
 
     expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: elsewhere })).body).toEqual({ root: elsewhere, forgotten: true });
     expect(services.widgetDev?.marked()).toEqual([]);
@@ -796,6 +806,73 @@ describe("a widget dev session", () => {
     renameSync(elsewhere, moved);
     writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.another" });
     expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+  });
+
+  it("drops a chosen folder's id along with the mark when the person forgets it", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    const store = join(dir, "node");
+    expect(readDevSessions(store)[0]).toMatchObject({ chosenByPerson: true, chosenFolderId: idOf(elsewhere) });
+
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: elsewhere })).body).toEqual({ root: elsewhere, forgotten: true });
+    const forgotten = readDevSessions(store)[0];
+    expect(forgotten?.sessionId).toBe(started.sessionId);
+    expect(forgotten?.chosenByPerson).toBeUndefined();
+    expect(forgotten?.chosenFolderId).toBeUndefined();
+  });
+
+  it("records the folder now at the path when the person starts a live session again after its folder was made again", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    const store = join(dir, "node");
+    const first = idOf(elsewhere);
+    expect(readDevSessions(store)[0]?.chosenFolderId).toEqual(first);
+
+    // The chosen folder is moved away and another folder is made at its path while the session is still live.
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const second = idOf(elsewhere);
+    expect(second).not.toEqual(first);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+
+    // The person's start picks up the live session and chooses the folder that is there now.
+    const again = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    expect(again).toMatchObject({ sessionId: started.sessionId, status: "live" });
+    expect(readDevSessions(store)[0]?.chosenFolderId).toEqual(second);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: true }]);
+  });
+
+  it("stops a session Clark started in a chosen folder made again, at the next restart, and asks the person to choose it again", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const chosen = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    await call("DELETE", `/widget-dev/sessions/${chosen.sessionId}`);
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Running generation 1.");
+
+    // The node stops; meanwhile the chosen folder is replaced by another folder at the same path.
+    await services.widgetDev?.close();
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+
+    const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
+    expect(views.find((view) => view.sessionId === chosen.sessionId)).toMatchObject({ status: "stopped", stopReason: "root-refused" });
+    const card = services.widgetDev.folderCard({ locale: "en" });
+    const row = card.rows.find((candidate) => candidate.rowId === `session:${chosen.sessionId}`);
+    expect(row?.note).toContain("Press Develop again to choose the folder again");
+    expect(row?.actions).toMatchObject([{ action: { kind: "develop-folder", root: elsewhere } }]);
+    expect(services.widgetDev.folderCard({ locale: "vi" }).rows.find((candidate) => candidate.rowId === row?.rowId)?.note).toContain(
+      "Bấm Phát triển lại để chọn lại thư mục",
+    );
+
+    // That press, the person's own start, chooses the folder now at the path.
+    session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    expect(services.widgetDev.chosen()).toEqual([elsewhere]);
   });
 
   it("warns that a whole drive or the home folder is watched for the session only, and keeps no choice of it", async () => {

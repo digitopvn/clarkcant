@@ -57,8 +57,8 @@ export function developFolderCard(input: {
     note: found
       ? say("Clark được phát triển trong thư mục này và mọi thư mục bên trong nó.", "Clark may develop in this folder and every folder inside it.")
       : say(
-          "Hiện không tìm thấy thư mục này ở đường dẫn đó (đã bị chuyển, xoá, hoặc thay bằng một liên kết hay một thư mục khác), nên nó không cho Clark quyền gì; nếu chính thư mục này trở lại đúng chỗ này, quyền sẽ có lại, còn một thư mục khác được tạo ở đó thì không. Thu hồi để bỏ hẳn.",
-          "This folder is not found at this path now (moved, removed, or replaced by a link or by another folder), so it gives Clark nothing; if this same folder comes back here, so does the access, but another folder made here does not get it. Forget it to drop it for good.",
+          "Hiện không tìm thấy thư mục này ở đường dẫn đó (đã bị chuyển, xoá, hoặc thay bằng một liên kết hay một thư mục khác), nên nó không cho Clark quyền gì; nếu chính thư mục này trở lại đúng chỗ này, quyền sẽ có lại. Một thư mục mới ở đường dẫn này được chọn khi chính bạn bắt đầu phát triển nó. Thu hồi để bỏ hẳn.",
+          "This folder is not found at this path now (moved, removed, or replaced by a link or by another folder), so it gives Clark nothing; if this same folder comes back here, so does the access. A new folder at this path is chosen when you start developing it yourself. Forget it to drop it for good.",
         ),
     badge: found ? { text: say("bạn đã chọn", "you chose"), tone: "success" } : { text: say("không tìm thấy", "not found now"), tone: "warning" },
     actions: [{ actionId: "forget", label: say("Thu hồi", "Forget"), action: { kind: "develop-folder-forget", root } }],
@@ -142,10 +142,20 @@ export function developFolderCard(input: {
     .slice(0, SESSIONS_LISTED);
   for (const session of listed) {
     const named = session.packageId === undefined ? undefined : session.version === undefined ? session.packageId : `${session.packageId}@${session.version}`;
+    // Stopped when the node started again because Clark may no longer watch the folder on its own: for example a chosen
+    // folder deleted and made again, which is another folder, or a folder the person forgot. Only the person's own start chooses it.
+    const refused =
+      session.status === "stopped" && session.stopReason === "root-refused"
+        ? say(
+            "Clark không còn được tự theo dõi thư mục này (chẳng hạn vì nó đã bị xoá rồi tạo lại sau khi bạn chọn); những gì nó đã dựng vẫn chạy. Bấm Phát triển lại để chọn lại thư mục.",
+            "Clark may no longer watch this folder on its own (for example, it was deleted and made again after you chose it); what it built keeps running. Press Develop again to choose the folder again.",
+          )
+        : undefined;
+    const note = [named, refused].filter((part): part is string => part !== undefined).join(" · ");
     rows.push({
       rowId: `session:${session.sessionId}`,
       label: shown(session.root),
-      ...(named === undefined ? {} : { note: named }),
+      ...(note === "" ? {} : { note }),
       badge:
         session.status === "live"
           ? { text: say("đang theo dõi", "watching"), tone: "active" }

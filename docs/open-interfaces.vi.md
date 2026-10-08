@@ -919,10 +919,20 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   thư mục đó (`chosenFolderId` trong kho phiên). Nếu về sau đường dẫn đó dẫn tới nơi khác (thư mục bị thay bằng một
   liên kết hoặc junction, bị chuyển đi hoặc bị xoá), hoặc chứa một thư mục khác (được tạo ở đó sau khi thư mục đã chọn
   không còn), lựa chọn không còn được tính, nên cả một liên kết bị tráo lẫn một thư mục được tạo vào chỗ đó đều không mở
-  rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu chính thư mục đó trở lại
+  rộng được nó (trong giới hạn của mã thư mục, xem bên dưới). Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu chính thư mục đó trở lại
   đúng đường dẫn đó (được chuyển về), lựa chọn lại được tính. Một lựa chọn được lưu từ trước khi mã thư mục được giữ thì
   không có mã: nó nhận mã của thư mục được tìm thấy ở đường dẫn đó vào lần đầu tiên có thư mục ở đó, và từ đó chỉ gắn
-  với thư mục ấy.
+  với thư mục ấy. Một thư mục mới ở đường dẫn đó được chọn khi chính người dùng bắt đầu nó, và lần bắt đầu ấy ghi lại mã
+  của nó (kể cả với một phiên vẫn đang chạy ở đó).
+- **Giới hạn của mã thư mục.** Mã này chỉ phân biệt được các thư mục khi hệ thống tệp không cấp lại đúng mã đó cho một
+  thư mục tạo sau. NTFS (Windows) cấp mã mới cho một thư mục được tạo lại. Các hệ thống tệp trên Linux như ext4 có thể
+  cấp cho một thư mục bị xoá (không phải bị chuyển đi) rồi được tạo lại ngay ở cùng đường dẫn đúng mã của thư mục đã
+  xoá, và khi đó nó được tính là thư mục đã chọn. Trên Linux và macOS node giữ thư mục đang theo dõi ở trạng thái mở,
+  nên điều này không xảy ra khi có phiên đang theo dõi nó; nó có thể xảy ra giữa các phiên hoặc khi node đang dừng.
+  Không có tín hiệu thứ hai nào được thêm vào: thời điểm tạo của thư mục không mịn hơn một nhịp đồng hồ của hệ thống tệp
+  (trên ext4, một thư mục bị xoá rồi tạo lại trong cùng một nhịp có cùng mã và cùng thời điểm tạo), và ở nơi không đọc
+  được nó, Node trả về thời điểm thay đổi, vốn đổi mỗi khi có tệp được thêm hay xoá. Hãy thu hồi một thư mục trước khi
+  xoá nó nếu không muốn một thư mục khác tạo ở đó thừa hưởng lựa chọn.
 - Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
   `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
   `develop_widget`). Thu hồi không dừng phiên đang chạy. Một thư mục nằm trong một thư mục đã chọn khác, hoặc trong một
@@ -998,7 +1008,10 @@ vẫn hiện là đang chạy:
   khi thư mục không còn sau một lần khởi động lại.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
 - `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
-  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
+  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget, hoặc nằm trong một thư mục đã chọn bị xoá (hay bị chuyển
+  đi) rồi được tạo lại ở cùng đường dẫn trong lúc node dừng: thư mục ở đó không phải thư mục đã chọn, nên Clark không được
+  tự theo dõi nó. Những gì phiên đã chạy vẫn tiếp tục chạy. Dòng trạng thái và dòng của phiên trên thẻ `develop` nhắc
+  người dùng chọn lại thư mục; chính lần bắt đầu của họ (**Phát triển lại**) chọn thư mục đang ở đường dẫn đó.
 
 Một thư mục vẫn còn đó nhưng mang định danh khác không làm phiên dừng. Node so sánh device và file id của thư mục với
 những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
