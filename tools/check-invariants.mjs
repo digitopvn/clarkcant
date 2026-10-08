@@ -12,7 +12,7 @@
  *
  * Exit code is non-zero when any check fails.
  */
-import { buildContext } from "./invariants/context.mjs";
+import { buildContext, formatReport } from "./invariants/context.mjs";
 
 import docsManifestIntegrity, { fixManifest } from "./invariants/docs-manifest-integrity.mjs";
 import workspacePhaseTraceability from "./invariants/workspace-phase-traceability.mjs";
@@ -63,19 +63,6 @@ for (const runCheck of CHECKS) {
 /* ------------------------------------------------------------------ *
  * Report
  * ------------------------------------------------------------------ */
-let failed = 0;
-const lines = [];
-for (const entry of ctx.results) {
-  const ok = entry.failures.length === 0;
-  if (!ok) failed += 1;
-  lines.push(`${ok ? "PASS" : "FAIL"}  ${entry.name}`);
-  for (const note of entry.notes) lines.push(`      · ${note}`);
-  for (const failure of entry.failures) lines.push(`      ✗ ${failure}`);
-}
-
-process.stdout.write(`${lines.join("\n")}\n\n`);
-if (failed > 0) {
-  process.stdout.write(`${failed} invariant check(s) failed\n`);
-  process.exit(1);
-}
-process.stdout.write(`all ${ctx.results.length} invariant checks passed\n`);
+const { text, failed } = formatReport(ctx.results);
+process.stdout.write(text);
+if (failed > 0) process.exit(1);

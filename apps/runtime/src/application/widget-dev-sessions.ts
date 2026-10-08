@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -171,6 +171,21 @@ function realOrUndefined(path: string): string | undefined {
   }
 }
 
+type ChosenFolderId = NonNullable<StoredDevSession["chosenFolderId"]>;
+
+/** The device and file id of the folder at `path` itself, not reached through a link, or undefined when none is there. */
+function folderIdOf(path: string): ChosenFolderId | undefined {
+  try {
+    const stat = lstatSync(path, { bigint: true });
+    return stat.isDirectory() ? { dev: String(stat.dev), ino: String(stat.ino) } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the folder at `root` is still the one with `id` (`devRootState`, as a dev session watches its folder). */
+const isFolder = (root: string, id: ChosenFolderId): boolean => devRootState(root, { dev: BigInt(id.dev), ino: BigInt(id.ino) }) === "present";
+
 /** A Windows path that names another machine or a device rather than a folder on a local drive. */
 function isRemoteOrDevicePath(path: string): boolean {
   return process.platform === "win32" && /^[\\/]{2}/.test(path);
@@ -185,6 +200,8 @@ export function createWidgetDevSessions(
     watch?: boolean;
     /** How often a session waiting on an answer looks for it. */
     answerPollMs?: number;
+    /** How long a folder may keep failing to be looked at before its session stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
+    rootUnreadableMs?: number;
   } = {},
 ): WidgetDevSessions {
   const live = new Map<string, LiveSession>();
@@ -261,13 +278,24 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_NOT_LOCAL", "give a folder on a drive of this machine; a network share or device path is not developed from");
     }
     const resolved = resolve(given);
+    // Only "not found" means not there: a folder an antivirus or indexer holds (`EPERM`, `EBUSY`) is there, unreadable.
+    const unreadable = (cause: unknown) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      return code !== undefined && code !== "ENOENT" && code !== "ENOTDIR"
+        ? refusal(403, "ROOT_UNREADABLE", `${resolved} cannot be read on this node (${code})`)
+        : undefined;
+    };
     try {
       if (!statSync(resolved).isDirectory()) return refusal(400, "ROOT_NOT_A_FOLDER", `${resolved} is not a folder`);
-    } catch {
-      return refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
     }
-    const root = realOrUndefined(resolved);
-    if (root === undefined) return refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    let root: string;
+    try {
+      root = realpathSync.native(resolved);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    }
     if (isRemoteOrDevicePath(root)) {
       return refusal(400, "ROOT_NOT_LOCAL", "the folder resolves to a network share or device path, which is not developed from");
     }
@@ -279,7 +307,8 @@ export function createWidgetDevSessions(
     }
     if (initiative.kind === "clark" && !inWorkspace) {
       // The person's configured roots are resolved as they are now; a chosen folder is the canonical path the person's
-      // start stored, compared as it is (`chosenFolders`), so a link swapped in at its path later widens nothing.
+      // start stored, compared as it is, and only while the same folder is there (`chosenFolders`), so neither a link
+      // swapped in at its path later nor another folder made there widens anything.
       const allowed = [
         ...configuredRoots()
           .map((path) => realOrUndefined(path))
@@ -317,16 +346,43 @@ export function createWidgetDevSessions(
   const chosenFolders = (): string[] => markedFolders().filter((folder) => folder.found).map((folder) => folder.root);
 
   /**
-   * Every folder marked as chosen, once each. The stored root is the canonical path the person's start resolved; a folder
-   * that now resolves anywhere else (it was replaced by a link, moved or removed) is not `found`, and so grants nothing
-   * (`chosenFolders`), but it is still the person's mark to see and forget.
+   * Every folder marked as chosen, once each. The stored root is the canonical path the person's start resolved, and the
+   * stored id (`chosenFolderId`) is the folder that was there. A path that now resolves anywhere else (it was replaced by
+   * a link, moved or removed), or that holds another folder (one made there after the chosen one went), is not `found`,
+   * and so grants nothing (`chosenFolders`), but it is still the person's mark to see and forget. The chosen folder moved
+   * back to its path is found again.
+   *
+   * A mark stored before ids were kept has none. It takes the id of the folder found at its path the first time one is,
+   * and is held to that folder from then on: until then there is no record of which folder was chosen.
    */
   const markedFolders = (): { root: string; found: boolean }[] => {
+    const sessions = readDevSessions(dataDir());
     const folders: { root: string; found: boolean }[] = [];
-    for (const session of readDevSessions(dataDir())) {
-      if (session.chosenByPerson !== true || folders.some((folder) => sameRoot(folder.root, session.root))) continue;
+    const adopted = new Map<string, ChosenFolderId>();
+    for (const session of sessions) {
+      if (session.chosenByPerson !== true) continue;
       const now = realOrUndefined(session.root);
-      folders.push({ root: session.root, found: now !== undefined && sameRoot(now, session.root) });
+      let found = false;
+      if (now !== undefined && sameRoot(now, session.root)) {
+        if (session.chosenFolderId !== undefined) found = isFolder(session.root, session.chosenFolderId);
+        else {
+          const id = folderIdOf(session.root);
+          if (id !== undefined) adopted.set(session.sessionId, id);
+          found = id !== undefined;
+        }
+      }
+      const listed = folders.find((folder) => sameRoot(folder.root, session.root));
+      if (listed === undefined) folders.push({ root: session.root, found });
+      else listed.found ||= found;
+    }
+    if (adopted.size > 0) {
+      writeDevSessions(
+        dataDir(),
+        sessions.map((session) => {
+          const id = adopted.get(session.sessionId);
+          return id === undefined ? session : { ...session, chosenFolderId: id };
+        }),
+      );
     }
     return folders;
   };
@@ -346,9 +402,12 @@ export function createWidgetDevSessions(
    * always carries the canonical path it showed; if that path leads somewhere else by the time of the press (a link
    * swapped in, or a missing folder made a link), the session runs but nothing is kept, so the person never approves one
    * folder and grants another. A folder too broad to keep (`broadFolder`) is never chosen either.
+   *
+   * What it keeps is the id of the folder at `root` (`folderIdOf`), read right after `checkRoot` resolved it, so the mark
+   * names that folder and no other made at the path later; with no folder of its own there by then, nothing is kept.
    */
-  const choosesFolder = (initiative: WidgetDevInitiative, root: string, pressed: string): boolean =>
-    initiative.kind === "person" && sameRoot(resolve(pressed.trim()), root) && broadFolder(root) === undefined;
+  const choiceOf = (initiative: WidgetDevInitiative, root: string, pressed: string): ChosenFolderId | undefined =>
+    initiative.kind === "person" && sameRoot(resolve(pressed.trim()), root) && broadFolder(root) === undefined ? folderIdOf(root) : undefined;
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {
     const session = live.get(stored.sessionId);
@@ -742,8 +801,9 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * Whether a live session's folder has gone (deleted, renamed, or replaced by another folder at the same path while it
-   * was watched); when it has, the session is stopped as `folder-gone` before anything is built or installed from it. A
+   * Whether a live session's folder has gone (deleted, renamed, or no longer a folder; another folder made at the same
+   * path is watched in its place by the engine); when it has, the session is stopped as `folder-gone` before anything is
+   * built or installed from it. A
    * platform watcher does not always report this (Windows reports nothing), so the check is made before each build is
    * followed, not only on a watcher error. The session's engine answers, since it knows which folder it watches; a folder
    * that could not be looked at this time (a busy or locked folder on Windows) is not taken as gone.
@@ -779,6 +839,7 @@ export function createWidgetDevSessions(
         root: stored.root,
         cacheRoot: cacheRoot(),
         watch: options.watch !== false,
+        ...(options.rootUnreadableMs === undefined ? {} : { rootUnreadableMs: options.rootUnreadableMs }),
         generationsBefore: before,
         allowedIsolations: WIDGET_DEV_ALLOWED_ISOLATIONS,
         baseline: () => live.get(sessionId)?.baseline,
@@ -793,7 +854,7 @@ export function createWidgetDevSessions(
           });
         },
         onWatchError: (error) => {
-          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}\n`);
+          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}; what it ran keeps running\n`);
           // Said as it is: a session whose folder is no longer watched is stopped, not live.
           void serial(sessionId, async () => {
             if (live.get(sessionId) === session) markStopped(sessionId, "watch-failed");
@@ -853,12 +914,13 @@ export function createWidgetDevSessions(
       const checked = checkRoot(input.root, initiative);
       if (!checked.ok) return checked;
       const root = checked.value;
+      const choice = choiceOf(initiative, root, input.root);
       if (input.conversationId !== undefined && !conversationExists(input.conversationId)) return noConversation(input.conversationId);
       const sessions = readDevSessions(dataDir());
       const existing = sessions.find((session) => sameRoot(session.root, root) && session.status === "live" && live.has(session.sessionId));
       if (existing !== undefined) {
         const view = await serial(existing.sessionId, async () => {
-          if (choosesFolder(initiative, root, input.root)) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
+          if (choice !== undefined) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true, chosenFolderId: choice }));
           await settle(existing.sessionId, "start");
           return sessionView(existing.sessionId);
         });
@@ -887,7 +949,7 @@ export function createWidgetDevSessions(
         startedAt: nowInstant(),
         initiative,
         // The person starting a folder is them choosing it; Clark picking up a folder they chose keeps the mark.
-        ...(choosesFolder(initiative, root, input.root) ? { chosenByPerson: true as const } : {}),
+        ...(choice === undefined ? {} : { chosenByPerson: true as const, chosenFolderId: choice }),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(input.widgetId === undefined ? {} : { widgetId: input.widgetId }),
         ...(placed === undefined ? {} : { placed }),
@@ -1003,7 +1065,7 @@ export function createWidgetDevSessions(
           dataDir(),
           sessions.map((session) => {
             if (session.chosenByPerson !== true || !matches(session.root)) return session;
-            const { chosenByPerson: _forgotten, ...rest } = session;
+            const { chosenByPerson: _forgotten, chosenFolderId: _which, ...rest } = session;
             return rest;
           }),
         );
@@ -1033,8 +1095,9 @@ export function createWidgetDevSessions(
         const checked = checkRoot(stored.root, { kind: stored.initiative?.kind ?? "person" });
         if (!checked.ok) {
           const gone = checked.code === "ROOT_NOT_FOUND" || checked.code === "ROOT_NOT_A_FOLDER";
-          markStopped(stored.sessionId, gone ? "folder-gone" : "root-refused");
-          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}), so its session was stopped; what it ran keeps running\n`);
+          // A folder that is there but cannot be read is not gone, nor refused: watching it failed.
+          markStopped(stored.sessionId, gone ? "folder-gone" : checked.code === "ROOT_UNREADABLE" ? "watch-failed" : "root-refused");
+          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}: ${checked.message}), so its session was stopped; what it ran keeps running\n`);
           continue;
         }
         if (live.size >= WIDGET_DEV_LIVE_MAX) {

@@ -278,3 +278,146 @@ test("a token in the address bar buys the detached window no conversation", asyn
   // The token was never even stored for this tab, which is what "the branch is taken first" means in practice.
   expect(await page.evaluate(() => window.sessionStorage.getItem("cc_token"))).toBeNull();
 });
+
+/*
+ * The conversation's half of the hand-off, driven through the real surface (`PinnedLiveSurface`) against the real node.
+ *
+ * The node's lease calls are held or failed with `page.route`, and the page's clock is installed, so the 30 s re-claim
+ * can be stepped rather than waited for. The bridge stands in for the desktop preload, recording what it is asked.
+ */
+const LIVE_OWNER = /\/widgets\/[^/]+\/live-owner$/;
+const LIVE_READ = /\/widgets\/[^/]+\/live$/;
+const REFRESH_MS = 30_000;
+
+async function openOwnedLiveWidget(
+  page: import("@playwright/test").Page,
+  bridge: "records" | "throws",
+  beforeOpen?: () => Promise<void>,
+): Promise<import("@playwright/test").Locator> {
+  if (NODE_PORT === undefined || NODE_PORT === "") throw new Error("CC_E2E_NODE_PORT is not set; run this suite through playwright.config.ts");
+  await page.addInitScript((mode) => {
+    if (window.top !== window) return;
+    const calls: string[] = [];
+    (window as unknown as { __shellCalls: string[] }).__shellCalls = calls;
+    (window as unknown as { clarkcant: unknown }).clarkcant = {
+      detachWidget: async () => {
+        calls.push("detach");
+        if (mode === "throws") throw new Error("the widget window closed while it was loading");
+        return { ok: true };
+      },
+      attachWidget: async () => {
+        calls.push("attach");
+        return { ok: true, attached: true };
+      },
+    };
+  }, bridge);
+  await page.clock.install();
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  await say(page, "cho tui xem tổng quan công việc tuần này");
+  await expect(page.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
+  await beforeOpen?.();
+  await page.locator("[data-open-live]").first().click();
+  return page.locator("[data-pin-live]").first();
+}
+
+function shellCalls(page: import("@playwright/test").Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __shellCalls: string[] }).__shellCalls);
+}
+
+test("a detach the desktop shell throws on tells the person, takes the widget back and leaves no uncaught error", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const live = await openOwnedLiveWidget(page, "throws");
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 30_000 });
+
+  await live.locator("[data-detach-widget='true']").click();
+  await expect.poll(() => shellCalls(page)).toEqual(["detach"]);
+  await expect(live.locator("[data-live-notice='true']")).toContainText("the widget window closed while it was loading");
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("a re-claim the node never answers does not stop the next one, and Detach waits for the one on its way", async ({ page }) => {
+  const live = await openOwnedLiveWidget(page, "records");
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 30_000 });
+
+  const held: Array<import("@playwright/test").Route> = [];
+  const releases: string[] = [];
+  await page.route(LIVE_OWNER, async (route) => {
+    const method = route.request().method();
+    if (method === "POST") {
+      held.push(route);
+      return;
+    }
+    if (method === "DELETE") releases.push("release");
+    await route.continue();
+  });
+
+  // The first re-claim is never answered. It times out well inside the interval, so the next tick still re-claims.
+  await page.clock.fastForward(REFRESH_MS);
+  await expect.poll(() => held.length).toBe(1);
+  // Stepped in two jumps, as real time would pass: the deadline (10 s) fires and settles before the next tick is due.
+  await page.clock.fastForward(10_000);
+  await page.clock.fastForward(REFRESH_MS - 10_000);
+  await expect.poll(() => held.length).toBe(2);
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible();
+
+  // Detach waits for the re-claim on its way: nothing is released while it is still out.
+  await live.locator("[data-detach-widget='true']").click();
+  await page.waitForTimeout(300);
+  expect(releases).toEqual([]);
+  expect(await shellCalls(page)).toEqual([]);
+
+  await held[1]?.continue();
+  await expect.poll(() => releases).toEqual(["release"]);
+  await expect.poll(() => shellCalls(page)).toEqual(["detach"]);
+});
+
+test("a re-claim that never lands does not stall Detach past its bound", async ({ page }) => {
+  const live = await openOwnedLiveWidget(page, "records");
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 30_000 });
+
+  let reclaims = 0;
+  const releases: string[] = [];
+  await page.route(LIVE_OWNER, async (route) => {
+    const method = route.request().method();
+    if (method === "POST") {
+      // Held for good: a node that accepted the call and never answers.
+      reclaims += 1;
+      return;
+    }
+    if (method === "DELETE") releases.push("release");
+    await route.continue();
+  });
+  await page.clock.fastForward(REFRESH_MS);
+  await expect.poll(() => reclaims).toBe(1);
+
+  await live.locator("[data-detach-widget='true']").click();
+  await page.waitForTimeout(300);
+  expect(releases).toEqual([]);
+  await page.clock.fastForward(5_000);
+  await expect.poll(() => releases).toEqual(["release"]);
+  await expect.poll(() => shellCalls(page)).toEqual(["detach"]);
+});
+
+test("a surface that could not read its widget recovers once a re-claim succeeds and the read does", async ({ page }) => {
+  let failReads = false;
+  const live = await openOwnedLiveWidget(page, "records", async () => {
+    // The first read of the opened surface fails; every read after it is answered by the node.
+    failReads = true;
+    await page.route(LIVE_READ, async (route) => {
+      if (route.request().method() === "GET" && failReads) {
+        failReads = false;
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "UNAVAILABLE", message: "the widget could not be read" } }) });
+        return;
+      }
+      await route.continue();
+    });
+  });
+  await expect(live.locator("[data-ownership='error']")).toBeVisible({ timeout: 30_000 });
+
+  await page.clock.fastForward(REFRESH_MS);
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 10_000 });
+  await expect(live.locator("[data-detach-widget='true']")).toBeVisible();
+});

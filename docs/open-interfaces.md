@@ -884,10 +884,12 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
 | `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Take back the person's choice of a folder (`widgetDevFolderForgetSchema`): it no longer lets Clark start sessions in it, or in the folders inside it. Answers `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` when the folder was not chosen, so pressing twice is harmless. `stillCoveredBy` names a folder Clark may still develop in that holds this one (another chosen folder, or a `workspace.roots` value the person recorded), so Clark keeps access there until that one goes too. Sessions and what they run stay as they are. Person-only. |
 
-Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` and
-`503 WIDGET_DEV_UNAVAILABLE`:
+Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
+`404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
+`409 NOT_PLACED` and `503 WIDGET_DEV_UNAVAILABLE`:
 
+- `403 ROOT_UNREADABLE` is for a folder that is there but cannot be read, for example while an antivirus holds it; the
+  message names the error, such as `EPERM`.
 - `409 TOO_MANY_SESSIONS` is for a ninth live session on the node, or for a store that already holds 256 sessions that
   all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
@@ -907,10 +909,13 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   nothing. The choice covers the folder and every folder inside it. Starting it again keeps the mark, and so
   does Clark picking the session up later. A whole drive (a filesystem or drive root) or the home folder itself is
   never marked: a session may still run there, but Clark gets no lasting access to it.
-- A chosen folder is kept as the real path it had when the person started it. If that path later leads somewhere else
-  (the folder was replaced by a link or junction, moved or removed), the choice no longer counts, so a swapped link
-  cannot widen it. It is still listed, as not found, so the person can forget it; if the folder comes back at that
-  path, the choice counts again.
+- A chosen folder is kept as the real path it had when the person started it, together with that folder's device and
+  file id (`chosenFolderId` in the session store). If that path later leads somewhere else (the folder was replaced by
+  a link or junction, moved or removed), or holds another folder (one made there after the chosen one went), the choice
+  no longer counts, so neither a swapped link nor a folder made in its place can widen it. It is still listed, as not
+  found, so the person can forget it; if that same folder comes back at that path (moved back), the choice counts
+  again. A choice stored before folder ids were kept has none: it takes the id of the folder found at its path the
+  first time one is, and from then on is held to that folder.
 - The person takes a choice back with `POST /widget-dev/chosen-folders/forget`, the **Forget** button on the card
   `/develop forget` answers with, or the same card Clark shows when asked in words (`develop_widget` action
   `folders`). Forgetting does not stop a running session. A folder inside another chosen folder, or inside a
@@ -972,16 +977,39 @@ node starts with no sessions; the file is never overwritten.
 **When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
 reading as live:
 
-- `watch-failed`: the watcher failed.
-- `folder-gone`: the folder was deleted or renamed, or it was deleted and a new folder was made at the same path, which
-  the watcher no longer hears (the node compares the folder's device and file id with the ones it started watching).
-  The node checks for the folder at least once a second and before each build, because Windows reports nothing when a
-  watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an
-  antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again. The same reason
-  applies when the folder is missing after a restart.
+- `watch-failed`: the watcher failed; the folder could not be looked at for 30 seconds in a row for a reason other
+  than "not found" (see below); the folder was found under a new file id on more than 30 looks in a row, with no look
+  between them finding it unchanged; or, after a restart, the folder cannot be read (`ROOT_UNREADABLE`). The node's log
+  names the error, for example `EPERM`.
+- `folder-gone`: the folder was deleted or renamed and is not back within 2 seconds, the path no longer names a folder,
+  or the path now leads to another folder through a symbolic link or junction (at the folder itself or at a folder
+  above it). The node checks for the folder at least once a second and before each build, because Windows reports
+  nothing when a watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another
+  reason, such as an antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again,
+  for up to 30 seconds of continuous failures; after that the session stops as `watch-failed`. The same reason applies
+  when the folder is missing after a restart.
 - `capacity`: the node is already watching eight folders as it resumes.
 - `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
   whose folder is outside the widget workspace.
+
+A folder that is still there with another identity does not stop the session. The node compares the folder's device and
+file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
+`rm -rf out && build`), or the filesystem gave it a new id (some FUSE mounts and network drives do). The node watches
+the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids.
+
+A folder that is missing when the node looks, because a build deleted it and has not made it again yet, is looked for
+again for 2 seconds before the session stops. No build starts meanwhile. A build already running when the folder went,
+or a rebuild asked for in those 2 seconds, fails on the missing files and leaves the session live; the folder is built
+again once it is back. A build that takes longer than 2 seconds to make the folder again stops the session as
+`folder-gone`.
+
+A folder chosen through a link or junction is watched at the real path it led to when the session started. A folder
+made again counts only while its path still resolves to that real path. Paths that differ only in case count as the
+same on Windows and macOS when no folder on the path is a link. A link swapped in at the folder or above it leads to a
+folder nobody chose, so the session stops as `folder-gone` instead. A build that finds the path leading elsewhere just
+before or after it copies the files fails with `FILES_LINK_REFUSED`.
+
+In every case, the generation that runs keeps running.
 
 **Consent.** The policy decides each install under a **consent scope** rather than the artifact. The scope is the
 package id together with everything the build binds about its reach:

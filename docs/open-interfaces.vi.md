@@ -889,10 +889,12 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
 | `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Thu hồi lựa chọn một thư mục của người dùng (`widgetDevFolderForgetSchema`): lựa chọn đó không còn cho Clark bắt đầu phiên trong thư mục đó, hay trong các thư mục bên trong nó, nữa. Trả `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` khi thư mục chưa được chọn, nên bấm hai lần cũng không sao. `stillCoveredBy` nêu một thư mục Clark vẫn được phát triển và chứa thư mục này (một thư mục khác đã chọn, hoặc một giá trị `workspace.roots` người dùng đã ghi), nên Clark vẫn có quyền ở đó cho tới khi thư mục đó cũng bị thu hồi. Các phiên và những gì chúng chạy vẫn giữ nguyên. Chỉ người dùng được gọi. |
 
-Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` và
-`503 WIDGET_DEV_UNAVAILABLE`:
+Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
+`404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
+`409 NOT_PLACED` và `503 WIDGET_DEV_UNAVAILABLE`:
 
+- `403 ROOT_UNREADABLE` dành cho thư mục vẫn còn đó nhưng không đọc được, chẳng hạn khi phần mềm diệt virus đang giữ nó;
+  thông báo ghi rõ lỗi, ví dụ `EPERM`.
 - `409 TOO_MANY_SESSIONS` dành cho phiên đang chạy thứ chín trên node, hoặc cho kho lưu đã giữ 256 phiên mà phiên nào
   cũng vẫn đang chạy bản đã dựng. Các phiên đã dừng cũ hơn và không còn chạy gì sẽ bị quên trước để lấy chỗ.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` và `409 NOT_PLACED` dành cho lần đặt khi chưa có gì chạy, khi gói không khai báo
@@ -913,10 +915,14 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   không cấp quyền gì. Lựa chọn này gồm thư mục đó và mọi thư mục bên trong nó. Bắt đầu lại phiên đó vẫn giữ dấu này, và
   Clark tiếp tục phiên đó về sau cũng vậy. Cả một ổ đĩa (gốc của hệ thống tệp hoặc của ổ đĩa) hay chính thư mục home
   không bao giờ được đánh dấu: một phiên vẫn có thể chạy ở đó, nhưng Clark không giữ quyền lâu dài với nó.
-- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu. Nếu về sau đường dẫn đó dẫn tới nơi khác
-  (thư mục bị thay bằng một liên kết hoặc junction, bị chuyển đi hoặc bị xoá), lựa chọn không còn được tính, nên một
-  liên kết bị tráo không mở rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu
-  thư mục trở lại đúng đường dẫn đó, lựa chọn lại được tính.
+- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu, cùng với mã thiết bị và mã tệp của chính
+  thư mục đó (`chosenFolderId` trong kho phiên). Nếu về sau đường dẫn đó dẫn tới nơi khác (thư mục bị thay bằng một
+  liên kết hoặc junction, bị chuyển đi hoặc bị xoá), hoặc chứa một thư mục khác (được tạo ở đó sau khi thư mục đã chọn
+  không còn), lựa chọn không còn được tính, nên cả một liên kết bị tráo lẫn một thư mục được tạo vào chỗ đó đều không mở
+  rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu chính thư mục đó trở lại
+  đúng đường dẫn đó (được chuyển về), lựa chọn lại được tính. Một lựa chọn được lưu từ trước khi mã thư mục được giữ thì
+  không có mã: nó nhận mã của thư mục được tìm thấy ở đường dẫn đó vào lần đầu tiên có thư mục ở đó, và từ đó chỉ gắn
+  với thư mục ấy.
 - Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
   `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
   `develop_widget`). Thu hồi không dừng phiên đang chạy. Một thư mục nằm trong một thư mục đã chọn khác, hoặc trong một
@@ -979,16 +985,39 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 **Khi việc theo dõi dừng.** Một phiên mà thư mục không còn theo dõi được sẽ được đánh dấu là đã dừng, kèm lý do, thay vì
 vẫn hiện là đang chạy:
 
-- `watch-failed`: bộ theo dõi bị lỗi.
-- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, hoặc bị xoá rồi một thư mục mới được tạo lại ở cùng đường dẫn, mà bộ
-  theo dõi không còn nghe thấy (node so sánh device và file id của thư mục với những giá trị lúc bắt đầu theo dõi). Node
-  kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được
-  theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục tạm thời không xem được vì lý do khác, chẳng hạn
-  phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra
-  lại. Lý do này cũng dùng khi thư mục không còn sau một lần khởi động lại.
+- `watch-failed`: bộ theo dõi bị lỗi; thư mục không xem được liên tục trong 30 giây vì một lý do khác "không tìm
+  thấy" (xem bên dưới); thư mục mang một file id mới ở hơn 30 lần xem liên tiếp, không có lần xem nào ở giữa thấy nó
+  không đổi; hoặc, sau một lần khởi động lại, thư mục không đọc được (`ROOT_UNREADABLE`). Nhật ký của node ghi rõ lỗi, ví
+  dụ `EPERM`.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên và không trở lại trong vòng 2 giây, đường dẫn không còn là một thư mục,
+  hoặc đường dẫn giờ dẫn tới một thư mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một
+  thư mục phía trên nó). Node kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì
+  khi một thư mục đang được theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục không xem được vì lý
+  do khác, chẳng hạn phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy
+  và được kiểm tra lại, tối đa 30 giây lỗi liên tục; sau đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng
+  khi thư mục không còn sau một lần khởi động lại.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
 - `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
   phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
+
+Một thư mục vẫn còn đó nhưng mang định danh khác không làm phiên dừng. Node so sánh device và file id của thư mục với
+những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
+`rm -rf out && build`), hoặc hệ thống tệp đã cấp cho nó một id mới (một số ổ FUSE và ổ mạng làm vậy). Node theo dõi thư
+mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu, và ghi id cũ lẫn id mới vào nhật ký.
+
+Một thư mục không có ở đó khi node xem, vì một lần dựng đã xoá nó mà chưa tạo lại, sẽ được tìm lại trong 2 giây trước
+khi phiên dừng. Trong lúc đó không có lần dựng mới nào bắt đầu. Một lần dựng đang chạy khi thư mục biến mất, hoặc một
+lần dựng lại được yêu cầu trong 2 giây đó, sẽ thất bại vì thiếu tệp và phiên vẫn chạy; thư mục được dựng lại khi nó trở
+lại. Một lần dựng cần lâu hơn 2 giây để tạo lại thư mục sẽ làm phiên dừng với lý do `folder-gone`.
+
+Một thư mục được chọn qua một liên kết hay junction được theo dõi ở đường dẫn thật mà nó dẫn tới lúc phiên bắt đầu. Một
+thư mục được tạo lại chỉ được tính khi đường dẫn của nó vẫn phân giải về đúng đường dẫn thật đó. Trên Windows và macOS,
+hai đường dẫn chỉ khác nhau về chữ hoa chữ thường được coi là một khi không có thư mục nào trên đường dẫn là liên kết.
+Một liên kết được tráo vào ở thư mục hoặc phía trên nó dẫn tới một thư mục không ai chọn, nên phiên dừng với lý do
+`folder-gone`. Một lần dựng thấy đường dẫn dẫn tới nơi khác ngay trước hoặc ngay sau khi chép tệp sẽ thất bại với
+`FILES_LINK_REFUSED`.
+
+Trong mọi trường hợp, generation đang chạy vẫn tiếp tục chạy.
 
 **Sự đồng ý.** Chính sách quyết định mỗi lần cài theo một **phạm vi đồng ý** thay vì theo artifact. Phạm vi là id gói
 cùng mọi thứ bản dựng ràng buộc về phạm vi tiếp cận của nó:
