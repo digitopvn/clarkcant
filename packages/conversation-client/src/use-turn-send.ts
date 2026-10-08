@@ -92,6 +92,10 @@ export interface TurnSendDeps {
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
   dispatchChips: (action: { type: "sent"; chipIds: readonly string[] } | { type: "cleared" }) => void;
+  /** The chips as they are now, read when a command's late answer could clear the ones attached after its Enter. */
+  readChips: () => readonly AttachmentChip[];
+  /** Stores files attached for the next message again in a new conversation, after a restart left theirs (`carryOver`). */
+  carryChips: (chips: readonly AttachmentChip[]) => void;
   /**
    * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
    * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
@@ -146,6 +150,8 @@ export function useTurnSend({
   setTimeline,
   chips,
   dispatchChips,
+  readChips,
+  carryChips,
   chosenReferences,
   onReferencesSent,
   beginHeroExit,
@@ -204,6 +210,9 @@ export function useTurnSend({
    * not moved since (`watchNewStart`).
    */
   const startMark = useRef(0);
+  /** The conversation on screen now, for a late answer that must not point at the one the person is already in. */
+  const conversationNow = useRef(conversationId);
+  conversationNow.current = conversationId;
   useEffect(() => {
     if (conversationId !== undefined) startMark.current += 1;
   }, [conversationId]);
@@ -270,12 +279,18 @@ export function useTurnSend({
          */
         const atOnce = typedCommandRunAtOnce(slash);
         if (atOnce !== undefined) {
+          const left = conversationId;
           void runAppIntentAtOnce(atOnce, {
             ask: () => client.sendAppIntent({ text: trimmed, source: "chat", conversationId }),
             run: runIntent,
             onRecorded: (decision) => onNotice(decision.readBack),
             onUnrecorded: () => onNotice(t("intents.newConversationKeptReplying")),
             watchStart: watchNewStart,
+            // Sent, or elsewhere, before the node answered: the remark is gone, but where the reply went still holds.
+            // Nothing is said once the person is back in that conversation, which then answers for itself.
+            onMovedOn: () => {
+              if (conversationNow.current !== left) onNotice(t("intents.leftConversationKept"));
+            },
           });
           return;
         }
@@ -295,11 +310,20 @@ export function useTurnSend({
          * The command stayed in the composer while the node read it, and the person may have edited it since: going home
          * on "về trang chủ" while they were already typing the next message. Text that is no longer the command is theirs,
          * so the intent runs now and the draft is put back after it, rather than the restart emptying it without a word.
+         * Files attached since Enter are the next message's too: a restart that left the conversation they were stored in
+         * has them stored again in the new one (`carryChips`), so "xem file này" does not point at a file that is gone.
+         * Only ready ones travel; one still uploading into the conversation left behind is cleared with it.
          */
         const typedSince = readDraft();
-        if (typedSince.trim() !== trimmed) {
+        const edited = typedSince.trim() !== trimmed;
+        const attachedSince = readChips().filter((chip) => !chips.some((was) => was.id === chip.id));
+        if (edited || attachedSince.length > 0) {
+          const generation = sessionGeneration.current;
           runIntent(decision);
-          onSendFailed(typedSince);
+          // The command's own sentence is not kept; only what came after it.
+          if (edited) onSendFailed(typedSince);
+          else clearDraft();
+          if (sessionGeneration.current !== generation) carryChips(attachedSince);
           return;
         }
         clearDraft();
@@ -421,6 +445,7 @@ export function useTurnSend({
       applyTimeline,
       beginHeroExit,
       busy,
+      carryChips,
       chips,
       chosenReferences,
       clearDraft,
@@ -431,6 +456,7 @@ export function useTurnSend({
       onNotice,
       onReferencesSent,
       onSendFailed,
+      readChips,
       readDraft,
       resetHero,
       setConversationId,

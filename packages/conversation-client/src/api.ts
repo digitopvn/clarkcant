@@ -2492,12 +2492,16 @@ export class GatewayClient {
    * `FIRST_RESPONSE_TIMEOUT_MS` fails the read (see `#readBytes`).
    */
   async attachmentObjectUrl(attachmentId: string, signal?: AbortSignal): Promise<string> {
+    return URL.createObjectURL(await this.attachmentBlob(attachmentId, signal));
+  }
+
+  /** An attachment's bytes, through the authenticated client: what `attachmentObjectUrl` draws, and what a re-upload reads. */
+  async attachmentBlob(attachmentId: string, signal?: AbortSignal): Promise<Blob> {
     const response = await this.#readBytes(`/attachments/${encodeURIComponent(attachmentId)}/content`, signal);
     if (!response.ok) {
       throw new GatewayError(response.status, "ATTACHMENT_UNAVAILABLE", "that attachment could not be read");
     }
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    return response.blob();
   }
 
   /*

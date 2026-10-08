@@ -20,6 +20,7 @@ export const MESSAGES_INTENTS_VI = {
   "intents.newConversationKept": "Đã mở cuộc trò chuyện mới. Cuộc trước vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
   "intents.newConversationKeptReplying":
     "Đã mở cuộc trò chuyện mới. Việc rời đi không dừng câu trả lời ở cuộc trước, cuộc đó vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
+  "intents.leftConversationKept": "Cuộc trò chuyện bạn vừa rời đi vẫn được giữ, cùng câu trả lời của nó; mở lại bất cứ lúc nào bằng /sessions.",
 } as const;
 
 export type MessageIntentsKey = keyof typeof MESSAGES_INTENTS_VI;
@@ -37,4 +38,5 @@ export const MESSAGES_INTENTS_EN = {
   "intents.newConversationKept": "Started a new conversation. The previous one is kept; reopen it any time with /sessions.",
   "intents.newConversationKeptReplying":
     "Started a new conversation. Leaving did not stop the reply in the previous one, which is kept; reopen it any time with /sessions.",
+  "intents.leftConversationKept": "The conversation you left is kept, along with its reply; reopen it any time with /sessions.",
 } as const satisfies Record<MessageIntentsKey, string>;

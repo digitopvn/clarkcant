@@ -42,6 +42,14 @@ export interface AttachmentComposerState {
    * whether the message carries it, and can remove it like any other chip.
    */
   addStored: (attachment: { attachmentId: string; filename: string; mime: string; sizeBytes: number }) => void;
+  /**
+   * Bring files attached for the next message into a new conversation, after a restart left the one they were stored
+   * in: a sentence such as "cuộc trò chuyện mới", answered late, while the person was already attaching the file for
+   * what they type next. A stored file belongs to the conversation it was uploaded into, and the node refuses it in any
+   * other (`resolveAttachmentRefs`), so each one is read back and stored again, exactly as if it had been attached
+   * after the restart. One that cannot be read or stored again stays as a failed chip saying why.
+   */
+  carryOver: (chips: readonly AttachmentChip[]) => void;
 }
 
 export interface AttachmentComposerDeps {
@@ -66,6 +74,50 @@ export function useAttachmentComposer({
 }: AttachmentComposerDeps): AttachmentComposerState {
   const [chips, dispatchChips] = useReducer(attachmentReducer, [] as readonly AttachmentChip[]);
   const [dragging, setDragging] = useState(false);
+
+  /**
+   * Store the chips' bytes in `target`, creating the conversation first when there is none. An attachment belongs to a
+   * conversation, and one uploaded into nothing could never be sent.
+   */
+  const store = useCallback(
+    async (considered: readonly { chip: AttachmentChip; bytes: () => Promise<Uint8Array> }[], target: string | undefined) => {
+      if (considered.length === 0) return;
+      if (target === undefined) {
+        try {
+          target = (await client.createConversation("Conversation")).conversationId;
+          onConversationCreated(target);
+        } catch (cause) {
+          const reason = cause instanceof Error ? cause.message : String(cause);
+          for (const { chip } of considered) dispatchChips({ type: "failed", id: chip.id, reason });
+          return;
+        }
+      }
+
+      for (const { chip, bytes } of considered) {
+        const refused = clientAccepts({ filename: chip.filename, mime: chip.mime, sizeBytes: chip.sizeBytes });
+        if (!refused.ok) {
+          dispatchChips({ type: "failed", id: chip.id, reason: refused.message });
+          continue;
+        }
+        try {
+          const stored = await client.uploadAttachment({
+            conversationId: target,
+            filename: chip.filename,
+            mime: chip.mime,
+            contentBase64: toBase64(await bytes()),
+          });
+          dispatchChips({ type: "stored", id: chip.id, attachmentId: stored.attachmentId });
+        } catch (cause) {
+          dispatchChips({
+            type: "failed",
+            id: chip.id,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+      }
+    },
+    [client, onConversationCreated],
+  );
 
   const addFiles = useCallback(
     async (files: readonly File[]) => {
@@ -95,48 +147,37 @@ export function useAttachmentComposer({
           });
         }
       }
-      const considered = additions.slice(0, room);
-      if (considered.length === 0) return;
-
-      let target = conversationId;
-      if (target === undefined) {
-        try {
-          target = (await client.createConversation("Conversation")).conversationId;
-          onConversationCreated(target);
-        } catch (cause) {
-          const reason = cause instanceof Error ? cause.message : String(cause);
-          for (const chip of considered) dispatchChips({ type: "failed", id: chip.id, reason });
-          return;
-        }
-      }
-
-      for (const chip of considered) {
-        const refused = clientAccepts({ filename: chip.filename, mime: chip.mime, sizeBytes: chip.sizeBytes });
-        if (!refused.ok) {
-          dispatchChips({ type: "failed", id: chip.id, reason: refused.message });
-          continue;
-        }
-        const file = files[additions.indexOf(chip)];
-        if (file === undefined) continue;
-        try {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          const stored = await client.uploadAttachment({
-            conversationId: target,
-            filename: chip.filename,
-            mime: chip.mime,
-            contentBase64: toBase64(bytes),
-          });
-          dispatchChips({ type: "stored", id: chip.id, attachmentId: stored.attachmentId });
-        } catch (cause) {
-          dispatchChips({
-            type: "failed",
-            id: chip.id,
-            reason: cause instanceof Error ? cause.message : String(cause),
-          });
-        }
-      }
+      const considered = additions.slice(0, room).flatMap((chip, index) => {
+        const file = files[index];
+        return file === undefined ? [] : [{ chip, bytes: async () => new Uint8Array(await file.arrayBuffer()) }];
+      });
+      await store(considered, conversationId);
     },
-    [chips.length, client, conversationId, onConversationCreated, onErrorCleared, t],
+    [chips.length, conversationId, onErrorCleared, store, t],
+  );
+
+  const carryOver = useCallback(
+    (carried: readonly AttachmentChip[]) => {
+      const stamped = Date.now();
+      const considered = carried.flatMap((chip, index) => {
+        const attachmentId = chip.attachmentId;
+        if (chip.state !== "ready" || attachmentId === undefined) return [];
+        // Checking again until stored in the new conversation, so a send waits for it rather than leaving it behind.
+        const again: AttachmentChip = {
+          id: `chip_${stamped}_carried_${index}`,
+          filename: chip.filename,
+          mime: chip.mime,
+          sizeBytes: chip.sizeBytes,
+          state: "checking",
+        };
+        return [{ chip: again, bytes: async () => new Uint8Array(await (await client.attachmentBlob(attachmentId)).arrayBuffer()) }];
+      });
+      if (considered.length === 0) return;
+      dispatchChips({ type: "add", chips: considered.map((entry) => entry.chip) });
+      // A new conversation, never the one in view: the restart that called this has just left it.
+      void store(considered, undefined);
+    },
+    [client, store],
   );
 
   const addStored = useCallback(
@@ -164,5 +205,5 @@ export function useAttachmentComposer({
     [chips, onErrorCleared, t],
   );
 
-  return { chips, dispatchChips, dragging, setDragging, addFiles, addStored };
+  return { chips, dispatchChips, dragging, setDragging, addFiles, addStored, carryOver };
 }
