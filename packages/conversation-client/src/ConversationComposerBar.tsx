@@ -1,4 +1,4 @@
-import { useRef, type ReactElement, type RefObject } from "react";
+import { useRef, type ReactElement, type ReactNode, type RefObject } from "react";
 
 import { referenceToken } from "@clarkcant/contracts";
 
@@ -39,6 +39,19 @@ export interface ConversationComposerBarProps {
   activeModel?: ActiveModel | null | undefined;
   error: string | undefined;
   messages: Timeline["messages"];
+}
+
+/**
+ * One of the composer's buttons drawn as a line icon, in the same box and stroke as the header's. The button's own label
+ * names it, so the icon is hidden from assistive technology, and it draws in the button's text colour so it follows the
+ * theme and forced colours.
+ */
+function LineIcon({ name, children }: { name: string; children: ReactNode }): ReactElement {
+  return (
+    <svg className="cc-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-icon={name}>
+      {children}
+    </svg>
+  );
 }
 
 /**
@@ -194,7 +207,9 @@ export function ConversationComposerBar({
             data-attachment-open="true"
             onClick={() => attachmentInput.current?.click()}
           >
-            +
+            <LineIcon name="paperclip">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </LineIcon>
           </button>
           <div className="cc-composer-field">
             <ComposerMirror draft={draft} mirror={mirror} />
@@ -241,12 +256,11 @@ export function ConversationComposerBar({
             data-voice-open="true"
             onClick={onOpenVoice}
           >
-            {/* A microphone, drawn like the header's line icons; the button's own label names it. */}
-            <svg className="cc-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-icon="microphone">
+            <LineIcon name="microphone">
               <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <path d="M12 19v3" />
-            </svg>
+            </LineIcon>
           </button>
           {busy ? (
             <button
@@ -257,17 +271,23 @@ export function ConversationComposerBar({
               data-stop="true"
               onClick={onStop}
             >
-              ■
+              <LineIcon name="stop">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </LineIcon>
             </button>
           ) : (
             <button
               type="submit"
               className="cc-icon-btn"
               aria-label={t("composer.send")}
+              title={t("composer.send")}
               disabled={draft.trim() === "" || chips.some((chip) => chip.state === "checking")}
               data-send="true"
             >
-              ↑
+              <LineIcon name="arrow-up">
+                <path d="M12 19V5" />
+                <path d="m5 12 7-7 7 7" />
+              </LineIcon>
             </button>
           )}
         </form>

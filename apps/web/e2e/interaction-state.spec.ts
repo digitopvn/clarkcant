@@ -180,11 +180,11 @@ test("reduced motion collapses every animation's duration, none left spinning at
   expect(problems, problems.join("; ")).toEqual([]);
 });
 
-/** The rendered box, text and icon of the composer's Voice Mode button beside the attach button it sits with. */
-async function voiceButtonLook(page: Page) {
-  const voice = page.locator("[data-voice-open='true']");
-  await expect(voice).toBeVisible();
-  return voice.evaluate((button) => {
+/** The rendered box, text and icon of one of the composer's icon buttons, beside the attach button it sits with. */
+async function iconButtonLook(page: Page, selector: string) {
+  const target = page.locator(selector);
+  await expect(target).toBeVisible();
+  return target.evaluate((button) => {
     const attach = document.querySelector<HTMLElement>("[data-attachment-open='true']");
     const icon = button.querySelector("svg");
     const box = button.getBoundingClientRect();
@@ -206,7 +206,7 @@ async function voiceButtonLook(page: Page) {
 test("the Voice Mode button is a named microphone icon the keyboard can reach", async ({ page }) => {
   await openApp(page);
 
-  const look = await voiceButtonLook(page);
+  const look = await iconButtonLook(page, "[data-voice-open='true']");
   expect(look.icon).toBe("microphone");
   // Nothing visible to read twice: the label is the name, and the old `◉` glyph is gone.
   expect(look.text).toBe("");
@@ -223,17 +223,100 @@ test("the Voice Mode button is a named microphone icon the keyboard can reach", 
   expect(outline).not.toBe("none");
 });
 
+/** The fixture node's scripted provider writes a long reply for this message, so Send turns into Stop for a while. */
+const LONG_REPLY = "viết một câu trả lời thật dài";
+const ATTACH = { selector: "[data-attachment-open='true']", icon: "paperclip" };
+const SEND = { selector: "[data-send='true']", icon: "arrow-up" };
+const STOP = { selector: "[data-stop='true']", icon: "stop" };
+
+/**
+ * One composer icon button, checked the way the microphone is: a named line icon with no text of its own, in the
+ * button's colour, the same box as its neighbours, and reachable with Tab to a visible focus ring.
+ */
+async function expectNamedLineIcon(page: Page, { selector, icon }: { selector: string; icon: string }): Promise<void> {
+  const look = await iconButtonLook(page, selector);
+  expect(look.icon).toBe(icon);
+  expect(look.text).toBe("");
+  expect(look.name).not.toBeNull();
+  expect(look.title).toBe(look.name);
+  expect(look.iconSize).toEqual([15, 15]);
+  expect(look.iconStroke).toBe(look.buttonColor);
+  expect(look.size).toEqual(look.attachSize);
+
+  const presses = await tabUntil(page, selector);
+  expect(presses, `the ${icon} button was not reachable with Tab alone`).toBeGreaterThan(0);
+  await expect(page.locator(selector)).toBeFocused();
+  const outline = await page.locator(selector).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor };
+  });
+  expect(outline.style).not.toBe("none");
+  expect(Number.parseFloat(outline.width)).toBeGreaterThan(0);
+  expect(outline.color).not.toBe("rgba(0, 0, 0, 0)");
+}
+
+test("attach, send and stop are named line icons the keyboard can reach", async ({ page }) => {
+  await openApp(page);
+
+  await expectNamedLineIcon(page, ATTACH);
+  // Send is disabled, and so out of the Tab order, until there is something to send.
+  await page.locator("[data-composer]").fill(LONG_REPLY);
+  await expectNamedLineIcon(page, SEND);
+
+  await page.locator("[data-composer]").press("Enter");
+  await expectNamedLineIcon(page, STOP);
+  // Pressing it still stops the reply, and Send comes back in the same place.
+  await page.keyboard.press("Enter");
+  await expect(page.locator(STOP.selector)).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator(SEND.selector)).toBeVisible();
+});
+
+for (const media of [{ colorScheme: "light" }, { colorScheme: "dark" }, { forcedColors: "active" }] as const) {
+  test(`the composer's icons draw in their button's colour with ${JSON.stringify(media)}`, async ({ page }) => {
+    await page.emulateMedia(media);
+    await openApp(page);
+
+    await page.locator("[data-composer]").fill(LONG_REPLY);
+    for (const { selector, icon } of [ATTACH, { selector: "[data-voice-open='true']", icon: "microphone" }, SEND]) {
+      const look = await iconButtonLook(page, selector);
+      expect(look.icon).toBe(icon);
+      expect(look.iconStroke).toBe(look.buttonColor);
+    }
+  });
+}
+
 test.describe("on a touch screen", () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
 
   test("the Voice Mode button is the same microphone at the 44 px touch size", async ({ page }) => {
     await openApp(page);
 
-    const look = await voiceButtonLook(page);
+    const look = await iconButtonLook(page, "[data-voice-open='true']");
     expect(look.icon).toBe("microphone");
     expect(look.text).toBe("");
     expect(look.iconSize).toEqual([15, 15]);
     expect(look.size).toEqual([44, 44]);
     expect(look.size).toEqual(look.attachSize);
+  });
+
+  test("attach, send and stop are the same line icons at the 44 px touch size", async ({ page }) => {
+    await openApp(page);
+
+    await page.locator("[data-composer]").fill(LONG_REPLY);
+    for (const { selector, icon } of [ATTACH, SEND]) {
+      const look = await iconButtonLook(page, selector);
+      expect(look.icon).toBe(icon);
+      expect(look.text).toBe("");
+      expect(look.iconSize).toEqual([15, 15]);
+      expect(look.size).toEqual([44, 44]);
+    }
+
+    await page.locator("[data-composer]").press("Enter");
+    const look = await iconButtonLook(page, STOP.selector);
+    expect(look.icon).toBe(STOP.icon);
+    expect(look.text).toBe("");
+    expect(look.size).toEqual([44, 44]);
+    await page.locator(STOP.selector).click();
+    await expect(page.locator(STOP.selector)).toHaveCount(0, { timeout: 15_000 });
   });
 });
