@@ -51,25 +51,37 @@ function token(): string {
   return parsed.localToken;
 }
 
-async function prepare(request: APIRequestContext): Promise<void> {
-  const headers = { authorization: `Bearer ${token()}` };
-  // Every run starts from Clark Default, whatever an earlier spec or run left chosen.
-  const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } });
+const authorized = (): { authorization: string } => ({ authorization: `Bearer ${token()}` });
+
+/** Choose Clark Default through the node, whatever an earlier spec, run or failed stage left chosen. */
+async function chooseClarkDefault(request: APIRequestContext): Promise<void> {
+  const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers: authorized(), data: { value: "builtin:clark" } });
   expect(reset.ok(), `reset answered ${String(reset.status())}: ${await reset.text()}`).toBe(true);
-  /*
-   * And from Dusk 1.0.0. Being installed is not enough: a run that failed after installing the unreadable update, or
-   * after removing the package, leaves it that way, and a retry that kept it would fail at the first stage instead of
-   * reporting the stage that really failed.
-   */
-  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers })).json()) as {
+}
+
+/**
+ * Leave Dusk 1.0.0 installed, and do nothing when it already is.
+ *
+ * Being installed is not enough: a run that failed after installing the unreadable update, or after removing the
+ * package, leaves it that way. A retry that kept it would fail at the first stage instead of reporting the stage that
+ * really failed, and a later spec that finds the package present would not install it and could not draw Dusk.
+ */
+async function restoreDusk(request: APIRequestContext): Promise<void> {
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: authorized() })).json()) as {
     packages: { packageId: string; version: string }[];
   };
   if (listed.packages.some((entry) => entry.packageId === PACKAGE && entry.version === "1.0.0")) return;
   const installed = await request.post(`${GATEWAY}/packages/install`, {
-    headers,
+    headers: authorized(),
     data: { packageId: PACKAGE, version: "1.0.0", localDigest: DUSK_DIGEST },
   });
   expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
+}
+
+/** Every run starts from Clark Default and Dusk 1.0.0. */
+async function prepare(request: APIRequestContext): Promise<void> {
+  await chooseClarkDefault(request);
+  await restoreDusk(request);
 }
 
 /**
@@ -109,6 +121,8 @@ let clarkAccent = "";
 let pinId = "";
 /** The conversation the pin was made in, read from the page's own pin request so cleanup can remove it. */
 let pinConversationId = "";
+/** Set once the last stage has pressed Unpin, so cleanup knows the pin may already be gone. */
+let unpinnedByJourney = false;
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
@@ -120,23 +134,36 @@ test.beforeAll(async ({ browser }) => {
 });
 
 /*
- * Whatever stage the journey stopped at, the specs after this one find Clark Default chosen and no pin of this spec's
- * on the shelf. The last stage does both through the page; this does them again through the node, which is a no-op
- * after a pass and the only cleanup after a failure.
+ * Whatever stage the journey stopped at, the specs after this one find Clark Default chosen, Dusk 1.0.0 installed and
+ * no pin of this spec's on the shelf. The journey leaves it that way when it passes, so this does nothing then; after a
+ * failure it is the only cleanup. Each step runs even when one before it failed, and every failure is reported.
  */
 test.afterAll(async ({ request }) => {
-  const headers = { authorization: `Bearer ${token()}` };
-  const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } });
-  expect(reset.ok(), `reset answered ${String(reset.status())}: ${await reset.text()}`).toBe(true);
-  if (pinId !== "" && pinConversationId !== "") {
+  const failures: unknown[] = [];
+  const step = async (run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (error) {
+      failures.push(error);
+    }
+  };
+  await step(() => chooseClarkDefault(request));
+  await step(() => restoreDusk(request));
+  await step(async () => {
+    if (pinId === "") return;
+    if (pinConversationId === "") throw new Error(`pin ${pinId} was made, but the conversation it was made in was never seen`);
     const unpinned = await request.delete(
       `${GATEWAY}/conversations/${encodeURIComponent(pinConversationId)}/pins/${encodeURIComponent(pinId)}`,
-      { headers },
+      { headers: authorized() },
     );
-    // 404 is the pass case: the last stage already unpinned it.
-    expect(unpinned.ok() || unpinned.status() === 404, `unpin answered ${String(unpinned.status())}: ${await unpinned.text()}`).toBe(true);
-  }
-  await context?.close();
+    // Not found is expected only when the last stage already unpinned it through the page.
+    const expected = unpinned.ok() || (unpinnedByJourney && unpinned.status() === 404);
+    expect(expected, `unpin answered ${String(unpinned.status())}: ${await unpinned.text()}`).toBe(true);
+  });
+  await step(async () => {
+    await context?.close();
+  });
+  if (failures.length > 0) throw new AggregateError(failures, "cleaning up after the theme journey failed");
 });
 
 const dusk = (): Locator => page.locator(`[data-theme-ref='${DUSK_REF}']`);
@@ -356,5 +383,6 @@ test("rolling the update back draws the kept choice again, and the conversation 
 
   // Unpinned again, so a spec after this one finds the shelf as it was.
   await page.locator(`[data-unpin='${pinId}']`).click();
+  unpinnedByJourney = true;
   await expect(page.locator(`[data-pin-id='${pinId}']`)).toHaveCount(0);
 });
