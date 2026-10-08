@@ -1,4 +1,4 @@
-import { type ComposerReference, type ComposerTrigger, referenceToken } from "@clarkcant/contracts";
+import { type ComposerReference, type ComposerTrigger, referenceToken, SKILL_TOKEN_PREFIX } from "@clarkcant/contracts";
 
 /**
  * Where a `/` or `@` in the draft opens the picker, and what choosing a row does to the draft.
@@ -25,6 +25,20 @@ const WORD = /[\p{L}\p{N}_]/u;
 const SPACE = /\s/u;
 /** What may stand right after a token that is still the reference: the end, a space, or closing punctuation. */
 const AFTER_TOKEN = /[\s.,;:!?)\]}"'”’»]/u;
+
+/**
+ * Whether the token found at `index` ends there rather than running into a longer word.
+ *
+ * Only `/skill` before `:<name>` is held back, so the `/skill` of `/skill:new` is not a skill called `skill`. Any other
+ * token still ends at a colon: `@main.ts:42` keeps its file and `/review:` its skill.
+ */
+function tokenEndsAt(text: string, index: number, token: string): boolean {
+  const end = index + token.length;
+  const after = text[end];
+  if (after === undefined) return true;
+  if (`${token}${after}` === SKILL_TOKEN_PREFIX && !SPACE.test(text[end + 1] ?? " ")) return false;
+  return AFTER_TOKEN.test(after);
+}
 
 export function activeTrigger(draft: string, caret: number): ActiveTrigger | undefined {
   if (caret < 0 || caret > draft.length) return undefined;
@@ -85,8 +99,7 @@ export function tokenPresent(text: string, token: string): boolean {
     const index = text.indexOf(token, from);
     if (index < 0) return false;
     const before = index === 0 ? "" : (text[index - 1] ?? "");
-    const after = text[index + token.length];
-    if ((before === "" || !WORD.test(before)) && (after === undefined || AFTER_TOKEN.test(after))) return true;
+    if ((before === "" || !WORD.test(before)) && tokenEndsAt(text, index, token)) return true;
     from = index + 1;
   }
 }
@@ -107,9 +120,8 @@ export function withoutToken(draft: string, token: string): string {
   for (;;) {
     const index = draft.indexOf(token, from);
     if (index < 0) return draft;
-    const after = draft[index + token.length];
-    if (after === undefined || AFTER_TOKEN.test(after)) {
-      const cut = after === " " ? token.length + 1 : token.length;
+    if (tokenEndsAt(draft, index, token)) {
+      const cut = draft[index + token.length] === " " ? token.length + 1 : token.length;
       return `${draft.slice(0, index)}${draft.slice(index + cut)}`;
     }
     from = index + 1;

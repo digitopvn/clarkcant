@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { slashCommandSchema } from "./slash-commands.ts";
+import { parseSlashCommand, slashCommandSchema } from "./slash-commands.ts";
 
 /**
  * What a person points at from the composer: a skill with `/`, and a project, a file, a service, a conversation, a
@@ -141,7 +141,17 @@ export const referenceBlockSchema = z.strictObject({
 });
 export type ReferenceBlock = z.infer<typeof referenceBlockSchema>;
 
-/** The token a reference is shown as in the draft: the trigger it was chosen with, then its label. */
+/** How a skill is named in words that cannot be read as a slash command: `/skill:<name>`, the form pi itself reads. */
+export const SKILL_TOKEN_PREFIX = "/skill:";
+
+/**
+ * The token a reference is shown as in the draft: the trigger it was chosen with, then its label.
+ *
+ * A skill whose `/<name>` would be read as one of the node's commands (`slash-commands.ts`) is written `/skill:<name>`
+ * instead, so a skill called `new` stays that skill when the message is sent, and a typed `/new` stays the command.
+ */
 export function referenceToken(reference: ComposerReference): string {
-  return `${reference.kind === "skill" ? "/" : "@"}${reference.label}`;
+  if (reference.kind !== "skill") return `@${reference.label}`;
+  const plain = `/${reference.label}`;
+  return parseSlashCommand(plain) === undefined ? plain : `${SKILL_TOKEN_PREFIX}${reference.label}`;
 }

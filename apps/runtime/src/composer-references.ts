@@ -6,6 +6,7 @@ import {
   type MessageRecord,
   type Notice,
   type ReferenceBlock,
+  SKILL_TOKEN_PREFIX,
   composerReferencesSchema,
   referenceBlockSchema,
   referenceToken,
@@ -297,6 +298,26 @@ export function referencedWork(
   return { places, skills };
 }
 
+/** The skills one message names by reference, by the id the brief and pi both use. */
+export function referencedSkillIds(blocks: readonly ReferenceBlock[]): string[] {
+  return blocks.flatMap(({ reference }) => (reference.kind === "skill" ? [reference.skillId] : []));
+}
+
+/**
+ * The person's words as the turn's prompt starts with them.
+ *
+ * A skill chosen in the picker whose name is also a command's is written `/skill:<name>`, which pi expands by itself at
+ * the start of a prompt. The host owns a skill the message names by reference: it includes the revision the person
+ * chose, without its location, or says that revision is gone. Either way pi must not add the file as it is now, so the
+ * token goes as the person's words, with a space in front: the form in which pi leaves a leading `/skill:` as typed. A
+ * `/skill:` the person typed without choosing the skill is not a reference, and pi still expands it.
+ */
+export function wordsBesideReferences(text: string, referencedSkills: readonly string[]): string {
+  if (!text.startsWith(SKILL_TOKEN_PREFIX)) return text;
+  const name = /^\S*/u.exec(text.slice(SKILL_TOKEN_PREFIX.length))?.[0] ?? "";
+  return name !== "" && referencedSkills.includes(name) ? ` ${text}` : text;
+}
+
 /**
  * The reference section of a turn's prompt.
  *
@@ -327,12 +348,12 @@ export async function referenceBrief(input: {
       case "skill": {
         const body = await input.skillBody(reference.skillId, reference.revision);
         if (!body.ok) {
-          lines.push(`- Kỹ năng /${reference.skillId}: đã thay đổi hoặc bị gỡ sau khi gửi, nên không được chèn.`);
+          lines.push(`- Kỹ năng ${referenceToken(reference)}: đã thay đổi hoặc bị gỡ sau khi gửi, nên không được chèn.`);
           break;
         }
         const text = body.body.length <= remaining ? body.body : `${body.body.slice(0, Math.max(0, remaining))}\n[…đã cắt bớt]`;
         remaining -= Math.min(body.body.length, remaining);
-        lines.push(`- Kỹ năng /${reference.skillId}: làm theo chỉ dẫn trong khối <skill> bên dưới cho yêu cầu này.`);
+        lines.push(`- Kỹ năng ${referenceToken(reference)}: làm theo chỉ dẫn trong khối <skill> bên dưới cho yêu cầu này.`);
         skills.push(`<skill name="${reference.skillId}">\n${text}\n</skill>`);
         break;
       }

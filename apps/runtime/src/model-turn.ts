@@ -65,6 +65,7 @@ import {
 } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { wordsBesideReferences } from "./composer-references.ts";
 import { channelToolWords } from "./channels/channel-tool-gate.ts";
 import { hostText } from "./host-text.ts";
 import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
@@ -1113,6 +1114,11 @@ export async function createModelTurn(options: {
       skillBody: (name: string, revision: string) => Promise<PiSkillBody>,
       messageId: string | undefined,
     ) => Promise<string>;
+    /**
+     * The skills the same message names by reference, read the same way. The host includes them itself, so pi is not
+     * handed a leading `/skill:<name>` of theirs to expand again (`wordsBesideReferences`).
+     */
+    skillsFor?: (conversationId: string, messageId: string | undefined) => readonly string[];
   };
   /**
    * The widgets a person changed in this conversation, each with what it means now and its revision (#195).
@@ -2596,7 +2602,9 @@ export async function createModelTurn(options: {
       // What this run's system prompt is given of the person's instructions: the value checked above, for this session.
       pinPersonal(promptedSession, personal);
       const promptText = promptForTurn({
-        text: input.text,
+        text: participant
+          ? input.text
+          : wordsBesideReferences(input.text, options.references?.skillsFor?.(input.conversationId, input.userMessageId) ?? []),
         ...(note === undefined ? {} : { note }),
         ...(brief === "" ? {} : { brief }),
         ...(data === "" ? {} : { data }),

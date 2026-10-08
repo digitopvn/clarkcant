@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 
-import { COMPOSER_REFERENCES_MAX, type ComposerSuggestion } from "@clarkcant/contracts";
+import { COMPOSER_REFERENCES_MAX, type ComposerSuggestion, referenceToken } from "@clarkcant/contracts";
 
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -78,7 +78,10 @@ export function ComposerSuggestions({ state }: { state: ComposerReferencesState 
               onMouseEnter={() => state.setActiveIndex(index)}
             >
               <span className="cc-reference-kind">{t(KIND_LABEL[row.kind])}</span>
-              <span className="cc-reference-label">{row.trigger === "/" ? `/${row.label}` : row.label}</span>
+              {/* What choosing the row writes: a skill a command's name would shadow shows as `/skill:<name>`. */}
+              <span className="cc-reference-label">
+                {row.kind === "command" ? `/${row.label}` : row.kind === "skill" ? referenceToken(row.ref) : row.label}
+              </span>
               {disabled ? (
                 <span className="cc-reference-note" data-reference-disabled="true">
                   {disabledReason}
