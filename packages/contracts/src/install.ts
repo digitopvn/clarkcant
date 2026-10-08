@@ -363,7 +363,8 @@ export function wasSkippedAtInstall(
  * The person consented to what the installing host could read. A facet it skipped was never shown, counted in the
  * reach the person saw, or bound into that consent, so a host that understands its kind later still does not run,
  * show or grant it for this generation: only an install or upgrade on a host that understands it, under a fresh
- * consent, does. Every reader of an installed package goes through this, so no consumer can act on such a facet.
+ * consent, does. Every reader of an installed package goes through this, so no consumer can act on such a facet. The one
+ * exception is uninstall's connection revoke, which only takes access away.
  */
 export function withoutFacetsSkippedAtInstall<M extends { facets: readonly { kind: string; id: string }[] }>(
   manifest: M,
