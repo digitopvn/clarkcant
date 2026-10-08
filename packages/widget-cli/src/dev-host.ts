@@ -291,17 +291,8 @@ events.addEventListener("reload", () => location.reload());
 /*
  * A build that failed leaves the frame on the last version that read as a package. Said beside the frame, in the
  * shell's own chrome, so old code is never mistaken for the files as they are now.
- *
- * The build state fetched when the stream opens and the events on the stream arrive on separate connections, in no
- * fixed order. A build older than the one on screen is old news, so whichever answers last never puts it back. Builds
- * are compared by when they were built, which also orders a dev host restarted on the same port after its old one.
  */
-let shownAt = "";
 function showBuild(build) {
-  if (build !== null && build !== undefined) {
-    if (build.at < shownAt) return;
-    shownAt = build.at;
-  }
   let status = document.querySelector("[data-dev-build]");
   if (build === null || build === undefined || build.ok) {
     status?.remove();
@@ -317,13 +308,40 @@ function showBuild(build) {
   const lines = build.diagnostics.map((item) => (item.path === undefined ? "" : item.path + ": ") + item.message);
   status.textContent = "Bản dựng mới lỗi — đang hiện bản dựng thành công gần nhất.\\n" + lines.join("\\n");
 }
-events.addEventListener("build", (event) => showBuild(JSON.parse(event.data)));
 /*
- * Asked once the stream is open, and again whenever it reopens: a build reported before then was sent to no one, and a
- * dev host restarted on the same port reports nothing about the build it started with.
+ * The build state is asked for once the stream is open, because a build reported before then was sent to no one. The
+ * answer and the stream's events travel on separate connections, in no fixed order. The stream is registered before the
+ * answer is served, so any event on it is at least as new as the answer: once one has arrived, the answer is old news
+ * and is left unshown. Stream events are always shown, so no clock decides what is current.
+ *
+ * Each opening is counted, so only the answer to the latest one counts, and only while no event has come since it.
+ *
+ * The stream opens again when the dev host went away and came back, most likely restarted on the same port. The answer
+ * names the process by its bridge nonce. A new process has a new frame address and nonce, and a start build it
+ * reported to no one, so the page is reloaded rather than left on the old process's frame looking current. A stream
+ * that reopened on the same process, such as one that is still closing, only asks again.
  */
+let opens = 0;
+let streamedOn = 0;
+events.addEventListener("build", (event) => {
+  streamedOn = opens;
+  showBuild(JSON.parse(event.data));
+});
 events.addEventListener("open", () => {
-  void fetch("/dev/api/build").then((response) => response.json()).then((body) => showBuild(body.build)).catch(() => undefined);
+  const asked = ++opens;
+  void fetch("/dev/api/build")
+    .then((response) => response.json())
+    .then((body) => {
+      if (body.bridgeNonce !== state.bridgeNonce) {
+        location.reload();
+        return;
+      }
+      if (asked !== opens) return;
+      if (streamedOn !== asked) showBuild(body.build);
+      // Said once the answer is handled, shown or not, so a reader of the page can tell the shell is in step.
+      document.body.dataset.devBuildSynced = "true";
+    })
+    .catch(() => undefined);
 });
 
 /* The frame speaks the bridge; a dev host shows what it said rather than silently accepting it. */
@@ -795,7 +813,9 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
 
     if (path === "/dev/api/build") {
       response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-      response.end(JSON.stringify({ build: engine?.lastBuild() ?? null, generation: engine?.latest()?.generation ?? null }));
+      response.end(
+        JSON.stringify({ build: engine?.lastBuild() ?? null, generation: engine?.latest()?.generation ?? null, bridgeNonce }),
+      );
       return;
     }
 
@@ -1374,7 +1394,11 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       lease.close();
       const activeVite = await vitePromise?.catch(() => undefined);
       await closeDevModuleServer(activeVite);
-      await new Promise<void>((done) => server.close(() => done()));
+      await new Promise<void>((done) => {
+        server.close(() => done());
+        // A shell's stream that reconnected over a kept-alive connection while this closed would hold the server open.
+        server.closeAllConnections();
+      });
     },
   };
 }
