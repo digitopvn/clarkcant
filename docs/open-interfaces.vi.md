@@ -906,9 +906,14 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 (`readNodeView` trong `packages/contracts/src/node-view-read.ts`) một cách khoan dung: một trường ở cấp trên cùng mà
 nó không biết, do một node mới hơn ứng dụng gửi, bị bỏ qua và không bao giờ được chuyển tiếp, còn dòng trạng thái cạnh
 widget và thẻ `develop` nói rằng node mới hơn và một số điều node gửi không được hiển thị. Mọi trường ứng dụng biết vẫn
-giữ nguyên các giới hạn của nó. Một trường lạ nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`
-vẫn làm view bị từ chối, vì các đối tượng đó mang trạng thái kích hoạt, phê duyệt và phạm vi truy cập mà ứng dụng
-không được hành động dựa trên một phần của chúng. Các yêu cầu gửi tới node, và các phiên node ghi và lưu, vẫn chặt.
+giữ nguyên các giới hạn của nó, nên một giá trị ứng dụng không biết trong một trường như vậy (một `stopReason`,
+`status`, `state` của activation, `verdict` hay `trigger` mới) vẫn làm view bị từ chối. Một trường lạ nằm trong
+`activation`, `latest`, `running`, `lastBuild` hoặc `placed` cũng vẫn làm view bị từ chối: `activation`, `latest` và
+`running` mang trạng thái kích hoạt, phê duyệt và phạm vi truy cập mà ứng dụng không được hành động dựa trên một phần
+của chúng, còn `lastBuild` và `placed` mang trạng thái bản dựng và vị trí đặt widget. Các yêu cầu gửi tới node, và các
+phiên node ghi và lưu, vẫn chặt. Vì một ứng dụng cũ hơn bỏ qua một trường mới ở cấp trên cùng và chỉ kèm lời báo
+chung, trạng thái phê duyệt hay phạm vi truy cập không bao giờ được thêm vào view thành một trường mới ở cấp trên cùng;
+nó nằm trong một đối tượng lồng nhau đọc chặt, hoặc dạng của view đổi theo cách mà ứng dụng cũ hơn từ chối.
 
 Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
 `404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
@@ -1050,11 +1055,12 @@ vẫn hiện là đang chạy:
   `stopCode` không bắt buộc. Một phiên dừng từ trước khi node giữ trường này thì không có nó, và một mã client không
   biết chỉ được nói bằng lý do, kèm lời khuyên đúng cho mọi trường hợp. Một trường ở cấp trên cùng mới hơn ứng dụng thì
   bị bỏ qua và ứng dụng nói rằng node mới hơn (xem **Đọc view của phiên** ở trên). Một ứng dụng dựng trước cách đọc
-  khoan dung đó, bao gồm mọi ứng dụng cũ hơn `stopCode`, thì từ chối cả view, và mọi ứng dụng đều từ chối một view có
-  trường mới hơn nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`; chỉ trong những trường hợp đó,
-  hãy giữ ứng dụng desktop ở cùng bản dựng với node mà nó kết nối tới, kể cả một node trên máy khác. Mã này là điều
-  bước kiểm tìm thấy ở lần khởi động lại đó và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu kiểm thư mục như
-  nó đang có lúc ấy.
+  khoan dung đó, bao gồm mọi ứng dụng cũ hơn `stopCode`, thì từ chối cả view. Mọi ứng dụng cũng từ chối một view có
+  trường mới hơn nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`, hoặc có một giá trị ứng dụng
+  không biết trong một trường nó biết, chẳng hạn một `stopReason`, `status` hay trạng thái activation mới. Trong những
+  trường hợp đó, hãy giữ ứng dụng desktop ở cùng bản dựng với node mà nó kết nối tới, kể cả một node trên máy khác.
+  Mã này là điều bước kiểm tìm thấy ở lần khởi động lại đó và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu
+  kiểm thư mục như nó đang có lúc ấy.
 
   **Hạ phiên bản.** `sessions.json` cũng được đọc bằng một schema chặt. Một bản dựng cũ hơn một trường mà kho đang giữ,
   chẳng hạn `stopCode` hay `chosenFolderId`, thấy cả tệp không khớp, chuyển nó sang

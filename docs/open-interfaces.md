@@ -901,9 +901,13 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 session view (`readNodeView` in `packages/contracts/src/node-view-read.ts`) tolerantly: a top-level field it does not
 know, sent by a node newer than the app, is left out and never passed on, and the status line beside the widget and
 the `develop` card say the node is newer and that some of what it said is not shown. Every field the app knows keeps
-its bounds. A field it does not know inside `activation`, `latest`, `running`, `lastBuild` or `placed` still refuses
-the view, because those objects carry activation, approval and reach state the app must not act on in part. Requests
-to the node, and the sessions the node writes and stores, stay strict.
+its bounds, so a value it does not know in such a field (a new `stopReason`, `status`, activation `state`, `verdict`
+or `trigger`) still refuses the view. A field it does not know inside `activation`, `latest`, `running`, `lastBuild`
+or `placed` still refuses the view too: `activation`, `latest` and `running` carry activation, approval and reach
+state the app must not act on in part, and `lastBuild` and `placed` carry build and placement state. Requests to the
+node, and the sessions the node writes and stores, stay strict. Because an older app drops a new top-level field with
+only the generic note, approval or reach state is never added to the view as a new top-level field; it goes inside a
+strict nested object, or the view's shape changes in a way older apps refuse.
 
 Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
 `404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
@@ -1041,10 +1045,11 @@ reading as live:
   `stopCode` is optional. A session stopped before nodes kept it has none, and a code the client does not know gets
   the reason alone, with advice that holds for every case. A top-level field newer than the app is left out and the
   app says the node is newer (see **Reading a session view** above). An app built before that tolerant read, which
-  includes every app older than `stopCode`, refuses the whole view instead, and any app refuses a view with a newer
-  field inside `activation`, `latest`, `running`, `lastBuild` or `placed`; only for those cases, keep the desktop app
-  on the same build as the node it connects to, including a node on another machine. The code is what the check found at that restart and is not
-  checked again while the session stays stopped; a start checks the folder as it is then.
+  includes every app older than `stopCode`, refuses the whole view instead. Any app also refuses a view with a newer
+  field inside `activation`, `latest`, `running`, `lastBuild` or `placed`, or with a value it does not know in a field
+  it knows, such as a new `stopReason`, `status` or activation state. For those cases, keep the desktop app on the
+  same build as the node it connects to, including a node on another machine. The code is what the check found at
+  that restart and is not checked again while the session stays stopped; a start checks the folder as it is then.
 
   **Downgrade.** `sessions.json` is read with a strict schema too. A build older than a field the store holds, such as
   `stopCode` or `chosenFolderId`, finds the whole file does not match, moves it aside as

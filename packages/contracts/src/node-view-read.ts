@@ -10,9 +10,11 @@ import { UNREAD_FIELD_PATH_PATTERN, unreadListingFields, type UnreadEntryFields,
  * over time (the widget dev session view gained `stopCode`), and refusing the whole answer for a field this client has
  * never heard of made an older client lose the view altogether, not just the field. So a top-level field outside the
  * schema is dropped and reported in `unreadFields`; it is never passed on, so nothing downstream carries a value nobody
- * validated. Every known field is still checked against the schema with all its bounds, and every object inside a known
- * field stays as strict as the schema says: those carry approval, reach and activation state, which a client must not act
- * on with part of it left out. A newer field inside one of them still refuses the view.
+ * validated. Every known field is still checked against the schema with all its bounds (a value it does not know, such as
+ * a new enum member, still refuses the view), and every object inside a known field stays as strict as the schema says:
+ * such objects may carry approval, reach and activation state, which a client must not act on with part of it left out.
+ * A newer field inside one of them still refuses the view. So binding state is never added as a new top-level field,
+ * which an older client would drop with only the generic note.
  *
  * `unreadFields` exists so what was dropped is said rather than hidden, the same rule a directory entry follows
  * (`readDirectoryEntry`). Requests a client sends, and what a node writes and stores, keep their strict schemas.

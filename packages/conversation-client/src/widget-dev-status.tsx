@@ -136,6 +136,12 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
     );
   }
   if (view === undefined) return null;
+  return <WidgetDevStatusReport view={view} />;
+}
+
+/** What the status says for one read of the session: drawn from the view alone, so it can be checked without a node. */
+export function WidgetDevStatusReport({ view }: { view: WidgetDevSessionRead }): ReactElement {
+  const t = useT();
   const line = widgetDevStatusLine(view, t);
   const problems = view.lastBuild?.ok === false ? view.lastBuild.diagnostics : [];
   const more = view.lastBuild?.ok === false ? (view.lastBuild.diagnosticsMore ?? 0) : 0;
