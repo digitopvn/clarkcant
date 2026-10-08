@@ -99,6 +99,8 @@ function readOne(name: string, value: unknown): StatedDataset | string {
     const cells: Record<string, StatedCell> = {};
     for (const [field, cell] of Object.entries(row as Record<string, unknown>)) {
       if (field === "" || field.length > COLUMN_LIMIT) return `data.${name} has a field name that is empty or longer than ${String(COLUMN_LIMIT)}`;
+      // A row is a plain object, where this one name would set the prototype instead of keeping a value.
+      if (field === "__proto__") return `data.${name} has a field named __proto__, which a row cannot keep`;
       if (!seen.includes(field)) {
         seen.push(field);
         if (seen.length > MAX_STATED_COLUMNS) return `data.${name} has more than ${String(MAX_STATED_COLUMNS)} fields`;

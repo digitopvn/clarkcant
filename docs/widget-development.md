@@ -1089,7 +1089,10 @@ benchmark comparison it was asked for), `show_view` takes them in `data`, under 
   sample. Every `datasetRef` in the props that uses the name, at any depth, is pointed at it before the view is built.
 - At most 8 names, 500 rows and 32 fields each. A value is text (up to 500 characters), a finite number, true/false
   or null; a number written as text (`"12%"`) stays text. `columns` may list fields in display order; one no row has is
-  refused. Anything that does not fit is refused whole, with the reason, and nothing is built.
+  refused, and so is a field named `__proto__`. Anything that does not fit is refused whole, with the reason, and
+  nothing is built.
+- Rows passed with a composed layout (`props.layout`) are refused and nothing is kept: its leaves draw the host's own
+  data, so the rows would not be drawn. Each chart or table over stated rows is shown with its own `show_view` call.
 - The model is told, as a guideline beside the tool, to show a structured answer as a view in the same turn without
   being asked (a chart for compared numbers, a table for several attributes, a diagram for a flow), to pass the numbers
   it gathered rather than invent them, to say where they come from, and to prefer a view over writing a widget package.

@@ -46,6 +46,8 @@ describe("reading stated rows", () => {
     ["an object cell", { s: { rows: [{ a: { b: 1 } }] } }, "rows[0].a must be text"],
     ["an infinite number", { s: { rows: [{ a: Number.POSITIVE_INFINITY }] } }, "finite"],
     ["a column no row has", { s: { columns: ["z"], rows: [{ a: 1 }] } }, "which no row has"],
+    // Parsed as a tool's JSON arguments are, so the name is an own field rather than the literal's prototype.
+    ["a field named __proto__", JSON.parse('{ "s": { "rows": [{ "__proto__": 1 }] } }') as unknown, "__proto__"],
   ])("refuses %s whole, saying why", (_label, raw, problem) => {
     const read = readStatedData(raw);
     expect(read.ok).toBe(false);
@@ -176,6 +178,31 @@ describe("show_view draws rows the model passes", () => {
       data: { bench: { rows: [{ score: "12%" }, { score: {} }] } },
     });
     expect(result.text).toContain("was not shown");
+    expect(built).toEqual([]);
+  });
+
+  it("refuses rows for a composed layout, whose leaves draw the host's own rows, and keeps nothing", async () => {
+    const kept: StatedDatasetInput[] = [];
+    const { tool, built } = await chartTool((input) => {
+      kept.push(input);
+      return "dataset_kept";
+    });
+    const result = await tool.execute({
+      view: "canvas.bar@1",
+      props: { layout: { children: [{ props: { datasetRef: "bench" } }] } },
+      data: { bench: { rows: [{ a: 1 }] } },
+    });
+    expect(result.text).toContain("not in a composed layout");
+    expect(kept).toEqual([]);
+    expect(built).toEqual([]);
+  });
+
+  it("says the rows could not be kept when the node fails to save them, and builds nothing", async () => {
+    const { tool, built } = await chartTool(() => {
+      throw new Error("disk full");
+    });
+    const result = await tool.execute({ view: "canvas.bar@1", props: { datasetRef: "bench" }, data: { bench: { rows: [{ a: 1 }] } } });
+    expect(result.text).toContain("could not be kept: disk full");
     expect(built).toEqual([]);
   });
 

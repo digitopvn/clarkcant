@@ -1686,15 +1686,28 @@ export async function createModelTurn(options: {
         if (keepDataset === undefined && params.data !== undefined) {
           return { text: `The view "${requested}" was not shown: this node keeps no stated data, so pass no data.` };
         }
-        // Kept before the view is built, because the build reads the rows by reference; a view that is then refused leaves
-        // only a dataset nothing points at, which is the person's own data and harmless.
-        const kept = new Map(
-          stated.datasets.map((dataset) => [dataset.name, keepDataset?.({ principalId: principal.principalId, dataset }) ?? dataset.name]),
-        );
         const given =
           typeof params.props === "object" && params.props !== null
             ? (params.props as Record<string, unknown>)
             : {};
+        if (stated.datasets.length > 0 && given.layout !== undefined) {
+          // A composed layout's leaves draw the host's own rows, so stated rows there would be silently ignored.
+          return {
+            text: `The view "${requested}" was not shown: stated data draws only in a view shown on its own, not in a composed layout. Show each chart or table with its own show_view call.`,
+          };
+        }
+        // Kept before the view is built, because the build reads the rows by reference; a view that is then refused leaves
+        // only a dataset nothing points at, which is the person's own data and harmless.
+        let kept: Map<string, string>;
+        try {
+          kept = new Map(
+            stated.datasets.map((dataset) => [dataset.name, keepDataset?.({ principalId: principal.principalId, dataset }) ?? dataset.name]),
+          );
+        } catch (cause) {
+          return {
+            text: `The view "${requested}" was not shown: the rows could not be kept: ${cause instanceof Error ? cause.message : String(cause)}.`,
+          };
+        }
         const props = kept.size === 0 ? given : (bindStatedRefs(given, kept) as Record<string, unknown>);
         const caption = typeof params.caption === "string" ? params.caption : descriptor.label;
         try {

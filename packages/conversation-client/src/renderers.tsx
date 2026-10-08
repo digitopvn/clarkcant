@@ -582,7 +582,7 @@ function BarChart({ props, dataset, state }: RendererProps): ReactElement {
 
   const choice = chosenSeries(state, dataset.rows);
   const series = barSeries(props, dataset.rows, choice.series);
-  if (series.length > 1) return <GroupedBarChart title={title} dataset={dataset} series={series} measure={measure} width={width} />;
+  if (series.length > 1) return <GroupedBarChart title={title} dataset={dataset} series={series} choice={choice} measure={measure} width={width} />;
   const seriesKey = series[0] ?? "value";
   const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
   const values = points.map((point) => point.value);
@@ -649,12 +649,14 @@ function GroupedBarChart({
   title,
   dataset,
   series,
+  choice,
   measure,
   width,
 }: {
   title: string;
   dataset: NonNullable<RendererProps["dataset"]>;
   series: readonly string[];
+  choice: { requested?: string; series?: string; label?: string };
   measure: (element: HTMLElement | null) => void;
   width: number;
 }): ReactElement {
@@ -674,6 +676,7 @@ function GroupedBarChart({
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
+        <SeriesNote choice={choice} />
         <ul className="cc-xy-legend" aria-label={fillMessage(t("widgets.xyChart.legend"), { title })} data-bar-legend="true">
           {series.map((key, index) => (
             <li key={key} className="cc-bar-legend-item">

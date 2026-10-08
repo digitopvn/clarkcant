@@ -1090,7 +1090,11 @@ benchmark được yêu cầu), `show_view` nhận chúng trong `data`, dưới 
   sâu nào, được trỏ tới dataset này trước khi view được dựng.
 - Tối đa 8 tên, mỗi tên 500 hàng và 32 trường. Một giá trị là chữ (tối đa 500 ký tự), số hữu hạn, true/false hoặc null;
   số viết dưới dạng chữ (`"12%"`) vẫn là chữ. `columns` có thể liệt kê các trường theo thứ tự hiển thị; trường không hàng
-  nào có sẽ bị từ chối. Thứ gì không vừa đều bị từ chối toàn bộ, kèm lý do, và không view nào được dựng.
+  nào có sẽ bị từ chối, trường tên `__proto__` cũng vậy. Thứ gì không vừa đều bị từ chối toàn bộ, kèm lý do, và không
+  view nào được dựng.
+- Các hàng truyền kèm một bố cục ghép (`props.layout`) bị từ chối và không được giữ lại: lá của bố cục vẽ dữ liệu của
+  chính host, nên các hàng đó sẽ không được vẽ. Mỗi biểu đồ hay bảng từ các hàng model nêu được hiển thị bằng một lời
+  gọi `show_view` riêng.
 - Model được dặn, bằng một guideline đi kèm tool, hiển thị câu trả lời có cấu trúc thành view ngay trong lượt đó mà không
   cần được yêu cầu (biểu đồ cho số liệu so sánh, bảng cho nhiều thuộc tính, sơ đồ cho một luồng), truyền số liệu nó đã
   thu thập thay vì bịa ra, nói rõ nguồn số liệu, và ưu tiên view hơn việc viết một package widget.
