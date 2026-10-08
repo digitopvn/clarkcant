@@ -291,8 +291,17 @@ events.addEventListener("reload", () => location.reload());
 /*
  * A build that failed leaves the frame on the last version that read as a package. Said beside the frame, in the
  * shell's own chrome, so old code is never mistaken for the files as they are now.
+ *
+ * The build state fetched when the stream opens and the events on the stream arrive on separate connections, in no
+ * fixed order. A build older than the one on screen is old news, so whichever answers last never puts it back. Builds
+ * are compared by when they were built, which also orders a dev host restarted on the same port after its old one.
  */
+let shownAt = "";
 function showBuild(build) {
+  if (build !== null && build !== undefined) {
+    if (build.at < shownAt) return;
+    shownAt = build.at;
+  }
   let status = document.querySelector("[data-dev-build]");
   if (build === null || build === undefined || build.ok) {
     status?.remove();
@@ -309,7 +318,13 @@ function showBuild(build) {
   status.textContent = "Bản dựng mới lỗi — đang hiện bản dựng thành công gần nhất.\\n" + lines.join("\\n");
 }
 events.addEventListener("build", (event) => showBuild(JSON.parse(event.data)));
-void fetch("/dev/api/build").then((response) => response.json()).then((body) => showBuild(body.build)).catch(() => undefined);
+/*
+ * Asked once the stream is open, and again whenever it reopens: a build reported before then was sent to no one, and a
+ * dev host restarted on the same port reports nothing about the build it started with.
+ */
+events.addEventListener("open", () => {
+  void fetch("/dev/api/build").then((response) => response.json()).then((body) => showBuild(body.build)).catch(() => undefined);
+});
 
 /* The frame speaks the bridge; a dev host shows what it said rather than silently accepting it. */
 window.addEventListener("message", (event) => {
@@ -1308,23 +1323,21 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
    * as a new generation reloads the shell. A change that does not read is a failed build the shell shows beside the
    * frame, which keeps the last version that worked rather than loading files that cannot run. A platform without
    * recursive watching still gets a working host; it needs a manual refresh, and the shell is not told a reload happened.
-   * Files put back to the bytes of the frame's version build as unchanged: after a failure, that ends it, so the shell is
-   * told to take the failure away; any other unchanged build has nothing to tell.
+   * Files put back to the bytes of the frame's version build as unchanged, and every reported unchanged build is sent
+   * on: after a failure it takes the failure away, and otherwise it says again that the frame is current, which the shell
+   * shows as it already does. Sending each one keeps the shell in step with the engine's own last build, with no second
+   * copy here of whether the last build failed.
    */
   if (root !== undefined) {
-    let failing = false;
     engine = startDevEngine({
       root,
       watch: options.watchFiles !== false,
       onBuild: (event) => {
-        const ended = failing && event.kind !== "failed";
-        failing = event.kind === "failed";
         if (event.kind === "generation") {
           reloadCount += 1;
           for (const client of clients) client.write("event: reload\ndata: {}\n\n");
           return;
         }
-        if (event.kind === "unchanged" && !ended) return;
         for (const client of clients) client.write(`event: build\ndata: ${JSON.stringify(event.build)}\n\n`);
       },
     });
