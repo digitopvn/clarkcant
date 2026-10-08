@@ -49,6 +49,8 @@ export const storedDevSessionSchema = z.strictObject({
   root: z.string().min(1).max(1000),
   status: z.enum(["live", "stopped"]),
   stopReason: widgetDevStopReasonSchema.optional(),
+  /** With `root-refused`, the code the start check refused the folder with when the node started again. */
+  stopCode: z.string().min(1).max(80).optional(),
   /**
    * Who started the session, which is whose intent its installs carry out: the person on their own surface, or Clark
    * during a turn (with the turn's origin), whose installs the policy decides as Clark's own proposal.

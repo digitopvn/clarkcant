@@ -2963,20 +2963,26 @@ system folder dialog; a browser, or a desktop app connected to a node on another
 path on the node's machine instead. If Clark asks to develop a folder you have not chosen, nothing starts and the same
 card appears with **Develop this folder**. The card names the folder the path really leads to, and says so when that
 differs from the path given; a path that is not found gets no button. A press keeps the folder as your choice only if
-the path is still that folder itself when you press, so a link put in its place meanwhile gains nothing. Once you start a folder, Clark may work in it, and in every folder inside it, without
-asking again, until you take that back: type `/develop forget` (or ask Clark which folders it may use) and press
-**Forget** beside the folder. Forgetting does not stop a session that is running, and a folder inside another folder
-you chose stays reachable through that one (the answer says so). A chosen folder that is moved away is listed as not
-found, so you can still forget it; it counts again if that same folder is moved back, and a new folder at its path is
-chosen when you start developing it yourself. One limit: on Linux (ext4 and similar), a folder deleted (not moved) and
-made again at once at the same path can get the deleted folder's file id and then still count as the one you chose, so
-forget a folder before deleting it if a folder made there later must not inherit the choice. If a session Clark started
-stops after a restart because its folder is no longer one Clark may watch on its own (for example, it was deleted and
-made again), what it built keeps running; press **Develop again** on its row in the `/develop` card to choose the
-folder again. Only a message you sent can make Clark show a folder to choose. A whole drive or your home folder can
-be developed for one session, but Clark never keeps access to it. The node's own data folder is never developed, and neither
-is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
-a native part is refused with a problem saying so; install that package the ordinary way.
+the path is still that folder itself when you press, so a link put in its place meanwhile gains nothing. Once you
+start a folder, Clark may work in it, and in every folder inside it, without asking again, until you take that back:
+type `/develop forget` (or ask Clark which folders it may use) and press **Forget** beside the folder. Forgetting does
+not stop a session that is running, and a folder inside another folder you chose stays reachable through that one (the
+answer says so). A chosen folder that is moved away is listed as not found, so you can still forget it; it counts again
+if that same folder is moved back, and a new folder at its path is chosen when you start developing it yourself. One
+limit: some filesystems can give a folder deleted (not moved) and made again at the same path the deleted folder's
+file id, and then it still counts as the one you chose. On Linux (ext4 and similar) a freed id can come back at any
+later time, for example to a fresh `git clone` into the same path the next day. On Windows, FAT32 and exFAT drives
+(such as USB sticks) can give a remade folder the same id, and nothing holds the folder open there, so this can happen
+even while a session watches it. Forget a folder before deleting it if a folder made there later must not inherit the
+choice. If a session Clark started stops after a restart because Clark is no longer allowed to watch its folder on its
+own (for example, it was deleted and made again), what it built keeps running; press **Develop again** on its row in
+the `/develop` card to choose the folder again. If the folder now leads to a network share or into the node's data
+folder, choosing it again is refused too, so the row has no button: copy the project into Clark's widget workspace or
+another folder on this machine, and develop it from there. Only a message you sent can make Clark show a folder to
+choose. A whole drive or your home folder can be developed for one session, but Clark never keeps access to it. The
+node's own data folder is never developed, and neither is a network share. A session runs widgets that stay in the
+frame and declarative data. A package with a service, tools or a native part is refused with a problem saying so;
+install that package the ordinary way.
 
 The widget appears in the conversation in the production frame, with the production sandbox, bridge, state and
 migrations. A new generation remounts only the frame; the instance and its state stay, and the state goes through the

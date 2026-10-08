@@ -458,6 +458,7 @@ export function createWidgetDevSessions(
       sessionId: stored.sessionId,
       status: stored.status,
       ...(stored.status === "stopped" && stored.stopReason !== undefined ? { stopReason: stored.stopReason } : {}),
+      ...(stored.status === "stopped" && stored.stopReason === "root-refused" && stored.stopCode !== undefined ? { stopCode: stored.stopCode } : {}),
       root: stored.root,
       ...(latest === undefined ? {} : { packageId: latest.packageId, version: latest.version, latest }),
       startedAt: stored.startedAt,
@@ -825,8 +826,12 @@ export function createWidgetDevSessions(
     }
   };
 
-  /** Stop watching, and say why: the person, a watcher that failed, a folder that is gone, or the node's capacity. */
-  const markStopped = (sessionId: string, reason: WidgetDevStopReason): StoredDevSession | undefined => {
+  /**
+   * Stop watching, and say why: the person, a watcher that failed, a folder that is gone, the node's capacity, or a folder
+   * refused when the node started again. A `root-refused` stop keeps the start check's `code`, which decides what the
+   * person can do next: choose the folder again, or copy the project elsewhere.
+   */
+  const markStopped = (sessionId: string, reason: WidgetDevStopReason, code?: string): StoredDevSession | undefined => {
     const session = live.get(sessionId);
     if (session !== undefined) end(session);
     live.delete(sessionId);
@@ -834,7 +839,7 @@ export function createWidgetDevSessions(
      * The running generation stays installed and keeps rendering where it was placed; only the folder stops being
      * watched. A build that was waiting on a question is dropped with its listing, so the question leaves the inbox.
      */
-    return update(sessionId, ({ pending: _dropped, ...rest }) => ({ ...rest, status: "stopped", stopReason: reason }));
+    return update(sessionId, ({ pending: _dropped, stopCode: _old, ...rest }) => ({ ...rest, status: "stopped", stopReason: reason, ...(reason === "root-refused" && code !== undefined ? { stopCode: code } : {}) }));
   };
 
   /**
@@ -977,7 +982,7 @@ export function createWidgetDevSessions(
           `this node keeps ${String(WIDGET_DEV_STORE_MAX)} widget dev sessions and each still runs what it built; uninstall some of those packages first`,
         );
       }
-      const { stopReason: _old, placed: oldPlaced, ...carried } = reopened ?? { sessionId: services().conductor.newId("wdev"), root };
+      const { stopReason: _old, stopCode: _oldCode, placed: oldPlaced, ...carried } = reopened ?? { sessionId: services().conductor.newId("wdev"), root };
       // A conversation named now replaces where the reopened session placed its widget before.
       const placed = oldPlaced !== undefined && input.conversationId !== undefined && oldPlaced.conversationId !== input.conversationId ? undefined : oldPlaced;
       const stored: StoredDevSession = {
@@ -1136,7 +1141,7 @@ export function createWidgetDevSessions(
         if (!checked.ok) {
           const gone = checked.code === "ROOT_NOT_FOUND" || checked.code === "ROOT_NOT_A_FOLDER";
           // A folder that is there but cannot be read is not gone, nor refused: watching it failed.
-          markStopped(stored.sessionId, gone ? "folder-gone" : checked.code === "ROOT_UNREADABLE" ? "watch-failed" : "root-refused");
+          markStopped(stored.sessionId, gone ? "folder-gone" : checked.code === "ROOT_UNREADABLE" ? "watch-failed" : "root-refused", checked.code);
           process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}: ${checked.message}), so its session was stopped; what it ran keeps running\n`);
           continue;
         }
