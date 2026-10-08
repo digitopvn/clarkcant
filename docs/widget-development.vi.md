@@ -2988,20 +2988,27 @@ của hệ thống; trình duyệt, hoặc ứng dụng desktop nối với mộ
 máy chạy node. Nếu Clark muốn phát triển một thư mục bạn chưa chọn, không có gì được bắt đầu và chính thẻ đó hiện ra với
 nút **Phát triển thư mục này**. Thẻ nêu thư mục mà đường dẫn thật sự dẫn tới, và nói rõ khi nó khác đường dẫn được đưa
 ra; đường dẫn không tìm thấy thì không có nút. Lần bấm chỉ giữ thư mục làm lựa chọn của bạn nếu lúc bấm đường dẫn vẫn
-chính là thư mục đó, nên một liên kết được đặt vào chỗ nó trong lúc chờ không được gì. Khi bạn đã bắt đầu một thư mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi
-lại, cho tới khi bạn thu hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh
-thư mục đó. Thu hồi không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua
-thư mục đó (câu trả lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn
-thu hồi được; nó được tính lại khi chính thư mục đó được chuyển về, còn một thư mục mới ở đường dẫn đó được chọn khi
-chính bạn bắt đầu phát triển nó. Có một giới hạn: trên Linux (ext4 và các hệ thống tệp tương tự), một thư mục bị xoá
-(không phải bị chuyển đi) rồi được tạo lại ngay ở cùng đường dẫn có thể nhận mã tệp của thư mục đã xoá và khi đó vẫn
-được tính là thư mục bạn đã chọn, nên hãy thu hồi một thư mục trước khi xoá nó nếu không muốn một thư mục tạo ở đó về
-sau thừa hưởng lựa chọn. Nếu một phiên do Clark bắt đầu dừng lại sau một lần khởi động lại vì thư mục của nó không còn
-là nơi Clark được tự theo dõi (chẳng hạn nó đã bị xoá rồi tạo lại), những gì nó đã dựng vẫn tiếp tục chạy; hãy bấm
-**Phát triển lại** ở dòng của phiên đó trên thẻ `/develop` để chọn lại thư mục. Chỉ tin nhắn do bạn gửi mới khiến Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
-phiên, nhưng Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển,
-và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
-dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
+chính là thư mục đó, nên một liên kết được đặt vào chỗ nó trong lúc chờ không được gì. Khi bạn đã bắt đầu một thư
+mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi lại, cho tới khi bạn thu
+hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh thư mục đó. Thu hồi
+không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua thư mục đó (câu trả
+lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn thu hồi được; nó được
+tính lại khi chính thư mục đó được chuyển về, còn một thư mục mới ở đường dẫn đó được chọn khi chính bạn bắt đầu phát
+triển nó. Có một giới hạn: một số hệ thống tệp có thể cấp cho một thư mục bị xoá (không phải bị chuyển đi) rồi được tạo
+lại ở cùng đường dẫn đúng mã tệp của thư mục đã xoá, và khi đó nó vẫn được tính là thư mục bạn đã chọn. Trên Linux
+(ext4 và các hệ thống tệp tương tự), một mã đã được giải phóng có thể quay lại vào bất kỳ lúc nào về sau, chẳng hạn cho
+một lần `git clone` mới vào cùng đường dẫn vào ngày hôm sau. Trên Windows, ổ FAT32 và exFAT (chẳng hạn USB) có thể cấp
+cùng mã cho một thư mục được tạo lại, và ở đó không có gì giữ thư mục ở trạng thái mở, nên điều này có thể xảy ra ngay
+cả khi có phiên đang theo dõi nó. Hãy thu hồi một thư mục trước khi xoá nó nếu không muốn một thư mục tạo ở đó về sau
+thừa hưởng lựa chọn. Nếu một phiên do Clark bắt đầu dừng lại sau một lần khởi động lại vì Clark không còn được phép tự
+theo dõi thư mục của nó (chẳng hạn nó đã bị xoá rồi tạo lại), những gì nó đã dựng vẫn tiếp tục chạy; hãy bấm **Phát
+triển lại** ở dòng của phiên đó trên thẻ `/develop` để chọn lại thư mục. Nếu thư mục giờ dẫn tới một thư mục chia sẻ
+qua mạng hoặc vào thư mục dữ liệu của node, chọn lại nó cũng bị từ chối, nên dòng đó không có nút: hãy chép dự án vào
+không gian widget của Clark hoặc một thư mục khác trên máy này, rồi phát triển từ đó. Chỉ tin nhắn do bạn gửi mới khiến
+Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một phiên, nhưng
+Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển, và một thư mục chia
+sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần dịch vụ, công cụ hoặc
+native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
 
 Widget hiện trong cuộc hội thoại bằng frame của bản chính thức, với đúng sandbox, bridge, state và migration của bản
 chính thức. Một generation mới chỉ mount lại frame; instance và state của nó được giữ, và state đi qua các migration của
@@ -3025,6 +3032,9 @@ mỗi giây, vì Windows không báo gì. Cũng có thể node đã theo dõi s�
 thể không còn là thư mục mà phiên được theo dõi. Một lần dựng có thư mục quá lớn, hoặc chứa liên kết trỏ ra ngoài, sẽ nói
 điều đó và cần đổi gì. Các bản dựng đã bị thay thế được dọn dẹp khi bản mới được cài. Node giữ bản dựng đang chạy và bản mà thao tác quay lại bản
 trước sẽ trở về.
+Một phiên không cài lại nữa, hoặc một lần xoá còn sót do tệp bị giữ hay do node đang đóng, được dọn ở lần khởi động kế
+tiếp của node, trước khi thư mục nào được theo dõi lại. Lần khởi động đó cũng xoá các bản dựng không còn phiên nào liệt
+kê, khi không còn gì chạy chúng.
 
 ### test
 
@@ -3611,8 +3621,10 @@ còn nêu đúng phiên bản và digest của generation đó (cùng phiên b�
 nó tạo một plan và generation mới thay vì nhập vào cái cũ; một plan đã xong chỉ được nhập vào khi snapshot của
 generation đang chạy chính là artifact của plan đó. Một generation được cài từ đường dẫn trước khi có snapshot thì không
 có `snapshotDigest` và vẫn đọc đường dẫn của nó cho tới khi được cài lại. Mỗi lần tạo snapshot sẽ dọn các thư mục
-`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache; ngoài ra chưa có gì dọn các mục cache không còn dùng, với snapshot
-cũng như với artifact git và npm.
+`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache. Các phiên widget dev xoá những snapshot chúng đã tạo khi không còn gì
+chạy, chờ hay có thể quay lại chúng: sau mỗi lần cài, và lúc khởi động trước khi thư mục nào được theo dõi lại, kể cả
+những snapshot đã rơi khỏi danh sách của một phiên (`orphaned-snapshots.json` trong thư mục của kho phiên). Ngoài ra
+chưa có gì dọn các mục cache không còn dùng: snapshot của một lần cài thông thường, và artifact git và npm, vẫn được giữ.
 
 `digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw

@@ -40,7 +40,7 @@ export type AttachmentAction =
   | { type: "remove"; id: string }
   | { type: "stored"; id: string; attachmentId: string }
   | { type: "failed"; id: string; reason: string }
-  | { type: "sent" }
+  | { type: "sent"; chipIds: readonly string[] }
   | { type: "cleared" };
 
 /**
@@ -48,7 +48,7 @@ export type AttachmentAction =
  *
  * A reducer rather than state spread across handlers because the transitions have to hold together: an
  * upload that finishes after its chip was removed must not resurrect it, and `sent` must clear only the
- * chips whose bytes are actually stored.
+ * chips the message actually carried.
  */
 export function attachmentReducer(
   state: readonly AttachmentChip[],
@@ -67,10 +67,14 @@ export function attachmentReducer(
       return state.map((chip) =>
         chip.id === action.id ? { ...chip, state: "failed" as const, reason: action.reason } : chip,
       );
-    case "sent":
-      // Ready chips are gone because the message now owns them; a failed one stays, because nothing was
-      // sent for it and its explanation is the only place the person can read what went wrong.
-      return state.filter((chip) => chip.state === "failed");
+    case "sent": {
+      // The chips the message carried are gone because the message now owns them, matched by each chip's own key rather
+      // than its attachment id: the same stored file attached again while the reply was written shares the id but is a
+      // separate chip, and it belongs to the next message. Everything else stays too, and a failed chip was never sent,
+      // so its explanation is the only place the person can read what went wrong.
+      const carried = new Set(action.chipIds);
+      return state.filter((chip) => !carried.has(chip.id));
+    }
     case "cleared":
       // The conversation they were attached for is gone from the screen, so none of them belongs to the next one.
       return [];
@@ -85,7 +89,18 @@ export function attachmentReducer(
 
 /** The ids a message should carry: the stored ones, in the order the person added them. */
 export function readyAttachmentIds(chips: readonly AttachmentChip[]): string[] {
-  return chips.flatMap((chip) => (chip.state === "ready" && chip.attachmentId !== undefined ? [chip.attachmentId] : []));
+  return readyChips(chips).map((chip) => chip.attachmentId);
+}
+
+/** The chips a message carries, by their own keys: the ones `readyAttachmentIds` takes the ids from. */
+export function readyChipIds(chips: readonly AttachmentChip[]): string[] {
+  return readyChips(chips).map((chip) => chip.id);
+}
+
+function readyChips(chips: readonly AttachmentChip[]): (AttachmentChip & { attachmentId: string })[] {
+  return chips.filter(
+    (chip): chip is AttachmentChip & { attachmentId: string } => chip.state === "ready" && chip.attachmentId !== undefined,
+  );
 }
 
 /**

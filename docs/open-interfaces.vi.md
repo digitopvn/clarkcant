@@ -896,7 +896,7 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Bắt đầu theo dõi `root` (đường dẫn tuyệt đối trên node). Trả `201` kèm phiên sau khi lần dựng đầu tiên đã chạy và đã được kích hoạt trong phạm vi chính sách cho phép. Có `conversationId` thì widget được đặt vào đó (ghim mở) ngay khi một generation chạy. Bắt đầu một thư mục đã có phiên bị dừng sẽ tiếp tục chính phiên đó. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` hoặc `root-refused`). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
+| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` hoặc `root-refused`, lý do có thể kèm `stopCode`; xem bên dưới). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
 | `DELETE /widget-dev/sessions/:id` | Dừng theo dõi (`stopReason: "requested"`). Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
 | `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
@@ -932,20 +932,27 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   thư mục đó (`chosenFolderId` trong kho phiên). Nếu về sau đường dẫn đó dẫn tới nơi khác (thư mục bị thay bằng một
   liên kết hoặc junction, bị chuyển đi hoặc bị xoá), hoặc chứa một thư mục khác (được tạo ở đó sau khi thư mục đã chọn
   không còn), lựa chọn không còn được tính, nên cả một liên kết bị tráo lẫn một thư mục được tạo vào chỗ đó đều không mở
-  rộng được nó (trong giới hạn của mã thư mục, xem bên dưới). Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu chính thư mục đó trở lại
-  đúng đường dẫn đó (được chuyển về), lựa chọn lại được tính. Một lựa chọn được lưu từ trước khi mã thư mục được giữ thì
-  không có mã: nó nhận mã của thư mục được tìm thấy ở đường dẫn đó vào lần đầu tiên có thư mục ở đó, và từ đó chỉ gắn
-  với thư mục ấy. Một thư mục mới ở đường dẫn đó được chọn khi chính người dùng bắt đầu nó, và lần bắt đầu ấy ghi lại mã
-  của nó (kể cả với một phiên vẫn đang chạy ở đó).
+  rộng được nó (trong giới hạn của mã thư mục, xem bên dưới). Nó vẫn được liệt kê, với trạng thái không tìm thấy, để
+  người dùng thu hồi; nếu chính thư mục đó trở lại đúng đường dẫn đó (được chuyển về), lựa chọn lại được tính. Một lựa
+  chọn được lưu từ trước khi mã thư mục được giữ thì không có mã: nó nhận mã của thư mục được tìm thấy ở đường dẫn đó vào
+  lần đầu tiên có thư mục ở đó, và từ đó chỉ gắn với thư mục ấy. Một thư mục mới ở đường dẫn đó được chọn khi chính
+  người dùng bắt đầu nó, và lần bắt đầu ấy ghi lại mã của nó (kể cả với một phiên vẫn đang chạy ở đó).
 - **Giới hạn của mã thư mục.** Mã này chỉ phân biệt được các thư mục khi hệ thống tệp không cấp lại đúng mã đó cho một
-  thư mục tạo sau. NTFS (Windows) cấp mã mới cho một thư mục được tạo lại. Các hệ thống tệp trên Linux như ext4 có thể
-  cấp cho một thư mục bị xoá (không phải bị chuyển đi) rồi được tạo lại ngay ở cùng đường dẫn đúng mã của thư mục đã
-  xoá, và khi đó nó được tính là thư mục đã chọn. Trên Linux và macOS node giữ thư mục đang theo dõi ở trạng thái mở,
-  nên điều này không xảy ra khi có phiên đang theo dõi nó; nó có thể xảy ra giữa các phiên hoặc khi node đang dừng.
-  Không có tín hiệu thứ hai nào được thêm vào: thời điểm tạo của thư mục không mịn hơn một nhịp đồng hồ của hệ thống tệp
-  (trên ext4, một thư mục bị xoá rồi tạo lại trong cùng một nhịp có cùng mã và cùng thời điểm tạo), và ở nơi không đọc
-  được nó, Node trả về thời điểm thay đổi, vốn đổi mỗi khi có tệp được thêm hay xoá. Hãy thu hồi một thư mục trước khi
-  xoá nó nếu không muốn một thư mục khác tạo ở đó thừa hưởng lựa chọn.
+  thư mục tạo sau. NTFS (Windows) cấp mã mới cho một thư mục được tạo lại. Một số hệ thống tệp có thể cấp cho một thư
+  mục bị xoá (không phải bị chuyển đi) rồi được tạo lại ở cùng đường dẫn đúng mã của thư mục đã xoá, và khi đó nó được
+  tính là thư mục đã chọn:
+  - Các hệ thống tệp trên Linux như ext4 có thể cấp lại một mã tệp đã được giải phóng vào bất kỳ lúc nào về sau, không
+    chỉ ngay lập tức: chẳng hạn cho một lần `git clone` mới vào cùng đường dẫn vào ngày hôm sau. Trên Linux và macOS
+    node giữ thư mục đang theo dõi ở trạng thái mở, nên điều này không xảy ra khi có phiên đang theo dõi nó; nó có thể
+    xảy ra giữa các phiên hoặc khi node đang dừng.
+  - Trên Windows, ổ FAT32 và exFAT (chẳng hạn USB) không giữ mã tệp lâu dài, nên một thư mục được tạo lại ở cùng đường
+    dẫn có thể nhận cùng mã. Trên Windows không có gì giữ thư mục ở trạng thái mở, nên điều này có thể xảy ra ngay cả khi
+    có phiên đang theo dõi nó.
+
+  Không có tín hiệu thứ hai nào được thêm vào: thời điểm tạo của thư mục không mịn hơn một nhịp đồng hồ của hệ thống
+  tệp (trên ext4, một thư mục bị xoá rồi tạo lại trong cùng một nhịp có cùng mã và cùng thời điểm tạo), và ở nơi không
+  đọc được nó, Node trả về thời điểm thay đổi, vốn đổi mỗi khi có tệp được thêm hay xoá. Hãy thu hồi một thư mục trước
+  khi xoá nó nếu không muốn một thư mục khác tạo ở đó thừa hưởng lựa chọn.
 - Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
   `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
   `develop_widget`). Thu hồi không dừng phiên đang chạy. Một thư mục nằm trong một thư mục đã chọn khác, hoặc trong một
@@ -1020,11 +1027,30 @@ vẫn hiện là đang chạy:
   và được kiểm tra lại, tối đa 30 giây lỗi liên tục; sau đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng
   khi thư mục không còn sau một lần khởi động lại.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
-- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
-  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget, hoặc nằm trong một thư mục đã chọn bị xoá (hay bị chuyển
-  đi) rồi được tạo lại ở cùng đường dẫn trong lúc node dừng: thư mục ở đó không phải thư mục đã chọn, nên Clark không được
-  tự theo dõi nó. Những gì phiên đã chạy vẫn tiếp tục chạy. Dòng trạng thái và dòng của phiên trên thẻ `develop` nhắc
-  người dùng chọn lại thư mục; chính lần bắt đầu của họ (**Phát triển lại**) chọn thư mục đang ở đường dẫn đó.
+- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Những gì
+  phiên đã chạy vẫn tiếp tục chạy. `stopCode` trong view của phiên cho biết bước kiểm nào, và dòng trạng thái, dòng của
+  phiên trên thẻ `develop` cùng những gì Clark được báo đều nói điều gì giúp được trong từng trường hợp:
+  - `ROOT_NOT_OWNED`: một phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget và mọi thư mục người dùng đã
+    chọn, chẳng hạn một thư mục đã chọn bị xoá (hay bị chuyển đi) rồi được tạo lại ở cùng đường dẫn trong lúc node dừng.
+    Thư mục ở đó không phải thư mục đã chọn, nên Clark không được phép tự theo dõi nó. Chính lần bắt đầu của người dùng
+    (**Phát triển lại**) chọn thư mục đang ở đường dẫn đó; chép dự án vào không gian widget cũng được.
+  - `ROOT_NOT_LOCAL` hoặc `ROOT_IN_DATA_FOLDER`: thư mục giờ dẫn tới một thư mục chia sẻ qua mạng hoặc đường dẫn thiết
+    bị, hoặc chứa hay nằm trong thư mục dữ liệu của node. Không lần bắt đầu nào được theo dõi nó, nên chọn lại nó cũng
+    bị từ chối và dòng đó không có nút **Phát triển lại**; người dùng chép dự án vào không gian widget hoặc một thư mục
+    dự án khác trên máy rồi phát triển từ đó.
+
+  `stopCode` không bắt buộc. Một phiên dừng từ trước khi node giữ trường này thì không có nó, và một mã client không
+  biết chỉ được nói bằng lý do, kèm lời khuyên đúng cho mọi trường hợp. Client đọc view của phiên bằng một schema chặt,
+  nên nó từ chối một view có trường nó không biết, chẳng hạn `stopCode` gửi tới một client cũ hơn trường đó. Hãy giữ
+  ứng dụng desktop ở cùng bản dựng với node mà nó kết nối tới, kể cả một node trên máy khác; việc cho client đọc các
+  view như vậy mà bỏ qua trường lạ được theo dõi ở issue #673. Mã này là điều bước kiểm tìm thấy ở lần khởi động lại đó
+  và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu kiểm thư mục như nó đang có lúc ấy.
+
+  **Hạ phiên bản.** `sessions.json` cũng được đọc bằng một schema chặt. Một bản dựng cũ hơn một trường mà kho đang giữ,
+  chẳng hạn `stopCode` hay `chosenFolderId`, thấy cả tệp không khớp, chuyển nó sang
+  `sessions.json.unreadable-<thời điểm>` và khởi động không có phiên nào (xem **Kho lưu** ở trên). Tệp không mất gì,
+  nhưng các phiên, và các thư mục người dùng đã chọn, không được thấy cho tới khi một bản dựng biết các trường đó đọc
+  lại tệp (chuyển nó về bằng tay).
 
 Một thư mục vẫn còn đó nhưng mang định danh khác không làm phiên dừng. Node so sánh device và file id của thư mục với
 những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi

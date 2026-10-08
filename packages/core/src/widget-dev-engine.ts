@@ -322,9 +322,11 @@ export interface DevRootIdentity {
  * names the chosen folder must not take the id of whatever a link leads to.
  *
  * A folder's device and file id say which folder it is only as long as the filesystem does not give a folder made later
- * the same id. Some do: on Linux (ext4) a folder deleted and made again at once at the same path can get the same file
- * id, and then reads as the same folder. Its birth time is no second check: it is no finer than the filesystem's clock
- * tick, and where it cannot be read Node reports the change time, which moves with every file added or removed.
+ * the same id. Some do, and then a folder deleted and made again at the same path reads as the same folder: on Linux
+ * (ext4) a freed file id can be handed back at any later time, not only at once, and on Windows FAT32 and exFAT drives
+ * keep no lasting file id, while nothing holds a folder open there. Its birth time is no second check: it is no finer
+ * than the filesystem's clock tick, and where it cannot be read Node reports the change time, which moves with every
+ * file added or removed.
  */
 export function devRootIdentityOf(root: string, options: { followLinks?: boolean } = {}): DevRootIdentity | undefined {
   try {

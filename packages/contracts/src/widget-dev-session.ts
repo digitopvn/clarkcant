@@ -214,13 +214,27 @@ export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
  * - `folder-gone`: the folder was deleted or renamed while it was watched and not back within 2 s, its path now leads elsewhere through a link
  *   or junction, or it was not there when the node started again.
  * - `capacity`: the node already watched as many folders as it does at once when it started again.
- * - `root-refused`: when the node started again, the folder was no longer one the session may watch (for example a
- *   session Clark started whose folder is outside the widget workspace and every folder the person chose, a chosen
- *   folder deleted and made again while the node was stopped, or a folder now inside the data folder). The person's own
- *   start chooses the folder again.
+ * - `root-refused`: when the node started again, the folder failed the check a start makes. `stopCode` says which
+ *   (`WIDGET_DEV_ROOT_REFUSED_CODES`): a session Clark started whose folder is outside the widget workspace and every
+ *   folder the person chose, for example a chosen folder deleted and made again while the node was stopped
+ *   (`ROOT_NOT_OWNED`, which the person's own start fixes by choosing the folder again), or a folder that now resolves to
+ *   a network share or device path (`ROOT_NOT_LOCAL`) or into the data folder (`ROOT_IN_DATA_FOLDER`), which nobody's
+ *   start may watch, so the project has to be copied elsewhere.
  */
 export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity", "root-refused"]);
 export type WidgetDevStopReason = z.infer<typeof widgetDevStopReasonSchema>;
+
+/**
+ * The start refusal codes a `root-refused` stop names in `stopCode`. A reader meets `stopCode` only with `root-refused`,
+ * may meet a code not listed here from a newer node, and treats an absent or unknown code as the reason alone.
+ */
+export const WIDGET_DEV_ROOT_REFUSED_CODES = ["ROOT_NOT_OWNED", "ROOT_NOT_LOCAL", "ROOT_IN_DATA_FOLDER"] as const;
+export type WidgetDevRootRefusedCode = (typeof WIDGET_DEV_ROOT_REFUSED_CODES)[number];
+
+/** The known `stopCode` of a `root-refused` session, or undefined for another reason, no code, or a code this reader does not know. */
+export function widgetDevRootRefusedCode(view: { stopReason?: WidgetDevStopReason | undefined; stopCode?: string | undefined }): WidgetDevRootRefusedCode | undefined {
+  return view.stopReason === "root-refused" ? WIDGET_DEV_ROOT_REFUSED_CODES.find((code) => code === view.stopCode) : undefined;
+}
 
 /** A session as the node reports it. */
 export const widgetDevSessionViewSchema = z.strictObject({
@@ -228,6 +242,12 @@ export const widgetDevSessionViewSchema = z.strictObject({
   /** `live` exactly while the node watches the folder; a watcher that failed reads as `stopped` with its reason. */
   status: z.enum(["live", "stopped"]),
   stopReason: widgetDevStopReasonSchema.optional(),
+  /**
+   * With `stopReason: "root-refused"`, the code the start check refused the folder with (`WIDGET_DEV_ROOT_REFUSED_CODES`).
+   * Additive and optional: a session stopped before nodes kept it has none, and a reader that does not know it shows the
+   * reason alone.
+   */
+  stopCode: z.string().min(1).max(80).optional(),
   /** The package folder on this node. */
   root: z.string().min(1).max(1000),
   packageId: z.string().min(1).max(160).optional(),
