@@ -73,24 +73,49 @@ export interface DevShellState {
   tokens: DevTokenMode;
 }
 
+export const DEV_SHELL_ACTION_KINDS = [
+  "fixture",
+  "viewport",
+  "theme",
+  "reduced-motion",
+  "offline",
+  "read-only",
+  "capability",
+  "pick-file",
+  "service-readiness",
+  "service-restart",
+  "resource-profile",
+  "browser-token",
+] as const;
+
 export interface DevShellAction {
-  kind:
-    | "fixture"
-    | "viewport"
-    | "theme"
-    | "reduced-motion"
-    | "offline"
-    | "read-only"
-    | "capability"
-    | "pick-file"
-    | "service-readiness"
-    | "service-restart"
-    | "resource-profile"
-    | "browser-token";
+  kind: (typeof DEV_SHELL_ACTION_KINDS)[number];
   value: string | boolean;
   capabilityRef?: string;
   status?: ServiceStatus;
   reason?: string;
+}
+
+/**
+ * A shell control change as it arrives over HTTP, or `undefined` when it is not one.
+ *
+ * Checked at the edge because `applyShellAction` trusts its type: an unknown kind matches no case and would hand back
+ * no state at all, and the next read of the state would take the dev host down. `value` may be left out, as the
+ * service-readiness control does; it then reads as `""`, which no control takes as a choice.
+ */
+export function parseShellAction(raw: unknown): DevShellAction | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const { kind, value, capabilityRef, status, reason } = raw as Record<string, unknown>;
+  if (typeof kind !== "string" || !(DEV_SHELL_ACTION_KINDS as readonly string[]).includes(kind)) return undefined;
+  if (value !== undefined && typeof value !== "string" && typeof value !== "boolean") return undefined;
+  if ([capabilityRef, status, reason].some((field) => field !== undefined && typeof field !== "string")) return undefined;
+  return {
+    kind: kind as DevShellAction["kind"],
+    value: value ?? "",
+    ...(capabilityRef === undefined ? {} : { capabilityRef: capabilityRef as string }),
+    ...(status === undefined ? {} : { status: status as ServiceStatus }),
+    ...(reason === undefined ? {} : { reason: reason as string }),
+  };
 }
 
 export function initialState(input: {

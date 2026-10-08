@@ -10,6 +10,7 @@ export default defineConfig({
       "packages/widget-cli/test/semantic-composition-real-browser.e2e.spec.ts",
       "packages/widget-cli/test/job-simulator-real-browser.e2e.spec.ts",
       "packages/widget-cli/test/dev-build-sync-real-browser.e2e.spec.ts",
+      "packages/widget-cli/test/dev-frame-modules-real-browser.e2e.spec.ts",
     ],
     exclude: ["**/dist/**", "**/coverage/**", "**/node_modules/**"],
   },

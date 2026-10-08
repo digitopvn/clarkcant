@@ -179,3 +179,61 @@ test("reduced motion collapses every animation's duration, none left spinning at
 
   expect(problems, problems.join("; ")).toEqual([]);
 });
+
+/** The rendered box, text and icon of the composer's Voice Mode button beside the attach button it sits with. */
+async function voiceButtonLook(page: Page) {
+  const voice = page.locator("[data-voice-open='true']");
+  await expect(voice).toBeVisible();
+  return voice.evaluate((button) => {
+    const attach = document.querySelector<HTMLElement>("[data-attachment-open='true']");
+    const icon = button.querySelector("svg");
+    const box = button.getBoundingClientRect();
+    const iconBox = icon?.getBoundingClientRect();
+    return {
+      text: button.textContent?.trim() ?? "",
+      name: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+      icon: icon?.getAttribute("data-icon") ?? null,
+      iconSize: iconBox === undefined ? null : [Math.round(iconBox.width), Math.round(iconBox.height)],
+      iconStroke: icon === null ? null : getComputedStyle(icon).stroke,
+      buttonColor: getComputedStyle(button).color,
+      size: [Math.round(box.width), Math.round(box.height)],
+      attachSize: attach === null ? null : [Math.round(attach.getBoundingClientRect().width), Math.round(attach.getBoundingClientRect().height)],
+    };
+  });
+}
+
+test("the Voice Mode button is a named microphone icon the keyboard can reach", async ({ page }) => {
+  await openApp(page);
+
+  const look = await voiceButtonLook(page);
+  expect(look.icon).toBe("microphone");
+  // Nothing visible to read twice: the label is the name, and the old `◉` glyph is gone.
+  expect(look.text).toBe("");
+  expect(look.name).not.toBeNull();
+  expect(look.title).toBe(look.name);
+  expect(look.iconSize).toEqual([15, 15]);
+  // Drawn in the button's own text colour, so it keeps the theme's contrast and follows forced colours.
+  expect(look.iconStroke).toBe(look.buttonColor);
+  expect(look.size).toEqual(look.attachSize);
+
+  const presses = await tabUntil(page, "[data-voice-open='true']");
+  expect(presses, "the voice button was not reachable with Tab alone").toBeGreaterThan(0);
+  const outline = await page.locator("[data-voice-open='true']").evaluate((element) => getComputedStyle(element).outlineStyle);
+  expect(outline).not.toBe("none");
+});
+
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+  test("the Voice Mode button is the same microphone at the 44 px touch size", async ({ page }) => {
+    await openApp(page);
+
+    const look = await voiceButtonLook(page);
+    expect(look.icon).toBe("microphone");
+    expect(look.text).toBe("");
+    expect(look.iconSize).toEqual([15, 15]);
+    expect(look.size).toEqual([44, 44]);
+    expect(look.size).toEqual(look.attachSize);
+  });
+});

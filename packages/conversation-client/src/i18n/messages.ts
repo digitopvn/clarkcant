@@ -18,6 +18,7 @@ import { MESSAGES_CHANGELOG_EN, MESSAGES_CHANGELOG_VI } from "./messages-changel
 import { MESSAGES_CREDENTIALS_EN, MESSAGES_CREDENTIALS_VI } from "./messages-credentials.ts";
 import { MESSAGES_INBOX_EN, MESSAGES_INBOX_VI } from "./messages-inbox.ts";
 import { MESSAGES_INTENTS_EN, MESSAGES_INTENTS_VI } from "./messages-intents.ts";
+import { MESSAGES_PROVIDERS_EN, MESSAGES_PROVIDERS_VI } from "./messages-providers.ts";
 import { MESSAGES_SETTINGS_VI, MESSAGES_SETTINGS_EN } from "./messages-settings.ts";
 import { MESSAGES_SHELL_EN, MESSAGES_SHELL_VI } from "./messages-shell.ts";
 import { MESSAGES_TIMELINE_EN, MESSAGES_TIMELINE_VI } from "./messages-timeline.ts";
@@ -28,6 +29,7 @@ export const MESSAGES_VI = {
   ...MESSAGES_CREDENTIALS_VI,
   ...MESSAGES_INBOX_VI,
   ...MESSAGES_INTENTS_VI,
+  ...MESSAGES_PROVIDERS_VI,
   ...MESSAGES_SETTINGS_VI,
   ...MESSAGES_SHELL_VI,
   ...MESSAGES_TIMELINE_VI,
@@ -72,6 +74,7 @@ export const MESSAGES_EN = {
   ...MESSAGES_CREDENTIALS_EN,
   ...MESSAGES_INBOX_EN,
   ...MESSAGES_INTENTS_EN,
+  ...MESSAGES_PROVIDERS_EN,
   ...MESSAGES_SETTINGS_EN,
   ...MESSAGES_SHELL_EN,
   ...MESSAGES_TIMELINE_EN,

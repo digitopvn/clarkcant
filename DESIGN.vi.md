@@ -1285,6 +1285,17 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
 ### 11.2 AI & Routing
 
 - Current model as searchable picker.
+- Đăng nhập nhà cung cấp (đã ship): ngay dưới ô chọn nhà cung cấp và model, liệt kê mọi nhà cung cấp mà pi có thể
+  dùng để trả lời, dù đã đăng nhập hay chưa, chỉ với những cách đăng nhập pi công bố cho nhà cung cấp đó — đăng nhập
+  tài khoản (OAuth) khi pi có, API key khi pi nhận. Nhà cung cấp đã đăng nhập cho biết thông tin đăng nhập đến từ
+  đâu: do pi lưu, biến môi trường của node (.env hoặc shell), được trao lúc khởi động, models.json của pi, hoặc khoá
+  pi tự tìm thấy. Chỉ thông tin đăng nhập do pi lưu mới có Đăng xuất (và Thay API key / Đăng nhập lại); các loại khác
+  nói rõ không đăng xuất được ở đây và phải gỡ ở đâu. Đây là cùng một capability mà `/login` và `/logout` trả lời
+  trong cuộc trò chuyện — cùng route của node, cùng sổ đăng nhập và cùng đường đi phía client — nên quá trình đăng
+  nhập hiện ngay trong hàng (trang của nhà cung cấp để mở, một mã, ô mật khẩu cho khoá) với trạng thái đang chạy,
+  thất bại và hoàn tất, và những gì người dùng nhập đi thẳng tới pi, không bao giờ hiện lại. Đăng nhập hoặc đăng
+  xuất xong thì danh sách nhà cung cấp và danh mục model được đọc lại. Node không có pi nói rằng ở đây không có gì
+  để đăng nhập; danh sách pi không đọc được thì nói lý do và có nút Thử lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.
 - Automatic routing by Jev toggle.
