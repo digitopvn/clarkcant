@@ -13,9 +13,10 @@ import { it } from "vitest";
  * A process that just exited can keep a handle open for a moment: a closed Chromium's helper processes, or a git that
  * had the directory as its working directory. Removal then fails with `EPERM` until the handle is gone.
  *
- * This is the promise form on purpose. On Windows (Node 22 and 24 alike), `rmSync` reports a locked file as `EPERM` or
- * `EBUSY` at once and ignores `maxRetries`, so a synchronous removal with retries is a removal without them. `fs.promises.rm` waits
- * `retryDelay` longer after each failed attempt, about five seconds over ten attempts.
+ * This is the promise form on purpose. On Windows, `rmSync` with `maxRetries` reports a held directory as `EPERM` or
+ * `EBUSY` at once on Node 22 and on Node 24 before 24.21, so the retries never run. From Node 24.21 it retries, but it
+ * sleeps the main thread between attempts, so the event loop stands still for the whole wait. `fs.promises.rm` waits
+ * `retryDelay` longer after each failed attempt, about five seconds over ten attempts, without blocking.
  */
 export async function removeTestDirectory(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
