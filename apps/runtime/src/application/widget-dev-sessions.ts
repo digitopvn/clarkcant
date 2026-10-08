@@ -185,6 +185,8 @@ export function createWidgetDevSessions(
     watch?: boolean;
     /** How often a session waiting on an answer looks for it. */
     answerPollMs?: number;
+    /** How long a folder may keep failing to be looked at before its session stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
+    rootUnreadableMs?: number;
   } = {},
 ): WidgetDevSessions {
   const live = new Map<string, LiveSession>();
@@ -261,13 +263,24 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_NOT_LOCAL", "give a folder on a drive of this machine; a network share or device path is not developed from");
     }
     const resolved = resolve(given);
+    // Only "not found" means not there: a folder an antivirus or indexer holds (`EPERM`, `EBUSY`) is there, unreadable.
+    const unreadable = (cause: unknown) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      return code !== undefined && code !== "ENOENT" && code !== "ENOTDIR"
+        ? refusal(403, "ROOT_UNREADABLE", `${resolved} cannot be read on this node (${code})`)
+        : undefined;
+    };
     try {
       if (!statSync(resolved).isDirectory()) return refusal(400, "ROOT_NOT_A_FOLDER", `${resolved} is not a folder`);
-    } catch {
-      return refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
     }
-    const root = realOrUndefined(resolved);
-    if (root === undefined) return refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    let root: string;
+    try {
+      root = realpathSync.native(resolved);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    }
     if (isRemoteOrDevicePath(root)) {
       return refusal(400, "ROOT_NOT_LOCAL", "the folder resolves to a network share or device path, which is not developed from");
     }
@@ -742,8 +755,9 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * Whether a live session's folder has gone (deleted, renamed, or replaced by another folder at the same path while it
-   * was watched); when it has, the session is stopped as `folder-gone` before anything is built or installed from it. A
+   * Whether a live session's folder has gone (deleted, renamed, or no longer a folder; another folder made at the same
+   * path is watched in its place by the engine); when it has, the session is stopped as `folder-gone` before anything is
+   * built or installed from it. A
    * platform watcher does not always report this (Windows reports nothing), so the check is made before each build is
    * followed, not only on a watcher error. The session's engine answers, since it knows which folder it watches; a folder
    * that could not be looked at this time (a busy or locked folder on Windows) is not taken as gone.
@@ -779,6 +793,7 @@ export function createWidgetDevSessions(
         root: stored.root,
         cacheRoot: cacheRoot(),
         watch: options.watch !== false,
+        ...(options.rootUnreadableMs === undefined ? {} : { rootUnreadableMs: options.rootUnreadableMs }),
         generationsBefore: before,
         allowedIsolations: WIDGET_DEV_ALLOWED_ISOLATIONS,
         baseline: () => live.get(sessionId)?.baseline,
@@ -793,7 +808,7 @@ export function createWidgetDevSessions(
           });
         },
         onWatchError: (error) => {
-          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}\n`);
+          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}; what it ran keeps running\n`);
           // Said as it is: a session whose folder is no longer watched is stopped, not live.
           void serial(sessionId, async () => {
             if (live.get(sessionId) === session) markStopped(sessionId, "watch-failed");
@@ -1033,8 +1048,9 @@ export function createWidgetDevSessions(
         const checked = checkRoot(stored.root, { kind: stored.initiative?.kind ?? "person" });
         if (!checked.ok) {
           const gone = checked.code === "ROOT_NOT_FOUND" || checked.code === "ROOT_NOT_A_FOLDER";
-          markStopped(stored.sessionId, gone ? "folder-gone" : "root-refused");
-          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}), so its session was stopped; what it ran keeps running\n`);
+          // A folder that is there but cannot be read is not gone, nor refused: watching it failed.
+          markStopped(stored.sessionId, gone ? "folder-gone" : checked.code === "ROOT_UNREADABLE" ? "watch-failed" : "root-refused");
+          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}: ${checked.message}), so its session was stopped; what it ran keeps running\n`);
           continue;
         }
         if (live.size >= WIDGET_DEV_LIVE_MAX) {

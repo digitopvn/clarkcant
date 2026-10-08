@@ -110,6 +110,10 @@ describe("the widget dev status line", () => {
       notice: true,
     });
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "watch-failed" }), vi).text).toContain("Việc theo dõi thư mục bị lỗi");
+    // Why watching failed, and that what runs keeps running.
+    const failed = widgetDevStatusLine(view({ status: "stopped", stopReason: "watch-failed" }), en).text;
+    expect(failed).toContain("build 2 keeps running");
+    expect(failed).toContain("could not be read for 30 seconds");
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "requested" }), en).notice).toBe(false);
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "folder-gone", running: undefined, activation: { state: "none" } }), en).text).toBe(
       "No longer watching the folder · no build runs yet. The folder is gone.",

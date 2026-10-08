@@ -1,5 +1,6 @@
 import type * as fs from "node:fs";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -8,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareDevReach, directoryEntrySchema, type PackageManifest, type WidgetDefinition } from "@clarkcant/contracts";
 
 import {
+  DEV_ENGINE_REARM_MAX,
   DEV_ENGINE_WATCH_CATCH_UP_MS,
   cachedLocalSnapshotPath,
   devConsentScopeOf,
@@ -19,6 +21,8 @@ import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /** A folder whose `stat` fails with this code, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined, code: "EPERM" }));
+/** A folder whose file id reads as another one, as a FUSE mount without stable inode numbers reports a folder still there. */
+const statNewId = vi.hoisted(() => ({ path: undefined as string | undefined, flap: false, shift: 0n, step: 1n }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -26,7 +30,13 @@ vi.mock("node:fs", async (importOriginal) => {
     if (statFailure.path !== undefined && resolve(String(path)) === statFailure.path) {
       throw Object.assign(new Error(`${statFailure.code}: operation not permitted, stat '${String(path)}'`), { code: statFailure.code });
     }
-    return actual.statSync(path, options);
+    const stat = actual.statSync(path, options);
+    if (statNewId.path !== undefined && resolve(String(path)) === statNewId.path && stat !== undefined && typeof stat.ino === "bigint") {
+      // Flapping: a new id on every look, as a filesystem that keeps no file id stable at all would report.
+      if (statNewId.flap) statNewId.shift += 1n;
+      stat.ino += statNewId.flap ? statNewId.shift : statNewId.step;
+    }
+    return stat;
   }) as typeof actual.statSync;
   return { ...actual, statSync, default: { ...actual, statSync } };
 });
@@ -95,6 +105,10 @@ function engineFor(root: string, cacheRoot?: string): DevEngine {
 
 afterEach(() => {
   statFailure.path = undefined;
+  statNewId.path = undefined;
+  statNewId.flap = false;
+  statNewId.shift = 0n;
+  statNewId.step = 1n;
   vi.useRealTimers();
   for (const engine of engines.splice(0)) engine.close();
   for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -314,11 +328,19 @@ describe("the dev engine", () => {
     expect(gone).toBe(1);
   });
 
-  it("notices a watched folder deleted and made again before it looks, which the watcher no longer hears", async () => {
+  it("watches a folder deleted and made again before it looks, and builds it, though the old watcher hears nothing", async () => {
     const root = tempDir("dev-engine-");
     writePackage(root, "<p>one</p>");
     let gone = 0;
-    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onRootGone: () => (gone += 1) });
+    const failures: Error[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 50,
+      onRootGone: () => (gone += 1),
+      onWatchError: (error) => failures.push(error),
+    });
     engines.push(engine);
     await engine.ready;
 
@@ -326,11 +348,351 @@ describe("the dev engine", () => {
     // no retries are asked for, since `rmSync` would not run them.
     rmSync(root, { recursive: true, force: true });
     writePackage(root, "<p>new folder</p>");
+    const waitFor = async (generation: number): Promise<void> => {
+      const deadline = Date.now() + 5_000;
+      while (engine.latest()?.generation.generation !== generation && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+      expect(engine.latest()?.generation.generation).toBe(generation);
+    };
+    await waitFor(2);
+    expect(gone).toBe(0);
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
+    expect(engine.rootGone()).toBe(false);
+
+    // The new folder is the one watched now: a save in it builds.
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved in the new folder</p>");
+    await waitFor(3);
+    expect(gone).toBe(0);
+  });
+
+  it("watches a folder that is still there under a new file id again, and builds it, rather than stopping", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const built: string[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      onRootGone: () => (gone += 1),
+      onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`),
+    });
+    engines.push(engine);
+    await engine.ready;
+    // Past the catch-up build, so the only build that follows is the one the new id asks for.
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 200));
+    built.length = 0;
+
+    statNewId.path = engine.root;
     const deadline = Date.now() + 5_000;
-    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
-    expect(gone).toBe(1);
+    while (built.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(built).toEqual(["change:unchanged"]);
+    expect(gone).toBe(0);
+    expect(engine.watching()).toBe(true);
+    expect(engine.rootGone()).toBe(false);
+
+    // Watched again once: the new id is the folder's id now, and a save still builds.
+    await new Promise((done) => setTimeout(done, 150));
+    expect(built).toEqual(["change:unchanged"]);
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved</p>");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+  });
+
+  /** A link to a folder: a junction on Windows, which needs no privilege, and a symbolic link elsewhere. */
+  const linkFolder = (target: string, path: string): void => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+
+  /** Watch `root` until the engine says it is gone, and report what it built and said meanwhile. */
+  async function watchUntilGone(root: string, swap: () => void): Promise<{ engine: DevEngine; gone: number; built: string[]; failures: Error[] }> {
+    const seen = { gone: 0, built: [] as string[], failures: [] as Error[] };
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      onRootGone: () => (seen.gone += 1),
+      onBuild: (event) => seen.built.push(event.kind === "generation" ? `generation:${event.record.generation.packageId}` : event.kind),
+      onWatchError: (error) => seen.failures.push(error),
+    });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    seen.built.length = 0;
+
+    swap();
+    const deadline = Date.now() + 5_000;
+    while (seen.gone === 0 && seen.failures.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    // Long enough for a build the swap would have scheduled to have run.
+    await new Promise((done) => setTimeout(done, 200));
+    return { engine, ...seen };
+  }
+
+  it("takes a folder swapped for a link to another folder as gone, rather than watching a folder nobody chose", async () => {
+    const base = tempDir("dev-engine-");
+    const root = join(base, "chosen");
+    const elsewhere = join(base, "elsewhere");
+    writePackage(root, "<p>chosen</p>");
+    writePackage(elsewhere, "<p>elsewhere</p>", { id: "com.example.elsewhere" });
+
+    const seen = await watchUntilGone(root, () => {
+      rmSync(root, { recursive: true, force: true });
+      linkFolder(elsewhere, root);
+    });
+    expect(seen.gone).toBe(1);
+    expect(seen.failures).toEqual([]);
+    expect(seen.built).toEqual([]);
+    expect(seen.engine.watching()).toBe(false);
+    expect(seen.engine.rootGone()).toBe(true);
+    expect(seen.engine.latest()?.generation.packageId).toBe("com.example.dev");
+  });
+
+  it("takes a folder whose parent was swapped for a link to another tree as gone, rather than building that tree", async () => {
+    const base = tempDir("dev-engine-");
+    const parent = join(base, "chosen");
+    const root = join(parent, "out");
+    const elsewhere = join(base, "elsewhere");
+    writePackage(root, "<p>chosen</p>");
+    writePackage(join(elsewhere, "out"), "<p>elsewhere</p>", { id: "com.example.elsewhere" });
+
+    const seen = await watchUntilGone(root, () => {
+      rmSync(parent, { recursive: true, force: true });
+      linkFolder(elsewhere, parent);
+    });
+    expect(seen.gone).toBe(1);
+    expect(seen.failures).toEqual([]);
+    expect(seen.built).toEqual([]);
+    expect(seen.engine.watching()).toBe(false);
+    expect(seen.engine.rootGone()).toBe(true);
+    expect(seen.engine.latest()?.generation.packageId).toBe("com.example.dev");
+  });
+
+  it("stops watching, and says why, a folder whose file id keeps changing", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const failures: Error[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 5, onWatchError: (error) => failures.push(error) });
+    engines.push(engine);
+    await engine.ready;
+
+    statNewId.path = engine.root;
+    statNewId.flap = true;
+    const deadline = Date.now() + 5_000;
+    while (failures.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.message).toContain(`more than ${String(DEV_ENGINE_REARM_MAX)} looks in a row`);
+    expect(failures[0]?.message).toContain("no longer watched");
     expect(engine.watching()).toBe(false);
+  });
+
+  it("keeps watching a folder made again many times, each new id followed by a look that finds it unchanged", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const failures: Error[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 5, onWatchError: (error) => failures.push(error) });
+    engines.push(engine);
+    await engine.ready;
+
+    // Each round gives the folder one new id, which the following looks see unchanged, as a folder made again per build.
+    statNewId.path = engine.root;
+    for (let round = 1; round <= DEV_ENGINE_REARM_MAX + 10; round += 1) {
+      statNewId.step = BigInt(round);
+      await new Promise((done) => setTimeout(done, 40));
+    }
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
+  });
+
+  it("watches a folder another process deletes and makes again a moment later, rather than taking it as gone", async () => {
+    const base = tempDir("dev-engine-");
+    const root = join(base, "out");
+    const source = join(base, "source");
+    writePackage(root, "<p>one</p>");
+    writePackage(source, "<p>made again by another process</p>");
+    let gone = 0;
+    const failures: Error[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 50,
+      onRootGone: () => (gone += 1),
+      onWatchError: (error) => failures.push(error),
+    });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+
+    // As a build tool in its own process: delete the output folder, work for a moment, then write it again.
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, source] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(source, out, { recursive: true }), 400);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    expect(await new Promise((done) => child.on("exit", done))).toBe(0);
+
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(gone).toBe(0);
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
+    expect(engine.rootGone()).toBe(false);
+
+    // The folder made again is the one watched now: a save in it builds.
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved</p>");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 3 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(3);
+  });
+
+  it.skipIf(process.platform !== "win32" && process.platform !== "darwin")(
+    "watches a folder made again with its name in another case, where the filesystem ignores case",
+    async () => {
+      const base = tempDir("dev-engine-");
+      const root = join(base, "out");
+      writePackage(root, "<p>one</p>");
+      let gone = 0;
+      const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onRootGone: () => (gone += 1) });
+      engines.push(engine);
+      await engine.ready;
+
+      rmSync(root, { recursive: true, force: true });
+      writePackage(join(base, "Out"), "<p>made again as Out</p>");
+      const deadline = Date.now() + 5_000;
+      while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+      expect(engine.latest()?.generation.generation).toBe(2);
+      expect(gone).toBe(0);
+    },
+  );
+
+  it("builds nothing from a folder whose path leads through a link swapped in after the last look", async () => {
+    const base = tempDir("dev-engine-");
+    const parent = join(base, "chosen");
+    const root = join(parent, "out");
+    const elsewhere = join(base, "elsewhere");
+    writePackage(root, "<p>chosen</p>");
+    writePackage(join(elsewhere, "out"), "<p>elsewhere</p>", { id: "com.example.elsewhere" });
+    const engine = engineFor(root);
+    await engine.ready;
+
+    rmSync(parent, { recursive: true, force: true });
+    linkFolder(elsewhere, parent);
+    const event = await engine.rebuild();
+    expect(event.kind).toBe("failed");
+    expect(event.build.diagnostics[0]?.code).toBe("FILES_LINK_REFUSED");
+    expect(engine.latest()?.generation.packageId).toBe("com.example.dev");
+  });
+
+  it("builds a folder given through a link or junction, as the standalone dev host does, at the real path it leads to", async () => {
+    const base = tempDir("dev-engine-");
+    const real = join(base, "real");
+    const linked = join(base, "linked");
+    writePackage(real, "<p>one</p>");
+    linkFolder(real, linked);
+    const engine = startDevEngine({ root: linked, watch: false });
+    engines.push(engine);
+
+    expect((await engine.ready).kind).toBe("generation");
+    expect(engine.root).toBe(realpathSync.native(real));
+    writeFileSync(join(real, "widgets", "main", "index.html"), "<p>saved</p>");
+    const event = await engine.rebuild();
+    expect(event.kind).toBe("generation");
+    expect(engine.latest()?.generation.generation).toBe(2);
+  });
+
+  it("watches a folder given through a link or junction, and builds a save in it rather than refusing the link", async () => {
+    const base = tempDir("dev-engine-");
+    const real = join(base, "real");
+    const linked = join(base, "linked");
+    writePackage(real, "<p>one</p>");
+    linkFolder(real, linked);
+    let gone = 0;
+    const engine = startDevEngine({ root: linked, watch: true, debounceMs: 30, rootCheckMs: 20, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    expect((await engine.ready).kind).toBe("generation");
+
+    writeFileSync(join(linked, "widgets", "main", "index.html"), "<p>saved</p>");
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(engine.lastBuild()?.ok).toBe(true);
+    expect(gone).toBe(0);
+    expect(engine.rootGone()).toBe(false);
+  });
+
+  it("does not call a watched folder gone while it may still come back, and does once the grace is over", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 20, rootMissingGraceMs: 400, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    await engine.ready;
+
+    rmSync(root, { recursive: true, force: true });
+    // A build that overlaps the absence fails on the missing files, and the folder is not gone for that.
+    expect((await engine.rebuild()).kind).toBe("failed");
+    expect(engine.rootGone()).toBe(false);
+    expect(engine.watching()).toBe(true);
+
+    const deadline = Date.now() + 5_000;
+    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    expect(gone).toBe(1);
     expect(engine.rootGone()).toBe(true);
+  });
+
+  it("stops watching, and says why, a folder it has not been able to look at for the time bound", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const failures: Error[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      rootUnreadableMs: 300,
+      onRootGone: () => (gone += 1),
+      onWatchError: (error) => failures.push(error),
+    });
+    engines.push(engine);
+    await engine.ready;
+
+    statFailure.path = engine.root;
+    statFailure.code = "EPERM";
+    const started = Date.now();
+    const deadline = started + 5_000;
+    while (failures.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    expect(failures).toHaveLength(1);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    expect(failures[0]?.message).toContain("could not be looked at");
+    expect(failures[0]?.message).toContain("EPERM");
+    expect(engine.watching()).toBe(false);
+    expect(gone).toBe(0);
+    // Told once: the check stops with the watch.
+    await new Promise((done) => setTimeout(done, 150));
+    expect(failures).toHaveLength(1);
+  });
+
+  it("starts the time bound again after the folder could be looked at", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const failures: Error[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 20, rootUnreadableMs: 300, onWatchError: (error) => failures.push(error) });
+    engines.push(engine);
+    await engine.ready;
+
+    for (let round = 0; round < 3; round += 1) {
+      statFailure.path = engine.root;
+      await new Promise((done) => setTimeout(done, 200));
+      statFailure.path = undefined;
+      await new Promise((done) => setTimeout(done, 80));
+    }
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
   });
 
   it("keeps watching through a folder it cannot look at for a moment, rather than taking it as gone", async () => {

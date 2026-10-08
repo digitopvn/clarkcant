@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type * as fs from "node:fs";
 import type * as fsPromises from "node:fs/promises";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -1021,7 +1022,7 @@ describe("a widget dev session", () => {
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
   });
 
-  it("stops a watched session as folder-gone when its folder is deleted and made again before anything looks", async () => {
+  it("keeps a watched session live, and builds the new folder, when its folder is deleted and made again before anything looks", async () => {
     services.widgetDev?.close();
     services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
@@ -1031,8 +1032,78 @@ describe("a widget dev session", () => {
     // so nothing looks between the delete and the new folder; no retries are asked for, since `rmSync` would not run them.
     rmSync(root, { recursive: true, force: true });
     writePackage("<!doctype html><p>a new folder</p>\n");
+    const rebuilt = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+
+    // The new folder is the one watched: a save in it builds and runs.
+    writePackage("<!doctype html><p>saved in the new folder</p>\n");
+    const saved = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 3);
+    expect(saved).toMatchObject({ status: "live", activation: { state: "active", generation: 3 } });
+  });
+
+  it("keeps a watched session live when another process deletes its folder and makes it again a moment later", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // As `rmdir /s /q out && xcopy source out` in a terminal: another process, and a moment with no folder at the path.
+    const source = join(dir, "source");
+    writePackage("<!doctype html><p>made again by another process</p>\n", [], source);
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, from] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(from, out, { recursive: true }), 400);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    expect(await new Promise((done) => child.on("exit", done))).toBe(0);
+
+    const rebuilt = await eventually(started.sessionId, (view) => view.status === "stopped" || (view.activation.state === "active" && view.activation.generation === 2));
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
+  it("keeps a watched session live when a build runs while another process makes its folder again, and builds it once back", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    const source = join(dir, "source");
+    writePackage("<!doctype html><p>made again by another process</p>\n", [], source);
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, from] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(from, out, { recursive: true }), 800);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    const exited = new Promise((done) => child.on("exit", done));
+
+    // A build that runs while no folder is at the path: it fails on the missing files, and the session stays live.
+    const deadline = Date.now() + 5_000;
+    while (existsSync(root) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 5));
+    expect(existsSync(root)).toBe(false);
+    const during = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    expect(during.status).toBe(200);
+    expect(session(during)).toMatchObject({ status: "live", lastBuild: { ok: false, trigger: "rebuild" }, activation: { state: "active", generation: 1 } });
+
+    expect(await exited).toBe(0);
+    const rebuilt = await eventually(started.sessionId, (view) => view.status === "stopped" || (view.activation.state === "active" && view.activation.generation === 2));
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
+  it("stops a watched session as watch-failed when its folder cannot be looked at for the time bound, and keeps what runs", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20, rootUnreadableMs: 300 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // The engine looks at the canonical path a start stores (on macOS, `/private/var/...` for a `/var/...` temp folder).
+    statFailure.path = realpathSync.native(root);
+    // Bounded: the node looks at the folder once a second, so the bound is passed on the second look at the latest.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
-    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "watch-failed", activation: { state: "active", generation: 1 } });
   });
 
   it("keeps a watched session live through a folder it cannot look at for a moment", async () => {
@@ -1041,7 +1112,8 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    statFailure.path = resolve(root);
+    // The engine looks at the canonical path a start stores (on macOS, `/private/var/...` for a `/var/...` temp folder).
+    statFailure.path = realpathSync.native(root);
     const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
     expect(rebuilt.status).toBe(200);
     expect(session(rebuilt).status).toBe("live");
@@ -1051,6 +1123,39 @@ describe("a widget dev session", () => {
     writePackage("<!doctype html><p>second</p>\n");
     const next = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
     expect(next).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
+  it("stops a watched session as folder-gone when a folder above it is swapped for a link to another tree, and builds nothing there", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // `projects/timer` now leads, through `projects`, to a tree the person never chose for this session.
+    const elsewhere = join(dir, "elsewhere");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], join(elsewhere, "timer"), { id: "com.example.elsewhere" });
+    const projects = join(dir, "projects");
+    rmSync(projects, { recursive: true, force: true });
+    symlinkSync(elsewhere, projects, process.platform === "win32" ? "junction" : "dir");
+
+    const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", packageId: PACKAGE, activation: { state: "active", generation: 1 } });
+  });
+
+  it("says a folder that is there but cannot be read cannot be read, at a start and at a resume", async () => {
+    // A start and a resume look at the path as given, before it is made canonical.
+    statFailure.path = resolve(root);
+    const refused = await call("POST", "/widget-dev/sessions", { root });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ code: "ROOT_UNREADABLE" });
+    expect((refused.body as { message: string }).message).toContain("cannot be read on this node (EPERM)");
+
+    writeDevSessions(join(dir, "node"), [{ sessionId: "wdev_unreadable", root, status: "live" as const, startedAt: new Date().toISOString() }]);
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+    const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
+    expect(views.find((view) => view.sessionId === "wdev_unreadable")).toMatchObject({ status: "stopped", stopReason: "watch-failed" });
   });
 });
 
