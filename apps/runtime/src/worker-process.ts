@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -340,8 +341,10 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     };
   } finally {
     try {
-      // Retried, because on Windows a worker being stopped still holds its working directory for a moment.
-      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // Retried, because on Windows a worker being stopped still holds its working directory for a moment. The promise
+      // form on purpose: on Windows `rmSync` reports a held directory as `EBUSY` or `EPERM` at once and never runs its
+      // retries, while `rm` waits `retryDelay` longer after each failed attempt (about 1.5 s over five), off the event loop.
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     } catch {
       // A temporary directory left behind (it holds the brief, never a key) is not worth replacing the run's own result
       // or error with.

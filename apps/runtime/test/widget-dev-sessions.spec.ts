@@ -1,4 +1,5 @@
 import type * as fs from "node:fs";
+import type * as fsPromises from "node:fs/promises";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type * as os from "node:os";
@@ -36,9 +37,13 @@ import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
+import { holdDirectory } from "./hold-directory.ts";
 
 /** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+/** Seen as the runtime starts to remove a path, in either form, before the removal itself runs. */
+const removal = vi.hoisted(() => ({ starting: undefined as ((path: string) => void) | undefined }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -48,7 +53,20 @@ vi.mock("node:fs", async (importOriginal) => {
     }
     return actual.statSync(path, options);
   }) as typeof actual.statSync;
-  return { ...actual, statSync, default: { ...actual, statSync } };
+  const rmSync = ((path: fs.PathLike, options?: fs.RmOptions) => {
+    removal.starting?.(resolve(String(path)));
+    actual.rmSync(path, options);
+  }) as typeof actual.rmSync;
+  return { ...actual, statSync, rmSync, default: { ...actual, statSync, rmSync } };
+});
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>();
+  const rm = (async (path: fs.PathLike, options?: fs.RmOptions) => {
+    removal.starting?.(resolve(String(path)));
+    await actual.rm(path, options);
+  }) as typeof actual.rm;
+  return { ...actual, rm, default: { ...actual, rm } };
 });
 
 /** The home folder the node sees, when a test needs it to be one of the test's own folders. */
@@ -881,6 +899,39 @@ describe("a widget dev session", () => {
     expect(rows.filter((row) => row.superseded_at === null)).toHaveLength(1);
     expect(rows.filter((row) => row.superseded_at !== null)).toHaveLength(1);
     expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(2);
+  });
+
+  it("removes a superseded snapshot that is held for a moment, as a file still open on Windows holds it", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const local = join(dir, "node", "package-cache", "local");
+    const [first] = readdirSync(local);
+    if (first === undefined) throw new Error("the first build left no snapshot");
+    const firstPath = resolve(local, first);
+    // On Windows a directory that is someone's working directory cannot be removed until they let go; elsewhere the
+    // hold changes nothing. It ends 300 ms after the removal starts, so only a removal that really retries finds it free.
+    const hold = holdDirectory(firstPath);
+    await hold.ready;
+    let released: Promise<void> | undefined;
+    removal.starting = (path) => {
+      if (path !== firstPath || released !== undefined) return;
+      released = new Promise<void>((done) => setTimeout(done, 300)).then(() => hold.release());
+    };
+    try {
+      // The second build supersedes the first, which stays as the generation a rollback returns to; the third prunes it.
+      for (const text of ["second", "third"]) {
+        writePackage(`<!doctype html><p>${text}</p>\n`);
+        expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).running?.generation).toBeGreaterThan(1);
+      }
+      expect(released).toBeDefined();
+      expect(existsSync(firstPath)).toBe(false);
+      // Removed, so no longer on the session's list of snapshots to try again.
+      const listed = readDevSessions(join(dir, "node"))[0]?.snapshots ?? [];
+      expect(listed).toHaveLength(2);
+      expect(listed.some((digest) => digest.endsWith(first))).toBe(false);
+    } finally {
+      removal.starting = undefined;
+      await (released ?? hold.release());
+    }
   });
 
   it("forgets the oldest stopped sessions rather than failing when the store is full", async () => {

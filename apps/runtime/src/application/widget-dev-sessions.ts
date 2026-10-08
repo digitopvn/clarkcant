@@ -1,4 +1,5 @@
-import { mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, realpathSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -462,7 +463,7 @@ export function createWidgetDevSessions(
         });
         if (session !== undefined && active?.snapshotDigest === asked.generation.digest) {
           session.baseline = manifestAt(asked.listing.source.kind === "local" ? asked.listing.source.path : "");
-          prune(sessionId);
+          await prune(sessionId);
         }
       } else {
         const denied = approval?.decision === "denied";
@@ -625,7 +626,7 @@ export function createWidgetDevSessions(
       if (session !== undefined) session.baseline = latest.manifest;
       // Only when nobody was asked: a build the person approved in the inbox was shown to them with what it adds.
       if (granted === undefined) sayWidened(stored, latest);
-      prune(sessionId);
+      await prune(sessionId);
       return;
     }
     if (outcome.kind === "approval-required") {
@@ -651,9 +652,10 @@ export function createWidgetDevSessions(
    * Remove what superseded generations of a session left behind: their generation records, except the newest superseded
    * one (the generation a rollback returns to), and their snapshots in the package cache, except the ones something
    * still runs, waits on or can roll back to. Only what this session made is touched. A snapshot that cannot be removed
-   * now (a file still open on Windows) is kept on the list and tried again after the next install.
+   * now (a file still open on Windows past the retries) is kept on the list and tried again after the next install. It
+   * runs on the session's chain, so nothing else of the session interleaves with it.
    */
-  const prune = (sessionId: string): void => {
+  const prune = async (sessionId: string): Promise<void> => {
     const stored = read(sessionId);
     if (stored === undefined) return;
     const made = new Set(stored.snapshots ?? []);
@@ -711,7 +713,9 @@ export function createWidgetDevSessions(
           continue;
         }
         try {
-          rmSync(path, { recursive: true, force: true, maxRetries: 2 });
+          // The promise form on purpose: on Windows `rmSync` reports a held file as `EBUSY` or `EPERM` at once and never
+          // runs its retries. These wait up to about 1.5 s on this session's chain, never on the event loop.
+          await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
           removed.push(digest);
         } catch (cause) {
           process.stderr.write(`widget dev: could not remove the superseded snapshot ${digest} yet: ${messageOf(cause)}\n`);
