@@ -5,9 +5,11 @@ import {
   createOrbRenderer,
   orbFrameBudget,
   orbPointerFromClient,
+  orbRendererKind,
   type OrbOptions,
   type OrbPointerRect,
   type OrbPointerSample,
+  type OrbRendererKind,
 } from "./orb.ts";
 import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
 import { orbOptionsFromProfile } from "./orb-snapshot.ts";
@@ -118,8 +120,8 @@ export function Orb({
 }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
-  // Whether the working context is drawn by the CPU, which is when the orb runs on its reduced frame budget.
-  const [software, setSoftware] = useState(false);
+  // What draws the orb: a GPU, the CPU (the reduced frame budget), or nothing because there is no WebGL at all.
+  const [rendererKind, setRendererKind] = useState<OrbRendererKind | undefined>(undefined);
   const platformReducedMotion = usePlatformReducedMotion();
   /*
    * Either switch is enough. The profile carries the stored preference; the live query covers the platform switch,
@@ -163,6 +165,7 @@ export function Orb({
       // Reported rather than swallowed: a caller that wants to know why there is no orb should be
       // able to find out, and the fallback is visible either way.
       setFailed(created.reason);
+      setRendererKind(orbRendererKind(created));
       return;
     }
     // A rebuild that succeeds after one that failed — a restored context, a theme change — is drawn by
@@ -170,7 +173,7 @@ export function Orb({
     setFailed(undefined);
 
     const renderer = created.renderer;
-    setSoftware(renderer.software);
+    setRendererKind(orbRendererKind(created));
     renderer.resize();
 
     let visible = true;
@@ -313,8 +316,9 @@ export function Orb({
       }}
       data-orb={failed === undefined ? "gl" : "fallback"}
       {...(failed === undefined ? {} : { "data-orb-reason": failed })}
-      // Published for diagnostics and tests, like the render mode: whether this orb is drawn on the CPU's budget.
-      {...(failed === undefined ? { "data-orb-renderer": software ? "software" : "gpu" } : {})}
+      // Published for diagnostics, tests and the composer glow: whether this orb is drawn on the CPU's budget, or
+      // whether the browser has no WebGL at all.
+      {...(rendererKind === undefined ? {} : { "data-orb-renderer": rendererKind })}
       /*
        * The resolved profile, published as state rather than kept internal.
        *
