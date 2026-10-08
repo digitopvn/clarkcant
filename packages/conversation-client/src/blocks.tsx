@@ -751,8 +751,35 @@ export type FeedbackCardState =
   | { status: "prepared"; requestKey: string; draft: FeedbackDraft; diagnostics: DiagnosticLine[] }
   | { status: "publishing"; intent: FeedbackPublishIntent }
   | { status: "done"; publication: FeedbackPublication }
-  /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
-  | { status: "failed"; message: string; reportId?: string; requestKey?: string };
+  /**
+   * `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. `next`
+   * is `retry` only when the same press, sent again, can go through (`retryableFailure`); `press` and `intent` say which
+   * press that is, so Try again repeats it rather than guessing.
+   */
+  | {
+      status: "failed";
+      message: string;
+      reportId?: string;
+      requestKey?: string;
+      next?: "retry";
+      press?: "preview" | "create";
+      intent?: FeedbackPublishIntent;
+    }
+  /**
+   * Whether `reportId` was filed is not known: the node answered a publish in words this app cannot read, the publish
+   * was sent and came back with anything but a refusal the node decided, or a check did not go through. Not a failure and not a success; Check again asks
+   * the node where the report stands, and sends nothing. `next` is `retry` when the publish itself may be pressed again
+   * (`press` and `intent` say which), which the node answers for a report it already holds without filing it twice.
+   */
+  | {
+      status: "unknown";
+      message: string;
+      reportId: string;
+      requestKey?: string;
+      next?: "retry";
+      press?: "create";
+      intent?: FeedbackPublishIntent;
+    };
 
 /** A secret's save on a credential card: on its way, kept, or refused. Never the value itself. */
 export interface CredentialSaveStatus {
@@ -774,7 +801,12 @@ export type FolderEntryReason = "browser" | "remote-node" | "dialog-failed";
 export type CommandActionState = (
   | { status: "pending" }
   | { status: "done"; message: string }
-  | { status: "failed"; message: string }
+  /**
+   * `next: "retry"`: the press did not reach the node or got no answer in time, and sending it again is safe, so the
+   * row offers Try again (`canRetry`). `root`: the folder a `/develop` start was for, so Try again starts that folder
+   * again rather than asking for one.
+   */
+  | { status: "failed"; message: string; next?: "retry"; root?: string }
   /** The node answered, but this app cannot read what it did: neither success nor failure is claimed. */
   | { status: "unknown"; message: string }
 ) & { attempt?: number };

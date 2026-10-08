@@ -349,6 +349,9 @@ này hay chưa, và kiểm tra lại cũng không thay đổi được điều �
 đã gửi báo cáo mở từ lần thử (`author:<login>` trong `searchUrl`, hoặc `author:@me` khi không có login được ghi lại) và
 trang tạo issue đã điền sẵn, cảnh báo rằng gửi lại có thể tạo bản trùng, và có nút Vẫn gửi
 (`intent: "send-anyway"`, chỉ nhận cho báo cáo như vậy, nếu không thì `409 NOT_INCONCLUSIVE`), có thể gửi nó hai lần.
+Một lần Vẫn gửi được bấm lại sau khi chính lần thử của nó đã đi thì chỉ được kiểm tra, như mọi báo cáo còn ở `publishing`
+hay `unknown`. Một cú bấm nhận báo cáo ở trạng thái `publishing` trước khi node hỏi GitHub bất cứ điều gì, nên cú bấm thứ
+hai chồng lên một lần gửi đang chạy trên node sẽ trả lời báo cáo đang ở đâu và không gửi gì.
 Node không bao giờ tự gửi lại. Khi node khởi động, mọi báo cáo còn ở `publishing` hay `unknown` được kiểm tra theo cùng cách, và kết quả đã ngã
 ngũ được ghi vào hội thoại của nó thành thẻ kết quả. Các trạng thái khác là `needs-access` (chưa có `github_token`; kèm
 `manualUrl`, trang tạo issue của GitHub đã điền sẵn) và `refused`. Lần ghi là một hiệu ứng `external-write` trong sổ

@@ -198,6 +198,55 @@ test("a command card press in English is said in English", async ({ page }) => {
   await expect(again.locator('[data-row-id="default"] .cc-command-status')).toContainText("Set.", { timeout: 10_000 });
 });
 
+test("a press that did not reach the node offers Try again, which presses it again; a refusal offers nothing to repeat", async ({
+  page,
+}) => {
+  await openApp(page);
+
+  // The node refuses the first press as policy would: said with its reason, and nothing to repeat beside it.
+  await page.route("**/preferences/ai.thinkingLevel", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "PREFERENCE_REFUSED", message: "khóa theo chính sách" }) })
+      : route.fallback(),
+  );
+  await sendCommand(page, "/thinking");
+  const refusedCard = commandCard(page, "thinking");
+  await expect(refusedCard).toBeVisible({ timeout: 20_000 });
+  const refusedRow = refusedCard.locator('[data-row-id="high"]');
+  await refusedRow.getByRole("button").click();
+  await expect(refusedRow.locator("[role='alert'] .cc-command-status[data-result='failed']")).toContainText("khóa theo chính sách", { timeout: 10_000 });
+  await expect(refusedRow.locator("[data-command-retry]")).toHaveCount(0);
+  await page.unrouteAll({ behavior: "wait" });
+
+  // The next press never reaches the node: the failure interrupts, and Try again sits beside it.
+  await page.route("**/preferences/ai.thinkingLevel", (route) => (route.request().method() === "PUT" ? route.abort("internetdisconnected") : route.fallback()));
+  const cards = page.locator('.cc-row[data-role="assistant"] [data-command="thinking"]');
+  const before = await cards.count();
+  await sendCommand(page, "/thinking");
+  await expect(cards).toHaveCount(before + 1, { timeout: 20_000 });
+  const thinking = commandCard(page, "thinking");
+  const high = thinking.locator('[data-row-id="high"]');
+  await high.getByRole("button").click();
+  await expect(high.locator("[role='alert'] .cc-command-status[data-result='failed']")).toBeVisible({ timeout: 10_000 });
+  const retry = high.locator("[data-command-retry]");
+  await expect(retry).toHaveText("Thử lại");
+  await page.unrouteAll({ behavior: "wait" });
+
+  // Pressed from the keyboard, the same press goes again through the same path, and the row's own button keeps focus.
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect(high.locator("[role='status'] .cc-command-status[data-surface-phase='success']")).toContainText("Đã đặt", { timeout: 10_000 });
+  await expect(high.locator("[data-command-retry]")).toHaveCount(0);
+  await expect(high.locator(".cc-command-actions .cc-action")).toBeFocused();
+
+  // Back to the model's default, so the rest of the suite runs as it always has.
+  await sendCommand(page, "/thinking");
+  const again = commandCard(page, "thinking");
+  await expect(again.locator('[data-row-id="high"]')).toHaveAttribute("data-current", "true", { timeout: 20_000 });
+  await again.locator('[data-row-id="default"]').getByRole("button").click();
+  await expect(again.locator('[data-row-id="default"] .cc-command-status')).toContainText("Đã đặt", { timeout: 10_000 });
+});
+
 test("an approval answered in English is said once, and a reload draws the decision without announcing it", async ({
   page,
 }) => {

@@ -537,6 +537,9 @@ label.cc-list-main { cursor: pointer; }
 .cc-after-sign-in .cc-command-actions { margin-inline-start: 0; }
 
 .cc-feedback-form { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+/* What a feedback press came to and what can follow it: no room until it says something, and where focus waits after Try again or Check again. */
+.cc-feedback-press { display: contents; }
+.cc-feedback-press:has(p, button) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-sm); width: 100%; min-width: 0; }
 .cc-feedback-kind { display: flex; flex-wrap: wrap; gap: var(--cc-space-sm); border: 0; margin: 0; padding: 0; }
 .cc-feedback-kind legend { padding: 0; margin-block-end: var(--cc-space-xs); }
 .cc-feedback-kind-option, .cc-feedback-include { display: inline-flex; align-items: center; gap: var(--cc-space-xs); }

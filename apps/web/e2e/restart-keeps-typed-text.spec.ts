@@ -21,6 +21,8 @@ const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 /** How late the node's answer to the click arrives: long enough that a person can type and send before it. */
 const INTENT_DELAY_MS = 1_500;
 const LONG_REPLY = "viết một câu trả lời thật dài";
+/** Said in place of /new's read-back once the person sent before it arrived: worded about the conversation left. */
+const LEFT_KEPT = "Cuộc trò chuyện bạn vừa rời đi vẫn được giữ, cùng câu trả lời của nó; mở lại bất cứ lúc nào bằng /sessions.";
 
 function token(): string {
   const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
@@ -149,10 +151,12 @@ test("a message sent right after /new during a reply starts a reply in the new c
   await expect(page.getByText(/Đoạn 2\./u).first()).toBeVisible({ timeout: 15_000 });
   await expect(composer).toHaveValue("");
 
-  // The late answer changes nothing, and its read-back is not said over a conversation the person has already
-  // written in: it would be a remark about leaving, shown beside a reply that has nothing to do with it.
+  // The late answer changes nothing, and its read-back ("Started a new conversation…") is not said over a conversation
+  // the person has already written in. What only it told still holds, and is said instead: the one left is kept.
   await answered;
-  await expectNoNotice(page);
+  const notice = page.locator("[data-intent-notice]");
+  await expect(notice).toHaveText(LEFT_KEPT);
+  await expect(notice).not.toContainText("Đã mở cuộc trò chuyện mới");
   await expect(page.locator('[data-role="user"]')).toHaveCount(1);
   await expect(page.locator("[data-stop]")).toBeVisible();
 
@@ -289,5 +293,74 @@ test("a draft edited after Enter on a sentence asking to go home is kept through
   await expect(page.locator(".cc-empty")).toBeVisible();
   await page.waitForTimeout(500);
   await expect(composer).toHaveValue("câu tiếp theo");
+  await held()?.continue();
+});
+
+test("a file attached after Enter on a sentence asking to go home goes with the kept text into the new conversation", async ({ page }) => {
+  const held = await openWithRunningReply(page);
+  const composer = page.locator("[data-composer]");
+  const chips = page.locator("[data-attachment-chip]");
+
+  const answered = page.waitForResponse((response) => isIntentRequest(response.url()));
+  await composer.fill("về trang chủ");
+  await composer.press("Enter");
+  // While the node reads the sentence, the person attaches a file and writes the message about it.
+  await page.locator("[data-attachment-input]").setInputFiles([
+    { name: "ghi-chu.md", mimeType: "text/markdown", buffer: Buffer.from("# Ghi chú\nnội dung thử.\n") },
+  ]);
+  await expect(chips).toHaveAttribute("data-attachment-state", "ready");
+  await composer.fill("đọc giúp tui tệp này");
+  await answered;
+
+  // Home, with the text and the file both kept: stored again in the new conversation, so the node accepts it there.
+  await expect(page.locator(".cc-empty")).toBeVisible();
+  await expect(composer).toHaveValue("đọc giúp tui tệp này");
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toHaveAttribute("data-attachment-state", "ready", { timeout: 10_000 });
+
+  await composer.press("Enter");
+  // The fixture model answers from the file's content, which only the carried file can supply.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("nội dung thử", { timeout: 20_000 });
+  await expect(page.locator("[data-attachment-block]")).toHaveCount(1);
+  await held()?.continue();
+});
+
+test("a file still uploading when the node's answer lands goes with the kept text into the new conversation", async ({ page }) => {
+  const held = await openWithRunningReply(page);
+  const composer = page.locator("[data-composer]");
+  const chips = page.locator("[data-attachment-chip]");
+  // The first upload, into the conversation about to be left, is held until the restart has landed.
+  let heldUpload: Route | undefined;
+  await page.route("**/attachments", async (route) => {
+    if (route.request().method() === "POST" && heldUpload === undefined) {
+      heldUpload = route;
+      return;
+    }
+    await route.continue();
+  });
+
+  const answered = page.waitForResponse((response) => isIntentRequest(response.url()));
+  await composer.fill("về trang chủ");
+  await composer.press("Enter");
+  await page.locator("[data-attachment-input]").setInputFiles([
+    { name: "ghi-chu.md", mimeType: "text/markdown", buffer: Buffer.from("# Ghi chú\nnội dung thử.\n") },
+  ]);
+  await expect.poll(() => heldUpload !== undefined, { timeout: 10_000 }).toBe(true);
+  await expect(chips).toHaveAttribute("data-attachment-state", "checking");
+  await composer.fill("đọc giúp tui tệp này");
+  await answered;
+
+  // Home, and the file still with the text: stored in the new conversation from the bytes it was uploading.
+  await expect(page.locator(".cc-empty")).toBeVisible();
+  await expect(composer).toHaveValue("đọc giúp tui tệp này");
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toHaveAttribute("data-attachment-state", "ready", { timeout: 10_000 });
+  // The upload left behind finishes where it was going and does not disturb the carried file.
+  await heldUpload?.continue();
+  await expect(chips).toHaveCount(1);
+
+  await composer.press("Enter");
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("nội dung thử", { timeout: 20_000 });
+  await expect(page.locator("[data-attachment-block]")).toHaveCount(1);
   await held()?.continue();
 });

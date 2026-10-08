@@ -238,6 +238,7 @@ export function Conversation({
     setDragging,
     addFiles,
     addStored,
+    carryOver,
   } = useAttachmentComposer({
     client,
     conversationId,
@@ -248,6 +249,10 @@ export function Conversation({
     onErrorCleared: () => setError(undefined),
     t: localeState.t,
   });
+
+  /** The chips as last drawn, for a send whose late answer has to know which were attached since (`readChips`). */
+  const chipsNow = useRef(chips);
+  chipsNow.current = chips;
 
   const references = useComposerReferences({ client, conversationId, draft, setDraft, input: composerInput });
 
@@ -292,6 +297,8 @@ export function Conversation({
     setTimeline,
     chips,
     dispatchChips,
+    readChips: () => chipsNow.current,
+    carryChips: carryOver,
     chosenReferences: references.chosen,
     onReferencesSent: references.clear,
     beginHeroExit,

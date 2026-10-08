@@ -92,6 +92,20 @@ export function updateFeedbackReport(
   return Number(result.changes) > 0;
 }
 
+/**
+ * Take a report for one send: move it to `publishing` only while it still stands as `from`, in one statement, so of two
+ * presses that overlap exactly one sends and the other finds it publishing. Answers whether this press took it.
+ */
+export function claimFeedbackReport(
+  db: Database,
+  input: { reportId: string; from: FeedbackStatus; publication: FeedbackPublication; at: Instant },
+): boolean {
+  const result = db
+    .prepare(`UPDATE feedback_reports SET status = 'publishing', publication = ?, updated_at = ? WHERE report_id = ? AND status = ?`)
+    .run(JSON.stringify(input.publication), input.at, input.reportId, input.from);
+  return Number(result.changes) > 0;
+}
+
 export function getFeedbackReport(db: Database, reportId: string): FeedbackReportRecord | undefined {
   const [row] = allRows<Record<string, unknown>>(db, "SELECT * FROM feedback_reports WHERE report_id = ?", reportId);
   return row === undefined ? undefined : feedbackReportFromRow(row);

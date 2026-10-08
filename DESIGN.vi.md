@@ -436,7 +436,7 @@ Giữ orb + prompt, nhưng suggestion chips nên là **dynamic recent intents** 
 
 Mỗi chip phải cho biết nếu là demo/sample.
 
-Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại. Logo, và `/new` gõ khi một câu trả lời đang được viết, có hiệu lực ngay qua cùng một đường: câu trả lời đó tiếp tục trong hội thoại vừa rời (với `/new`, lời đọc lại của node nói rõ điều này và chỉ tới `/sessions`), và những gì user gõ tiếp theo thuộc về hội thoại mới, không bị đối chiếu với hội thoại cũ hay bị xoá khi bản ghi của node tới. Nếu không báo được cho node, trang tự nói rằng hội thoại vừa rời vẫn được giữ, việc rời đi không dừng câu trả lời của nó, và `/sessions` mở lại nó; lỗi được ghi vết, không hiện thành lỗi tra cứu lệnh. Cả hai lời nhắn này chỉ được nói khi trang vẫn đang ở hội thoại mới và chưa có gì được gửi trong đó; lời nào tới muộn hơn sẽ bị bỏ, chỉ để lại vết. Một câu gõ yêu cầu hội thoại mới khi đang có câu trả lời sẽ chờ node đọc, vì chỉ node đọc câu; nếu ô soạn thảo đã được sửa sau khi nhấn Enter, lần khởi động lại do câu trả lời đó mang tới vẫn giữ nguyên phần chữ đã sửa. Khi được yêu cầu bằng giọng nói, việc về màn hình bắt đầu có hiệu lực ngay khi quyết định của node tới, qua cùng một executor.
+Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại. Logo, và `/new` gõ khi một câu trả lời đang được viết, có hiệu lực ngay qua cùng một đường: câu trả lời đó tiếp tục trong hội thoại vừa rời (với `/new`, lời đọc lại của node nói rõ điều này và chỉ tới `/sessions`), và những gì user gõ tiếp theo thuộc về hội thoại mới, không bị đối chiếu với hội thoại cũ hay bị xoá khi bản ghi của node tới. Nếu không báo được cho node, trang tự nói rằng hội thoại vừa rời vẫn được giữ, việc rời đi không dừng câu trả lời của nó, và `/sessions` mở lại nó; lỗi được ghi vết, không hiện thành lỗi tra cứu lệnh. Cả hai lời nhắn này chỉ được nói khi trang vẫn đang ở hội thoại mới và chưa có gì được gửi trong đó; lời nào tới muộn hơn sẽ bị bỏ, chỉ để lại vết, và thay vào đó trang chỉ nói điều vẫn còn đúng: hội thoại vừa rời vẫn được giữ, cùng câu trả lời của nó, và `/sessions` mở lại nó (không nói gì nếu user đã quay lại chính hội thoại đó). Một câu gõ yêu cầu hội thoại mới khi đang có câu trả lời sẽ chờ node đọc, vì chỉ node đọc câu; nếu ô soạn thảo đã được sửa sau khi nhấn Enter, lần khởi động lại do câu trả lời đó mang tới vẫn giữ nguyên phần chữ đã sửa. Các tệp đính kèm sau khi nhấn Enter cũng đi cùng, dù phần chữ có được sửa hay không: chúng được lưu lại vào hội thoại mới, vì một tệp đã lưu thuộc về hội thoại mà nó được tải lên, và tệp nào còn đang tải lên khi câu trả lời tới sẽ được lưu vào đó từ chính dữ liệu đang tải, chứ không bị bỏ đi. Tệp nào không đọc lại hay lưu lại được sẽ ở lại thành một chip lỗi nói rõ lý do, bằng ngôn ngữ của user. Khi được yêu cầu bằng giọng nói, việc về màn hình bắt đầu có hiệu lực ngay khi quyết định của node tới, qua cùng một executor.
 
 ### 6.3 Composer
 
@@ -863,6 +863,41 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   cũ sẽ đi qua `pending` trước, nên cùng một thất bại hai lần được nói hai lần.
   `canRetry` chỉ đề nghị thử lại khi phase là `error` hoặc `partial` và miền nêu
   rõ `retry` hoặc `check-again`.
+- **Chỉ đề nghị thử lại khi thử lại có ích.** Một lần bấm không tới được node
+  hoặc không có câu trả lời kịp thời (lỗi mạng, hết thời gian chờ, một chặng
+  chuyển tiếp hoặc node tạm thời không sẵn sàng) nêu `retry`, và thẻ đặt nút
+  **Thử lại** cạnh thất bại đó: các dòng của thẻ lệnh (`/thinking`, `/login`,
+  `/logout`, `/develop` và Quên) và thẻ góp ý. Thử lại gửi đúng lần bấm đó qua
+  đúng con đường cũ, dùng được bằng chuột và bàn phím như chính lần bấm, và bằng
+  giọng nói khi nói lại cùng lệnh; node trả lời an toàn cho mỗi lần bấm như vậy
+  ở lần thứ hai. Node nhận một báo cáo cho một lần gửi trước khi hỏi GitHub bất
+  cứ điều gì, nên một lần gửi thứ hai chồng lên lần đầu sẽ thấy báo cáo đang được
+  gửi và chỉ nói nó đang ở đâu, còn một báo cáo node đã gửi thì chỉ được kiểm
+  tra, không bao giờ bị gửi lại; điều này cũng đúng với Vẫn gửi. Một lời từ chối
+  do node quyết định (chính sách, xung đột, lỗi của chính node) và một câu trả
+  lời mà ứng dụng này không đọc được thì không có gì để lặp lại, vì gửi lại chỉ
+  nhận về đúng câu trả lời cũ, và lời của chúng không nói "bạn có thể thử lại".
+  Khi nút Thử lại hoặc Kiểm tra lại biến mất trong lúc lần bấm chạy, tiêu điểm
+  bàn phím chuyển sang ghi chú lần bấm của thẻ, nơi nói lần bấm đó ra sao. Trình hiển thị
+  terminal không tải được mã của nó cũng không đề nghị Thử lại, vì trình duyệt
+  giữ thất bại đó suốt vòng đời của trang; thông báo của nó nói rằng tải lại ứng
+  dụng sẽ tải lại trình hiển thị.
+- **Chưa biết đã gửi hay chưa.** Khi node trả lời lần bấm Tạo issue mà ứng dụng
+  này không đọc được câu trả lời, báo cáo có thể đã được gửi lên hoặc chưa. Thẻ
+  nói đúng điều đó, ở dạng `partial` và không bao giờ là "thất bại" kèm chữ của
+  schema, dùng câu mở đầu cho câu trả lời node không đọc được cùng câu về phiên
+  bản, và đề nghị **Kiểm tra lại**, chỉ hỏi node báo cáo đang ở đâu. Điều đó
+  cũng đúng mỗi khi lần gửi đã đi và thứ quay về không phải là lời từ chối do
+  chính node quyết định (một mã 4xx do node viết): mất kết nối, hết thời gian
+  chờ, chặng chuyển tiếp trả 408, 429, 502, 503 hoặc 504 (kể cả trang lỗi HTML
+  của nó), hay lỗi 500 của chính node, có thể xảy ra sau khi đã ghi lên GitHub
+  thành công. Node có thể đã gửi rồi, nên thẻ không bao giờ nói "chưa gửi được";
+  thẻ nói chưa biết kết quả, kèm Kiểm tra lại, và kèm Thử lại khi gửi lại lần
+  bấm đó có thể đi tới nơi. Một lần bấm rơi vào lúc node vẫn đang gửi báo cáo
+  được báo đúng như vậy bằng ngôn ngữ của người dùng. Một lần Kiểm tra lại không đi tới nơi vẫn để
+  báo cáo ở trạng thái chưa biết, kèm lý do, vì kiểm tra không bao giờ gửi gì.
+  Chỉ câu trả lời của chính node rằng nó chưa từng gửi báo cáo mới nói báo cáo
+  chưa có trên GitHub.
 
 ### 8.4 Local vs effect actions
 
