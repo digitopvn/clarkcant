@@ -19,6 +19,7 @@ import {
   followsBottom,
   noteLayoutScroll,
   reportScroll,
+  scrollAsTranscript,
   stillFollowsBottom,
   type ScrollReport,
 } from "./follow-bottom.ts";
@@ -215,7 +216,14 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     const rows = list.current;
     if (node === null || rows === null) return;
     if (Math.abs(node.scrollTop - anchoredTop.current) >= 1) {
-      // Pulled up to a bottom that came closer: the browser's move, because less is below the view, not the reader's.
+      /*
+       * Pulled up to a bottom that came closer: the browser's move, because less is below the view, not the reader's.
+       *
+       * Counted once because of the order a browser keeps: it reports a scroll (the report) and then runs the frame's
+       * callbacks (`sync`, which moves `anchoredTop` to the new position) before any later task can draw the transcript
+       * again. A report taken after this pull but before `anchoredTop` caught up would hold the pull twice, once in its
+       * position and once here, and leave the check lenient by its size.
+       */
       if (node.scrollTop < anchoredTop.current && distanceFromBottom(node) < 1) noteLayoutScroll(node, node.scrollTop - anchoredTop.current);
       anchor.current = captureAnchor(node, rows);
       anchoredTop.current = node.scrollTop;
@@ -225,11 +233,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     const slot = held === undefined ? undefined : slotById(rows, held.id);
     if (held !== undefined && slot !== undefined) {
       const delta = slot.getBoundingClientRect().top - node.getBoundingClientRect().top - held.offset;
-      if (Math.abs(delta) >= 1) {
-        const from = node.scrollTop;
-        node.scrollTo({ top: from + delta, behavior: "instant" });
-        noteLayoutScroll(node, node.scrollTop - from);
-      }
+      if (Math.abs(delta) >= 1) scrollAsTranscript(node, { top: node.scrollTop + delta, behavior: "instant" });
     }
     anchoredTop.current = node.scrollTop;
   }, [scroller]);
@@ -263,14 +267,22 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       if (frame === 0) frame = requestAnimationFrame(sync);
     };
     node.addEventListener("scroll", onScroll, { passive: true });
-    const resize = new ResizeObserver(onScroll);
+    /*
+     * The screen changing height. A screen that got taller - a docked panel closing, a soft keyboard going away - pulls a
+     * view at the bottom up, and nothing else draws the transcript to see it before more of a reply can land below and
+     * the view is no longer at the bottom: the place is held here, in the frame of the change, so that pull is recorded.
+     */
+    const resize = new ResizeObserver(() => {
+      holdPlace();
+      onScroll();
+    });
     resize.observe(node);
     return () => {
       node.removeEventListener("scroll", onScroll);
       resize.disconnect();
       if (frame !== 0) cancelAnimationFrame(frame);
     };
-  }, [nearTop, scroller]);
+  }, [holdPlace, nearTop, scroller]);
 
   /* Measuring rows: a row that changes height above the one being read must not move it. */
   const measure = useMemo(
@@ -323,7 +335,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     if (held !== heldMessages.current) {
       heldMessages.current = held;
       if (node !== null && rows !== null && distanceFromBottom(node) > 0 && followsBottomNow()) {
-        node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+        scrollAsTranscript(node, { top: node.scrollHeight, behavior: "instant" });
         anchor.current = captureAnchor(node, rows);
         anchoredTop.current = node.scrollTop;
       }

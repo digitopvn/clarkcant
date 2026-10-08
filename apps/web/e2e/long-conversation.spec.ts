@@ -126,6 +126,19 @@ async function seedConversation(): Promise<{ conversationId: string; idOf: (sequ
   }));
 }
 
+/**
+ * Every row of it is mounted: no spacer stands for a row, so no estimate of a row's height catching up with what was
+ * measured moves the view, and the moves a test makes are the only ones.
+ */
+const SHORT_MESSAGES = 40;
+
+async function seedShortConversation(): Promise<{ conversationId: string; idOf: (sequence: number) => string }> {
+  return seed(SHORT_MESSAGES, ({ sequence }) => ({
+    role: sequence % 2 === 1 ? "user" : "assistant",
+    blocks: [{ type: "text", format: "markdown", content: wording(sequence) }],
+  }));
+}
+
 async function openConversation(page: Page, conversationId: string): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await page.evaluate((id) => window.sessionStorage.setItem("cc_conversation", id), conversationId);
@@ -645,22 +658,31 @@ async function releaseScrollReports(page: Page): Promise<void> {
  * Collapse the rows just above the screen, at least 200px of them, as folds closing or pictures failing to load would,
  * and return how far that moved the view up: the transcript keeps the row being read in place, so the view goes up with
  * what shrank.
+ *
+ * With `growBelow`, the streamed reply below is made taller by more than that in the same task, so the two changes land
+ * in one layout and the view is never at the bottom for the browser to pull up: the move is the transcript's own.
  */
-async function collapseRowsAbove(page: Page): Promise<number> {
+async function collapseRowsAbove(page: Page, { growBelow = false } = {}): Promise<number> {
   const before = await scroller(page).evaluate((node) => node.scrollTop);
-  const collapsed = await scroller(page).evaluate((node) => {
+  const collapsed = await scroller(page).evaluate((node, grow) => {
     const top = node.getBoundingClientRect().top;
     const above = [...node.querySelectorAll<HTMLElement>("[data-row-id]")].filter((slot) => slot.getBoundingClientRect().bottom <= top);
+    // Every height is read before anything is changed: a read after a change would lay the page out in between.
+    const hidden: HTMLElement[] = [];
     let height = 0;
     for (const slot of above.reverse()) {
       const content = slot.querySelector<HTMLElement>(".cc-row");
       if (content === null) continue;
       height += content.getBoundingClientRect().height;
-      content.style.display = "none";
+      hidden.push(content);
       if (height >= 200) break;
     }
+    const live = grow ? node.querySelector<HTMLElement>("[data-live]") : null;
+    if (grow && live === null) throw new Error("no reply is being written");
+    for (const content of hidden) content.style.display = "none";
+    if (live !== null) live.style.paddingBottom = `${String(height + 200)}px`;
     return height;
-  });
+  }, growBelow);
   expect(collapsed).toBeGreaterThanOrEqual(200);
   await settle(page);
   return before - (await scroller(page).evaluate((node) => node.scrollTop));
@@ -711,6 +733,77 @@ test("a reader who scrolls up while rows above collapse is not taken back down",
   // Reported, the scroll up still stands: more of the reply does not take the reader down either.
   await releaseScrollReports(page);
   await growReply(page, "đoạn năm");
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+});
+
+test("a row above shrinking in the frame the reply grows below is the transcript's move, not the reader's", async ({ page }) => {
+  const { conversationId } = await seedShortConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-mounted", String(SHORT_MESSAGES));
+  await startReply(page);
+
+  // In one task, rows above collapse and the reply below grows by more than they lost, so both land in the same layout.
+  // There is room below, so the browser does not pull the view up: the transcript scrolls up itself to keep the row
+  // being read in place, and none of it is reported before more of the reply arrives.
+  await holdScrollReports(page);
+  const reading = await rowBeingRead(page);
+  expect(await collapseRowsAbove(page, { growBelow: true })).toBeGreaterThan(48);
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+  expect(await distanceToBottom(page)).toBeGreaterThan(48);
+
+  for (const marker of ["đoạn một", "đoạn hai"]) {
+    await growReply(page, marker);
+    await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  }
+});
+
+test("the transcript growing taller under a reader following the reply does not stop the following", async ({ page }) => {
+  const { conversationId } = await seedShortConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-mounted", String(SHORT_MESSAGES));
+  // Held 300px shorter than it would be, as a docked panel or an open soft keyboard would hold it.
+  await scroller(page).evaluate((node) => {
+    node.style.maxHeight = `${String(node.clientHeight - 300)}px`;
+  });
+  await startReply(page);
+
+  // The constraint goes, and the transcript gets taller without being drawn again: the browser pulls the view up to the
+  // bottom that came closer, and the reply goes on before that move is reported.
+  await holdScrollReports(page);
+  const before = await scroller(page).evaluate((node) => node.scrollTop);
+  await scroller(page).evaluate((node) => node.style.removeProperty("max-height"));
+  await settle(page);
+  expect(before - (await scroller(page).evaluate((node) => node.scrollTop))).toBeGreaterThan(48);
+
+  for (const marker of ["đoạn một", "đoạn hai"]) {
+    await growReply(page, marker);
+    await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  }
+});
+
+test("the transcript's own scroll to the bottom does not hide a reader's scroll up right after it", async ({ page }) => {
+  // Reduced motion: the follow is one instant move, the case a smooth glide reports frame by frame.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const { conversationId } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  await startReply(page);
+
+  // The reply grows and the transcript follows it down; then the reader scrolls up by as much, before either move is
+  // reported. Measured from the last report the view did not move, but the reader left the bottom.
+  await holdScrollReports(page);
+  const before = await scroller(page).evaluate((node) => node.scrollTop);
+  await growReply(page, "đoạn một");
+  await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  const followed = (await scroller(page).evaluate((node) => node.scrollTop)) - before;
+  expect(followed).toBeGreaterThan(2 * 48);
+  await scroller(page).evaluate((node, by) => node.scrollTo({ top: node.scrollTop - by, behavior: "instant" }), followed);
+  const reading = await rowBeingRead(page);
+
+  await growReply(page, "đoạn hai");
   expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
 });
 
