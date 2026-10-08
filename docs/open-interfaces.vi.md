@@ -539,7 +539,7 @@ provider và dấu đánh dấu model đang dùng. Mở thẻ không thay đổi
 qua `POST /model` — cùng đường kiểm tra theo danh mục mà phần Cài đặt dùng — và nó trả lời từ tin nhắn tiếp theo
 (`applies: "next-session"`), hoặc từ lần khởi động node sau với node chưa chạy model nào (`"next-start"`). Model của
 provider chưa đăng nhập vẫn được hiện nhưng không áp dụng được cho tới khi provider đó đăng nhập. Khi một lần đăng nhập
-trên thẻ `/login` hoàn tất, thẻ nêu tên provider, đọc lại cả hai danh sách thay vì cho rằng đăng nhập là đã có model,
+trên thẻ `/login` (hoặc trong Cài đặt → AI & Định tuyến) hoàn tất, thẻ nêu tên provider, đọc lại cả hai danh sách thay vì cho rằng đăng nhập là đã có model,
 rồi đề nghị chọn model của provider đó ngay trong cùng bộ chọn, hoặc giữ model đang dùng; provider chưa hiện là đã đăng
 nhập, hoặc không có model nào, được nói rõ kèm cách kiểm tra lại. Bản ghi của thẻ — trong bản ghi hội thoại, trong kết
 quả tìm kiếm — không vẽ bộ chọn.

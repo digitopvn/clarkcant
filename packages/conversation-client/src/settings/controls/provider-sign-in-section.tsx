@@ -6,7 +6,9 @@ import { GatewayError, type GatewayClient } from "../../api.ts";
 import { fillMessage } from "../../i18n/fill-message.ts";
 import { useT } from "../../i18n/locale-context.tsx";
 import type { MessageKey } from "../../i18n/messages.ts";
+import { AfterSignIn, type ModelPickerPort } from "../../model-picker.tsx";
 import { SignInPanel } from "../../provider-sign-in-panel.tsx";
+import { useModelPickerPort } from "../../use-model-picker-port.ts";
 import { useProviderSignIns } from "../../use-provider-sign-ins.ts";
 
 export type ProviderListing =
@@ -73,6 +75,8 @@ export function ProviderSignInSection({ client }: { client: GatewayClient }): Re
     [t],
   );
   const signIns = useProviderSignIns(client, onError);
+  // The step after a sign-in is the one a `/login` card offers: that provider's models in the same picker, or keeping the model in use.
+  const modelPicker = useModelPickerPort(client, t);
 
   const load = useCallback(() => {
     client.providerAuth().then(
@@ -98,6 +102,7 @@ export function ProviderSignInSection({ client }: { client: GatewayClient }): Re
       t={t}
       listing={listing}
       signIns={signIns.signIns}
+      modelPicker={modelPicker}
       outcomes={outcomes}
       notice={notice}
       onRetry={load}
@@ -134,6 +139,8 @@ export interface ProviderSignInListProps {
   listing: ProviderListing;
   /** Sign-ins started from this section, keyed by provider id. */
   signIns: Readonly<Record<string, ProviderSignInView>>;
+  /** What a finished sign-in offers next: the model picker for that provider. Without it, nothing is offered. */
+  modelPicker?: ModelPickerPort | undefined;
   outcomes: Readonly<Record<string, ProviderRowOutcome>>;
   notice?: string | undefined;
   onRetry: () => void;
@@ -148,6 +155,7 @@ export function ProviderSignInList({
   t,
   listing,
   signIns,
+  modelPicker,
   outcomes,
   notice,
   onRetry,
@@ -267,9 +275,11 @@ export function ProviderSignInList({
                 {signIn === undefined ? null : (
                   <SignInPanel
                     signIn={signIn}
+                    providerName={provider.name}
                     t={t}
                     onAnswer={(value) => onAnswer(provider.providerId, signIn.signInId, value)}
                     onCancel={() => onCancel(provider.providerId, signIn.signInId)}
+                    after={<AfterSignIn t={t} signInKey={`settings/${provider.providerId}`} providerId={provider.providerId} providerName={provider.name} port={modelPicker} />}
                   />
                 )}
               </li>

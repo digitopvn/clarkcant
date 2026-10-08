@@ -288,3 +288,30 @@ test("a failed sign-in offers no model to choose", async ({ page }) => {
     if (signInId !== undefined) await gateway("POST", `/providers/sign-ins/${signInId}/cancel`, {});
   }
 });
+
+test("a sign-in from Settings offers the same next step: that provider's models, applied only once confirmed", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  await page.locator('[data-settings="true"]').click();
+  await page.locator("#cc-tab-ai").click();
+  const row = page.locator('[data-provider-sign-in="true"] [data-provider-id="fake-other"]');
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await row.getByRole("button", { name: "Dùng API key" }).click();
+  const field = row.locator('.cc-sign-in input[type="password"]');
+  await expect(field).toBeVisible({ timeout: 10_000 });
+  await field.fill("e2e-settings-picker-key");
+  await row.getByRole("button", { name: "Gửi" }).click();
+
+  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  const after = row.locator("[data-after-sign-in='ready']");
+  await after.getByRole("button", { name: "Chọn model của Fake Other" }).click({ timeout: 10_000 });
+  const picker = row.locator(".cc-model-picker[data-state='ready']");
+  await picker.locator('[data-model="fake-other/fake-other-model"] input[type="radio"]').check();
+  await picker.getByRole("button", { name: "Dùng model này" }).click();
+  await picker.getByRole("button", { name: "Đổi model" }).click();
+  await expect(picker.locator(".cc-command-status[data-result='done']")).toContainText("Đã đổi sang fake-other/fake-other-model", { timeout: 10_000 });
+  await expect(page.locator("body")).not.toContainText("e2e-settings-picker-key");
+
+  await page.keyboard.press("Escape");
+  expect(await nextTurnModel(page)).toBe("fake-other/fake-other-model");
+});

@@ -133,7 +133,7 @@ describe("the provider sign-in section", () => {
       signIns: { acct: done },
       outcomes: { stored: { status: "failed", message: "Sign-out didn't complete; the credential is still there. pi said no" } },
     });
-    expect(row(html, "acct")).toContain(en("commandCard.signIn.done"));
+    expect(row(html, "acct")).toContain(en("commandCard.signIn.done").replace("{provider}", "Account Co"));
     expect(row(html, "stored")).toContain("pi said no");
   });
 
