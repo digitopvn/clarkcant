@@ -1308,18 +1308,23 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
    * as a new generation reloads the shell. A change that does not read is a failed build the shell shows beside the
    * frame, which keeps the last version that worked rather than loading files that cannot run. A platform without
    * recursive watching still gets a working host; it needs a manual refresh, and the shell is not told a reload happened.
+   * Files put back to the bytes of the frame's version build as unchanged: after a failure, that ends it, so the shell is
+   * told to take the failure away; any other unchanged build has nothing to tell.
    */
   if (root !== undefined) {
+    let failing = false;
     engine = startDevEngine({
       root,
       watch: options.watchFiles !== false,
       onBuild: (event) => {
-        if (event.kind === "unchanged") return;
+        const ended = failing && event.kind !== "failed";
+        failing = event.kind === "failed";
         if (event.kind === "generation") {
           reloadCount += 1;
           for (const client of clients) client.write("event: reload\ndata: {}\n\n");
           return;
         }
+        if (event.kind === "unchanged" && !ended) return;
         for (const client of clients) client.write(`event: build\ndata: ${JSON.stringify(event.build)}\n\n`);
       },
     });

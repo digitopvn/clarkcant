@@ -251,6 +251,54 @@ describe("the dev host server", () => {
     }
   });
 
+  it("takes the failure off the shell when the files are put back to the version on screen", async () => {
+    const { url, root, stop, host } = await started();
+    const stream = await fetch(`${url}dev/events`, { headers: { accept: "text/event-stream" } });
+    const reader = stream.body?.getReader();
+    const decoder = new TextDecoder();
+    const builds: { ok: boolean }[] = [];
+    let buffered = "";
+    /** The `build` events the shell is sent, read until there are `count` of them. */
+    const readBuilds = async (count: number): Promise<{ ok: boolean }[]> => {
+      while (builds.length < count && reader !== undefined) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`only ${String(builds.length)} build events`)), 2000);
+        });
+        const chunk = await Promise.race([reader.read(), timeout]).finally(() => clearTimeout(timer));
+        if (chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true });
+        let end = buffered.indexOf("\n\n");
+        while (end !== -1) {
+          const message = buffered.slice(0, end);
+          buffered = buffered.slice(end + 2);
+          const data = /^data: (.*)$/m.exec(message)?.[1];
+          if (message.startsWith("event: build") && data !== undefined) builds.push(JSON.parse(data) as { ok: boolean });
+          end = buffered.indexOf("\n\n");
+        }
+      }
+      return builds;
+    };
+    try {
+      const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { facets: { kind: string; definition?: string }[] };
+      const definitionPath = join(root, manifest.facets.find((facet) => facet.kind === "ui")?.definition ?? "");
+      const definition = readFileSync(definitionPath, "utf8");
+
+      writeFileSync(definitionPath, "{ not json");
+      expect((await host.rebuild())?.ok).toBe(false);
+      expect((await readBuilds(1)).map((build) => build.ok)).toEqual([false]);
+
+      // The same bytes as the frame's version: no new generation and no reload, but the failure is over.
+      writeFileSync(definitionPath, definition);
+      expect((await host.rebuild())?.ok).toBe(true);
+      expect(host.reloads()).toBe(0);
+      expect((await readBuilds(2)).map((build) => build.ok)).toEqual([false, true]);
+    } finally {
+      await reader?.cancel();
+      await stop();
+    }
+  });
+
   it("serves the package's own files", async () => {
     const { url, stop } = await started();
     try {

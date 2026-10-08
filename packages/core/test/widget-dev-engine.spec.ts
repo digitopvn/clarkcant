@@ -1006,11 +1006,21 @@ describe("the dev engine", () => {
     const root = tempDir("dev-engine-");
     writePackage(root, "<p>one</p>");
     const built: string[] = [];
-    const engine = startDevEngine({ root, watch: true, debounceMs: 30, onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`) });
+    const generations: number[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      onBuild: (event) => {
+        built.push(`${event.build.trigger}:${event.kind}`);
+        if (event.kind === "generation") generations.push(event.record.generation.generation);
+      },
+    });
     engines.push(engine);
     await engine.ready;
     await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
     built.length = 0;
+    generations.length = 0;
 
     const part = join(root, "widgets", "main", "parts", "deeper", "part.js");
     mkdirSync(join(root, "widgets", "main", "parts", "deeper"), { recursive: true });
@@ -1033,6 +1043,9 @@ describe("the dev engine", () => {
     const saved = Date.now() + 5_000;
     while (engine.latest()?.generation.generation !== 3 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
     expect(engine.latest()?.generation.generation).toBe(3);
+    await new Promise((done) => setTimeout(done, 100));
+    expect(built).toEqual(["change:generation", "rebuild:unchanged", "change:generation"]);
+    expect(generations).toEqual([2, 3]);
   });
 
   it("stops watching, and says why, a folder it has not been able to look at for the time bound", async () => {
