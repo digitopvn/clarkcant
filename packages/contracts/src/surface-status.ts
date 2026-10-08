@@ -150,6 +150,7 @@ export const SURFACE_NEXT_ACTIONS = [
   "decide",
   "grant-permission",
   "open-settings",
+  "reconnect",
   "none",
 ] as const;
 export const surfaceNextActionSchema = z.enum(SURFACE_NEXT_ACTIONS);
@@ -173,7 +174,9 @@ export type SurfaceStatus = z.infer<typeof surfaceStatusSchema>;
  * The status a surface shows after `incoming` arrives while it shows `current`.
  *
  * - An answer for an earlier attempt is late and is dropped.
- * - Within one attempt, an outcome is final: a late "pending" or "loading" does not reopen it.
+ * - Within one attempt, an outcome is final: the first one shown stays. A late "pending" or "loading" does not reopen
+ *   it, and a later outcome for the same attempt — a success after a cancel, an error after a success — does not
+ *   replace it, however fresh its observation.
  * - Within one attempt, a live observation older than the one shown is dropped.
  *
  * A new attempt (a retry, a check again) always replaces what was shown, outcome or not.
@@ -182,7 +185,7 @@ export function settleSurfaceStatus(current: SurfaceStatus | undefined, incoming
   if (current === undefined) return incoming;
   if (incoming.attempt < current.attempt) return current;
   if (incoming.attempt > current.attempt) return incoming;
-  if (isOutcomePhase(current.phase) && !isOutcomePhase(incoming.phase)) return current;
+  if (isOutcomePhase(current.phase)) return current;
   if (current.freshness.kind === "live" && incoming.freshness.kind === "live") {
     const shown = Date.parse(current.freshness.observedAt);
     const arrived = Date.parse(incoming.freshness.observedAt);
@@ -332,11 +335,24 @@ export const CONNECTION_PHASE: Record<ConnectionStatus, SurfacePhase> = {
   connected: "success",
   needs_reauth: "needs-action",
   degraded: "partial",
-  revoked: "cancelled",
-  denied: "cancelled",
+  // Access withdrawn or refused: the connection no longer works, and the person may not have caused it. It is not
+  // "stopped before it finished", so it reads as something standing in the way, with reconnecting as the way past.
+  revoked: "unavailable",
+  denied: "unavailable",
   partial: "partial",
   expired: "needs-action",
   failed: "error",
+};
+
+/**
+ * The step a connection card names for a state, where it names one. A state left out has no next step on the card
+ * today; it is never guessed.
+ */
+export const CONNECTION_NEXT_ACTION: Partial<Record<ConnectionStatus, SurfaceNextAction>> = {
+  needs_reauth: "sign-in",
+  expired: "sign-in",
+  revoked: "reconnect",
+  denied: "reconnect",
 };
 
 type TaskProgressStatus = z.infer<typeof taskProgressCardSchema>["status"];

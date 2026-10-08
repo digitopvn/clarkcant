@@ -11,6 +11,7 @@ import {
 } from "../src/surfaces.ts";
 import {
   APPROVAL_PHASE,
+  CONNECTION_NEXT_ACTION,
   CONNECTION_PHASE,
   FEEDBACK_PUBLICATION_PHASE,
   OUTCOME_PHASES,
@@ -91,12 +92,23 @@ describe("domain machines read through the contract", () => {
   it("never reads a failed, denied, revoked or expired state as a success", () => {
     expect(CONNECTION_PHASE.failed).toBe("error");
     expect(CONNECTION_PHASE.degraded).toBe("partial");
-    expect(CONNECTION_PHASE.revoked).toBe("cancelled");
     expect(CONNECTION_PHASE.needs_reauth).toBe("needs-action");
     expect(APPROVAL_PHASE.denied).toBe("cancelled");
     expect(APPROVAL_PHASE.expired).toBe("cancelled");
     expect(SYSTEM_CARD_PHASE.failed).toBe("error");
     expect(RECONNECT_PHASE.failed).toBe("error");
+  });
+
+  it("reads a revoked or denied connection as standing in the way, with reconnecting as the next step", () => {
+    for (const state of ["revoked", "denied"] as const) {
+      expect(CONNECTION_PHASE[state]).toBe("unavailable");
+      expect(CONNECTION_NEXT_ACTION[state]).toBe("reconnect");
+    }
+    expect(CONNECTION_NEXT_ACTION.needs_reauth).toBe("sign-in");
+    expect(CONNECTION_NEXT_ACTION.expired).toBe("sign-in");
+    // Only states the card has a step for are named; the rest are left out, never guessed.
+    const states = optionsOf(connectionCardBlockSchema.shape.status);
+    for (const state of Object.keys(CONNECTION_NEXT_ACTION)) expect(states).toContain(state);
   });
 
   it("reads a report GitHub did not answer as partial, not as filed and not as failed", () => {
@@ -160,6 +172,18 @@ describe("late answers", () => {
     const done = status("success", 1);
     expect(settleSurfaceStatus(done, status("pending", 1))).toBe(done);
     expect(settleSurfaceStatus(done, status("loading", 1))).toBe(done);
+  });
+
+  it("keeps the first outcome of an attempt: a later, different outcome for the same attempt does not replace it", () => {
+    for (const first of OUTCOME_PHASES) {
+      for (const later of OUTCOME_PHASES) {
+        const shown = status(first, 1);
+        expect(settleSurfaceStatus(shown, status(later, 1))).toBe(shown);
+      }
+    }
+    // Not even a fresher live observation: a success that lands after a cancel is a late answer, not a correction.
+    const cancelled = status("cancelled", 1, AT);
+    expect(settleSurfaceStatus(cancelled, status("success", 1, "2026-10-08T09:00:20.000Z"))).toBe(cancelled);
   });
 
   it("drops a live observation older than the one shown", () => {
