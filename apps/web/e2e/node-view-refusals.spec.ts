@@ -88,6 +88,75 @@ test("an inbox the app cannot read names the newer Clark and says nothing change
   await expect(failed).not.toContainText(/invalid|expected|zod/i);
 });
 
+/** A notice only this page sees: added to the node's `GET /inbox` answer, with the actions the test presses. */
+function withNotice(notice: Record<string, unknown>): (inbox: Record<string, unknown>) => Record<string, unknown> {
+  return (inbox) => ({ ...inbox, notices: [notice, ...(inbox.notices as unknown[])] });
+}
+
+test("an update whose answer the app cannot read is neither done nor failed, and points at the inbox", async ({ page }) => {
+  const noticeId = "ntc_e2e_update_newer";
+  await nodeIsNewer(page);
+  await rewriteInbox(
+    page,
+    withNotice({
+      noticeId,
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật: com.example.newer",
+      createdAt: AT,
+      readAt: AT,
+      subject: { kind: "package", packageId: "com.example.newer", version: "9.9.9", source: "npm" },
+      actions: [{ id: "update", placement: "primary" }],
+    }),
+  );
+  // The node took the update and answered with an outcome this app does not know.
+  await page.route(`${GATEWAY}/inbox/notices/${noticeId}/actions/update`, (route) =>
+    route.fulfill({ json: { noticeId, action: "update", outcome: "staged" } }),
+  );
+  await openApp(page);
+  const dialog = await openInbox(page);
+  await dialog.locator(`[data-inbox-update="${noticeId}"]`).click();
+  const status = dialog.locator("[data-inbox-status]");
+  await expect(status).toHaveAttribute("data-inbox-status", "unknown", { timeout: 10_000 });
+  await expect(status).toContainText("Node đã trả lời, nhưng ứng dụng này không đọc được node đã làm gì.");
+  await expect(status).toContainText(`Node đang chạy Clark ${NEWER}, mới hơn ứng dụng này`);
+  await expect(status).toContainText("Hãy xem hộp thư để biết bản cập nhật đã được cài hay đang chờ bạn phê duyệt.");
+});
+
+test("a reconcile whose answer the app cannot read says the node recorded it", async ({ page }) => {
+  const noticeId = "ntc_e2e_reconcile_newer";
+  const effectId = "eff_e2e_reconcile_newer";
+  await nodeIsNewer(page);
+  await rewriteInbox(
+    page,
+    withNotice({
+      noticeId,
+      sourceKind: "worker",
+      category: "alert",
+      severity: "warning",
+      title: "Chưa rõ thao tác đã có hiệu lực chưa",
+      createdAt: AT,
+      readAt: AT,
+      actions: [
+        { id: "reconcile-confirmed", placement: "primary", effectId },
+        { id: "reconcile-failed", placement: "secondary", effectId },
+      ],
+    }),
+  );
+  // The node recorded the answer and replied with a task outcome this app does not know.
+  await page.route(`${GATEWAY}/effects/${effectId}/reconcile`, (route) =>
+    route.fulfill({ json: { effectId, taskId: "task_e2e", outcome: "confirmed", taskState: "done", settled: "settled-later", remainingUnknown: 0 } }),
+  );
+  await openApp(page);
+  const dialog = await openInbox(page);
+  await dialog.locator(`[data-inbox-reconcile="confirmed"][data-inbox-reconcile-effect="${effectId}"]`).click();
+  const status = dialog.locator("[data-inbox-status]");
+  await expect(status).toHaveAttribute("data-inbox-status", "done", { timeout: 10_000 });
+  await expect(status).toContainText("Node đã ghi nhận câu trả lời của bạn, nhưng ứng dụng này không đọc được phần node trả lời thêm.");
+  await expect(status).toContainText(`Node đang chạy Clark ${NEWER}, mới hơn ứng dụng này`);
+});
+
 test("the Memory tab says a newer node sent more than it shows", async ({ page }) => {
   await page.route(`${GATEWAY}/memory`, (route) =>
     route.request().method() === "GET" ? route.fulfill({ json: { items: [{ ...record, pinned: true }], counts, total: 1 } }) : route.continue(),

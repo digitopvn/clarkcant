@@ -1212,7 +1212,7 @@ nghị người dùng cập nhật ứng dụng. Khi node không chạy Clark m�
 lại. Khi không biết một trong hai phiên bản, ứng dụng nói rằng có lẽ node mới hơn. Lời báo cũng nói điều gì được giữ
 nguyên: một lần đọc không thay đổi gì; một hành động trên thông báo chỉ nói rằng node đã trả lời, không bao giờ nói rằng
 nó đã được thực hiện, vì giá trị ứng dụng không đọc được có thể nghĩa là nó đang chờ điều gì đó (một bản cập nhật đề
-nghị xem hộp thư); một lần đối chiếu nói rằng node đã ghi nhận câu trả lời; một lần bắt đầu `/develop` đã bắt đầu phiên, nên thẻ của nó hiện lần bắt đầu là đã xong chứ không phải thất bại. Nội dung lỗi của
+nghị xem hộp thư); một lần đối chiếu nói rằng node đã ghi nhận câu trả lời; bỏ chọn một thư mục chỉ nói rằng node đã trả lời, không nói thư mục đã được bỏ chọn hay Clark còn truy cập được ở đâu, và dòng đó giữ nhãn cũ; một lần bắt đầu `/develop` đã bắt đầu phiên, nên thẻ của nó hiện lần bắt đầu là đã xong chứ không phải thất bại. Nội dung lỗi của
 schema chỉ được ghi ra console.
 
 **Quy tắc cho người viết.** Không bao giờ thêm trạng thái ràng buộc (một phê duyệt, một quyền được cấp, một phạm vi truy

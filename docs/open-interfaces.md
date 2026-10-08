@@ -1197,7 +1197,8 @@ asks the person to update the app. When the node does not run a newer Clark, the
 try again. When either version is not known, the app says the node is probably newer. The message also says what was
 preserved: a read changed nothing; a notice action says only that the node answered, never that it was carried out,
 since the value the app cannot read may mean it waits on something (an update says to check the inbox); a reconcile
-says the node recorded the answer; a `/develop` start started the
+says the node recorded the answer; forgetting a chosen folder says only that the node answered, claiming neither that
+the folder was forgotten nor what Clark can still reach, and the row keeps its badge; a `/develop` start started the
 session, so its card shows the start as done rather than failed. The schema's own error text goes to the console only.
 
 **Author rule.** Never add binding state (an approval, a grant, a reach, an activation, a confirmation) as a new
