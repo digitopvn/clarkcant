@@ -18,6 +18,7 @@ import {
   type Timeline,
 } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
+import { liveActionRefusal } from "./node-view-refusal.ts";
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent, composedImageRefs } from "./mini-app-surface.tsx";
@@ -950,8 +951,7 @@ export function PinnedLiveSurface({
                     } catch (cause: unknown) {
                       // The node kept what it holds; the re-read below shows it, so the page does not keep a value the
                       // node refused.
-                      const message = cause instanceof Error ? cause.message : String(cause);
-                      setNotice(message.includes("REVISION_MISMATCH") ? t("shell.live.revisionMismatch") : message);
+                      setNotice(liveActionRefusal(cause, t));
                     } finally {
                       queue.pending -= 1;
                       if (queue.pending === 0) await load();
@@ -977,12 +977,7 @@ export function PinnedLiveSurface({
                     return load();
                   })
                   .catch((cause: unknown) => {
-                    const message = cause instanceof Error ? cause.message : String(cause);
-                    setNotice(
-                      message.includes("REVISION_MISMATCH")
-                        ? t("shell.live.revisionMismatch")
-                        : message,
-                    );
+                    setNotice(liveActionRefusal(cause, t));
                     return load();
                   })
                   .finally(() => setBusy(false));

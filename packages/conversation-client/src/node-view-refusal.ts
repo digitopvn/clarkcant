@@ -43,3 +43,12 @@ export function nodeViewRefusalText(cause: unknown, t: (key: MessageKey) => stri
         : t("shell.nodeView.unknown");
   return `${t(lead)} ${next}`;
 }
+
+/**
+ * What a pinned live widget says when the node refuses a press or a queued state event: the stale-view notice when the
+ * node moved on (`REVISION_MISMATCH`, read from the code, never the sentence), otherwise the node's own reason.
+ */
+export function liveActionRefusal(cause: unknown, t: (key: MessageKey) => string): string {
+  if (cause instanceof GatewayError && cause.code === "REVISION_MISMATCH") return t("shell.live.revisionMismatch");
+  return refusalReason(cause);
+}

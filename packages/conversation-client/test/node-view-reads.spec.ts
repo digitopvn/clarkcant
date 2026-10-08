@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLARK_VERSION_MAX, GatewayClient, GatewayError, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
 import { COMMAND_ACTION_PHASE } from "../src/command-card.tsx";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
-import { nodeViewRefusalText } from "../src/node-view-refusal.ts";
+import { liveActionRefusal, nodeViewRefusalText } from "../src/node-view-refusal.ts";
 import { developStartRefused } from "../src/use-block-actions.ts";
 
 /**
@@ -281,5 +281,16 @@ describe("the /develop card after a start this app cannot read", () => {
       status: "failed",
       message: en("commandCard.develop.startFailed").replace("{reason}", "choose the folder first"),
     });
+  });
+});
+
+describe("a pinned live widget's refusal", () => {
+  it("says the view was stale when the node moved on, read from the code", () => {
+    const error = new GatewayError(409, "REVISION_MISMATCH", "invocation expected revision 3 but the instance is at 4; re-read before acting");
+    expect(liveActionRefusal(error, en)).toBe(en("shell.live.revisionMismatch"));
+  });
+
+  it("shows the node's reason for any other refusal, never its code", () => {
+    expect(liveActionRefusal(new GatewayError(403, "PERSON_ONLY", "only the person may do this"), en)).toBe("only the person may do this");
   });
 });
