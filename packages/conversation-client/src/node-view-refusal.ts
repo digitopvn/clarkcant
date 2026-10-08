@@ -71,6 +71,15 @@ export function retryableFailure(error: unknown): boolean {
   return error instanceof TypeError;
 }
 
+/**
+ * Whether the node itself answered a request with a refusal it decided: a 4xx it wrote, readable, and not one that
+ * says the request timed out or came too soon (`retryableFailure`). A 5xx, an answer this app cannot read (a relay's
+ * HTML error page among them), a transport failure and a timeout are not: the node may have done the work behind them.
+ */
+export function nodeDecidedRefusal(error: unknown): boolean {
+  return error instanceof GatewayError && error.status < 500 && !UNREADABLE_CODES.has(error.code) && !retryableFailure(error);
+}
+
 /** A failed press's `next`: `retry` only when sending the same press again can go through (`retryableFailure`). */
 export function retryNext(error: unknown): { next?: "retry" } {
   return retryableFailure(error) ? { next: "retry" } : {};

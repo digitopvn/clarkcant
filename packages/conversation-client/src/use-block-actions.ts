@@ -15,7 +15,7 @@ import { settleCommandAction } from "./command-card.tsx";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
-import { nodeViewRefusalText, refusalReason, refusalSentence, retryNext, retryableFailure } from "./node-view-refusal.ts";
+import { nodeDecidedRefusal, nodeViewRefusalText, refusalReason, refusalSentence, retryNext, retryableFailure } from "./node-view-refusal.ts";
 import type { TerminalFirstState } from "./terminal-card.tsx";
 import { signInStartRefused, signOutRefused, signOutSettled, useProviderSignIns } from "./use-provider-sign-ins.ts";
 import { useModelPickerPort } from "./use-model-picker-port.ts";
@@ -109,10 +109,12 @@ export function feedbackRefusalReason(error: unknown, t: (key: MessageKey) => st
  * - The node answered the publish, but this app cannot read the answer (`NodeViewUnreadable`): the report may have been
  *   filed or not, so the card says exactly that — never "failed" with the schema's text — and offers Check again, which
  *   only asks the node where the report stands.
- * - The publish was sent and no answer came back in time (a dropped connection, a timeout, a relay's 408/502/503/504):
- *   the node may have filed it, so the card says it is not known yet — never "not filed" — and offers Check again and
- *   Try again. Pressing the publish again is safe: the node answers a report it already holds, or is still sending,
- *   with where it stands and never files it twice.
+ * - The publish was sent and anything but a refusal the node decided came back (`nodeDecidedRefusal`): a dropped
+ *   connection, a timeout, a relay's 408/429/502/503/504 including its HTML error page, or the node's own 500, which
+ *   can follow a GitHub write that went through. The node may have filed it, so the card says it is not known yet —
+ *   never "not filed" — and offers Check again, plus Try again where the press may go through when sent again
+ *   (`retryableFailure`). Pressing the publish again is safe: the node answers a report it already holds, or is still
+ *   sending, with where it stands and never files it twice.
  * - A Check again that did not go through: a check never files anything, so the report stays not known, with the
  *   reason, and Check again stays offered. Only the node's own answer that it never sent the report (`NOTHING_SENT`)
  *   says it is not on GitHub, in the app's words, because that is the node's fact rather than a guess.
@@ -140,11 +142,12 @@ export function feedbackPressFailed(
       if (error instanceof GatewayError && error.code === "NOTHING_SENT") return { status: "failed", message: t("feedback.check.nothingSent"), ...kept };
       return { ...notKnown, message: fillMessage(t("feedback.notKnown.check"), reason) };
     }
-    if (retryableFailure(error)) {
+    // Only a refusal the node decided says the report was not filed; anything else may have come after GitHub kept it.
+    if (!nodeDecidedRefusal(error)) {
       return {
         ...notKnown,
         message: fillMessage(t("feedback.notKnown.sent"), reason),
-        next: "retry",
+        ...(retryableFailure(error) ? { next: "retry" as const } : {}),
         press: "create",
         ...(press.intent === undefined ? {} : { intent: press.intent }),
       };

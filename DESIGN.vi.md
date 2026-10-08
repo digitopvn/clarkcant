@@ -887,10 +887,14 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   nói đúng điều đó, ở dạng `partial` và không bao giờ là "thất bại" kèm chữ của
   schema, dùng câu mở đầu cho câu trả lời node không đọc được cùng câu về phiên
   bản, và đề nghị **Kiểm tra lại**, chỉ hỏi node báo cáo đang ở đâu. Điều đó
-  cũng đúng khi lần gửi đã đi mà không có câu trả lời nào quay về (mất kết nối,
-  hết thời gian chờ, chặng chuyển tiếp trả 408, 502, 503 hoặc 504): node có thể
-  đã gửi rồi, nên thẻ không bao giờ nói "chưa gửi được"; thẻ nói chưa biết kết
-  quả, kèm Kiểm tra lại và Thử lại. Một lần Kiểm tra lại không đi tới nơi vẫn để
+  cũng đúng mỗi khi lần gửi đã đi và thứ quay về không phải là lời từ chối do
+  chính node quyết định (một mã 4xx do node viết): mất kết nối, hết thời gian
+  chờ, chặng chuyển tiếp trả 408, 429, 502, 503 hoặc 504 (kể cả trang lỗi HTML
+  của nó), hay lỗi 500 của chính node, có thể xảy ra sau khi đã ghi lên GitHub
+  thành công. Node có thể đã gửi rồi, nên thẻ không bao giờ nói "chưa gửi được";
+  thẻ nói chưa biết kết quả, kèm Kiểm tra lại, và kèm Thử lại khi gửi lại lần
+  bấm đó có thể đi tới nơi. Một lần bấm rơi vào lúc node vẫn đang gửi báo cáo
+  được báo đúng như vậy bằng ngôn ngữ của người dùng. Một lần Kiểm tra lại không đi tới nơi vẫn để
   báo cáo ở trạng thái chưa biết, kèm lý do, vì kiểm tra không bao giờ gửi gì.
   Chỉ câu trả lời của chính node rằng nó chưa từng gửi báo cáo mới nói báo cáo
   chưa có trên GitHub.

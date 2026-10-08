@@ -903,10 +903,14 @@ whether it can be retried, and whether it is still current.
   exactly that, as `partial` and never as "failed" with the schema's text, using
   the node-view refusal lead and the version sentence, and offers **Check
   again**, which only asks the node where the report stands. The same holds
-  when the publish was sent and no answer came back (a dropped connection, a
-  timeout, a relay's 408, 502, 503 or 504): the node may have filed it, so the
+  whenever the publish was sent and what came back is not a refusal the node
+  decided (a 4xx it wrote): a dropped connection, a timeout, a relay's 408, 429,
+  502, 503 or 504 (its HTML error page too), or the node's own 500, which can
+  follow a GitHub write that went through. The node may have filed it, so the
   card never says "not filed"; it says the outcome is not known yet, with Check
-  again and Try again. A Check again that does not go through keeps the report
+  again, and with Try again where sending the press again can go through. A
+  press that lands while the node is still sending the report is told so in the
+  person's language. A Check again that does not go through keeps the report
   not known, with the reason, because a check never files anything. Only the
   node's own answer that it never sent the report says it is not on GitHub.
 

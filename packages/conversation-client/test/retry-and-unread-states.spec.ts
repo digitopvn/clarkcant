@@ -206,6 +206,34 @@ describe("a feedback press that did not come back readable", () => {
     expect(feedbackPressFailed(offline(), en, { press: "create", intent: "send", requestKey: "k", published: false })).toMatchObject({ status: "failed", next: "retry" });
   });
 
+  it("says a sent publish answered by a relay's HTML error page or the node's own 500 as not known, never not filed, with Check again", () => {
+    for (const [t, messages] of [
+      [en, MESSAGES_EN],
+      [vi, MESSAGES_VI],
+    ] as const) {
+      for (const error of [
+        // What `#call` makes of a reverse proxy's HTML 502/504 page: the node may have filed it behind the relay.
+        new GatewayError(502, "MALFORMED_RESPONSE", "the gateway returned a body that is not JSON (status 502)"),
+        new GatewayError(504, "MALFORMED_RESPONSE", "the gateway returned a body that is not JSON (status 504)"),
+        // The node failed after the GitHub write, for example while recording it: the issue may exist.
+        new GatewayError(500, "INTERNAL", "the ledger could not be written"),
+      ]) {
+        const state = feedbackPressFailed(error, t, { press: "create", intent: "send", reportId: "rpt_1", requestKey: "k", published: true });
+        expect(state).toMatchObject({ status: "unknown", reportId: "rpt_1", requestKey: "k" });
+        const message = state.status === "unknown" ? state.message : "";
+        expect(message.startsWith(messages["feedback.notKnown.sent"].split("{reason}")[0]!)).toBe(true);
+        expect(message).toContain(error.reason);
+        expect(message).not.toContain(messages["feedback.failed.final"].split("{reason}")[0]!);
+      }
+    }
+  });
+
+  it("says not filed after the publish was sent only for a refusal the node decided", () => {
+    const state = feedbackPressFailed(policy(), en, { press: "create", intent: "send", reportId: "rpt_1", requestKey: "k", published: true });
+    expect(state).toMatchObject({ status: "failed", reportId: "rpt_1", press: "create" });
+    expect(state).not.toHaveProperty("next");
+  });
+
   it("keeps a Check again that did not go through as not known, with its reason, and never as not filed", () => {
     for (const [t, messages] of [
       [en, MESSAGES_EN],

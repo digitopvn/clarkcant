@@ -767,7 +767,7 @@ export type FeedbackCardState =
     }
   /**
    * Whether `reportId` was filed is not known: the node answered a publish in words this app cannot read, the publish
-   * was sent and no answer came back, or a check did not go through. Not a failure and not a success; Check again asks
+   * was sent and came back with anything but a refusal the node decided, or a check did not go through. Not a failure and not a success; Check again asks
    * the node where the report stands, and sends nothing. `next` is `retry` when the publish itself may be pressed again
    * (`press` and `intent` say which), which the node answers for a report it already holds without filing it twice.
    */
