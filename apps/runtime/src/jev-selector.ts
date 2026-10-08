@@ -15,7 +15,13 @@ import {
   sanitizeIntent,
   stateLooksRedacted,
 } from "./mini-app-candidates.ts";
-import { type DecisionConfig, JEV_POLICY_VERSION, decisionCallRefusal, decisionConfigFromEnv } from "./decision-config.ts";
+import {
+  type DecisionConfig,
+  JEV_POLICY_VERSION,
+  currentDecisionConfig,
+  decisionCallRefusal,
+  decisionConfigFromEnv,
+} from "./decision-config.ts";
 import {
   DEFAULT_DECISION_PROVIDER,
   type DecisionProviderId,
@@ -218,9 +224,12 @@ function refusalReason(deps: JevDeps, budget: JevBudget): string | undefined {
  * why the deadline is an AbortSignal rather than a race against a promise that keeps running.
  */
 async function callProvider(
-  deps: JevDeps,
+  callerDeps: JevDeps,
   input: CallInput,
 ): Promise<{ ok: true; response: SystemOneResponse } | { ok: false; status: "abstained" | "unavailable"; reason: string }> {
+  // One reading of the configuration for the whole call, so a provider switch mid-call cannot pair one provider's key
+  // with another's endpoint (currentDecisionConfig).
+  const deps: JevDeps = { ...callerDeps, config: currentDecisionConfig(callerDeps.config) };
   const now = deps.now ?? Date.now;
   const refused = refusalReason(deps, input.budget);
   const requestId = (deps.newRequestId ?? defaultRequestId)();
@@ -342,7 +351,8 @@ async function callProvider(
     }
 
     const usage = answered.usage;
-    const drift = answered.model !== deps.config.model;
+    const adapter = decisionProviderFor(providerOf(deps.config));
+    const drift = !(adapter.answersAs?.(deps.config.model, answered.model) ?? answered.model === deps.config.model);
     // The id is the provider's text, so it is bounded before it is recorded or repeated in a reason.
     const answeredModel = answered.model.slice(0, MAX_RECORDED_MODEL_LENGTH);
     emit(deps, {

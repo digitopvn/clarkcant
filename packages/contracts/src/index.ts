@@ -17,6 +17,7 @@ export * from "./project-instructions.ts";
 export * from "./package-instructions.ts";
 export * from "./themes.ts";
 export * from "./preferences.ts";
+export * from "./decision-provider.ts";
 export * from "./protocol.ts";
 export * from "./errors.ts";
 export * from "./envelope.ts";

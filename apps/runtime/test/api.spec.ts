@@ -998,6 +998,9 @@ describe("a secret a person types", () => {
   it("is the key in effect when the environment holds one too, and readiness says so without either value", async () => {
     vi.stubEnv("GEMINI_API_KEY", "env-gemini-not-a-real-key");
     vi.stubEnv("TYPESAFE_API_KEY", "env-typesafe-not-a-real-key");
+    // Blank is "not configured", so the decision provider's other keys read as `none` whatever this machine holds.
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
     try {
       await request("POST", "/credentials", { body: { fields: [{ name: "gemini", value: "AIza-saved-not-a-real-key" }] } });
       const response = await request("GET", "/readiness");
@@ -1005,7 +1008,12 @@ describe("a secret a person types", () => {
       expect(response.status).toBe(200);
       const body = response.body as { credentials?: string[]; sources?: Record<string, string> };
       expect(body.credentials).toEqual(["gemini", "typesafe"]);
-      expect(body.sources).toEqual({ gemini: "vault", typesafe: "environment" });
+      expect(body.sources).toEqual({
+        gemini: "vault",
+        typesafe: "environment",
+        "decision:cloudflare": "none",
+        "decision:openrouter": "none",
+      });
       const text = JSON.stringify(body);
       for (const value of ["env-gemini-not-a-real-key", "env-typesafe-not-a-real-key", "AIza-saved-not-a-real-key"]) {
         expect(text).not.toContain(value);

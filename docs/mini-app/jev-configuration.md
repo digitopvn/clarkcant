@@ -10,28 +10,34 @@ effect. Everything that turns its answer into something the user sees is host co
 This document is the operator's half: what to set, what leaves the machine, what is recorded, and
 what happens when the provider is unavailable.
 
-The selector is a role, and Jev is the provider that fills it by default. An operator can select
-Cloudflare Clef on Workers AI instead (see [Choosing a decision provider](#choosing-a-decision-provider)).
+The selector is a role, and Jev is the provider that fills it by default. It is separate from the
+conversation model: Pi answers the conversation, and the decision provider answers only the small
+typed questions below. An operator can select Cloudflare Clef on Workers AI or OpenRouter's decisions
+API instead, and the person can choose one in Settings (see
+[Choosing a decision provider](#choosing-a-decision-provider)).
 Clark's policy — what is offered, what is redacted, the floors, the budget and every fallback — is
 the same whichever provider answers; only the endpoint, the credential and the pinned model differ.
 Unless a section says otherwise, "the provider" below means the selected one.
 
 ## Configuration
 
-All settings are read from the environment of the runtime process. The selected provider's
-credential (`TYPESAFE_API_KEY`, or `CLOUDFLARE_API_TOKEN` when Cloudflare is selected) is the only
-one used, and it is never read by a renderer, written into props, stored in a snapshot, or logged.
+All settings are read from the environment of the runtime process, except that the person's choice
+in Settings (below) replaces the provider, its model and Cloudflare's account id. The selected
+provider's credential (`TYPESAFE_API_KEY`, `CLOUDFLARE_API_TOKEN` or `OPENROUTER_API_KEY`, or the key
+saved in that provider's card) is the only one used, and it is never read by a renderer, written into
+props, stored in a snapshot, or logged.
 The `CLARKCANT_JEV_*` settings other than the model and the endpoint apply to whichever provider is
 selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTEXT_DECIDER` means
 "ask the selected decision provider".
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev) or `cloudflare` (Clef). Any other value refuses every decision call rather than falling back to TypeSafe. |
-| `CLARKCANT_DECISION_MODEL` | *(see meaning)* | Exact model id for the selected provider. With TypeSafe it wins over `CLARKCANT_JEV_MODEL`, and unset leaves that setting in charge. With Cloudflare it is required and must be `clef` or `clef-flash`. |
+| `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev), `cloudflare` (Clef) or `openrouter` (OpenRouter's decisions API). Any other value refuses every decision call rather than falling back to TypeSafe. A choice made in Settings wins over this. |
+| `CLARKCANT_DECISION_MODEL` | *(see meaning)* | Exact model id for the selected provider. With TypeSafe it wins over `CLARKCANT_JEV_MODEL`, and unset leaves that setting in charge. With Cloudflare it is required and must be `clef` or `clef-flash`. With OpenRouter it is required and must be a pinned slug (`vendor/model`, lower case, no `~` alias), such as `cloudflare/clef-flash` or `typesafe/jev-1.13`. |
 | `TYPESAFE_API_KEY` | *(none)* | TypeSafe credential. With TypeSafe selected, no key means the selector is disabled. |
-| `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Cloudflare only. 32 hexadecimal characters; anything else refuses every call. |
-| `CLOUDFLARE_API_TOKEN` | *(none)* | Cloudflare only, and read from the environment only. A token allowed to run Workers AI. With Cloudflare selected, no token means the selector is disabled; the TypeSafe key is never used instead. |
+| `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Cloudflare only. 32 hexadecimal characters; anything else refuses every call. An account id chosen in Settings wins over this. |
+| `CLOUDFLARE_API_TOKEN` | *(none)* | Cloudflare only. A token allowed to run Workers AI. A token saved in the decision provider's Cloudflare card wins over this. With Cloudflare selected and no token in either place, the selector is disabled; the TypeSafe key is never used instead. |
+| `OPENROUTER_API_KEY` | *(none)* | OpenRouter only, for decisions. A key saved in the decision provider's OpenRouter card wins over this. With OpenRouter selected and no key in either place, the selector is disabled. This is the same variable Pi may use for conversation models; selecting OpenRouter as the decision provider is what makes decisions use it. |
 | `CLARKCANT_JEV_ENABLED` | derived | Explicit override. Defaults to "a key is present and the node is not local-only". |
 | `CLARKCANT_JEV_LOCAL_ONLY` | off | `1`/`true` forbids sending any intent to a third party. Outranks a key being present. |
 | `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | TypeSafe only. Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
@@ -51,50 +57,106 @@ The key belongs in the runtime's environment or its local, gitignored `.env`. It
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
 referenced from code. The TypeSafe key can also be typed into the settings card. When both hold one,
 the key saved in the card wins, the rule every provider credential follows; the environment's key is
-used when the card holds none. Saving or removing the key in the card takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value. The Cloudflare token is read from
-the environment only: there is no settings card for it, and a secret stored for another purpose is
-never used as the decision provider's credential.
+used when the card holds none. Saving or removing the key in the card takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value.
+
+The Cloudflare and OpenRouter keys follow the same rule, but are stored under host-owned vault names
+(`decision:cloudflare`, `decision:openrouter`) that only the decision provider's own card writes
+(`PUT /decision-provider/credential`). The generic credential store refuses those names, so a secret
+somebody stored for another purpose (a `cloudflare` token for a deploy command, say) never becomes the
+decision provider's credential, and a decision key cannot be replaced from a form. Each provider reads
+only its own name: a TypeSafe key is never sent to Cloudflare or OpenRouter, or the other way round.
 
 ### Choosing a decision provider
 
-TypeSafe Jev stays the default. Cloudflare Clef is used only when an operator sets all of:
+TypeSafe Jev stays the default. There are two ways to choose another provider, and the first wins:
+
+1. **In Settings.** The person picks a provider (and, for Cloudflare and OpenRouter, a model) and saves
+   that provider's key in its own card. The choice is stored as the preference `ai.decisionProvider`,
+   so it has a revision and an undo. Choosing "follow the environment" stores `null` and hands the
+   choice back to the variables below. The same choice is available over the node's API:
+   `PUT /decision-provider` with a body such as
+   `{"selection": {"provider": "cloudflare", "model": "clef", "accountId": "<32 hex>"}}`,
+   `{"selection": {"provider": "openrouter", "model": "cloudflare/clef-flash"}}`,
+   `{"selection": {"provider": "typesafe"}}` or `{"selection": null}`. Keys go to
+   `PUT /decision-provider/credential` with `{provider, value}` and are removed with
+   `DELETE /decision-provider/credential/<provider>`. Every one of these writes is person-only: an AI
+   client or another machine surface cannot choose which third party receives a decision.
+2. **In the environment**, for an operator who configures the node without Settings:
 
 ```bash
 CLARKCANT_DECISION_PROVIDER=cloudflare
 CLARKCANT_DECISION_MODEL=clef        # or clef-flash
 CLOUDFLARE_ACCOUNT_ID=<32 hexadecimal characters>
 CLOUDFLARE_API_TOKEN=<a token allowed to run Workers AI>
+
+# or
+CLARKCANT_DECISION_PROVIDER=openrouter
+CLARKCANT_DECISION_MODEL=cloudflare/clef-flash   # a pinned slug
+OPENROUTER_API_KEY=<an OpenRouter key>
 ```
 
-| | TypeSafe Jev | Cloudflare Clef |
-|---|---|---|
-| Receives the request | `https://api.typesafe.ai/v1/systemone`, or `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, built from the two validated values; there is no endpoint override |
-| Model | `jev-1.13.0` unless overridden | `clef` or `clef-flash`, always named explicitly |
-| Credential | The key from the settings card, else `TYPESAFE_API_KEY` | `CLOUDFLARE_API_TOKEN` only |
-| Request body | System One: `{state, model, questions}` | The same body |
-| Response | System One answer | The same answer inside Cloudflare's REST envelope; only `success: true` is unwrapped |
+| | TypeSafe Jev | Cloudflare Clef | OpenRouter |
+|---|---|---|---|
+| Receives the request | `https://api.typesafe.ai/v1/systemone`, or `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, built from the two validated values; there is no endpoint override | `https://openrouter.ai/api/alpha/decisions`; there is no endpoint override. OpenRouter forwards the request to the company that serves the chosen model. |
+| Model | `jev-1.13.0` unless overridden | `clef` or `clef-flash`, always named explicitly | A pinned slug such as `cloudflare/clef-flash` or `typesafe/jev-1.13`, always named explicitly; `~` aliases are refused |
+| Credential | The key from the settings card, else `TYPESAFE_API_KEY` | The decision provider's Cloudflare card, else `CLOUDFLARE_API_TOKEN` | The decision provider's OpenRouter card, else `OPENROUTER_API_KEY` |
+| Request body | System One: `{state, model, questions}` | The same body | The same body |
+| Response | System One answer | The same answer inside Cloudflare's REST envelope; only `success: true` is unwrapped | The System One answer plus OpenRouter's `id`, `provider` and `usage.cost`, which are dropped. The model comes back as a dated snapshot of the pinned slug (`typesafe/jev-1.13-20260917`), which is accepted; any other model is drift. |
 
-What leaves the node is identical for both: the same redacted, size-capped state and the same offered
-options, built before the provider is known. Local-only refuses both, and every failure falls back
-exactly as described under [Failure behaviour](#failure-behaviour). Changing provider changes who
-receives the decision payload, so it is a data-sharing decision as well as a technical one.
+What leaves the node is identical for every provider: the same redacted, size-capped state and the
+same offered options, built before the provider is known. Local-only refuses all of them, and every
+failure falls back exactly as described under [Failure behaviour](#failure-behaviour). Changing
+provider changes who receives the decision payload, so it is a data-sharing decision as well as a
+technical one. With OpenRouter, two parties receive it: OpenRouter and the company serving the model.
+
+OpenRouter marks its decisions API as alpha. Its API reference shows the path
+`/api/v1/api/alpha/decisions` while its guides use `/api/alpha/decisions`; the node calls the second,
+which is the one that answered live (below).
 
 Cloudflare publishes benchmarks for Clef against Jev. They are the vendor's numbers on the vendor's
 workload, not evidence about this node's decisions, which is why the default has not changed.
 
-**Switching back to TypeSafe.** Unset `CLARKCANT_DECISION_PROVIDER` (or set it to `typesafe`) and
-restart. A surface Cloudflare chose stays readable: a replayed turn returns the stored surface without
-asking any provider, and its provenance still names `provider: "cloudflare"` and `clef`, because it
-records who decided rather than what is configured now. New decisions are recorded as a default node
-records them, with no `provider` field. Rolling the node itself back to a release without Cloudflare
-support is different: that release's stored-surface schema does not know the `provider` field, so it
-refuses to read a surface Cloudflare chose (a replay or refresh of that surface fails). Switch the
-provider back first and keep the release that reads the field for as long as such surfaces matter.
+**When a change applies.** A change of provider, model, Cloudflare account id or key, made in
+Settings or through the API, applies from the next decision. The node does not restart, and a
+decision call already in flight finishes with the configuration it started with: one call never pairs
+one provider's key with another provider's endpoint. The start-up line (see the runbook) still
+describes the node as it started. Changes to environment variables, `CLARKCANT_JEV_LOCAL_ONLY` and
+`CLARKCANT_JEV_ENABLED` included, still need a restart; neither Settings nor the API can lift
+local-only.
 
-What has not been verified against the live Workers AI service: the exact model id inside a Clef
-response (`clef` and `@cf/cloudflare/clef` are both read as `clef`; anything else is refused as
-drift), and the envelope as Clef returns it, which follows Cloudflare's general REST documentation.
-`clef-live.spec.ts` (below) is the check that would produce that evidence.
+**Seeing what is in effect.** `GET /decision-provider` answers with the effective provider and model,
+what chose them (`settings`, `environment` or `default`), the host decisions go to, where the key
+comes from (`vault`, `environment` or `none`, never the value), for Cloudflare where the account id
+comes from, a `status` (`ready`, `local-only`, `misconfigured`, `no-credential` or `disabled`) with
+its reason, the outcome of the last call since the node started, and the credential source of every
+provider, so a selector can show which ones are ready to use.
+
+**Switching back to TypeSafe.** Choose TypeSafe (or "follow the environment") in Settings, or unset
+`CLARKCANT_DECISION_PROVIDER` (or set it to `typesafe`) and restart. A surface another provider chose
+stays readable: a replayed turn returns the stored surface without asking any provider, and its
+provenance still names that provider and model, because it records who decided rather than what is
+configured now. New decisions are recorded as a default node records them, with no `provider` field.
+Rolling the node itself back to an older release is different: a release whose stored-surface schema
+does not know `provider: "cloudflare"` (or, before OpenRouter support, `provider: "openrouter"`)
+refuses to read such a surface (a replay or refresh of it fails). Switch the provider back first and
+keep a release that reads the field for as long as such surfaces matter.
+
+**Live evidence (2026-10-08).** Run with real keys and synthetic state only, using the opt-in checks
+under [Running the checks](#running-the-checks):
+
+| Provider and model | Template choice | Yes/no question |
+|---|---|---|
+| Cloudflare `clef` | passed | passed |
+| Cloudflare `clef-flash` | passed | passed |
+| OpenRouter `cloudflare/clef` | passed | passed |
+| OpenRouter `cloudflare/clef-flash` | passed | passed |
+| OpenRouter `typesafe/jev-1.13` | blocked: one HTTP 529 (provider overloaded), then timeouts | blocked |
+| TypeSafe `jev-1.13.0` direct | blocked: timeouts at 4 s and 20 s | blocked |
+
+The passing runs went through the same model check and response parsing as production, so the Clef
+envelope and model id the adapter expects are confirmed live. The two blocked rows are availability
+on that day, not a compatibility finding: TypeSafe still answered the wrong-model refusal check as
+expected.
 
 ### The exact-model gate
 
@@ -184,8 +246,9 @@ the release evidence rather than tuned to taste.
 | Condition | Outcome |
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
-| Unknown provider name, or a Cloudflare model or account id that is missing or malformed | `unavailable`; no network call, and the reason names the setting. |
-| TypeSafe selected with a Cloudflare model id (`clef`, `clef-flash`, or any `@cf/` id) | `unavailable`; no network call, and the reason says to select Cloudflare or unset `CLARKCANT_DECISION_MODEL`. |
+| Unknown provider name, a Cloudflare model or account id that is missing or malformed, or an OpenRouter model that is missing, an alias, or not a pinned slug | `unavailable`; no network call, and the reason names the setting. |
+| TypeSafe selected with a Cloudflare model id (`clef`, `clef-flash`, or any `@cf/` id) or an OpenRouter slug (anything with a `/`) | `unavailable`; no network call, and the reason says to select the provider that serves it or unset `CLARKCANT_DECISION_MODEL`. |
+| A selection in Settings that is not one of the three shapes, or a key that is empty or over 4096 characters | Refused when it is saved, with the field named and never the value; the configuration in effect does not change. |
 | A credential left anywhere in the request | `unavailable`; no network call, and the reason carries no part of the value. |
 | A request over 64 KiB serialized | `unavailable`; no network call, and the request is not scanned. |
 | Fewer than two search results within the selector's ceiling | The ranking stands; no network call. |
@@ -196,7 +259,7 @@ the release evidence rather than tuned to taste.
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
 | A redirect | The call fails rather than follows it, so the credential never reaches a host the endpoint check did not approve. Applies to both providers. |
 | A response over 256 KiB | Not read past the limit (by its declared length, or by counting the stream), and treated as malformed. The shared call path holds the same limit whatever transport delivered the answer. Applies to both providers. |
-| Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. For Cloudflare, an envelope without `success: true` or without a System One `result` is malformed. |
+| Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. For Cloudflare, an envelope without `success: true` or without a System One `result` is malformed. For OpenRouter, a model other than the pinned slug or its dated snapshot (`<slug>-YYYYMMDD`) is drift. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
 An abstention is not a failure. It is the answer that says "no offered option fits", and the
@@ -208,9 +271,12 @@ clarifying question — and to record that the composition was a fallback.
 One line per call, printed through the injected sink and kept to the last 200 in memory. It holds:
 request id, event (`call`, `refusal`, `policy`, `model_drift`, `error`, `oversized_state`), model id,
 policy version, duration, question count, token counts, the selected enum, and a reason. When a
-provider other than TypeSafe is selected, each line also names it (`provider: "cloudflare"`); a line
-from a default node has no `provider` field, exactly as before. A model id the provider returns is
-cut to 64 characters before it is recorded or repeated in a reason.
+provider other than TypeSafe is selected, each line also names it (`provider: "cloudflare"` or
+`provider: "openrouter"`); a line from a default node has no `provider` field, exactly as before. The
+model id is the one the provider answered with, so an OpenRouter line records the dated snapshot that
+served the call. A model id the provider returns is cut to 64 characters before it is recorded or
+repeated in a reason. `GET /decision-provider` shows the most recent line's event, status, model,
+duration and reason.
 
 The same rule applies to what is stored with a decision: a composition's selector provenance and a
 search result's decider record carry `provider` only when it is not TypeSafe.
@@ -232,9 +298,10 @@ selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
 
-The second form appears only when Cloudflare is selected. The line describes the node at start-up: a
-TypeSafe key saved or removed in the settings card later changes what the selector does without changing
-that line.
+The second form appears only when another provider is selected (`on cloudflare`, `on openrouter`).
+The line describes the node at start-up: a provider chosen, or a key saved or removed, in Settings
+later changes what the selector does without changing that line. `GET /decision-provider` is the
+current answer.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one
@@ -319,12 +386,16 @@ startup.
 # Unit and boundary tests: no credentials, no network.
 pnpm exec vitest run apps/runtime/test/jev-selector.spec.ts
 pnpm exec vitest run apps/runtime/test/cloudflare-decision-provider.spec.ts apps/runtime/test/decision-provider-parity.spec.ts
+pnpm exec vitest run apps/runtime/test/openrouter-decision-provider.spec.ts apps/runtime/test/decision-provider-settings.spec.ts
 
 # Live smoke: opt-in, needs a real key, sends only synthetic state.
 CLARKCANT_JEV_LIVE=1 pnpm exec vitest run apps/runtime/test/jev-live.spec.ts
 
 # Live Clef smoke: opt-in, needs the Cloudflare settings above, sends only synthetic state.
 CLARKCANT_CLEF_LIVE=1 pnpm exec vitest run apps/runtime/test/clef-live.spec.ts
+
+# Live OpenRouter smoke: opt-in, needs OPENROUTER_API_KEY and CLARKCANT_DECISION_MODEL (a pinned slug).
+CLARKCANT_OPENROUTER_DECISION_LIVE=1 pnpm exec vitest run apps/runtime/test/openrouter-decision-live.spec.ts
 ```
 
 Each live file reports `BLOCKED` with the missing variable when it cannot run. It deliberately

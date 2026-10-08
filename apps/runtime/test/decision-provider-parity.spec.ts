@@ -20,8 +20,8 @@ import type { MiniAppCandidateSet } from "../src/mini-app-candidates.ts";
 /**
  * Changing the provider changes who answers, and nothing else.
  *
- * Each decision consumer is run twice with the same System One answer - once from TypeSafe, once from Cloudflare in
- * its envelope - and once more with each provider failing. The outcomes must match apart from the model id they name,
+ * Each decision consumer is run with the same System One answer from each provider - TypeSafe bare, Cloudflare in its
+ * envelope, OpenRouter with its own extra fields and a dated snapshot id - and once more with each provider failing. The outcomes must match apart from the model id they name,
  * and the request each provider received must carry the same redacted state and the same offered options. That is
  * the property that keeps a second provider from widening authority or skipping a redaction step: the policy and the
  * payload are built once, before any adapter sees them.
@@ -34,8 +34,13 @@ const CLOUDFLARE_ENV: NodeJS.ProcessEnv = {
   CLOUDFLARE_API_TOKEN: "cf-test-token-not-a-real-one",
   CLARKCANT_DECISION_MODEL: "clef-flash",
 };
+const OPENROUTER_ENV: NodeJS.ProcessEnv = {
+  CLARKCANT_DECISION_PROVIDER: "openrouter",
+  CLARKCANT_DECISION_MODEL: "typesafe/jev-1.13",
+  OPENROUTER_API_KEY: "or-test-key-not-a-real-one",
+};
 
-type Provider = "typesafe" | "cloudflare";
+type Provider = "typesafe" | "cloudflare" | "openrouter";
 
 interface Seen {
   state: unknown;
@@ -63,13 +68,19 @@ function answering(provider: Provider, model: string, seen: Seen[], status = 200
       const probabilities = Object.fromEntries([[chosen, 0.95], ...rest.map((option) => [option, 0.05 / rest.length])]);
       answers[id] = { type: "choice", choice: chosen, probabilities, confidence: 0.95 };
     }
-    const result = { model, answers, usage: { input_tokens: 10, output_tokens: 2 } };
+    // OpenRouter answers an unversioned slug with the dated snapshot that served it, and adds fields of its own.
+    const result =
+      provider === "openrouter"
+        ? { id: "gen-dec-test", model: `${model}-20260917`, provider: "TypeSafe", answers, usage: { input_tokens: 10, output_tokens: 2, cost: 0 } }
+        : { model, answers, usage: { input_tokens: 10, output_tokens: 2 } };
     return { status: 200, body: provider === "cloudflare" ? { success: true, errors: [], messages: [], result } : result };
   };
 }
 
 function depsFor(provider: Provider, seen: Seen[], status?: number): DecideDeps {
-  const config = decisionConfigFromEnv(provider === "cloudflare" ? CLOUDFLARE_ENV : TYPESAFE_ENV);
+  const config = decisionConfigFromEnv(
+    provider === "cloudflare" ? CLOUDFLARE_ENV : provider === "openrouter" ? OPENROUTER_ENV : TYPESAFE_ENV,
+  );
   return { jev: { config, transport: answering(provider, config.model, seen, status) }, budget: () => createJevBudget(config) };
 }
 
@@ -155,20 +166,28 @@ describe("decision consumers behave the same whichever provider answers", () => 
     it(`${name}: same outcome and same redacted payload`, async () => {
       const typesafeSeen: Seen[] = [];
       const cloudflareSeen: Seen[] = [];
+      const openrouterSeen: Seen[] = [];
       const typesafe = await run(depsFor("typesafe", typesafeSeen));
       const cloudflare = await run(depsFor("cloudflare", cloudflareSeen));
+      const openrouter = await run(depsFor("openrouter", openrouterSeen));
 
       expect(typesafeSeen.length).toBeGreaterThan(0);
       expect(withoutModel(cloudflare)).toEqual(withoutModel(typesafe));
+      expect(withoutModel(openrouter)).toEqual(withoutModel(typesafe));
       expect(cloudflareSeen).toEqual(typesafeSeen);
-      expect(JSON.stringify(cloudflareSeen)).not.toContain("sk-live-abcdef1234567890");
-      expect(JSON.stringify(cloudflareSeen)).not.toContain("an.nguyen@example.com");
+      expect(openrouterSeen).toEqual(typesafeSeen);
+      for (const seen of [cloudflareSeen, openrouterSeen]) {
+        expect(JSON.stringify(seen)).not.toContain("sk-live-abcdef1234567890");
+        expect(JSON.stringify(seen)).not.toContain("an.nguyen@example.com");
+      }
     });
 
     it(`${name}: same fallback when the provider fails`, async () => {
       const typesafe = await run(depsFor("typesafe", [], 503));
       const cloudflare = await run(depsFor("cloudflare", [], 503));
+      const openrouter = await run(depsFor("openrouter", [], 503));
       expect(withoutModel(cloudflare)).toEqual(withoutModel(typesafe));
+      expect(withoutModel(openrouter)).toEqual(withoutModel(typesafe));
     });
   }
 });

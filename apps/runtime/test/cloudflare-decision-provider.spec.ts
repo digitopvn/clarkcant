@@ -177,15 +177,21 @@ describe("selecting Cloudflare", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("takes the Cloudflare token from the environment only, never from a stored secret", async () => {
-    // A stored value here is whatever the credential store would hand back; none of it may become the bearer.
-    const stored = (): string | undefined => "stored-secret-for-another-consumer";
+  it("never takes another provider's stored key as the Cloudflare token", async () => {
+    // The vault answers by provider; a key saved for TypeSafe must not become Cloudflare's bearer.
+    const stored = (provider: string): string | undefined => (provider === "typesafe" ? "stored-typesafe-key" : undefined);
     const config = decisionConfigFromEnv(cloudflareEnv({ CLOUDFLARE_API_TOKEN: undefined }), stored);
     expect(config.apiKey).toBeUndefined();
     expect(config.enabled).toBe(false);
     const { calls } = await selectWith(config, [envelope(decisiveTemplate)]);
     expect(calls).toHaveLength(0);
     expect(decisionConfigFromEnv(cloudflareEnv(), stored).apiKey).toBe(TOKEN);
+  });
+
+  it("uses the token saved in its own card over the environment's, and the environment's when none is saved", () => {
+    const stored = (provider: string): string | undefined => (provider === "cloudflare" ? "cf-card-token" : undefined);
+    expect(decisionConfigFromEnv(cloudflareEnv(), stored).apiKey).toBe("cf-card-token");
+    expect(decisionConfigFromEnv(cloudflareEnv(), () => undefined).apiKey).toBe(TOKEN);
   });
 });
 
