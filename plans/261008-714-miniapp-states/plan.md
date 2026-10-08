@@ -35,6 +35,9 @@ retries the same way on every card; failures are never drawn as successes and mi
    changes, tests, docs.
 2. [phase-02-command-cards-and-terminal.md](phase-02-command-cards-and-terminal.md) — in review: command cards,
    sign-in panel, credential card and terminal adopt the contract; `/logout` refusal text.
+3. [phase-03-retry-and-feedback-unread.md](phase-03-retry-and-feedback-unread.md) — in review: Try again where a
+   failure is retryable (command-card rows, sign-in, feedback card); an unreadable feedback answer reads as not
+   known, with Check again. The credential manager section and cross-host staleness remain.
 
 ## Acceptance criteria
 

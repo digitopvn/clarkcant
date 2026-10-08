@@ -28,6 +28,7 @@ import {
   activeTaskGoalsMentioningIssue,
   appendEvent,
   asJsonValue,
+  claimFeedbackReport,
   getEffect,
   getFeedbackReport,
   getTask,
@@ -562,18 +563,21 @@ export async function publishFeedback(
     return { ok: false, status: 409, code: "WRONG_REPOSITORY", message: `reports go to ${FEEDBACK_REPOSITORY} only` };
   }
 
-  const anyway = input.intent === "send-anyway";
-  if (anyway && !isInconclusive(record)) {
+  // A send of this report is running on this node right now: say where it stands, and neither send nor rewrite it.
+  if (sendsInFlight(services).has(record.reportId)) return settled(record, previousStatus);
+  const anyway = input.intent === "send-anyway" && isInconclusive(record);
+  // An earlier attempt that never got a trustworthy answer: find out, and send nothing. A Send anyway pressed again
+  // after its own attempt was sent lands here too, so pressing it twice never files twice.
+  if (!anyway && (record.status === "publishing" || record.status === "unknown")) {
+    return settled(await reconcileAttempt(services, record, github.reader(), say, options), previousStatus);
+  }
+  if (input.intent === "send-anyway" && !anyway) {
     return {
       ok: false,
       status: 409,
       code: "NOT_INCONCLUSIVE",
       message: "Send anyway is only for a report whose earlier attempt cannot be found out; this one can be sent or checked",
     };
-  }
-  // An earlier attempt that never got a trustworthy answer: find out, and send nothing.
-  if (!anyway && (record.status === "publishing" || record.status === "unknown")) {
-    return settled(await reconcileAttempt(services, record, github.reader(), say, options), previousStatus);
   }
   if (input.intent === "check") {
     // Nothing was sent that could be looked for: the report stands as it is.
@@ -618,9 +622,21 @@ export async function publishFeedback(
     },
   );
 
-  const current = record;
+  // Take the report before anything is awaited, so a press that overlaps this one finds it publishing and only checks.
+  const before = record;
+  const claim = beingSent(record.reportId, say);
+  const claimedAt = ledgerNow();
+  if (!claimFeedbackReport(services.runtime.db, { reportId: record.reportId, from: record.status, publication: claim, at: claimedAt })) {
+    // Another press took it first: what it stands as now is the answer.
+    const now = getFeedbackReport(services.runtime.db, record.reportId) ?? record;
+    return settled(now.publication === undefined ? { ...now, publication: claim } : now, previousStatus);
+  }
+  const current: FeedbackReportRecord = { ...record, status: "publishing", publication: claim, updatedAt: claimedAt };
+  const inFlight = sendsInFlight(services);
+  inFlight.add(record.reportId);
   const attempt = github.withWriter((client) => sendAndReadBack(services, client, current, input.conversationId, description, options));
   if (!attempt.ok) {
+    inFlight.delete(record.reportId);
     record = save(services, record, "draft", {
       status: "needs-access",
       reportId: record.reportId,
@@ -632,7 +648,55 @@ export async function publishFeedback(
     });
     return settled(record, previousStatus);
   }
-  return settled(await attempt.result, previousStatus);
+  try {
+    return settled(await attempt.result, previousStatus);
+  } catch (cause) {
+    // Nothing settled the send: the report goes back to where it stood before this press, so it can be sent again.
+    releaseClaim(services, before);
+    throw cause;
+  } finally {
+    inFlight.delete(record.reportId);
+  }
+}
+
+/**
+ * What a report taken for one send says until that send settles, in the owner's language: a press that overlaps the
+ * send, before or while GitHub is written to, reads this rather than an internal word.
+ */
+function beingSent(reportId: string, say: (vi: string, en: string) => string): FeedbackPublication {
+  return {
+    status: "unknown",
+    reportId,
+    reason: say(
+      "Báo cáo đang được gửi. Kiểm tra lại sau giây lát; nó không được gửi hai lần.",
+      "This report is being sent now. Check again in a moment; it is not sent twice.",
+    ),
+  };
+}
+
+/** Reports a send is running for, per node database: an overlapping press reads them, never sends them. */
+const SENDS_IN_FLIGHT = new WeakMap<object, Set<string>>();
+
+function sendsInFlight(services: FeedbackServices): Set<string> {
+  const db = services.runtime.db;
+  let reports = SENDS_IN_FLIGHT.get(db);
+  if (reports === undefined) {
+    reports = new Set();
+    SENDS_IN_FLIGHT.set(db, reports);
+  }
+  return reports;
+}
+
+/** Puts a report a press took back as it stood, when the press ended without settling it, unless it moved on since. */
+function releaseClaim(services: FeedbackServices, before: FeedbackReportRecord): void {
+  const now = getFeedbackReport(services.runtime.db, before.reportId);
+  if (now?.status !== "publishing" || now.effectId !== before.effectId) return;
+  updateFeedbackReport(services.runtime.db, {
+    reportId: before.reportId,
+    status: before.status,
+    ...(before.publication === undefined ? {} : { publication: before.publication }),
+    at: ledgerNow(),
+  });
 }
 
 /** The write itself, inside the token's one use: ledger first, then GitHub, then GitHub read back. */
@@ -673,7 +737,7 @@ async function sendAndReadBack(
     services,
     record,
     "publishing",
-    { status: "unknown", reportId: record.reportId, reason: "sending" },
+    beingSent(record.reportId, say),
     { effectId: opened.effect.effectId, ...(login === undefined ? {} : { login }) },
   );
 
@@ -1060,6 +1124,8 @@ export async function reconcileUnsettledFeedback(
   let announced = 0;
   for (const record of unsettledFeedbackReports(services.runtime.db)) {
     if (record.principalId !== services.runtime.identity.ownerPrincipalId) continue;
+    // A send running now settles it itself.
+    if (sendsInFlight(services).has(record.reportId)) continue;
     const effect = record.effectId === undefined ? undefined : getEffect(services.runtime.db, record.effectId);
     const conversationId = record.conversationId ?? (effect === undefined ? undefined : getTask(services.runtime.db, effect.taskId)?.conversationId);
     const described = await publishAndDescribe(

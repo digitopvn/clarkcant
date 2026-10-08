@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
-import { COMMAND_BADGE_PHASE, type CommandCard, type SurfacePhase, type SurfaceStatus, settleSurfaceStatus } from "@clarkcant/contracts";
+import { COMMAND_BADGE_PHASE, type CommandCard, type SurfacePhase, type SurfaceStatus, canRetry, settleSurfaceStatus } from "@clarkcant/contracts";
 
 import type { BlockActions, CommandActionState, FolderEntryReason } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -40,13 +40,31 @@ export function settleCommandAction(current: CommandActionState | undefined, inc
   return settleSurfaceStatus(shownStatus, asSurfaceStatus(incoming)) === shownStatus ? current : incoming;
 }
 
+/** Which of a row's buttons holds the latest press, or -1 when none was pressed. */
+function latestCommandIndex(states: readonly (CommandActionState | undefined)[]): number {
+  let latest = -1;
+  states.forEach((state, index) => {
+    if (state === undefined) return;
+    const shown = latest === -1 ? undefined : states[latest];
+    if (shown === undefined || (state.attempt ?? 0) > (shown.attempt ?? 0)) latest = index;
+  });
+  return latest;
+}
+
 /** The press a row speaks for: the latest among its buttons, so an older press on a sibling button never shows over it. */
 export function latestCommandAction(states: readonly (CommandActionState | undefined)[]): CommandActionState | undefined {
-  let latest: CommandActionState | undefined;
-  for (const state of states) {
-    if (state !== undefined && (latest === undefined || (state.attempt ?? 0) > (latest.attempt ?? 0))) latest = state;
-  }
-  return latest;
+  const index = latestCommandIndex(states);
+  return index === -1 ? undefined : states[index];
+}
+
+/**
+ * Whether a settled press offers Try again, by the shared status's rule (`canRetry`): only a failure whose press did not
+ * get through and is safe to send again says `next: "retry"`. A refusal the node decided, and a reply this app cannot
+ * read, offer nothing to repeat.
+ */
+export function commandActionRetryable(state: CommandActionState | undefined): boolean {
+  if (state === undefined) return false;
+  return canRetry({ phase: COMMAND_ACTION_PHASE[state.status], ...(state.status === "failed" && state.next !== undefined ? { next: state.next } : {}) });
 }
 
 export function CommandCardBlock({
@@ -108,8 +126,11 @@ function CommandRow({
    * failure would hide behind a newer success.
    */
   const pending = states.some((state) => state?.status === "pending");
-  const latest = latestCommandAction(states);
+  const latestIndex = latestCommandIndex(states);
+  const latest = latestIndex === -1 ? undefined : states[latestIndex];
   const settled = latest === undefined || latest.status === "pending" ? undefined : latest;
+  // Try again repeats the press the row shows, through the same path its button takes.
+  const retryEntry = commandActionRetryable(settled) ? row.actions[latestIndex] : undefined;
   const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
   const busy = pending || signingIn;
   /** The row's buttons, so focus returns to the one that opened a folder path field once that field closes. */
@@ -175,6 +196,27 @@ function CommandRow({
           >
             {pending ? t("commandCard.working") : settled?.message}
           </LiveNote>
+          {retryEntry === undefined ? null : (
+            <button
+              type="button"
+              className="cc-chip"
+              data-command-retry={retryEntry.actionId}
+              aria-disabled={busy ? "true" : undefined}
+              onClick={() => {
+                if (busy) return;
+                // The press's own button keeps the focus while the press runs again; this one goes away with the failure.
+                buttons.current.get(retryEntry.actionId)?.focus();
+                const root = settled?.status === "failed" ? settled.root : undefined;
+                if (retryEntry.action.kind === "develop-folder" && root !== undefined) {
+                  actions?.onFolderEntrySubmit?.({ cardId, rowId: row.rowId, actionId: retryEntry.actionId, root });
+                  return;
+                }
+                actions?.onCommandAction?.({ cardId, rowId: row.rowId, actionId: retryEntry.actionId, action: retryEntry.action });
+              }}
+            >
+              {t("surface.retry")}
+            </button>
+          )}
         </div>
       ) : null}
       {signIn === undefined ? null : (

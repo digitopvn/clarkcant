@@ -15,7 +15,7 @@ import { settleCommandAction } from "./command-card.tsx";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
-import { nodeViewRefusalText, refusalReason, refusalSentence } from "./node-view-refusal.ts";
+import { nodeDecidedRefusal, nodeViewRefusalText, refusalReason, refusalSentence, retryNext, retryableFailure } from "./node-view-refusal.ts";
 import type { TerminalFirstState } from "./terminal-card.tsx";
 import { signInStartRefused, signOutRefused, signOutSettled, useProviderSignIns } from "./use-provider-sign-ins.ts";
 import { useModelPickerPort } from "./use-model-picker-port.ts";
@@ -104,6 +104,68 @@ export function feedbackRefusalReason(error: unknown, t: (key: MessageKey) => st
 }
 
 /**
+ * What a feedback press that did not come back as an answer this app could read settles on.
+ *
+ * - The node answered the publish, but this app cannot read the answer (`NodeViewUnreadable`): the report may have been
+ *   filed or not, so the card says exactly that — never "failed" with the schema's text — and offers Check again, which
+ *   only asks the node where the report stands.
+ * - The publish was sent and anything but a refusal the node decided came back (`nodeDecidedRefusal`): a dropped
+ *   connection, a timeout, a relay's 408/429/502/503/504 including its HTML error page, or the node's own 500, which
+ *   can follow a GitHub write that went through. The node may have filed it, so the card says it is not known yet —
+ *   never "not filed" — and offers Check again, plus Try again where the press may go through when sent again
+ *   (`retryableFailure`). Pressing the publish again is safe: the node answers a report it already holds, or is still
+ *   sending, with where it stands and never files it twice.
+ * - A Check again that did not go through: a check never files anything, so the report stays not known, with the
+ *   reason, and Check again stays offered. Only the node's own answer that it never sent the report (`NOTHING_SENT`)
+ *   says it is not on GitHub, in the app's words, because that is the node's fact rather than a guess.
+ * - The node answered the preparation and this app cannot read it: nothing was filed. Said in words, with nothing to
+ *   repeat, since the same request would bring the same answer back.
+ * - Anything else did not get through. A press that did not reach the node or timed out before the publish was sent
+ *   offers Try again (`next: "retry"`); a refusal the node decided says its reason and offers nothing to repeat.
+ */
+export function feedbackPressFailed(
+  error: unknown,
+  t: (key: MessageKey) => string,
+  press: { press: "preview" | "create"; intent?: FeedbackPublishIntent; reportId?: string; requestKey?: string; published: boolean },
+): FeedbackCardState {
+  const kept = {
+    ...(press.reportId === undefined ? {} : { reportId: press.reportId }),
+    ...(press.requestKey === undefined ? {} : { requestKey: press.requestKey }),
+  };
+  if (press.published && press.reportId !== undefined) {
+    const notKnown = { status: "unknown" as const, ...kept, reportId: press.reportId };
+    const unread = nodeViewRefusalText(error, t, "feedback.unread");
+    if (unread !== undefined) return { ...notKnown, message: unread };
+    const reason = { reason: feedbackRefusalReason(error, t) };
+    if (press.intent === "check") {
+      // The node's own answer that it never sent this report is a fact, not a guess: nothing is on GitHub.
+      if (error instanceof GatewayError && error.code === "NOTHING_SENT") return { status: "failed", message: t("feedback.check.nothingSent"), ...kept };
+      return { ...notKnown, message: fillMessage(t("feedback.notKnown.check"), reason) };
+    }
+    // Only a refusal the node decided says the report was not filed; anything else may have come after GitHub kept it.
+    if (!nodeDecidedRefusal(error)) {
+      return {
+        ...notKnown,
+        message: fillMessage(t("feedback.notKnown.sent"), reason),
+        ...(retryableFailure(error) ? { next: "retry" as const } : {}),
+        press: "create",
+        ...(press.intent === undefined ? {} : { intent: press.intent }),
+      };
+    }
+  }
+  const unreadPrepared = nodeViewRefusalText(error, t, "shell.nodeView.read");
+  if (unreadPrepared !== undefined) return { status: "failed", message: unreadPrepared, ...kept };
+  return {
+    status: "failed",
+    message: feedbackRefusalReason(error, t),
+    ...kept,
+    press: press.press,
+    ...(press.intent === undefined ? {} : { intent: press.intent }),
+    ...retryNext(error),
+  };
+}
+
+/**
  * Approval refusals this client words itself, by the node's code. The node's own sentence for these is English, and
  * each has a fact the person can act on: the request changed under them (`APPROVAL_FORGED` is what `decideApproval`
  * answers when the digest the approver saw no longer matches), it expired, someone else decided it, or its task moved on.
@@ -155,7 +217,9 @@ export function questionRefusalText(error: unknown, t: (key: MessageKey) => stri
  */
 export function feedbackReportToReuse(previous: FeedbackCardState | undefined, requestKey: string): string | undefined {
   if (previous?.status === "prepared" && previous.requestKey === requestKey) return previous.draft.reportId;
-  if (previous?.status === "failed" && previous.reportId !== undefined && previous.requestKey === requestKey) return previous.reportId;
+  if ((previous?.status === "failed" || previous?.status === "unknown") && previous.reportId !== undefined && previous.requestKey === requestKey) {
+    return previous.reportId;
+  }
   return undefined;
 }
 
@@ -186,10 +250,12 @@ export function developOutcomeMessage(view: WidgetDevSessionRead, t: (key: Messa
  * "failed" with the schema's text. What the session is doing is not known, so the state is `unknown` (drawn partial),
  * never a success. Any other error is a start that did not happen, said as the node's reason.
  */
-export function developStartRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
+export function developStartRefused(error: unknown, t: (key: MessageKey) => string, root?: string): CommandActionState {
   const unread = nodeViewRefusalText(error, t, "commandCard.develop.startedUnread");
   if (unread !== undefined) return { status: "unknown", message: unread };
-  return { status: "failed", message: fillMessage(t("commandCard.develop.startFailed"), { reason: refusalReason(error) }) };
+  // A start for a folder the node already watches picks that session up again, so starting the same folder again is safe.
+  const retry = retryableFailure(error) ? { next: "retry" as const, ...(root === undefined ? {} : { root }) } : {};
+  return { status: "failed", message: fillMessage(t("commandCard.develop.startFailed"), { reason: refusalReason(error) }), ...retry };
 }
 
 /**
@@ -202,7 +268,7 @@ export function developStartRefused(error: unknown, t: (key: MessageKey) => stri
 export function forgetRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
   const unread = nodeViewRefusalText(error, t, "shell.nodeView.answered");
   if (unread !== undefined) return { status: "unknown", message: unread };
-  return { status: "failed", message: fillMessage(t("commandCard.develop.forgetFailed"), { reason: refusalReason(error) }) };
+  return { status: "failed", message: fillMessage(t("commandCard.develop.forgetFailed"), { reason: refusalReason(error) }), ...retryNext(error) };
 }
 
 /** What a Forget press did, saying so when the folder stays reachable through a folder that holds it. */
@@ -400,7 +466,7 @@ export function commandPresses(deps: CommandPressDeps): CommandPresses {
     settle(key, attempt, { status: "pending" });
     void client.startWidgetDevSession({ root, conversationId }).then(
       (view) => settle(key, attempt, { status: "done", message: developOutcomeMessage(view, t, root) }),
-      (error: unknown) => settle(key, attempt, developStartRefused(error, t)),
+      (error: unknown) => settle(key, attempt, developStartRefused(error, t, root)),
     );
   };
 
@@ -420,7 +486,11 @@ export function commandPresses(deps: CommandPressDeps): CommandPresses {
         void client.writePreference("ai.thinkingLevel", action.level).then(
           () => settleThis({ status: "done", message: t("commandCard.thinking.set") }),
           (error: unknown) =>
-            settleThis({ status: "failed", message: fillMessage(t("commandCard.thinking.failed"), { reason: refusalReason(error) }) }),
+            settleThis({
+              status: "failed",
+              message: fillMessage(t("commandCard.thinking.failed"), { reason: refusalReason(error) }),
+              ...retryNext(error),
+            }),
         );
         return;
       case "provider-sign-in":
@@ -865,21 +935,16 @@ export function useBlockActions({
     (cardId: string, state: FeedbackCardState) => setFeedback((current) => ({ ...current, [cardId]: state })),
     [],
   );
-  const failFeedback = useCallback(
-    (cardId: string, error: unknown) =>
-      settleFeedback(cardId, { status: "failed", message: feedbackRefusalReason(error, t) }),
-    [settleFeedback, t],
-  );
-
   const previewFeedback = useCallback(
     ({ cardId, request }: { cardId: string; request: FeedbackRequestInput }) => {
+      const requestKey = JSON.stringify(request);
       settleFeedback(cardId, { status: "preparing" });
       void client.prepareFeedback(request, conversationId).then(
-        (prepared) => settleFeedback(cardId, { status: "prepared", requestKey: JSON.stringify(request), ...prepared }),
-        (error: unknown) => failFeedback(cardId, error),
+        (prepared) => settleFeedback(cardId, { status: "prepared", requestKey, ...prepared }),
+        (error: unknown) => settleFeedback(cardId, feedbackPressFailed(error, t, { press: "preview", requestKey, published: false })),
       );
     },
-    [client, conversationId, failFeedback, settleFeedback],
+    [client, conversationId, settleFeedback, t],
   );
 
   const createFeedback = useCallback(
@@ -891,6 +956,8 @@ export function useBlockActions({
       // The report this press is about. A press that did not get through keeps its report, so pressing again for the
       // same words acts on that one — which the node may already have sent — and never prepares a second.
       let acting: string | undefined = reportId;
+      // Whether the publish itself was asked: only its answer can leave a report filed or not without this app knowing.
+      let published = false;
       const reportOf = async (): Promise<string> => {
         if (reportId !== undefined) return reportId;
         if (request === undefined || requestKey === undefined) throw new Error(t("commandCard.failed"));
@@ -899,6 +966,7 @@ export function useBlockActions({
       void reportOf()
         .then((id) => {
           acting = id;
+          published = true;
           return client.publishFeedback(id, conversationId, { intent, answers: cardId });
         })
         .then(
@@ -907,12 +975,16 @@ export function useBlockActions({
             settleFeedback(cardId, { status: "done", publication: result.publication });
           },
           (error: unknown) =>
-            settleFeedback(cardId, {
-              status: "failed",
-              message: feedbackRefusalReason(error, t),
-              ...(acting === undefined ? {} : { reportId: acting }),
-              ...(requestKey === undefined ? {} : { requestKey }),
-            }),
+            settleFeedback(
+              cardId,
+              feedbackPressFailed(error, t, {
+                press: "create",
+                intent,
+                published,
+                ...(acting === undefined ? {} : { reportId: acting }),
+                ...(requestKey === undefined ? {} : { requestKey }),
+              }),
+            ),
         );
     },
     [applyTimeline, client, conversationId, settleFeedback, t],

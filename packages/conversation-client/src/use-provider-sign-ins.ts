@@ -5,7 +5,7 @@ import type { ProviderSignInView } from "@clarkcant/contracts";
 import type { GatewayClient } from "./api.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
-import { refusalReason } from "./node-view-refusal.ts";
+import { refusalReason, retryNext } from "./node-view-refusal.ts";
 
 /** Often enough that a finished browser sign-in shows within a moment, rarely enough to stay quiet. */
 const SIGN_IN_POLL_MS = 1500;
@@ -30,13 +30,15 @@ export interface ProviderSignIns {
 
 /**
  * What a sign-in, sign-out press settles on, in the same words wherever it was pressed: a `/login` or `/logout` card
- * row and a Settings provider row say the same thing about the same answer.
+ * row and a Settings provider row say the same thing about the same answer. `next: "retry"` when the press did not reach
+ * the node and pressing it again is safe (`retryableFailure`): the node answers a second start with the sign-in already
+ * running, and a second sign-out with nothing left to remove.
  */
-export type ProviderPressOutcome = { status: "done" | "failed"; message: string };
+export type ProviderPressOutcome = { status: "done" | "failed"; message: string; next?: "retry" };
 
 /** A sign-in that could not start, with the node's own reason and never its code. */
 export function signInStartRefused(error: unknown, t: (key: MessageKey) => string): ProviderPressOutcome {
-  return { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: refusalReason(error) }) };
+  return { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: refusalReason(error) }), ...retryNext(error) };
 }
 
 /** A sign-out the node answered: removed, or nothing to remove. */
@@ -46,7 +48,7 @@ export function signOutSettled(result: { signedOut: boolean }, t: (key: MessageK
 
 /** A sign-out that did not happen: the credential is still there, with the node's reason and never its code. */
 export function signOutRefused(error: unknown, t: (key: MessageKey) => string): ProviderPressOutcome {
-  return { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: refusalReason(error) }) };
+  return { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: refusalReason(error) }), ...retryNext(error) };
 }
 
 export type ProviderSignInPort = Pick<

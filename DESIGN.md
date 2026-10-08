@@ -879,6 +879,40 @@ whether it can be retried, and whether it is still current.
   whose retry repeats the same answer passes through `pending` first, so the
   same failure twice is said twice. `canRetry` offers a retry only for `error`
   or `partial` when the domain names `retry` or `check-again`.
+- **Try again only where it can help.** A press that did not reach the node or
+  got no answer in time (a network failure, a timeout, a relay or the node
+  briefly unavailable) names `retry`, and the card offers **Try again** beside
+  the failure: command-card rows (`/thinking`, `/login`, `/logout`, `/develop`
+  and Forget) and the feedback card. Try again sends the same press through the
+  same path, reachable by pointer and keyboard like the press itself, and by
+  voice as the same command spoken again; each of those presses is one the node
+  answers safely a second time. The node takes a report for one send before it
+  asks GitHub anything, so a second publish that overlaps the first finds it
+  being sent and only says where it stands, and a report the node already sent
+  is checked, never sent again; this holds for Send anyway too. A refusal the
+  node decided (policy, a conflict, its own failure) and an answer this app
+  cannot read offer nothing to repeat, because sending them again would bring
+  the same answer back, and their words do not say "you can try again". When
+  Try again or Check again goes away while its press runs, keyboard focus moves
+  to the card's press note, which says what the press came to. A terminal view
+  whose code did not load offers no Try again either, because the browser keeps
+  that failure for the page's life; its notice says that reloading the app loads
+  it again.
+- **Filed or not is not known.** When the node answers Create issue and this app
+  cannot read the answer, the report may have been filed or not. The card says
+  exactly that, as `partial` and never as "failed" with the schema's text, using
+  the node-view refusal lead and the version sentence, and offers **Check
+  again**, which only asks the node where the report stands. The same holds
+  whenever the publish was sent and what came back is not a refusal the node
+  decided (a 4xx it wrote): a dropped connection, a timeout, a relay's 408, 429,
+  502, 503 or 504 (its HTML error page too), or the node's own 500, which can
+  follow a GitHub write that went through. The node may have filed it, so the
+  card never says "not filed"; it says the outcome is not known yet, with Check
+  again, and with Try again where sending the press again can go through. A
+  press that lands while the node is still sending the report is told so in the
+  person's language. A Check again that does not go through keeps the report
+  not known, with the reason, because a check never files anything. Only the
+  node's own answer that it never sent the report says it is not on GitHub.
 
 ### 8.4 Local vs effect actions
 

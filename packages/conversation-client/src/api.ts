@@ -3072,7 +3072,10 @@ export class GatewayClient {
       request,
       ...(conversationId === undefined ? {} : { conversationId }),
     });
-    return feedbackPrepareResponseSchema.parse(body);
+    // An answer this app cannot read is said as such (`NodeViewUnreadable`), never as the schema's own text.
+    const read = feedbackPrepareResponseSchema.safeParse(body);
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.data;
   }
 
   /**
@@ -3089,7 +3092,11 @@ export class GatewayClient {
       ...(options.intent === undefined ? {} : { intent: options.intent }),
       ...(options.answers === undefined ? {} : { answers: options.answers }),
     });
-    return { ...feedbackPublishResponseSchema.parse(body), timeline: body.timeline };
+    // The node answered, so the report may have been filed: an answer this app cannot read is `NodeViewUnreadable`, which
+    // the card says as "not known whether it was filed", never as a failure with the schema's text.
+    const read = feedbackPublishResponseSchema.safeParse(body);
+    if (!read.success) throw await this.#unreadable(read.error);
+    return { ...read.data, timeline: body.timeline };
   }
 
   /** The same, from the inbox's list of quieted kinds, for a kind with no notice left to act from. */

@@ -1,16 +1,19 @@
 import { useState, type ReactElement } from "react";
 
-import type {
-  DiagnosticLine,
-  FeedbackCard,
-  FeedbackKind,
-  FeedbackPublication,
-  FeedbackPublishIntent,
-  FeedbackRequestInput,
+import {
+  type DiagnosticLine,
+  type FeedbackCard,
+  type FeedbackKind,
+  type FeedbackPublication,
+  type FeedbackPublishIntent,
+  type FeedbackRequestInput,
+  type SurfacePhase,
+  canRetry,
 } from "@clarkcant/contracts";
 
 import type { BlockActions, FeedbackCardState } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
+import { LiveNote } from "./surface-status.tsx";
 
 /**
  * The host-owned Feedback Composer and its result, in the conversation (#510).
@@ -29,6 +32,112 @@ import type { MessageKey } from "./i18n/messages.ts";
  */
 
 type T = (key: MessageKey) => string;
+
+/** Where a press on a feedback card stands, read through the shared status contract: a reply nobody can read is partial. */
+export const FEEDBACK_PRESS_PHASE: Record<FeedbackCardState["status"], SurfacePhase | undefined> = {
+  preparing: "pending",
+  // A preview is shown in place, not said: nothing happened that the person has to hear about.
+  prepared: undefined,
+  publishing: "pending",
+  done: "success",
+  failed: "error",
+  unknown: "partial",
+};
+
+function pressText(state: FeedbackCardState, t: T): string | undefined {
+  switch (state.status) {
+    case "preparing":
+      return t("feedback.preview.loading");
+    case "publishing":
+      return t(state.intent === "check" ? "feedback.checking" : "feedback.creating");
+    case "done":
+      return t("feedback.created");
+    case "failed":
+      // An answer this app cannot read is already a whole sentence; any other failure is the node's reason in the card's,
+      // which says the press can be tried again only where Try again is offered beside it.
+      if (state.press === undefined) return state.message;
+      return fill(t(state.next === "retry" ? "feedback.failed" : "feedback.failed.final"), { reason: state.message });
+    case "unknown":
+      return state.message;
+    case "prepared":
+      return undefined;
+  }
+}
+
+/** A press that can be made again as it was: one that did not get through, or a publish whose outcome is not known. */
+type RepeatablePress = Extract<FeedbackCardState, { status: "failed" | "unknown" }>;
+
+/**
+ * Moves focus from a pressed Try again or Check again to the note around it, which stays while the press runs and says
+ * what it comes to: the button itself goes away with the state it was offered for, and focus must not fall to the page.
+ */
+function keepFocusOnNote(event: { currentTarget: Element } | undefined): void {
+  const note = event?.currentTarget.closest<HTMLElement>("[data-feedback-press]");
+  note?.focus();
+}
+
+/**
+ * What a press on a feedback card came to, in live regions mounted with the card, so the answer is heard when it
+ * arrives: a failure interrupts, anything else waits its turn. Beside it, what can help: Try again when the press did
+ * not get through or its outcome is not known, and sending it again is safe (`canRetry`); Check again whenever whether
+ * the report was filed is not known. Nothing is offered for a refusal the node decided.
+ */
+function FeedbackPressNote({
+  state,
+  t,
+  onRetry,
+  onCheck,
+}: {
+  state: FeedbackCardState | undefined;
+  t: T;
+  /** Repeats the press that failed; absent where the card cannot repeat it as it was (the words changed since). */
+  onRetry?: (state: RepeatablePress) => void;
+  /** Asks the node where the report stands; absent where the card already offers that press. */
+  onCheck?: (reportId: string) => void;
+}): ReactElement {
+  const phase = state === undefined ? undefined : FEEDBACK_PRESS_PHASE[state.status];
+  const retry =
+    (state?.status === "failed" || state?.status === "unknown") && canRetry({ phase: "error", ...(state.next === undefined ? {} : { next: state.next }) })
+      ? state
+      : undefined;
+  return (
+    <div className="cc-feedback-press" data-feedback-press tabIndex={-1}>
+      <LiveNote phase={phase} className="cc-command-status" data-result={state?.status === "done" || state?.status === "failed" || state?.status === "unknown" ? state.status : undefined}>
+        {state === undefined ? undefined : pressText(state, t)}
+      </LiveNote>
+      {retry === undefined || onRetry === undefined ? null : (
+        <div className="cc-command-actions">
+          <button
+            type="button"
+            className="cc-chip"
+            data-feedback-retry
+            onClick={(event?: { currentTarget: Element }) => {
+              keepFocusOnNote(event);
+              onRetry(retry);
+            }}
+          >
+            {t("surface.retry")}
+          </button>
+        </div>
+      )}
+      {state?.status !== "unknown" || onCheck === undefined ? null : (
+        <div className="cc-command-actions">
+          <button
+            type="button"
+            className="cc-chip"
+            data-feedback-check-unread
+            onClick={(event?: { currentTarget: Element }) => {
+              keepFocusOnNote(event);
+              onCheck(state.reportId);
+            }}
+          >
+            {t("feedback.checkAgain")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function fill(text: string, values: Record<string, string>): string {
   return Object.entries(values).reduce((acc, [key, value]) => acc.split(`{${key}}`).join(value), text);
@@ -137,21 +246,13 @@ function FeedbackPrepared({ block, t, actions }: { block: FeedbackCard; t: T; ac
         </details>
         {actions === undefined ? null : (
           <div className="cc-form-foot">
-            {busy ? (
-              <p className="cc-command-status" role="status">
-                {t("feedback.creating")}
-              </p>
-            ) : done ? (
-              <p className="cc-command-status" role="status" data-result="done">
-                {t("feedback.created")}
-              </p>
-            ) : state?.status === "failed" ? (
-              <p className="cc-command-status" role="status" data-result="failed">
-                {fill(t("feedback.failed"), { reason: state.message })}
-              </p>
-            ) : (
-              <p className="cc-list-subtitle">{t("feedback.prepared.notSent")}</p>
-            )}
+            {state === undefined || state.status === "prepared" ? <p className="cc-list-subtitle">{t("feedback.prepared.notSent")}</p> : null}
+            <FeedbackPressNote
+              state={state}
+              t={t}
+              onRetry={(failed) => actions.onFeedbackCreate?.({ cardId: block.cardId, reportId, intent: failed.intent ?? "send" })}
+              onCheck={(id) => actions.onFeedbackCreate?.({ cardId: block.cardId, reportId: id, intent: "check" })}
+            />
             {done ? null : (
               <div className="cc-command-actions">
                 <button
@@ -238,7 +339,8 @@ function FeedbackComposer({
   const busy = state?.status === "preparing" || state?.status === "publishing";
   const done = state?.status === "done";
   const empty = description.trim() === "";
-  const preview = state?.status === "prepared" && state.requestKey === JSON.stringify(request) ? state : undefined;
+  const requestKey = JSON.stringify(request);
+  const preview = state?.status === "prepared" && state.requestKey === requestKey ? state : undefined;
   const idPrefix = `feedback-${block.cardId}`;
   return (
     <section className="cc-card cc-feedback-card" data-owner="host" data-feedback-stage="compose" aria-label={t("feedback.title.compose")}>
@@ -313,19 +415,28 @@ function FeedbackComposer({
           </div>
         )}
         <div className="cc-form-foot">
-          {state?.status === "preparing" || state?.status === "publishing" ? (
-            <p className="cc-command-status" role="status">
-              {t(state.status === "preparing" ? "feedback.preview.loading" : "feedback.creating")}
-            </p>
-          ) : state?.status === "done" ? (
-            <p className="cc-command-status" role="status" data-result="done">
-              {t("feedback.created")}
-            </p>
-          ) : state?.status === "failed" ? (
-            <p className="cc-command-status" role="status" data-result="failed">
-              {fill(t("feedback.failed"), { reason: state.message })}
-            </p>
-          ) : null}
+          <FeedbackPressNote
+            state={state}
+            t={t}
+            // The same press again, only while the words are the ones it was for: other words are another report.
+            {...((state?.status === "failed" || state?.status === "unknown") && state.requestKey === requestKey
+              ? {
+                  onRetry: (failed: RepeatablePress) =>
+                    failed.press === "preview"
+                      ? actions?.onFeedbackPreview?.({ cardId: block.cardId, request })
+                      : actions?.onFeedbackCreate?.({ cardId: block.cardId, request, ...(failed.intent === undefined ? {} : { intent: failed.intent }) }),
+                }
+              : {})}
+            // The words go with the check only while they are the report's, so a later Create for them acts on it again.
+            onCheck={(id) =>
+              actions?.onFeedbackCreate?.({
+                cardId: block.cardId,
+                reportId: id,
+                intent: "check",
+                ...(state?.status === "unknown" && state.requestKey === requestKey ? { request } : {}),
+              })
+            }
+          />
           {done ? null : (
             <div className="cc-command-actions">
               <button
@@ -398,8 +509,12 @@ export function FeedbackResult({ block, t, actions }: { block: FeedbackCard; t: 
         type="button"
         className="cc-action"
         {...{ [marker]: true }}
-        disabled={busy}
-        onClick={() => actions?.onFeedbackCreate?.({ cardId: block.cardId, reportId, intent })}
+        // aria-disabled, not disabled: a disabled button drops the focus that pressed it to the page.
+        aria-disabled={busy ? "true" : undefined}
+        onClick={() => {
+          if (busy) return;
+          actions?.onFeedbackCreate?.({ cardId: block.cardId, reportId, intent });
+        }}
       >
         {t(label)}
       </button>
@@ -458,14 +573,16 @@ export function FeedbackResult({ block, t, actions }: { block: FeedbackCard; t: 
         {publication.status === "unknown" && inconclusive === undefined ? press("feedback.checkAgain", "data-feedback-check", "check") : null}
         {inconclusive === undefined ? null : press("feedback.sendAnyway", "data-feedback-send-anyway", "send-anyway")}
         {publication.status === "failed" && publication.retryable ? press("feedback.sendAgain", "data-feedback-send-again", "send") : null}
-        {state?.status === "publishing" ? (
-          <p className="cc-command-status" role="status">
-            {t(state.intent === "check" ? "feedback.checking" : "feedback.creating")}
-          </p>
-        ) : state?.status === "failed" ? (
-          <p className="cc-command-status" role="status" data-result="failed">
-            {fill(t("feedback.failed"), { reason: state.message })}
-          </p>
+        {live ? (
+          <FeedbackPressNote
+            state={state}
+            t={t}
+            onRetry={(failed) => actions?.onFeedbackCreate?.({ cardId: block.cardId, reportId, intent: failed.intent ?? "send" })}
+            // Where the card already offers Check again for this report, that press is the way to check.
+            {...(publication.status === "unknown" && inconclusive === undefined
+              ? {}
+              : { onCheck: (id: string) => actions?.onFeedbackCreate?.({ cardId: block.cardId, reportId: id, intent: "check" }) })}
+          />
         ) : null}
         <PhilosophyFit block={block} t={t} />
         <RelatedIssues block={block} t={t} />
