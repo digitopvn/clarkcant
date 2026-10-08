@@ -24,8 +24,19 @@ const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined, c
 /** A folder whose file id reads as another one, as a FUSE mount without stable inode numbers reports a folder still there. */
 const statNewId = vi.hoisted(() => ({ path: undefined as string | undefined, flap: false, shift: 0n, step: 1n }));
 
+/** Runs once just before this file is read: a build reading its manifest, at the moment something else changes the folder. */
+const beforeRead = vi.hoisted(() => ({ path: undefined as string | undefined, run: undefined as (() => void) | undefined }));
+
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
+  const readFileSync = ((path: fs.PathOrFileDescriptor, options?: Parameters<typeof actual.readFileSync>[1]) => {
+    if (beforeRead.run !== undefined && typeof path === "string" && resolve(path) === beforeRead.path) {
+      const run = beforeRead.run;
+      beforeRead.run = undefined;
+      run();
+    }
+    return actual.readFileSync(path, options);
+  }) as typeof actual.readFileSync;
   const statSync = ((path: fs.PathLike, options?: fs.StatSyncOptions) => {
     if (statFailure.path !== undefined && resolve(String(path)) === statFailure.path) {
       throw Object.assign(new Error(`${statFailure.code}: operation not permitted, stat '${String(path)}'`), { code: statFailure.code });
@@ -38,7 +49,7 @@ vi.mock("node:fs", async (importOriginal) => {
     }
     return stat;
   }) as typeof actual.statSync;
-  return { ...actual, statSync, default: { ...actual, statSync } };
+  return { ...actual, statSync, readFileSync, default: { ...actual, statSync, readFileSync } };
 });
 
 /**
@@ -104,6 +115,8 @@ function engineFor(root: string, cacheRoot?: string): DevEngine {
 }
 
 afterEach(() => {
+  beforeRead.path = undefined;
+  beforeRead.run = undefined;
   statFailure.path = undefined;
   statNewId.path = undefined;
   statNewId.flap = false;
@@ -628,20 +641,195 @@ describe("the dev engine", () => {
     const root = tempDir("dev-engine-");
     writePackage(root, "<p>one</p>");
     let gone = 0;
-    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 20, rootMissingGraceMs: 400, onRootGone: () => (gone += 1) });
+    const built: string[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      rootMissingGraceMs: 400,
+      onRootGone: () => (gone += 1),
+      onBuild: (event) => built.push(event.kind),
+    });
     engines.push(engine);
     await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    const good = engine.lastBuild();
 
     rmSync(root, { recursive: true, force: true });
-    // A build that overlaps the absence fails on the missing files, and the folder is not gone for that.
-    expect((await engine.rebuild()).kind).toBe("failed");
+    // A rebuild asked for while the folder may still come back waits for it rather than failing on the missing files.
+    let settled = false;
+    const rebuilt = engine.rebuild().finally(() => (settled = true));
+    await new Promise((done) => setTimeout(done, 150));
+    expect(settled).toBe(false);
     expect(engine.rootGone()).toBe(false);
     expect(engine.watching()).toBe(true);
+    expect(engine.lastBuild()).toBe(good);
 
-    const deadline = Date.now() + 5_000;
-    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    // Not back within the grace: the rebuild settles with why nothing was built, and the folder is gone.
+    const event = await rebuilt;
+    expect(event.kind).toBe("failed");
+    expect(event.build.diagnostics).toEqual([expect.objectContaining({ code: "FILES_UNREADABLE" })]);
     expect(gone).toBe(1);
     expect(engine.rootGone()).toBe(true);
+    expect(built).toEqual([]);
+  });
+
+  it("holds a build that fails because the folder went while it ran, and builds the folder once when it is back", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const built: string[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      onRootGone: () => (gone += 1),
+      onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`),
+    });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    built.length = 0;
+    const good = engine.lastBuild();
+
+    // The folder goes just as the rebuild reads it, so that build fails on the missing files.
+    beforeRead.path = join(engine.root, "clarkcant.json");
+    beforeRead.run = () => rmSync(engine.root, { recursive: true, force: true });
+    let settled = false;
+    const rebuilt = engine.rebuild().finally(() => (settled = true));
+    await new Promise((done) => setTimeout(done, 200));
+    expect(beforeRead.run).toBeUndefined();
+    expect(settled).toBe(false);
+    expect(built).toEqual([]);
+    expect(engine.lastBuild()).toBe(good);
+    expect(engine.rootGone()).toBe(false);
+
+    writePackage(root, "<p>made again</p>");
+    const event = await rebuilt;
+    expect(event.kind).toBe("generation");
+    expect(event.build.trigger).toBe("rebuild");
+    // Past the catch-up build of the new watcher, and any change the build itself made the platform report.
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 300));
+    expect(built).toEqual(["rebuild:generation"]);
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(gone).toBe(0);
+  });
+
+  it("builds a folder another process makes again exactly once, with no failed build, though rebuilds overlap the absence", async () => {
+    const base = tempDir("dev-engine-");
+    const root = join(base, "out");
+    const source = join(base, "source");
+    writePackage(root, "<p>one</p>");
+    writePackage(source, "<p>made again by another process</p>");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    let gone = 0;
+    const failures: Error[] = [];
+    const built: string[] = [];
+    const engine = startDevEngine({
+      root,
+      cacheRoot,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 50,
+      onRootGone: () => (gone += 1),
+      onWatchError: (error) => failures.push(error),
+      onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`),
+    });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    built.length = 0;
+
+    // As a build tool in its own process: delete the output folder, work for a moment, then write it again.
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, source] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(source, out, { recursive: true }), 500);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    const exited = new Promise((done) => child.on("exit", done));
+    const missing = Date.now() + 5_000;
+    while (existsSync(root) && Date.now() < missing) await new Promise((done) => setTimeout(done, 5));
+    // Rebuilds asked for while the folder is missing, as saves and a person asking again would.
+    const rebuilds: Promise<{ kind: string }>[] = [];
+    for (let round = 0; round < 4; round += 1) {
+      rebuilds.push(engine.rebuild());
+      await new Promise((done) => setTimeout(done, 60));
+    }
+    expect(await exited).toBe(0);
+
+    const events = await Promise.all(rebuilds);
+    expect(events.map((event) => event.kind)).toEqual(["generation", "generation", "generation", "generation"]);
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 300));
+    expect(built).toEqual(["rebuild:generation"]);
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(engine.lastBuild()?.ok).toBe(true);
+    expect(gone).toBe(0);
+    expect(failures).toEqual([]);
+    expect(engine.watching()).toBe(true);
+  });
+
+  it("builds a folder another process made again once, though the build's own reading makes the platform report changes", async () => {
+    const base = tempDir("dev-engine-");
+    const root = join(base, "out");
+    const source = join(base, "source");
+    writePackage(root, "<p>one</p>");
+    writePackage(source, "<p>made again by another process</p>");
+    const built: string[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`) });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    built.length = 0;
+
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, source] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "fs.cpSync(source, out, { recursive: true });",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    expect(await new Promise((done) => child.on("exit", done))).toBe(0);
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    // Past the catch-up build of the new watcher, and any change listing the new folders made the platform report.
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 300));
+    expect(built).toEqual(["change:generation"]);
+
+    // A save right after the folder is watched anew still builds.
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved</p>");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 3 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(3);
+  });
+
+  it("builds a save that adds a folder, once, and a save right after it", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`) });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    built.length = 0;
+
+    mkdirSync(join(root, "widgets", "main", "parts", "deeper"), { recursive: true });
+    writeFileSync(join(root, "widgets", "main", "parts", "deeper", "part.js"), "export const part = 1;");
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    await new Promise((done) => setTimeout(done, 400));
+    expect(built).toEqual(["change:generation"]);
+
+    // A save right after still builds.
+    writeFileSync(join(root, "widgets", "main", "parts", "deeper", "part.js"), "export const part = 2;");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 3 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(3);
   });
 
   it("stops watching, and says why, a folder it has not been able to look at for the time bound", async () => {

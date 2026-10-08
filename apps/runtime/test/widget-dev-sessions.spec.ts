@@ -1080,17 +1080,19 @@ describe("a widget dev session", () => {
     const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
     const exited = new Promise((done) => child.on("exit", done));
 
-    // A build that runs while no folder is at the path: it fails on the missing files, and the session stays live.
+    // A rebuild asked for while no folder is at the path waits for it rather than failing on the missing files, and
+    // answers with the one build made once it is back.
     const deadline = Date.now() + 5_000;
     while (existsSync(root) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 5));
     expect(existsSync(root)).toBe(false);
     const during = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
     expect(during.status).toBe(200);
-    expect(session(during)).toMatchObject({ status: "live", lastBuild: { ok: false, trigger: "rebuild" }, activation: { state: "active", generation: 1 } });
-
+    expect(session(during)).toMatchObject({
+      status: "live",
+      lastBuild: { ok: true, trigger: "rebuild", generation: 2 },
+      activation: { state: "active", generation: 2 },
+    });
     expect(await exited).toBe(0);
-    const rebuilt = await eventually(started.sessionId, (view) => view.status === "stopped" || (view.activation.state === "active" && view.activation.generation === 2));
-    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
   });
 
   it("stops a watched session as watch-failed when its folder cannot be looked at for the time bound, and keeps what runs", async () => {
