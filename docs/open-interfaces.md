@@ -874,7 +874,6 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
 
 - `403 ROOT_UNREADABLE` is for a folder that is there but cannot be read, for example while an antivirus holds it; the
   message names the error, such as `EPERM`.
-
 - `409 TOO_MANY_SESSIONS` is for a ninth live session on the node, or for a store that already holds 256 sessions that
   all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
@@ -960,10 +959,12 @@ node starts with no sessions; the file is never overwritten.
 reading as live:
 
 - `watch-failed`: the watcher failed; the folder could not be looked at for 30 seconds in a row for a reason other
-  than "not found" (see below); the folder was found under a new file id more than 30 times in 60 seconds; or, after a
-  restart, the folder cannot be read (`ROOT_UNREADABLE`). The node's log names the error, for example `EPERM`.
-- `folder-gone`: the folder was deleted or renamed, the path no longer names a folder, or the path now leads to another
-  folder through a symbolic link or junction (at the folder itself or at a folder above it). The node checks for the
+  than "not found" (see below); the folder was found under a new file id on more than 30 looks in a row, with no look
+  between them finding it unchanged; or, after a restart, the folder cannot be read (`ROOT_UNREADABLE`). The node's log
+  names the error, for example `EPERM`.
+- `folder-gone`: the folder was deleted or renamed and is not back within 2 seconds, the path no longer names a folder,
+  or the path now leads to another folder through a symbolic link or junction (at the folder itself or at a folder
+  above it). The node checks for the
   folder at least once a second and before each build, because Windows reports nothing when a watched folder is
   deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an antivirus or
   indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again, for up to 30 seconds of
@@ -976,9 +977,13 @@ reading as live:
 A folder that is still there with another identity does not stop the session. The node compares the folder's device and
 file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
 `rm -rf out && build`), or the filesystem gave it a new id (some FUSE mounts and network drives do). The node watches
-the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids. This holds only
-while the path still resolves to the real path the session started from: a link swapped in at the folder or above it
-leads to a folder nobody chose, so the session stops as `folder-gone` instead.
+the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids. A folder that is
+missing when the node looks, because a build deleted it and has not made it again yet, is looked for again for 2
+seconds before the session stops; nothing is built meanwhile. A build that takes longer than that to make the folder
+again stops the session as `folder-gone`. This holds only while the path still resolves to the real path the session
+started from (compared without case on Windows and macOS): a link swapped in at the folder or above it leads to a
+folder nobody chose, so the session stops as `folder-gone` instead. A build that finds the path leading elsewhere just
+before or after it copies the files fails with `FILES_LINK_REFUSED`.
 
 In every case, the generation that runs keeps running.
 

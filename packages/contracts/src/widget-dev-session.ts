@@ -211,7 +211,7 @@ export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
  * - `watch-failed`: the platform stopped reporting changes (the folder cannot be watched), or the folder could not be
  *   looked at for 30 s in a row (`EPERM`, `EBUSY`), kept changing file id, or could not be read when the node started
  *   again. What the session ran keeps running.
- * - `folder-gone`: the folder was deleted or renamed while it was watched, its path now leads elsewhere through a link
+ * - `folder-gone`: the folder was deleted or renamed while it was watched and not back within 2 s, its path now leads elsewhere through a link
  *   or junction, or it was not there when the node started again.
  * - `capacity`: the node already watched as many folders as it does at once when it started again.
  * - `root-refused`: when the node started again, the folder was no longer one the session may watch (for example a

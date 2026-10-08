@@ -56,12 +56,19 @@ export const DEV_ENGINE_ROOT_UNREADABLE_MS = 30_000;
  */
 export const DEV_ENGINE_WATCH_CATCH_UP_MS = 500;
 /**
- * How many times a watched folder may be found under a new file id (`replaced`) within `DEV_ENGINE_REARM_WINDOW_MS`
- * before watching stops. A build that makes its output folder again re-arms once per build; a filesystem that gives the
- * folder a new id on every look would otherwise re-watch and copy the whole folder every second, without end.
+ * How many looks in a row may find a watched folder under a new file id (`replaced`), with no look between them finding
+ * the same folder again, before watching stops. A build that makes its output folder again re-arms once and the next
+ * look finds the new folder unchanged, however often that happens; a filesystem that gives the folder a new id on every
+ * look would otherwise re-watch and copy the whole folder every second, without end.
  */
 export const DEV_ENGINE_REARM_MAX = 30;
-export const DEV_ENGINE_REARM_WINDOW_MS = 60_000;
+/**
+ * How long a watched folder may be missing before it counts as gone. A build that deletes its output folder and makes it
+ * again (`rm -rf out && build`, `rmdir /s /q out && xcopy src out`) leaves the path empty for a moment, and the old
+ * watcher reports the deletion straight away; a folder back at the same real path within this time is watched anew
+ * rather than stopping the session. Nothing is built while the folder is missing.
+ */
+export const DEV_ENGINE_ROOT_MISSING_GRACE_MS = 2_000;
 /**
  * Folders at the package root that are not the package: version control, and the author's installed dependencies, which
  * the package does not ship and which may hold thousands of files and links (a pnpm `node_modules` is junctions). Left
@@ -120,12 +127,17 @@ export interface DevEngineOptions {
    * not be looked at for `rootUnreadableMs`; watching has stopped.
    */
   onWatchError?: (error: Error) => void;
-  /** Told once when the watched folder is no longer there (deleted, renamed, or no longer a folder); watching has stopped. */
+  /**
+   * Told once when the watched folder is no longer there (deleted or renamed and not back within `rootMissingGraceMs`, no
+   * longer a folder, or reached through a link); watching has stopped.
+   */
   onRootGone?: () => void;
   /** How often a watched folder is checked to still be there (`DEV_ENGINE_ROOT_CHECK_MS`). */
   rootCheckMs?: number;
   /** How long a folder may keep failing to be looked at before watching stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
   rootUnreadableMs?: number;
+  /** How long a watched folder may be missing before it counts as gone (`DEV_ENGINE_ROOT_MISSING_GRACE_MS`). */
+  rootMissingGraceMs?: number;
   /**
    * The facet lanes a build may declare. A package with a facet in any other lane is a failed build
    * (`FACET_LANE_UNSUPPORTED`), not a generation. Absent, every lane builds: the standalone dev host runs none of them.
@@ -275,8 +287,29 @@ const GONE_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]);
 type DevRootLook =
   | { state: "present" }
   | { state: "replaced"; identity: DevRootIdentity }
-  | { state: "gone" }
+  /** `missing`: nothing is at the path (`ENOENT`, `ENOTDIR`), which a build that makes the folder again also leaves for a moment. */
+  | { state: "gone"; missing?: true }
   | { state: "unknown"; code: string };
+
+/**
+ * Whether two canonical paths name the same place: compared without case where the filesystem usually ignores it
+ * (Windows, macOS), as the runtime compares roots, so a folder made again as `Out` for `out` is the same folder.
+ */
+const samePlace = (a: string, b: string): boolean =>
+  process.platform === "win32" || process.platform === "darwin" ? a.toLowerCase() === b.toLowerCase() : a === b;
+
+/**
+ * Whether `root` still leads to `canonical`: it is not itself a link or junction, and it resolves there. When it could
+ * not be looked at, the look that says why.
+ */
+function leadsTo(root: string, canonical: string | undefined): boolean | DevRootLook {
+  if (canonical === undefined) return false;
+  try {
+    return !lstatSync(root).isSymbolicLink() && samePlace(realpathSync.native(root), canonical);
+  } catch (cause) {
+    return lookFailed(cause);
+  }
+}
 
 /** The canonical path of `root`, or undefined when it cannot be resolved. */
 function canonicalPathOf(root: string): string | undefined {
@@ -289,7 +322,7 @@ function canonicalPathOf(root: string): string | undefined {
 
 const lookFailed = (cause: unknown): DevRootLook => {
   const code = (cause as NodeJS.ErrnoException).code;
-  return code !== undefined && GONE_CODES.has(code) ? { state: "gone" } : { state: "unknown", code: code ?? messageOf(cause) };
+  return code !== undefined && GONE_CODES.has(code) ? { state: "gone", missing: true } : { state: "unknown", code: code ?? messageOf(cause) };
 };
 
 function lookAtDevRoot(root: string, identity?: DevRootIdentity, canonical?: string): DevRootLook {
@@ -303,11 +336,8 @@ function lookAtDevRoot(root: string, identity?: DevRootIdentity, canonical?: str
   if (identity !== undefined && (stat.dev !== identity.dev || stat.ino !== identity.ino)) {
     // Another folder at the path is the folder being developed only when the path still leads where it led when watching
     // started: the path itself, or a folder above it, swapped for a link or junction leads into a tree nobody chose.
-    try {
-      if (canonical === undefined || lstatSync(root).isSymbolicLink() || realpathSync.native(root) !== canonical) return { state: "gone" };
-    } catch (cause) {
-      return lookFailed(cause);
-    }
+    const leads = leadsTo(root, canonical);
+    if (leads !== true) return leads === false ? { state: "gone" } : leads;
     return { state: "replaced", identity: { dev: stat.dev, ino: stat.ino } };
   }
   return { state: "present" };
@@ -319,7 +349,7 @@ function lookAtDevRoot(root: string, identity?: DevRootIdentity, canonical?: str
  * - `gone`: nothing is at the path, or something other than a folder is.
  * - `replaced`: given the `identity` it was watched with, a different folder is at the path. A folder deleted and made
  *   again (`rm -rf out && build`) keeps its path but not its identity, and a watcher on the old one hears nothing from the
- *   new one; some filesystems (FUSE mounts without stable inode numbers, some network drives) also give a folder that
+ *   new one (a watching engine waits `DEV_ENGINE_ROOT_MISSING_GRACE_MS` for a missing folder to come back); some filesystems (FUSE mounts without stable inode numbers, some network drives) also give a folder that
  *   is still there a new id. Either way there is a folder to watch, so the watcher moves to it. A different folder
  *   reached through a link or junction (at the path or at a folder above it), so that the path no longer resolves to
  *   the canonical path watching started from, is `gone` instead: it is not the folder that was chosen.
@@ -348,6 +378,8 @@ const devFilesCodeOf = (code: string): "FILES_TOO_LARGE" | "FILES_LINK_REFUSED" 
 
 export function startDevEngine(options: DevEngineOptions): DevEngine {
   const root = resolve(options.root);
+  /** Where the folder's path resolved when the engine started: a folder at the path that resolves elsewhere is not it. */
+  const canonical = canonicalPathOf(root);
   const limits = options.limits ?? DEV_ENGINE_LIMITS;
   const now = options.now ?? (() => new Date().toISOString());
   // Only the newest generation is kept: older ones are named in their build records and the caller's own state.
@@ -396,7 +428,23 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     return { ok: true, manifest: pkg.manifest, widgetIds };
   };
 
+  /**
+   * Whether the path now leads somewhere other than where it led at the start, through a link or junction swapped in at
+   * the folder or above it. Checked before and after the files are taken, so the window in which a swap could have a
+   * foreign tree built is the copy itself; closing it fully would need reads relative to a held folder handle.
+   */
+  const ledElsewhere = (): boolean => canonical !== undefined && leadsTo(root, canonical) === false;
+  const elsewhere = (trigger: WidgetDevTrigger): DevEngineEvent =>
+    fail(trigger, [
+      {
+        severity: "error",
+        code: "FILES_LINK_REFUSED",
+        message: "the folder's path now leads to another folder through a link or junction, so it was not built",
+      },
+    ]);
+
   const build = async (trigger: WidgetDevTrigger): Promise<DevEngineEvent> => {
+    if (ledElsewhere()) return elsewhere(trigger);
     const source = read(root);
     if (!source.ok) return fail(trigger, source.diagnostics);
 
@@ -433,6 +481,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     } catch (cause) {
       return fail(trigger, [{ severity: "error", code: "FILES_UNREADABLE", message: `the files could not be read: ${messageOf(cause)}` }]);
     }
+    if (ledElsewhere()) return elsewhere(trigger);
 
     const previous = newest;
     if (previous !== undefined && previous.generation.digest === digest) {
@@ -491,13 +540,14 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    * watching.
    */
   let identity: DevRootIdentity | undefined;
-  /** Where the folder's path resolved when watching started: a folder at the path that resolves elsewhere is not it. */
-  let canonical: string | undefined;
   /** When the folder first failed to be looked at, in the run of failures going on now (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
   let unreadableSince: number | undefined;
-  /** When the folder was last watched anew (`DEV_ENGINE_REARM_MAX` within `DEV_ENGINE_REARM_WINDOW_MS`). */
-  const rearms: number[] = [];
+  /** When the folder was first found missing, in the absence going on now (`DEV_ENGINE_ROOT_MISSING_GRACE_MS`). */
+  let missingSince: number | undefined;
+  /** How many looks in a row found the folder under a new id, with none finding it unchanged between (`DEV_ENGINE_REARM_MAX`). */
+  let rearmsInARow = 0;
   const unreadableMs = options.rootUnreadableMs ?? DEV_ENGINE_ROOT_UNREADABLE_MS;
+  const missingGraceMs = options.rootMissingGraceMs ?? DEV_ENGINE_ROOT_MISSING_GRACE_MS;
   /**
    * The watched folder held open, on Linux and macOS, while it is watched. A folder deleted there frees its file id, and
    * one made again at the same path straight after is commonly given the same id back, so it would read as the same
@@ -574,8 +624,12 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    *
    * - Another folder at the path (`replaced`) is watched in place of the old one and built: it is where the person's
    *   files are now, whether a build made it again or the filesystem gave the same folder a new id. One reached through a
-   *   link or junction is `gone`. More than `DEV_ENGINE_REARM_MAX` of these within `DEV_ENGINE_REARM_WINDOW_MS` stops
-   *   watching as a watch failure.
+   *   link or junction is `gone`. More than `DEV_ENGINE_REARM_MAX` of these in a row, with no look between them finding
+   *   the folder unchanged, stops watching as a watch failure.
+   * - A folder missing from the path (`gone`, not found) counts as gone only once it has been missing for
+   *   `rootMissingGraceMs`: until then nothing is built and the path is looked at again, and a folder back at the same
+   *   real path is watched anew (`replaced`). Anything else that is `gone` (not a folder, or reached through a link) is
+   *   gone at once.
    * - A folder that could not be looked at this time (`unknown`) is looked at again on the next tick rather than taken as
    *   gone, until it has failed for `rootUnreadableMs` in a row: then watching stops as a watch failure that says why.
    */
@@ -594,17 +648,24 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       return false;
     }
     unreadableSince = undefined;
-    if (look.state === "present") return true;
-    if (look.state === "replaced") {
+    if (look.state === "gone" && look.missing === true) {
       const at = performance.now();
-      while (rearms.length > 0 && at - (rearms[0] ?? at) > DEV_ENGINE_REARM_WINDOW_MS) rearms.shift();
-      rearms.push(at);
+      missingSince ??= at;
+      if (at - missingSince < missingGraceMs) return false;
+    }
+    missingSince = undefined;
+    if (look.state === "present") {
+      rearmsInARow = 0;
+      return true;
+    }
+    if (look.state === "replaced") {
+      rearmsInARow += 1;
       const idOf = (id: DevRootIdentity | undefined): string => (id === undefined ? "none" : `${String(id.dev)}:${String(id.ino)}`);
-      if (rearms.length > DEV_ENGINE_REARM_MAX) {
+      if (rearmsInARow > DEV_ENGINE_REARM_MAX) {
         stopWatching();
         options.onWatchError?.(
           new Error(
-            `the folder was found under a new file id more than ${String(DEV_ENGINE_REARM_MAX)} times in ${String(DEV_ENGINE_REARM_WINDOW_MS / 1000)} s (last ${idOf(identity)} to ${idOf(look.identity)}), so it is no longer watched; its filesystem may not keep file ids stable`,
+            `the folder was found under a new file id on more than ${String(DEV_ENGINE_REARM_MAX)} looks in a row (last ${idOf(identity)} to ${idOf(look.identity)}), so it is no longer watched; its filesystem may not keep file ids stable`,
           ),
         );
         return false;
@@ -665,7 +726,6 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   if (options.watch !== false) {
     try {
       identity = devRootIdentityOf(root);
-      canonical = canonicalPathOf(root);
       arm();
       rootCheck = setInterval(() => void rootStillThere(), options.rootCheckMs ?? DEV_ENGINE_ROOT_CHECK_MS);
       rootCheck.unref();

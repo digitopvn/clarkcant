@@ -262,18 +262,24 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_NOT_LOCAL", "give a folder on a drive of this machine; a network share or device path is not developed from");
     }
     const resolved = resolve(given);
+    // Only "not found" means not there: a folder an antivirus or indexer holds (`EPERM`, `EBUSY`) is there, unreadable.
+    const unreadable = (cause: unknown) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      return code !== undefined && code !== "ENOENT" && code !== "ENOTDIR"
+        ? refusal(403, "ROOT_UNREADABLE", `${resolved} cannot be read on this node (${code})`)
+        : undefined;
+    };
     try {
       if (!statSync(resolved).isDirectory()) return refusal(400, "ROOT_NOT_A_FOLDER", `${resolved} is not a folder`);
     } catch (cause) {
-      const code = (cause as NodeJS.ErrnoException).code;
-      // Only "not found" means not there: a folder an antivirus or indexer holds (`EPERM`, `EBUSY`) is there, unreadable.
-      if (code !== undefined && code !== "ENOENT" && code !== "ENOTDIR") {
-        return refusal(403, "ROOT_UNREADABLE", `${resolved} cannot be read on this node (${code})`);
-      }
-      return refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
     }
-    const root = realOrUndefined(resolved);
-    if (root === undefined) return refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    let root: string;
+    try {
+      root = realpathSync.native(resolved);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    }
     if (isRemoteOrDevicePath(root)) {
       return refusal(400, "ROOT_NOT_LOCAL", "the folder resolves to a network share or device path, which is not developed from");
     }

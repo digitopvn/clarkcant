@@ -876,7 +876,6 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
 
 - `403 ROOT_UNREADABLE` dành cho thư mục vẫn còn đó nhưng không đọc được, chẳng hạn khi phần mềm diệt virus đang giữ nó;
   thông báo ghi rõ lỗi, ví dụ `EPERM`.
-
 - `409 TOO_MANY_SESSIONS` dành cho phiên đang chạy thứ chín trên node, hoặc cho kho lưu đã giữ 256 phiên mà phiên nào
   cũng vẫn đang chạy bản đã dựng. Các phiên đã dừng cũ hơn và không còn chạy gì sẽ bị quên trước để lấy chỗ.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` và `409 NOT_PLACED` dành cho lần đặt khi chưa có gì chạy, khi gói không khai báo
@@ -964,10 +963,11 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 vẫn hiện là đang chạy:
 
 - `watch-failed`: bộ theo dõi bị lỗi; thư mục không xem được liên tục trong 30 giây vì một lý do khác "không tìm
-  thấy" (xem bên dưới); thư mục mang một file id mới quá 30 lần trong 60 giây; hoặc, sau một lần khởi động lại, thư mục
-  không đọc được (`ROOT_UNREADABLE`). Nhật ký của node ghi rõ lỗi, ví dụ `EPERM`.
-- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, đường dẫn không còn là một thư mục, hoặc đường dẫn giờ dẫn tới một thư
-  mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một thư mục phía trên nó). Node kiểm tra
+  thấy" (xem bên dưới); thư mục mang một file id mới ở hơn 30 lần xem liên tiếp, không có lần xem nào ở giữa thấy nó
+  không đổi; hoặc, sau một lần khởi động lại, thư mục không đọc được (`ROOT_UNREADABLE`). Nhật ký của node ghi rõ lỗi, ví
+  dụ `EPERM`.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên và không trở lại trong vòng 2 giây, đường dẫn không còn là một thư mục,
+  hoặc đường dẫn giờ dẫn tới một thư mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một thư mục phía trên nó). Node kiểm tra
   thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được theo dõi bị
   xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục không xem được vì lý do khác, chẳng hạn phần mềm diệt virus
   hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra lại, tối đa 30 giây
@@ -981,8 +981,12 @@ Một thư mục vẫn còn đó nhưng mang định danh khác không làm phi�
 những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
 `rm -rf out && build`), hoặc hệ thống tệp đã cấp cho nó một id mới (một số ổ FUSE và ổ mạng làm vậy). Node theo dõi thư
 mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu, và ghi id cũ lẫn id mới vào nhật ký.
-Điều này chỉ đúng khi đường dẫn vẫn phân giải về đúng đường dẫn thật lúc phiên bắt đầu: một liên kết được tráo vào ở thư
-mục hoặc phía trên nó dẫn tới một thư mục không ai chọn, nên phiên dừng với lý do `folder-gone`.
+Một thư mục không có ở đó khi node xem, vì một lần dựng đã xoá nó mà chưa tạo lại, sẽ được tìm lại trong 2 giây trước khi
+phiên dừng; trong lúc đó không có gì được dựng. Một lần dựng cần lâu hơn thế để tạo lại thư mục sẽ làm phiên dừng với lý
+do `folder-gone`. Điều này chỉ đúng khi đường dẫn vẫn phân giải về đúng đường dẫn thật lúc phiên bắt đầu (so sánh không
+phân biệt hoa thường trên Windows và macOS): một liên kết được tráo vào ở thư mục hoặc phía trên nó dẫn tới một thư mục
+không ai chọn, nên phiên dừng với lý do `folder-gone`. Một lần dựng thấy đường dẫn dẫn tới nơi khác ngay trước hoặc ngay
+sau khi chép tệp sẽ thất bại với `FILES_LINK_REFUSED`.
 
 Trong mọi trường hợp, generation đang chạy vẫn tiếp tục chạy.
 

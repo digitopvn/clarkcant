@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -987,6 +988,28 @@ describe("a widget dev session", () => {
     writePackage("<!doctype html><p>saved in the new folder</p>\n");
     const saved = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 3);
     expect(saved).toMatchObject({ status: "live", activation: { state: "active", generation: 3 } });
+  });
+
+  it("keeps a watched session live when another process deletes its folder and makes it again a moment later", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // As `rmdir /s /q out && xcopy source out` in a terminal: another process, and a moment with no folder at the path.
+    const source = join(dir, "source");
+    writePackage("<!doctype html><p>made again by another process</p>\n", [], source);
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, from] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(from, out, { recursive: true }), 400);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    expect(await new Promise((done) => child.on("exit", done))).toBe(0);
+
+    const rebuilt = await eventually(started.sessionId, (view) => view.status === "stopped" || (view.activation.state === "active" && view.activation.generation === 2));
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
   });
 
   it("stops a watched session as watch-failed when its folder cannot be looked at for the time bound, and keeps what runs", async () => {
