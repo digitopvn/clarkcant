@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { GatewayError, type GatewayClient, type ResolvedDataset, type SnapshotPresentationResponse, type Timeline } from "./api.ts";
-import { readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
+import {
+  GatewayError,
+  type GatewayClient,
+  type ResolvedDataset,
+  type SendMessageResult,
+  type SnapshotPresentationResponse,
+  type Timeline,
+} from "./api.ts";
+import { chipsAfterAnswer, readyAttachmentIds, readyChipIds, type AttachmentChip } from "./attachments.ts";
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
-import { followScrollBehavior, followsBottom, stillFollowsBottom } from "./follow-bottom.ts";
+import { followScrollBehavior, followsBottom, reportScroll, scrollAsTranscript, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -23,6 +30,11 @@ export interface TurnSendState {
   busy: boolean;
   error: string | undefined;
   setError: (message: string | undefined) => void;
+  /**
+   * Whether the files on the composer are there because a command answered the last message: commands carry no
+   * files, so they were kept for the next one, and the composer says so beside them.
+   */
+  chipsKept: boolean;
   /** The message the user just sent, drawn before the node has confirmed anything about it. */
   pendingUser: { text: string } | undefined;
   /** The reply as it arrives, in the order the turn produces it. */
@@ -73,7 +85,7 @@ export interface TurnSendDeps {
   timeline: Timeline | undefined;
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
-  dispatchChips: (action: { type: "sent" }) => void;
+  dispatchChips: (action: { type: "sent"; chipIds: readonly string[] } | { type: "cleared" }) => void;
   /**
    * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
    * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
@@ -132,6 +144,12 @@ export function useTurnSend({
 }: TurnSendDeps): TurnSendState {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [chipsKept, setChipsKept] = useState(false);
+  // Once the person has removed the files that were kept, there is nothing left for the note to be about; a file added
+  // after that is a new one, not one a command left behind.
+  useEffect(() => {
+    if (!chips.some((chip) => chip.state === "ready")) setChipsKept(false);
+  }, [chips]);
   const [pendingUser, setPendingUser] = useState<{ text: string } | undefined>(undefined);
   const [live, setLive] = useState<LiveSegment[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
@@ -144,10 +162,10 @@ export function useTurnSend({
    */
   const followBottom = useRef(true);
   /** Where the view was when the last scroll event was read, so a scroll not yet reported is not overruled. */
-  const reportedTop = useRef(0);
+  const reported = useRef<ScrollReport>({ top: 0, layout: 0 });
   const followsBottomNow = useCallback((): boolean => {
     const node = scroller.current;
-    if (node !== null && !stillFollowsBottom(followBottom.current, reportedTop.current, node.scrollTop)) followBottom.current = false;
+    if (node !== null && !stillFollowsBottom(followBottom.current, reported.current, node)) followBottom.current = false;
     return followBottom.current;
   }, []);
   /**
@@ -156,6 +174,10 @@ export function useTurnSend({
    * Incremented by a restart, and captured by anything that is about to write a result back. A
    * reply that arrives after the user restarted belongs to a conversation they have left, so it is
    * dropped rather than drawn into the fresh start screen.
+   *
+   * Only `restartSession` increments it, and it clears `busy` as it does. The busy guard at the end of `send` depends on
+   * that: a send that finds the generation changed leaves `busy` alone because the restart already reset it. Anything
+   * else that increments the generation must reset `busy` too, or a stale send would leave Stop on screen for good.
    */
   const sessionGeneration = useRef(0);
 
@@ -163,7 +185,7 @@ export function useTurnSend({
     const node = scroller.current;
     if (node === null || !followsBottomNow()) return;
     const metrics = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop, clientHeight: node.clientHeight };
-    node.scrollTo({ top: node.scrollHeight, behavior: followScrollBehavior(metrics) });
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: followScrollBehavior(metrics) });
     // The streamed reply is as much a reason to follow the bottom as a stored message is: without
     // it the answer grows below the fold while the view stays where the question was. It is
     // conditional because that is a reason to follow, not a licence to interrupt someone reading
@@ -175,7 +197,7 @@ export function useTurnSend({
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
-      reportedTop.current = node.scrollTop;
+      reported.current = reportScroll(node);
       followBottom.current = followsBottom({
         scrollHeight: node.scrollHeight,
         scrollTop: node.scrollTop,
@@ -218,19 +240,25 @@ export function useTurnSend({
       setError(undefined);
       // Cleared here, after the guard above: a send refused for being empty or for arriving while
       // another turn is busy keeps its text. A send that fails later gets it back from `onSendFailed`.
-      if (!standalone) clearDraft();
+      if (!standalone) {
+        clearDraft();
+        setChipsKept(false);
+      }
       // Drawn from here rather than from the node's answer: the user's own message is not in
       // doubt, and waiting for the round trip to show it makes the interface feel slower than it
       // is.
       setPendingUser({ text: trimmed });
       // Sending is a decision to be at the newest turn, whatever the view was doing before it.
       followBottom.current = true;
-      reportedTop.current = scroller.current?.scrollTop ?? 0;
+      if (scroller.current !== null) reported.current = reportScroll(scroller.current);
       setLive([]);
       beginHeroExit();
       const generation = sessionGeneration.current;
+      /** The node's answer, read once the stream has ended: it says whether a message was stored or a command answered. */
+      let answered: SendMessageResult | undefined;
       try {
         const attachmentIds = standalone ? [] : readyAttachmentIds(chips);
+        const sentChipIds = standalone ? [] : readyChipIds(chips);
         const references = options.references ?? liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
         // The user may have restarted while the conversation was being created or the model was
@@ -266,6 +294,7 @@ export function useTurnSend({
               setLive((segments) => applyLiveEvent(segments, event));
             },
             onDone: (result) => {
+              answered = result;
               if (sessionGeneration.current !== generation) return;
               // The node's own record replaces both placeholders in one update, so the reply is
               // never on screen twice: the stored message and the text that stood in for it change
@@ -286,9 +315,15 @@ export function useTurnSend({
           { ...(options.demo === undefined ? {} : { demo: options.demo }), attachmentIds, references: [...references] },
         );
         // Cleared only after the send succeeded: a failed send leaves the chips stored on the node,
-        // so the person can press send again rather than attaching the same file a second time.
-        if (!standalone) {
-          dispatchChips({ type: "sent" });
+        // so the person can press send again rather than attaching the same file a second time. A command the host
+        // answered carries no files, so they stay for the next message, and the composer says why they are still there.
+        // A reply from a session the person already restarted away from touches nothing here: the restart dropped that
+        // session's chips, and the ones on screen now belong to the new conversation. Only the files this message
+        // carried leave: one attached while the reply was being written belongs to the next message.
+        if (!standalone && sessionGeneration.current === generation) {
+          const keep = attachmentIds.length > 0 && answered !== undefined && chipsAfterAnswer(answered) === "kept";
+          if (keep) setChipsKept(true);
+          else dispatchChips({ type: "sent", chipIds: sentChipIds });
           onReferencesSent();
         }
       } catch (cause) {
@@ -302,7 +337,9 @@ export function useTurnSend({
         // so the start screen comes back with the text, rather than an empty page with the composer at its foot.
         if ((timeline?.messages.length ?? 0) === 0) resetHero();
       } finally {
-        setBusy(false);
+        // A send from a session the person already left has no say over this one: the restart ended its busy state,
+        // and a newer send may be running in the new conversation.
+        if (sessionGeneration.current === generation) setBusy(false);
       }
     },
     [
@@ -336,6 +373,9 @@ export function useTurnSend({
     setDatasets({});
     setSnapshots({});
     clearDraft();
+    // A new conversation starts without the files that were waiting in the one left behind.
+    dispatchChips({ type: "cleared" });
+    setChipsKept(false);
     setError(undefined);
     setBusy(false);
     // Back to the start screen, with the orb returning to the middle: the phase is the same fact as
@@ -343,7 +383,7 @@ export function useTurnSend({
     setPendingUser(undefined);
     setLive([]);
     onSessionReset?.();
-  }, [clearDraft, onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
+  }, [clearDraft, dispatchChips, onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
 
   const stop = useCallback(async (): Promise<boolean> => {
     // Nothing to stop before the conversation exists or once the reply has ended: a quiet no-op, not an error.
@@ -356,5 +396,5 @@ export function useTurnSend({
     }
   }, [busy, client, conversationId, t]);
 
-  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
+  return { busy, error, setError, chipsKept, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
 }

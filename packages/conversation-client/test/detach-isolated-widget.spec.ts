@@ -6,14 +6,19 @@ import type { IsolatedFrameLiveResponse, LiveWidgetResponse } from "../src/api.t
 /**
  * Which widgets the conversation offers to detach.
  *
- * A detached window holds no credential, so it can draw a composition and relay its presses, but it cannot run a widget
- * in its own frame: that frame saves state and renews its URL with the conversation's credential. Offering Detach for
- * one opened a window that threw, so the control is not offered and the window says why if it is reached anyway.
+ * A detached window holds no credential, but the desktop host relays a frame's reads, state writes, publishes and
+ * presses for it with its own, so a widget in its own frame can run there. One with no frame (its package is gone) has
+ * nothing to run, so it stays in the conversation, where its text alternative is shown.
  */
 describe("detaching an isolated widget", () => {
-  it("is not offered for a widget that runs in its own frame", () => {
-    const isolated = { kind: "isolated-frame", instanceId: "widget_frame" } as unknown as IsolatedFrameLiveResponse;
-    expect(canShowDetached(isolated)).toBe(false);
+  it("is offered for a widget that runs in its own frame", () => {
+    const isolated = { kind: "isolated-frame", instanceId: "widget_frame", frame: { url: "/widgets/frame" } } as unknown as IsolatedFrameLiveResponse;
+    expect(canShowDetached(isolated)).toBe(true);
+  });
+
+  it("is not offered for a widget whose frame is gone (frame: null)", () => {
+    const gone = { kind: "isolated-frame", instanceId: "widget_frame", frame: null } as unknown as IsolatedFrameLiveResponse;
+    expect(canShowDetached(gone)).toBe(false);
   });
 
   it("is offered for a composition, which the detached window draws", () => {

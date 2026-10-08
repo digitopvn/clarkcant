@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -247,6 +248,59 @@ describe("the dev host server", () => {
       expect(fixed?.ok).toBe(true);
       expect(host.reloads()).toBe(1);
     } finally {
+      await stop();
+    }
+  });
+
+  it("takes the failure off the shell when the files are put back to the version on screen", async () => {
+    const { url, root, stop, host } = await started();
+    const stream = await fetch(`${url}dev/events`, { headers: { accept: "text/event-stream" } });
+    const reader = stream.body?.getReader();
+    const decoder = new TextDecoder();
+    const builds: { ok: boolean }[] = [];
+    let buffered = "";
+    /** The `build` events the shell is sent, read until there are `count` of them. */
+    const readBuilds = async (count: number): Promise<{ ok: boolean }[]> => {
+      while (builds.length < count && reader !== undefined) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`only ${String(builds.length)} build events`)), 2000);
+        });
+        const chunk = await Promise.race([reader.read(), timeout]).finally(() => clearTimeout(timer));
+        if (chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true });
+        let end = buffered.indexOf("\n\n");
+        while (end !== -1) {
+          const message = buffered.slice(0, end);
+          buffered = buffered.slice(end + 2);
+          const data = /^data: (.*)$/m.exec(message)?.[1];
+          if (message.startsWith("event: build") && data !== undefined) builds.push(JSON.parse(data) as { ok: boolean });
+          end = buffered.indexOf("\n\n");
+        }
+      }
+      return builds;
+    };
+    try {
+      const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { facets: { kind: string; definition?: string }[] };
+      const definitionPath = join(root, manifest.facets.find((facet) => facet.kind === "ui")?.definition ?? "");
+      const definition = readFileSync(definitionPath, "utf8");
+
+      writeFileSync(definitionPath, "{ not json");
+      expect((await host.rebuild())?.ok).toBe(false);
+      expect((await readBuilds(1)).map((build) => build.ok)).toEqual([false]);
+
+      // The same bytes as the frame's version: no new generation and no reload, but the failure is over.
+      writeFileSync(definitionPath, definition);
+      expect((await host.rebuild())?.ok).toBe(true);
+      expect(host.reloads()).toBe(0);
+      expect((await readBuilds(2)).map((build) => build.ok)).toEqual([false, true]);
+
+      // With no failure before it, an unchanged build is sent as well: the shell follows the engine's last build, and
+      // a failure the dev host never reported (one released while watching stopped) still gets taken away.
+      expect((await host.rebuild())?.ok).toBe(true);
+      expect((await readBuilds(3)).map((build) => build.ok)).toEqual([false, true, true]);
+    } finally {
+      await reader?.cancel();
       await stop();
     }
   });
@@ -525,6 +579,87 @@ describe("the dev host server", () => {
       expect(response.headers.get("content-type")).toContain("text/event-stream");
       // The stream is left open by design; closing the reader is what ends it.
       await response.body?.cancel();
+    } finally {
+      await stop();
+    }
+  });
+
+  /*
+   * DNS rebinding: a website points its own name at 127.0.0.1 and talks to the dev host as a same-origin page. Its
+   * requests still name that website in `Host`, which `fetch` cannot forge, so these are sent with `node:http`.
+   */
+  function raw(
+    url: string,
+    path: string,
+    headers: Record<string, string>,
+    method = "GET",
+    body?: string,
+  ): Promise<{ status: number; text: string }> {
+    return new Promise((done, failed) => {
+      const sent = httpRequest(new URL(path, url), { method, headers }, (response) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          text += chunk;
+          // The stream never ends on its own; its first bytes are enough to know it was opened.
+          if (response.headers["content-type"]?.includes("text/event-stream") === true) response.destroy();
+        });
+        response.on("close", () => done({ status: response.statusCode ?? 0, text }));
+      });
+      sent.on("error", failed);
+      sent.end(body);
+    });
+  }
+
+  it("refuses every route to a request that names another host, so a rebound page reads and changes nothing", async () => {
+    const { url, stop, host } = await started();
+    try {
+      const nonce = ((await (await fetch(`${url}dev/api/state`)).json()) as { bridgeNonce: string }).bridgeNonce;
+      const foreign = { host: `rebind.attacker.test:${String(host.port)}` };
+      for (const path of ["/dev/api/state", "/dev/api/build", "/dev/events", "/", `/dev/frame/${nonce}/fixtures/default.json`]) {
+        const answer = await raw(url, path, foreign);
+        expect(answer.status, path).toBe(403);
+        expect(answer.text, path).not.toContain(nonce);
+      }
+      // Another port on loopback is another server's name, not this one's.
+      expect((await raw(url, "/dev/api/state", { host: `127.0.0.1:${String(host.port + 1)}` })).status).toBe(403);
+
+      const action = JSON.stringify({ kind: "viewport", value: "narrow-320" });
+      const posted = await raw(url, "/dev/api/action", { ...foreign, "content-type": "application/json" }, "POST", action);
+      expect(posted.status).toBe(403);
+      expect(host.state().viewport).not.toBe("narrow-320");
+    } finally {
+      await stop();
+    }
+  });
+
+  it("answers to each loopback name it listens on", async () => {
+    const { url, stop, host } = await started();
+    try {
+      for (const name of ["127.0.0.1", "localhost", "LocalHost", "[::1]"]) {
+        const answer = await raw(url, "/dev/api/state", { host: `${name}:${String(host.port)}` });
+        expect(answer.status, name).toBe(200);
+      }
+      expect((await raw(url, "/dev/events", { host: `localhost:${String(host.port)}` })).status).toBe(200);
+    } finally {
+      await stop();
+    }
+  });
+
+  it("refuses a change posted from another origin, and takes one from its own page", async () => {
+    const { url, stop, host } = await started();
+    try {
+      const loopback = { host: `127.0.0.1:${String(host.port)}`, "content-type": "application/json" };
+      const action = JSON.stringify({ kind: "viewport", value: "narrow-320" });
+      for (const origin of ["https://attacker.test", "null", `http://127.0.0.1:${String(host.port + 1)}`]) {
+        const answer = await raw(url, "/dev/api/action", { ...loopback, origin }, "POST", action);
+        expect(answer.status, origin).toBe(403);
+      }
+      expect(host.state().viewport).not.toBe("narrow-320");
+
+      const own = await raw(url, "/dev/api/action", { ...loopback, origin: `http://localhost:${String(host.port)}` }, "POST", action);
+      expect(own.status).toBe(200);
+      expect(host.state().viewport).toBe("narrow-320");
     } finally {
       await stop();
     }

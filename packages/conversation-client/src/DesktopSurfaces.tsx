@@ -12,7 +12,6 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 import {
   type FrameStateStatus,
   type GatewayClient,
-  GatewayError,
   type IsolatedFrameLiveResponse,
   type LiveWidgetResponse,
   type Timeline,
@@ -22,12 +21,22 @@ import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent, composedImageRefs } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
-import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
+import {
+  frameHostCallbacks,
+  frameJobBroker,
+  frameTokenBroker,
+  offersBrowserTokens,
+  shellJobTransport,
+  shellTokenTransport,
+} from "./frame-host-callbacks.ts";
+import { markFrameDetached } from "./frame-performs.ts";
+import { shellArtifactFiles, useWidgetArtifactHost } from "./widget-artifacts.tsx";
 import { WidgetDevStatus } from "./widget-dev-status.tsx";
 import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
 import { offscreenPlayback } from "./offscreen-playback.ts";
+import { type LiveLeaseRefresh, refreshLiveLease } from "./live-lease-refresh.ts";
 
 export interface MenuBarPopoverProps {
   nodeLabel: string;
@@ -243,13 +252,15 @@ function shellDetachBridge(): ShellDetachBridge | undefined {
 /**
  * Whether this read can be shown in a detached window.
  *
- * A composition can: the window draws it and relays each press to the host. A widget in its own frame cannot. Its
- * frame saves state, publishes what it shows and renews its URL with the conversation's credential, and a detached
- * window holds no credential by design — so it would open as a frame that cannot save. Detach is not offered for it.
- * Only a composition is offered, so a kind added later stays in the conversation until the window can draw it.
+ * A composition can: the window draws it and relays each press to the host. A widget in its own frame can too, while it
+ * has a frame: the window runs it, and the desktop host relays its reads, state writes, what it shows and its presses
+ * with the host's own credential, which the window never holds. A frame whose package is gone (`frame: null`) has only
+ * its text left, which the conversation already shows, so it is not offered. A kind added later stays in the
+ * conversation until the window can draw it.
  */
 export function canShowDetached(live: LiveWidgetResponse | IsolatedFrameLiveResponse | undefined): boolean {
-  return live?.kind === "composition";
+  if (live?.kind === "composition") return true;
+  return live?.kind === "isolated-frame" && live.frame !== null;
 }
 
 export function PinnedLiveSurface({
@@ -268,11 +279,15 @@ export function PinnedLiveSurface({
    * Files for a widget in its own frame: requests the node answers against this instance's grant, and a pick or a save
    * the person answers in host chrome drawn beside the frame (`widget-artifacts.tsx`).
    */
-  const artifactHost = useWidgetArtifactHost({ client, conversationId, instanceId, widgetTitle: title, onAttach: onAttachArtifact });
+  const artifactFiles = useMemo(() => shellArtifactFiles(client, conversationId, instanceId), [client, conversationId, instanceId]);
+  const artifactHost = useWidgetArtifactHost({ files: artifactFiles, widgetTitle: title, onAttach: onAttachArtifact });
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);
   const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
+  // Read by the periodic re-claim, whose callback outlives the render that created it.
+  const ownershipNow = useRef(ownership);
+  ownershipNow.current = ownership;
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   /*
@@ -297,6 +312,20 @@ export function PinnedLiveSurface({
    * the pin closed), it closes the window, because nothing else would be left to take the instance back.
    */
   const detachedHere = useRef(false);
+  /*
+   * The same fact as `detachedHere`, for rendering: while the widget is in its own window this surface does not run a
+   * second copy of its frame — two frames would write the same state from two places — and Clark's performs for it are
+   * answered as detached rather than handed to a frame nobody here shows.
+   */
+  const [detachedOpen, setDetachedOpen] = useState(false);
+  useEffect(() => (detachedOpen ? markFrameDetached(instanceId) : undefined), [detachedOpen, instanceId]);
+  /*
+   * Whether this surface is between letting the lease go and hearing whether the detached window took it. The
+   * periodic re-claim is paused for that stretch too: landing after the release, it would hold the widget again and
+   * the window's own claim would be refused.
+   */
+  const handingOff = useRef(false);
+  const leaseRefresh = useRef<LiveLeaseRefresh | undefined>(undefined);
   /*
    * Graph events go to the node one at a time, each against the revision the one before it produced, and the surface is
    * re-read once they have all landed. Sent together they would race for one revision; re-read after each, a query typed
@@ -324,13 +353,16 @@ export function PinnedLiveSurface({
     return () => observer.disconnect();
   }, []);
 
-  const load = useCallback(async (): Promise<void> => {
+  /** Re-reads the surface; answers whether the read succeeded, so a caller recovering from `error` knows it may. */
+  const load = useCallback(async (): Promise<boolean> => {
     try {
       const resolved = await client.liveWidget(conversationId, instanceId);
       setLive((previous) => keepMountedFrame(previous, resolved));
+      return true;
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : String(cause));
       setOwnership("error");
+      return false;
     }
   }, [client, conversationId, instanceId]);
 
@@ -402,21 +434,42 @@ export function PinnedLiveSurface({
     };
 
     void claim();
-    const timer = setInterval(() => {
-      // The detached window holds the lease now; re-claiming it here would take the widget out from under it.
-      if (detachedHere.current) return;
-      void client
-        .claimLiveOwner(conversationId, instanceId, {
+    const ownedElsewhere = t("shell.live.ownedElsewhere");
+    const refresh = refreshLiveLease({
+      claim: () =>
+        client.claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
           surface: "pin",
           leaseMs: CLAIM_REFRESH_MS * 3,
-        })
-        .catch(() => undefined);
-    }, CLAIM_REFRESH_MS);
+        }),
+      // Handing off to, or held by, a detached window: re-claiming here would take the widget out from under it.
+      paused: () => handingOff.current || detachedHere.current,
+      onOwner: () => {
+        if (cancelled) return;
+        if (ownershipNow.current !== "error") {
+          setOwnership("owner");
+          setNotice((current) => (current === ownedElsewhere ? undefined : current));
+          return;
+        }
+        /*
+         * Holding the lease does not make a widget the surface could not read readable, so a surface in error reads it
+         * again first, and becomes the owner — with the error notice gone — only once that read succeeds. Without this
+         * one failed read left the widget read-only until the surface was mounted again.
+         */
+        void load().then((read) => {
+          if (!read || cancelled || handingOff.current || detachedHere.current) return;
+          setOwnership("owner");
+          setNotice(undefined);
+        });
+      },
+      refreshMs: CLAIM_REFRESH_MS,
+    });
+    leaseRefresh.current = refresh;
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      refresh.stop();
+      if (leaseRefresh.current === refresh) leaseRefresh.current = undefined;
       // Best effort: the lease is what makes a failed release recoverable.
       void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
     };
@@ -481,35 +534,55 @@ export function PinnedLiveSurface({
    */
   const detach = useCallback(async (): Promise<void> => {
     const bridge = shellDetachBridge();
-    if (bridge === undefined || !canShowDetached(live)) return;
+    if (bridge === undefined || !canShowDetached(live) || handingOff.current) return;
+    handingOff.current = true;
     try {
-      await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
-    } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : String(cause));
-      return;
+      // A re-claim already on its way would land after the release below and hold the widget again. Bounded, so a
+      // node that never answers does not leave Detach waiting with nothing on screen.
+      await leaseRefresh.current?.settled();
+      try {
+        await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
+      } catch (cause) {
+        setNotice(cause instanceof Error ? cause.message : String(cause));
+        return;
+      }
+      /*
+       * A bridge call that throws (the window closed while it was loading, the page failed to load) is a window that did
+       * not open, said the same way as a refusal: the person is told, and the lease is taken back.
+       */
+      let answer: { ok: boolean; refused?: string };
+      try {
+        answer = await bridge.detachWidget({
+          conversationId,
+          instanceId,
+          ...(title === undefined ? {} : { title }),
+          live,
+          appearance: readAppearanceSnapshot(),
+        });
+      } catch (cause) {
+        answer = { ok: false, ...(cause instanceof Error && cause.message !== "" ? { refused: cause.message } : {}) };
+      }
+      if (!answer.ok) {
+        setNotice(answer.refused ?? t("shell.live.detachFailed"));
+        await client
+          .claimLiveOwner(conversationId, instanceId, {
+            ownerToken: ownerToken.current,
+            surface: "pin",
+            leaseMs: CLAIM_REFRESH_MS * 3,
+          })
+          .then(() => setOwnership("owner"))
+          .catch(() => undefined);
+        return;
+      }
+      detachedHere.current = true;
+      setDetachedOpen(true);
+      // Nothing plays here while the frame runs in its own window, so no "still playing" chrome is left behind.
+      setKeepPlaying(false);
+      setOwnership("elsewhere");
+      setNotice(t("shell.live.detachedOpen"));
+    } finally {
+      handingOff.current = false;
     }
-    const answer = await bridge.detachWidget({
-      conversationId,
-      instanceId,
-      ...(title === undefined ? {} : { title }),
-      live,
-      appearance: readAppearanceSnapshot(),
-    });
-    if (!answer.ok) {
-      setNotice(answer.refused ?? t("shell.live.detachFailed"));
-      await client
-        .claimLiveOwner(conversationId, instanceId, {
-          ownerToken: ownerToken.current,
-          surface: "pin",
-          leaseMs: CLAIM_REFRESH_MS * 3,
-        })
-        .then(() => setOwnership("owner"))
-        .catch(() => undefined);
-      return;
-    }
-    detachedHere.current = true;
-    setOwnership("elsewhere");
-    setNotice(t("shell.live.detachedOpen"));
   }, [client, conversationId, instanceId, live, title, t]);
 
   /*
@@ -525,6 +598,7 @@ export function PinnedLiveSurface({
     // A shell older than the unsubscribe returns nothing; there is nothing to remove then.
     const unsubscribe = bridge.onWidgetReattached(() => {
       detachedHere.current = false;
+      setDetachedOpen(false);
       void client
         .claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
@@ -657,7 +731,7 @@ export function PinnedLiveSurface({
         {live.development !== undefined && (
           <WidgetDevStatus client={client} sessionId={live.development.sessionId} onRunningChange={() => void load()} />
         )}
-        {playbackAllowed && frame !== null && (
+        {playbackAllowed && frame !== null && !detachedOpen && (
           <button
             type="button"
             className="cc-icon-btn"
@@ -736,7 +810,12 @@ export function PinnedLiveSurface({
           No frame means the package is gone: what the widget said about itself is what is left to show, and it is
           shown as text rather than as an empty box or a frame that would fail to load.
         */}
-        {frame === null ? (
+        {detachedOpen ? (
+          // The frame runs in its own window now; this one says where, rather than running a second copy.
+          <p className="cc-freshness" data-live-notice="true" data-widget-detached="true" role="status" style={{ margin: 0 }}>
+            {t("shell.live.detachedOpen")}
+          </p>
+        ) : frame === null ? (
           <p data-widget-text-fallback="true" style={{ margin: 0 }}>
             {live.textFallback ?? title ?? instanceId}
           </p>
@@ -753,39 +832,34 @@ export function PinnedLiveSurface({
           stateRevision={live.stateRevision}
           ephemeralStateKeys={live.ephemeralStateKeys}
           /*
-           * Every durable write goes to the node and is answered from there: the widget is told its state was saved
-           * only when the node committed it, and a refusal comes back with what the node holds. A read-only frame is
-           * wired the same way on purpose — the node is what refuses, so there is one answer to "may this be written".
+           * State writes, what the widget says it shows, and presses: mapped to the widget's answers in one place shared
+           * with the detached window (`frame-host-callbacks.ts`). A read-only frame is wired the same way on purpose —
+           * the node is what refuses, so there is one answer to "may this be written". Every press goes through the
+           * same route a click in the conversation takes, against the same instance, digest and revision — so a widget
+           * in a frame is not a second way to reach an effect.
            */
-          persistState={async (write) => {
-            try {
-              const saved = await client.saveWidgetState(conversationId, instanceId, write);
-              return { ok: true, stateRevision: saved.stateRevision, state: saved.state };
-            } catch (cause) {
-              if (cause instanceof GatewayError) {
-                const committed = cause.details["state"];
-                const revision = cause.details["stateRevision"];
-                return {
-                  ok: false,
-                  code: cause.code,
-                  message: typeof cause.details["message"] === "string" ? cause.details["message"] : cause.message,
-                  ...(typeof revision === "number" ? { stateRevision: revision } : {}),
-                  ...(typeof committed === "object" && committed !== null && !Array.isArray(committed)
-                    ? { state: committed as Record<string, unknown> }
-                    : {}),
-                };
-              }
-              return { ok: false, code: "STATE_NOT_SAVED", message: cause instanceof Error ? cause.message : String(cause) };
-            }
-          }}
-          /*
-           * What the widget says it shows, for the next turn and for voice. The frame waits on it only before a press
-           * the widget makes, which may read it; otherwise a publish that does not arrive leaves the widget out of the
-           * next turn's note, and changes nothing on screen.
-           */
-          publishSemantic={async (proposal, signal) => {
-            await client.publishWidgetSemantic(conversationId, instanceId, proposal, signal);
-          }}
+          {...frameHostCallbacks({
+            transport: {
+              saveState: (write) => client.saveWidgetState(conversationId, instanceId, write),
+              publishSemantic: async (proposal, signal) => {
+                await client.publishWidgetSemantic(conversationId, instanceId, proposal, signal);
+              },
+              invokeAction: (press, binding) =>
+                client.invokeAction(conversationId, instanceId, {
+                  actionBindingId: press.actionBindingId,
+                  expectedRevision: press.expectedRevision,
+                  expectedBindingDigest: binding.bindingDigest,
+                  input: press.input,
+                  invocationId: press.invocationId,
+                }),
+            },
+            bindings: live.bindings,
+            t,
+            // The conversation is where an approval card, or anything else the action said, appears.
+            onTimeline,
+            // A refusal may be the service having stopped; re-reading shows why without waiting for the next poll.
+            onPressRefused: () => void load(),
+          })}
           contextBindings={live.bindings.flatMap((entry) =>
             entry.contextRefs !== undefined && entry.contextRefs.length > 0 ? [entry.actionBindingId] : [],
           )}
@@ -804,52 +878,6 @@ export function PinnedLiveSurface({
                 ],
           )}
           revision={live.revision}
-          /*
-           * The frame asks; this authorizes and performs. Every invocation goes through the same route a click in
-           * the conversation takes, against the same instance, digest and revision — so a widget in a frame is not a
-           * second way to reach an effect.
-           */
-          invokeAction={async (intent) => {
-            try {
-              /*
-               * The digest comes from the binding the frame named, not from a composition. A frame has no
-               * composition, and the node re-authorizes against exactly this value — so sending the wrong one is
-               * refused rather than papered over.
-               */
-              const binding = live.bindings.find((entry) => entry.actionBindingId === intent.actionBindingId);
-              if (binding === undefined) {
-                return { status: "refused", message: t("shell.live.actionUnbound") };
-              }
-              const result = await client.invokeAction(conversationId, instanceId, {
-                actionBindingId: intent.actionBindingId,
-                expectedRevision: intent.expectedRevision,
-                expectedBindingDigest: binding.bindingDigest,
-                input: intent.input,
-                invocationId: intent.invocationId,
-              });
-              // The conversation is where an approval card, or anything else the action said, appears.
-              onTimeline(result.timeline);
-              if (result.approvalRequired !== undefined) {
-                /*
-                 * Nothing ran yet, so the widget is not told it succeeded: the outcome waits on the person, on a card
-                 * the host drew in the conversation and the frame cannot reach.
-                 */
-                return { status: "uncertain", message: t("shell.live.actionAwaitingApproval") };
-              }
-              return {
-                status: "accepted",
-                message: t("shell.live.actionSent"),
-                ...(result.output === undefined ? {} : { output: result.output }),
-              };
-            } catch (cause) {
-              // A refusal may be the service having stopped; re-reading shows why without waiting for the next poll.
-              void load();
-              return {
-                status: "refused",
-                message: cause instanceof Error ? cause.message : t("shell.live.actionRefusedGeneric"),
-              };
-            }
-          }}
           chrome={{
             focus: () => panel.current?.focus(),
             resize: () => undefined,
@@ -857,44 +885,11 @@ export function PinnedLiveSurface({
             openExternal: () => undefined,
           }}
           artifacts={artifactHost.broker}
-          jobs={async (request) => {
-            try {
-              if (request.op === "list") return { status: "ok", jobs: await client.listWidgetJobs(conversationId, instanceId) };
-              if (request.op === "cancel") await client.cancelWidgetJob(conversationId, instanceId, request.jobId);
-              const job = await client.getWidgetJob(conversationId, instanceId, request.jobId);
-              return { status: "ok", job };
-            } catch (cause) {
-              return {
-                status: "refused",
-                code: cause instanceof GatewayError ? cause.code : "JOB_UNAVAILABLE",
-                message: cause instanceof Error ? cause.message : "the job is unavailable to this widget",
-              };
-            }
-          }}
-          tokens={
-            frame.browserTokens === undefined
-              ? undefined
-              : {
-                  request: async (request, session) => {
-                    try {
-                      return { status: "ok", token: await client.requestBrowserToken(conversationId, instanceId, session, request) };
-                    } catch (cause) {
-                      return {
-                        status: "refused",
-                        code: cause instanceof GatewayError ? cause.code : "TOKEN_UNAVAILABLE",
-                        message: cause instanceof Error ? cause.message : "no token is available to this widget",
-                      };
-                    }
-                  },
-                  // The frame is gone either way; a failed revoke still lapses at the token's own expiry.
-                  release: (session) => {
-                    void client.endBrowserTokens(conversationId, instanceId, session).catch(() => undefined);
-                  },
-                }
-          }
+          jobs={frameJobBroker(shellJobTransport(client, conversationId, instanceId))}
+          tokens={offersBrowserTokens(frame) ? frameTokenBroker(shellTokenTransport(client, conversationId, instanceId)) : undefined}
         />
         )}
-        {frame !== null && artifactHost.chrome}
+        {frame !== null && !detachedOpen && artifactHost.chrome}
       </div>
     );
   }
@@ -1038,7 +1033,7 @@ export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolea
  * What a frame whose state cannot be written says about it: what happened, that the data is kept, and what the
  * person can do. Never the internal status name.
  */
-function frameStateNotice(status: FrameStateStatus, t: (key: MessageKey) => string): string {
+export function frameStateNotice(status: FrameStateStatus, t: (key: MessageKey) => string): string {
   switch (status.kind) {
     case "offline":
       return t("shell.live.stateOffline");

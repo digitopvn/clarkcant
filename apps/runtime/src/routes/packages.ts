@@ -25,6 +25,7 @@ import {
 } from "../application/package-install.ts";
 import { decideInstallApproval, isInstallApproval } from "../application/install-approval.ts";
 import { changePackageAndConnection } from "../application/package-change.ts";
+import { turnOffPackageInstructions } from "../application/package-instructions.ts";
 import { installedConnection, installedManifest, installedReach, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
 import type { PackageConnectionBroker } from "../package-connections.ts";
 import { resourceProfilePolicy, type ServiceHost } from "../service-host.ts";
@@ -108,6 +109,29 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       // Uninstalled here and restorable without fetching anything: the generation rows outlive an uninstall.
       restorable: listRestorablePackages(deps),
     });
+  }
+
+  /*
+   * POST /packages/instructions/turn-off `{ packageId, project }`
+   *
+   * The person's own Turn off in Settings: removes this one pair from where the package's instructions apply, computed
+   * on the node against what is stored now, so a screen that read the list earlier cannot put back a pair turned off
+   * elsewhere since. Idempotent: a pair already off answers `removed: false` and writes nothing. Person-only, like
+   * writing the whole preference: a machine surface that wants one turned off asks Clark.
+   */
+  if (segments.length === 3 && segments[0] === "packages" && segments[1] === "instructions" && segments[2] === "turn-off" && request.method === "POST") {
+    if (cameThroughMachineSurface(request)) return fail(403, PERSON_ONLY_REFUSAL.code, PERSON_ONLY_REFUSAL.message);
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const packageId = typeof parsed.value.packageId === "string" ? parsed.value.packageId : "";
+    const project = typeof parsed.value.project === "string" ? parsed.value.project : "";
+    if (packageId === "" || project === "") return fail(400, "INVALID_SCHEMA", "turning instructions off needs the package id and the project");
+    const outcome = turnOffPackageInstructions(
+      { db: runtime.db, now: nowInstant },
+      { principalId: runtime.identity.ownerPrincipalId, packageId, project },
+    );
+    if (!outcome.ok) return fail(400, outcome.code, outcome.message);
+    return json(200, { packageId, project, removed: outcome.removed });
   }
 
   /*
@@ -205,6 +229,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
             listed.source.kind === "local"
               ? resolveLocalSource(listed, join(runtime.dataDir, "package-cache"), entry)
               : listed.source,
+          skippedAtInstall: entry.skippedFacets,
         });
         return read.ok
           ? {

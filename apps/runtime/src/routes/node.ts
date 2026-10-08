@@ -14,7 +14,7 @@ import { ownerLocale } from "../host-text.ts";
 import { toolsTab } from "../tool-catalogue.ts";
 import { type NodeServices } from "../services.ts";
 import { storeModelChoice } from "../application/model-choice.ts";
-import { readChangelog } from "../application/changelog.ts";
+import { clarkVersion, readChangelog } from "../application/changelog.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -60,6 +60,9 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
       // this node is configured for before it has answered anything. `null` means no model, which
       // is a state worth showing plainly: the node answers from scripts and capabilities only.
       model: liveModel(deps.services),
+      // The Clark version this node runs, so an app that cannot read one of its answers can say whether the node is
+      // newer than it, rather than only that the answer did not read. "unknown" when the build record cannot be read.
+      clarkVersion: clarkVersion(),
     });
   }
 

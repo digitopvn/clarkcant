@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   FILE_REFUSALS,
   createFileHandles,
+  dispositionFilename,
+  reviewSaveDialog,
   dialogFiltersForAccept,
   fileRefusal,
   mimeForFileName,
@@ -271,5 +273,32 @@ describe("writing a file whole", () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(readFileSync(real, "utf8")).toBe("moi");
     expect(readdirSync(dir).sort()).toEqual(["link.md", "that.md"]);
+  });
+});
+
+describe("an export saved by the host", () => {
+  it("is offered under the bare name the node gave it, as the conversation reads it", () => {
+    expect(dispositionFilename('attachment; filename="notes.txt"')).toBe("notes.txt");
+    expect(dispositionFilename("attachment; filename*=UTF-8''b%C3%A1o%20c%C3%A1o.md")).toBe("báo cáo.md");
+    expect(dispositionFilename("attachment; filename=plain.txt")).toBe("plain.txt");
+    // A path in the header is never a place to save to: only the name is kept.
+    expect(dispositionFilename('attachment; filename="../../etc/passwd"')).toBe("....etcpasswd");
+    expect(dispositionFilename('attachment; filename="C:\\Users\\me\\a.txt"')).toBe("C:Usersmea.txt");
+    expect(dispositionFilename('attachment; filename=".."')).toBeUndefined();
+    expect(dispositionFilename("attachment")).toBeUndefined();
+    expect(dispositionFilename(undefined)).toBeUndefined();
+    expect(dispositionFilename("attachment; filename*=UTF-8''%E0%A4%A")).toBeUndefined();
+  });
+
+  it("asks the same Save As and replace questions as a save the renderer sent", () => {
+    const labels = { filterName: "Tệp", replaceTitle: "Thay tệp", replaceMessage: "Thay {name}?", replace: "Thay", cancel: "Huỷ" };
+    const dialog = reviewSaveDialog({ mimeType: "text/plain", suggestedName: "notes", labels });
+    expect(dialog).toMatchObject({
+      allowed: true,
+      mimeType: "text/plain",
+      dialog: { replaceTitle: "Thay tệp", replaceMessage: "Thay {name}?", replace: "Thay", cancel: "Huỷ" },
+    });
+    expect(dialog).toMatchObject({ suggestedName: expect.stringMatching(/\.txt$/u), filters: [{ name: "Tệp" }] });
+    expect(reviewSaveDialog({ mimeType: "application/x-msdownload", suggestedName: "a.exe" }).allowed).toBe(false);
   });
 });

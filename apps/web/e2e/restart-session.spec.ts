@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
  * Starting again.
@@ -14,6 +14,9 @@ import { expect, test, type Page } from "@playwright/test";
  *     until the next reload pulled the old conversation back.
  *   - the next message opens a new conversation rather than appending to the one that was left,
  *     which is what "a new session" has to mean.
+ *
+ * And a send still in flight from the conversation that was left ends without touching the new one: a reply running
+ * there keeps its Stop button.
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -98,4 +101,50 @@ test("the next message opens a new conversation rather than continuing the old o
   // And the old timeline is not carried into the new one.
   await expect(page.locator('[data-role="user"]')).toHaveCount(1);
   await expect(page.locator(".cc-empty")).toHaveCount(0);
+});
+
+test("a send from the conversation left behind does not end the reply running in the new one", async ({ page }) => {
+  await openApp(page);
+  // The first message's stream is held, so it is still in flight when the person starts over.
+  let held: Route | undefined;
+  await page.route("**/messages/stream", async (route) => {
+    if (held === undefined) {
+      held = route;
+      return;
+    }
+    await route.continue();
+  });
+  const composer = page.locator("[data-composer]");
+  await composer.fill("xin chào");
+  const first = page.waitForRequest((request) => /\/messages\/stream$/u.test(new URL(request.url()).pathname));
+  await composer.press("Enter");
+  const firstRequest = await first;
+  await expect.poll(() => held !== undefined).toBe(true);
+
+  await page.locator('[data-home="true"]').click();
+  await expect(page.locator(".cc-empty")).toBeVisible({ timeout: 10_000 });
+
+  // A slow reply in the new conversation.
+  await composer.fill("viết một câu trả lời thật dài");
+  await composer.press("Enter");
+  await expect(page.locator("[data-stop]")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Đoạn 2\./u).first()).toBeVisible({ timeout: 15_000 });
+
+  // The old send now ends. The reply being written is still running, so Stop stays where it is.
+  const finished = page.waitForEvent("requestfinished", (request) => request === firstRequest);
+  await held?.continue();
+  await finished;
+  // The old send clears busy after its stream ends, in a later task than `requestfinished`, and nothing on screen
+  // marks the moment it would have. A short fixed wait gives it time to do so before Stop is checked; the new reply
+  // keeps writing for about a minute, so Stop vanishing in this window can only be the old send.
+  await page.waitForTimeout(500);
+  await expect(page.locator("[data-stop]")).toBeVisible();
+  await expect(page.locator("[data-send]")).toHaveCount(0);
+
+  await page.locator("[data-stop]").click();
+  await expect(page.locator('[data-role="assistant"]').last().locator("[data-model-note]")).toContainText(
+    "Đã dừng theo yêu cầu",
+    { timeout: 15_000 },
+  );
+  await expect(page.locator("[data-send]")).toBeVisible();
 });

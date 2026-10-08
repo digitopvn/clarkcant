@@ -133,6 +133,8 @@ export function compileWidgetAction(
      * The active package generation the widget the button is for was read from, found by package identity and version
      * (`locateIsolatedFrame`), never by widget id. Every capability the action calls, an `invoke` or each step of a
      * `workflow`, must then be served by that same generation: a widget is never bound to another package's service.
+     * A `perform` records it as the binding's generation, so what the widget declared about the action — its
+     * description — is read later only from that exact generation (`focusedWidgetActionsContext`).
      */
     widgetGeneration?: string;
   },
@@ -319,6 +321,12 @@ export function compileWidgetAction(
         };
       }
       declaredInput = offered.inputSchema;
+      /*
+       * The action is the widget's own, so the binding pins the package generation the widget was read from: the
+       * generation is what says which package declared it, since a widget id, version and digest can be copied.
+       * Without one the binding keeps the definition digest, which names no generation.
+       */
+      if (input.widgetGeneration !== undefined) packageGeneration = input.widgetGeneration;
       /*
        * What the frame does is the widget's own: it changes what the widget holds, on this machine. The frame is granted
        * nothing by it — anything it then asks the host for passes that request's own gate — so the category is the host's

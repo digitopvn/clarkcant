@@ -550,6 +550,11 @@ async function main(): Promise<void> {
     hardStop.unref();
     leaseSweeper.stop();
     runtimeHandles.stopUpdateChecks();
+    // Started now and awaited before the database closes: a snapshot a session is removing finishes, within its bound.
+    // Handled here, as it is made: it is awaited only after the steps below, and a rejection must not go unhandled until then.
+    const widgetDevClosed = runtimeHandles.closeWidgetDev().catch((cause: unknown) => {
+      process.stderr.write(`widget dev sessions did not close cleanly: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+    });
     services.expirySweep?.stop();
     services.artifactSweep?.stop();
     effectNotices.stop();
@@ -591,6 +596,7 @@ async function main(): Promise<void> {
         if (channelsStopped !== undefined && !(await channelsStopped)) {
           process.stderr.write("channel turns were still running at shutdown; closing anyway\n");
         }
+        await widgetDevClosed;
         await modelTurn?.dispose();
         // Every browser token still held is withdrawn where its provider allows, rather than left to lapse.
         await services.browserTokens?.close();

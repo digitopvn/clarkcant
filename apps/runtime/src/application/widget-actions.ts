@@ -193,6 +193,7 @@ function statusOf(code: string): number {
     case "SERVICE_CANCELLED":
     case "WORKFLOW_STOPPED":
     case "FRAME_NOT_MOUNTED":
+    case "FRAME_DETACHED":
     case "FRAME_NOT_READY":
     case "SURFACE_GONE":
     case "PERFORM_IN_PROGRESS":
@@ -1552,6 +1553,10 @@ export function performReceipt(locale: "vi" | "en", rawLabel: string, result: Wi
       ? locale === "en"
         ? "the screen you approved on does not show the widget now"
         : "màn hình bạn duyệt lúc này không hiện widget đó"
+      : result.code === "FRAME_DETACHED"
+        ? locale === "en"
+          ? "the widget is open in its own window; reattach it to let Clark act on it"
+          : "widget đang mở trong cửa sổ riêng; hãy gắn lại vào cuộc trò chuyện để Clark thao tác được"
       : result.code === "WIDGET_REFUSED"
         ? locale === "en"
           ? "the widget refused it"

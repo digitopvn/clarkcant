@@ -49,6 +49,8 @@ export type WidgetPerformRequest = z.infer<typeof widgetPerformRequestSchema>;
  */
 export const PAGE_PERFORM_REFUSAL_CODES = [
   "FRAME_NOT_MOUNTED",
+  // The widget is open in its own desktop window, which Clark cannot ask yet; reattaching it lets Clark act on it.
+  "FRAME_DETACHED",
   "FRAME_NOT_READY",
   "EXTENSION_NOT_OFFERED",
   "ACTION_NOT_OFFERED",

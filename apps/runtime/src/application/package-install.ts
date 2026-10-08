@@ -10,12 +10,15 @@ import {
   instantSchema,
   nowInstant,
   platformForHost,
+  recordSkippedFacets,
   riskLaneFor,
+  skippedFacetLane,
   type CapabilityRef,
   type DirectoryEntry,
   type DirectorySourceRef,
   type EffectCategory,
   type PackageGeneration,
+  type PackageManifest,
   type Principal,
 } from "@clarkcant/contracts";
 import {
@@ -67,6 +70,7 @@ import {
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
 import { hostText, ownerLocale } from "../host-text.ts";
+import { forgetPackageInstructionsQuietly } from "./package-instructions.ts";
 import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
@@ -534,26 +538,48 @@ export function sourceRefusal(input: {
   return undefined;
 }
 
+/** Options of `installPackage`. */
+interface InstallOptions {
+  approved?: ApprovedInstall;
+  /**
+   * A widget dev session's consent scope (`devConsentScopeOf`), when the listing is one of its generations. The policy
+   * decides, asks about and approves the scope rather than this one artifact: the package and everything it may reach.
+   * A generation that reaches exactly what an approved one did is the same question, already answered; any change to
+   * that reach is a new question. Each install still records the exact files it ran. Refused unless it is the scope of
+   * the listing being installed, so a caller cannot name a scope it was not given.
+   */
+  consentScope?: string;
+  /**
+   * Whose intent the install carries out. Absent is the person asking for this named package on their own surface.
+   * A widget dev session Clark started passes `proposed` (with the turn's origin): Clark chose to install, so the
+   * policy decides it as Clark's own proposal rather than as the person's request.
+   */
+  intent?: ExecutionIntent;
+}
+
+/**
+ * Install a package from the directory. A local package's snapshot is held for the whole install (`SnapshotOutcome`),
+ * so nothing removes it between the moment it is placed or reused and the moment a generation names it, or the install
+ * ends without one.
+ */
 export async function installPackage(
   deps: PackageInstallDeps,
   request: PackageInstallRequest,
-  options: {
-    approved?: ApprovedInstall;
-    /**
-     * A widget dev session's consent scope (`devConsentScopeOf`), when the listing is one of its generations. The policy
-     * decides, asks about and approves the scope rather than this one artifact: the package and everything it may reach.
-     * A generation that reaches exactly what an approved one did is the same question, already answered; any change to
-     * that reach is a new question. Each install still records the exact files it ran. Refused unless it is the scope of
-     * the listing being installed, so a caller cannot name a scope it was not given.
-     */
-    consentScope?: string;
-    /**
-     * Whose intent the install carries out. Absent is the person asking for this named package on their own surface.
-     * A widget dev session Clark started passes `proposed` (with the turn's origin): Clark chose to install, so the
-     * policy decides it as Clark's own proposal rather than as the person's request.
-     */
-    intent?: ExecutionIntent;
-  } = {},
+  options: InstallOptions = {},
+): Promise<PackageInstallOutcome> {
+  const holds: (() => void)[] = [];
+  try {
+    return await installHolding(deps, request, options, holds);
+  } finally {
+    for (const release of holds) release();
+  }
+}
+
+async function installHolding(
+  deps: PackageInstallDeps,
+  request: PackageInstallRequest,
+  options: InstallOptions,
+  holds: (() => void)[],
 ): Promise<PackageInstallOutcome> {
   const { runtime, conductor } = deps;
   const { packageId, version } = request;
@@ -750,6 +776,7 @@ export async function installPackage(
     if (!taken.ok) {
       return localSourceUnreadable(packageId, version, { tooLarge: taken.code === "ARTIFACT_TOO_LARGE", message: taken.message });
     }
+    holds.push(taken.release);
     snapshot = taken.artifact;
   }
 
@@ -873,16 +900,41 @@ export async function installPackage(
    * by this point (git and npm sources are re-pointed at their cache path, local ones at their snapshot), so this is
    * the package's own word, read from the bytes that will run.
    */
-  const fetchedManifest = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path).manifest : undefined;
+  const fetchedPackage = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path) : undefined;
+  const fetchedManifest = fetchedPackage?.manifest;
+  const skippedFacets = fetchedPackage?.skippedFacets ?? [];
+
+  /*
+   * The listing's host API range was checked above; the package's own manifest says it too, and a listing written by
+   * hand can say less. A package whose manifest needs a newer host than this one is refused here, before anything is
+   * recorded, the same way a listing that says so is.
+   */
+  const manifestHostApi = (fetchedManifest as Partial<PackageManifest> | undefined)?.hostApi;
+  if (manifestHostApi !== undefined && (manifestHostApi.min > HOST_API_VERSION || manifestHostApi.max < HOST_API_VERSION)) {
+    return {
+      kind: "refused",
+      status: 400,
+      code: "HOST_API_MISMATCH",
+      message: `${entry.packageId}@${entry.version} was not installed: its manifest needs host API ${String(manifestHostApi.min)}–${String(manifestHostApi.max)}, this host is ${String(HOST_API_VERSION)}`,
+    };
+  }
 
   /*
    * What the person was shown is what they agree to. The listing and the install question show the entry's declared
    * reach (the origins, secrets and browser-token providers), so an artifact that declares a different one is refused
    * before anything is recorded or installed, rather than installed on a consent given for something else. A listing
    * that says nothing claims the package reaches nothing.
+   *
+   * The reach compared is what this node can read: a skipped facet's reach is never read, so it is never in the
+   * package's side. A listing is one list for the whole package and cannot say which facet reaches what, so its side
+   * cannot be narrowed the same way; a listing that counts a skipped facet's reach is refused, and the message says
+   * that may be why, so the fix (update ClarkCant) is named rather than the publisher blamed.
    */
+  const reachRefusal = declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] }));
   const reachMismatch =
-    declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] })) ??
+    (reachRefusal === undefined || skippedFacets.length === 0
+      ? reachRefusal
+      : `${reachRefusal}. The package also declares facets of a kind this version of ClarkCant does not understand (${[...new Set(skippedFacets.map((facet) => facet.kind))].join(", ")}), whose reach this node cannot read or check; if the listing counts their reach, update ClarkCant to install this package`) ??
     // The resource profile is shown the same way (an update notice compares it before anything is fetched), so it binds too.
     declaredResourcesMismatch(entry.resources, fetchedManifest?.resources);
   if (reachMismatch !== undefined) {
@@ -963,6 +1015,9 @@ export async function installPackage(
     // The facets the digest-verified artifact itself declares, so a listing that left a service facet out cannot
     // lower the lane its capabilities are granted in.
     ...(fetchedManifest?.facets ?? []).map((facet) => facet.isolation),
+    // A facet of a kind this node does not know is never run here, but its lane still counts, so a skipped facet can
+    // only raise the lane; one that names no lane this node knows counts as the strongest.
+    ...skippedFacets.map(skippedFacetLane),
   ]);
 
   /*
@@ -1039,6 +1094,8 @@ export async function installPackage(
     };
   });
 
+  // A package installed while none was: whatever pairs an earlier one left are not a decision about this one.
+  const fresh = activeGeneration(coordination, entry.packageId, runtime.identity.nodeId) === undefined;
   const outcome = installFromEntry(coordination, {
     entry: resolvedEntry,
     directory: directoryForInstall,
@@ -1070,6 +1127,8 @@ export async function installPackage(
     ...(resolvedEntry.source.kind === "local" ? { widgetIds: declaredWidgetIds(resolvedEntry.source.path) } : {}),
     // Recorded on the generation, so every later read of this package finds the snapshot rather than the path.
     ...(snapshot === undefined ? {} : { snapshotDigest: snapshot.digest }),
+    // What it left out, so those facets stay inert for this generation even on a host that understands them later.
+    ...(skippedFacets.length === 0 ? {} : { skippedFacets: recordSkippedFacets(skippedFacets) }),
     // Where it came from, so its updates are taken from that source only. A long index path keeps its end, the file name.
     ...(origin === undefined
       ? {}
@@ -1081,6 +1140,8 @@ export async function installPackage(
   // New code is running: tokens its frames were given under the code it replaced, and the declaration that allowed
   // them, end with it. A first install has none, and joining an install already made changes no code.
   if (!outcome.joinedExisting) deps.packageCodeEnded?.(entry.packageId);
+  // Last, and never failing the install: a fresh package's instructions start off, whatever an earlier one left.
+  if (fresh) forgetPackageInstructionsQuietly({ db: runtime.db, now: nowInstant }, { principalId, packageId: entry.packageId, source: "agent" });
   return {
     kind: "installed",
     packageId: entry.packageId,
@@ -1608,7 +1669,7 @@ export function resolveGenerationGrantedCapabilities(
   const resolvedSource = resolveLocalSource(entry, cacheRoot, generation);
   if (resolvedSource.kind !== "local") return []; // Not fetched onto this node (yet); nothing to read a manifest from.
 
-  const requested = readPackage(resolvedSource.path)
+  const requested = readPackage(resolvedSource.path, { skippedAtInstall: generation.skippedFacets })
     .manifest.requestedCapabilities?.map((ref) => capabilityRefSchema.safeParse(ref))
     .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed?.success === true)
     .map((parsed) => parsed.data);

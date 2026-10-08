@@ -1,6 +1,12 @@
-import { type CSSProperties, type ReactElement, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 
-import type { NoticeOperationId, NoticeOperationSource, OrbProfileName } from "@clarkcant/contracts";
+import {
+  type NoticeOperationId,
+  type NoticeOperationSource,
+  type OrbProfileName,
+  attachmentRefSchema,
+  readNodeView,
+} from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
@@ -242,10 +248,28 @@ export function Conversation({
 
   const references = useComposerReferences({ client, conversationId, draft, setDraft, input: composerInput });
 
+  /*
+   * A file a widget in a detached window attached: the desktop hands it to this window, which owns the composer. Only
+   * into the conversation it was attached in — a window that has since moved to another one does not take it.
+   */
+  useEffect(() => {
+    const bridge = (window as unknown as { clarkcant?: { onArtifactAttached?: (listener: (payload: unknown) => void) => () => void } }).clarkcant;
+    if (typeof bridge?.onArtifactAttached !== "function") return;
+    return bridge.onArtifactAttached((payload) => {
+      const pushed = payload as { conversationId?: unknown; attachmentRef?: unknown } | undefined;
+      if (pushed === undefined || conversationId === undefined || pushed.conversationId !== conversationId) return;
+      const parsed = readNodeView(attachmentRefSchema, pushed.attachmentRef);
+      if (!parsed.success) return;
+      const { attachmentId, filename, mime, sizeBytes } = parsed.data;
+      addStored({ attachmentId, filename, mime, sizeBytes });
+    });
+  }, [addStored, conversationId]);
+
   const {
     busy,
     error,
     setError,
+    chipsKept,
     pendingUser,
     live,
     send,
@@ -615,6 +639,7 @@ export function Conversation({
           setDragging={setDragging}
           addFiles={addFiles}
           chips={chips}
+          chipsKept={chipsKept}
           onRemoveChip={(id) => dispatchChips({ type: "remove", id })}
           references={references}
           draft={draft}

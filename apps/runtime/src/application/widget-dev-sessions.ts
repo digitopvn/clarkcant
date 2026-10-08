@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -19,11 +19,13 @@ import {
   activeGeneration,
   cachedLocalSnapshotPath,
   devConsentScopeOf,
+  devRootIdentityOf,
   devRootState,
   getPreference,
   pinInstance,
   readDirectory,
   readPackage,
+  removeLocalSnapshot,
   startDevEngine,
   type DevEngine,
   type DevGenerationRecord,
@@ -36,15 +38,17 @@ import { containingRoot, ownedResources } from "../preflight.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
-import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
+import { INSTALL_APPROVAL_STREAM, installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
 import { developFolderCard, type ProposedFolder } from "./widget-dev-card.ts";
 import {
   WIDGET_DEV_DIRECTORY_SOURCE,
   WIDGET_DEV_SNAPSHOTS_MAX,
   WIDGET_DEV_STORE_MAX,
   readDevSessions,
+  readOrphanedSnapshots,
   widgetWorkspaceDir,
   writeDevSessions,
+  writeOrphanedSnapshots,
   type StoredDevSession,
 } from "./widget-dev-store.ts";
 
@@ -125,13 +129,49 @@ export interface WidgetDevSessions {
    * surface calls this (the route is person-only). Sessions there, and what they run, stay as they are.
    */
   forget(root: string): WidgetDevResult<{ root: string; forgotten: boolean; stillCoveredBy?: string }>;
-  /** Start watching again every session that was live when the node stopped. */
+  /**
+   * Start watching again every session that was live when the node stopped. First, before any folder is watched, remove
+   * what sessions left behind (`tidy`): each session's superseded snapshots, and orphaned ones no session lists.
+   */
   resume(): Promise<void>;
-  close(): void;
+  /**
+   * Stop watching every folder, then wait for the work each session already started (a build being followed, a
+   * superseded snapshot being removed) to finish, for at most `closeWaitMs`, so the caller can let go of the database and
+   * the data folder without pulling them from under a removal. Past the bound it resolves anyway: a shutdown never hangs.
+   * It never rejects. Once called, nothing new is watched: a later `start` is refused and a `resume` still going stops.
+   */
+  close(): Promise<void>;
 }
 
 /** How often a session waiting on the person's answer looks for it, so an approval in the inbox is followed promptly. */
 const ANSWER_POLL_MS = 2_000;
+
+/**
+ * The longest a session waits, after the person grants its question in the inbox, for the install that grant runs to
+ * end. Until then it installs nothing newer and prunes nothing (`answerInstalling`). Past it, an install whose ending was
+ * never recorded is taken as over, so a session never waits on it for good.
+ */
+const ANSWER_INSTALL_WAIT_MS = 60_000;
+
+/**
+ * How a superseded snapshot is removed: the promise form of `rm`, retrying a file still held open (on Windows) after 100,
+ * 200, 300, 400 and 500 ms, about 1.5 s in all.
+ */
+export const SNAPSHOT_REMOVAL = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
+
+/**
+ * The longest `close` waits for work already started: one snapshot's removal with all its retries, with room to spare,
+ * and well inside the node's shutdown grace. One removal is all it has to cover: once `close` is called a prune starts
+ * no further removal, so a session with several held snapshots left over waits only for the one in flight, and the rest
+ * stay on its list for the next prune, after an install or at the next boot.
+ */
+export const WIDGET_DEV_CLOSE_WAIT_MS = 2_000;
+
+/** The most orphaned snapshots one boot removes (`tidy`); the rest stay listed for the next. */
+export const WIDGET_DEV_SWEEP_MAX = 64;
+
+/** The chain the boot's tidying runs on, so `close` waits for its removal in flight. No session id is empty. */
+const TIDY_CHAIN = "";
 
 interface LiveSession {
   sessionId: string;
@@ -141,9 +181,14 @@ interface LiveSession {
   baseline: PackageManifest | undefined;
 }
 
+/** Stop a session's answer poll and its engine. An engine that fails to let go is said, never thrown: the others still end. */
 function end(session: LiveSession): void {
   clearInterval(session.answerPoll);
-  session.engine.close();
+  try {
+    session.engine.close();
+  } catch (cause) {
+    process.stderr.write(`widget dev: ${session.sessionId} could not stop watching: ${messageOf(cause)}\n`);
+  }
 }
 
 const refusal = (status: number, code: string, message: string) => ({ ok: false as const, status, code, message });
@@ -170,6 +215,17 @@ function realOrUndefined(path: string): string | undefined {
   }
 }
 
+type ChosenFolderId = NonNullable<StoredDevSession["chosenFolderId"]>;
+
+/** The device and file id of the folder at `path` itself, not reached through a link, or undefined when none is there. */
+function folderIdOf(path: string): ChosenFolderId | undefined {
+  const id = devRootIdentityOf(path, { followLinks: false });
+  return id === undefined ? undefined : { dev: String(id.dev), ino: String(id.ino) };
+}
+
+/** Whether the folder at `root` is still the one with `id` (`devRootState`, as a dev session watches its folder). */
+const isFolder = (root: string, id: ChosenFolderId): boolean => devRootState(root, { dev: BigInt(id.dev), ino: BigInt(id.ino) }) === "present";
+
 /** A Windows path that names another machine or a device rather than a folder on a local drive. */
 function isRemoteOrDevicePath(path: string): boolean {
   return process.platform === "win32" && /^[\\/]{2}/.test(path);
@@ -184,9 +240,20 @@ export function createWidgetDevSessions(
     watch?: boolean;
     /** How often a session waiting on an answer looks for it. */
     answerPollMs?: number;
+    /** How long a folder may keep failing to be looked at before its session stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
+    rootUnreadableMs?: number;
+    /** The longest `close` waits for work already started (`WIDGET_DEV_CLOSE_WAIT_MS`). */
+    closeWaitMs?: number;
   } = {},
 ): WidgetDevSessions {
   const live = new Map<string, LiveSession>();
+  /**
+   * Set by `close`: nothing watches a folder again, neither a late start nor a resume still going through the store, and
+   * no prune starts another removal. A session left reading as live in the store is resumed at the next boot.
+   */
+  let closed = false;
+  /** The boot's tidying (`tidy`), which a start waits for before it watches a folder. */
+  let tidying: Promise<void> = Promise.resolve();
   /** One chain per session: builds, approvals and placement of one session never interleave. */
   const chains = new Map<string, Promise<unknown>>();
 
@@ -233,6 +300,31 @@ export function createWidgetDevSessions(
     return { decision, operationDigest: row.operation_digest };
   };
 
+  /**
+   * Whether the install a grant in the inbox runs is still going (`installing`): the approval is granted, no outcome of
+   * that install is recorded yet (`INSTALL_APPROVAL_STREAM` holds the question and, once the install ends, how it ended),
+   * and the grant is recent (`ANSWER_INSTALL_WAIT_MS`). That install copies the generation it was asked about from the
+   * session's snapshot, so installing a newer build meanwhile would race it. `over` once its outcome is recorded, and
+   * `given-up` when none was recorded within the wait.
+   */
+  const answerInstalling = (approvalId: string): "installing" | "over" | "given-up" => {
+    const node = services();
+    const decided = oneRow<{ decided_at: string | null }>(node.runtime.db, "SELECT decided_at FROM approvals WHERE approval_id = ?", approvalId)?.decided_at;
+    if (decided === undefined || decided === null) return "over";
+    const ended = oneRow<{ found: number }>(
+      node.runtime.db,
+      `SELECT 1 AS found FROM events
+        WHERE source_node_id = ? AND stream = ? AND json_extract(document, '$.approvalId') = ?
+          AND json_extract(document, '$.result') <> 'asked'
+        LIMIT 1`,
+      node.runtime.identity.nodeId,
+      INSTALL_APPROVAL_STREAM,
+      approvalId,
+    );
+    if (ended !== undefined) return "over";
+    return Date.now() - Date.parse(decided) > ANSWER_INSTALL_WAIT_MS ? "given-up" : "installing";
+  };
+
   const installDeps = () => {
     const node = services();
     return { db: node.runtime.db, nodeId: node.runtime.identity.nodeId, now: nowInstant, newId: node.conductor.newId };
@@ -260,13 +352,24 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_NOT_LOCAL", "give a folder on a drive of this machine; a network share or device path is not developed from");
     }
     const resolved = resolve(given);
+    // Only "not found" means not there: a folder an antivirus or indexer holds (`EPERM`, `EBUSY`) is there, unreadable.
+    const unreadable = (cause: unknown) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      return code !== undefined && code !== "ENOENT" && code !== "ENOTDIR"
+        ? refusal(403, "ROOT_UNREADABLE", `${resolved} cannot be read on this node (${code})`)
+        : undefined;
+    };
     try {
       if (!statSync(resolved).isDirectory()) return refusal(400, "ROOT_NOT_A_FOLDER", `${resolved} is not a folder`);
-    } catch {
-      return refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} does not exist on this node`);
     }
-    const root = realOrUndefined(resolved);
-    if (root === undefined) return refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    let root: string;
+    try {
+      root = realpathSync.native(resolved);
+    } catch (cause) {
+      return unreadable(cause) ?? refusal(404, "ROOT_NOT_FOUND", `${resolved} could not be resolved on this node`);
+    }
     if (isRemoteOrDevicePath(root)) {
       return refusal(400, "ROOT_NOT_LOCAL", "the folder resolves to a network share or device path, which is not developed from");
     }
@@ -278,7 +381,8 @@ export function createWidgetDevSessions(
     }
     if (initiative.kind === "clark" && !inWorkspace) {
       // The person's configured roots are resolved as they are now; a chosen folder is the canonical path the person's
-      // start stored, compared as it is (`chosenFolders`), so a link swapped in at its path later widens nothing.
+      // start stored, compared as it is, and only while the same folder is there (`chosenFolders`), so neither a link
+      // swapped in at its path later nor another folder made there widens anything.
       const allowed = [
         ...configuredRoots()
           .map((path) => realOrUndefined(path))
@@ -316,16 +420,43 @@ export function createWidgetDevSessions(
   const chosenFolders = (): string[] => markedFolders().filter((folder) => folder.found).map((folder) => folder.root);
 
   /**
-   * Every folder marked as chosen, once each. The stored root is the canonical path the person's start resolved; a folder
-   * that now resolves anywhere else (it was replaced by a link, moved or removed) is not `found`, and so grants nothing
-   * (`chosenFolders`), but it is still the person's mark to see and forget.
+   * Every folder marked as chosen, once each. The stored root is the canonical path the person's start resolved, and the
+   * stored id (`chosenFolderId`) is the folder that was there. A path that now resolves anywhere else (it was replaced by
+   * a link, moved or removed), or that holds another folder (one made there after the chosen one went), is not `found`,
+   * and so grants nothing (`chosenFolders`), but it is still the person's mark to see and forget. The chosen folder moved
+   * back to its path is found again.
+   *
+   * A mark stored before ids were kept has none. It takes the id of the folder found at its path the first time one is,
+   * and is held to that folder from then on: until then there is no record of which folder was chosen.
    */
   const markedFolders = (): { root: string; found: boolean }[] => {
+    const sessions = readDevSessions(dataDir());
     const folders: { root: string; found: boolean }[] = [];
-    for (const session of readDevSessions(dataDir())) {
-      if (session.chosenByPerson !== true || folders.some((folder) => sameRoot(folder.root, session.root))) continue;
+    const adopted = new Map<string, ChosenFolderId>();
+    for (const session of sessions) {
+      if (session.chosenByPerson !== true) continue;
       const now = realOrUndefined(session.root);
-      folders.push({ root: session.root, found: now !== undefined && sameRoot(now, session.root) });
+      let found = false;
+      if (now !== undefined && sameRoot(now, session.root)) {
+        if (session.chosenFolderId !== undefined) found = isFolder(session.root, session.chosenFolderId);
+        else {
+          const id = folderIdOf(session.root);
+          if (id !== undefined) adopted.set(session.sessionId, id);
+          found = id !== undefined;
+        }
+      }
+      const listed = folders.find((folder) => sameRoot(folder.root, session.root));
+      if (listed === undefined) folders.push({ root: session.root, found });
+      else listed.found ||= found;
+    }
+    if (adopted.size > 0) {
+      writeDevSessions(
+        dataDir(),
+        sessions.map((session) => {
+          const id = adopted.get(session.sessionId);
+          return id === undefined ? session : { ...session, chosenFolderId: id };
+        }),
+      );
     }
     return folders;
   };
@@ -345,9 +476,12 @@ export function createWidgetDevSessions(
    * always carries the canonical path it showed; if that path leads somewhere else by the time of the press (a link
    * swapped in, or a missing folder made a link), the session runs but nothing is kept, so the person never approves one
    * folder and grants another. A folder too broad to keep (`broadFolder`) is never chosen either.
+   *
+   * What it keeps is the id of the folder at `root` (`folderIdOf`), read right after `checkRoot` resolved it, so the mark
+   * names that folder and no other made at the path later; with no folder of its own there by then, nothing is kept.
    */
-  const choosesFolder = (initiative: WidgetDevInitiative, root: string, pressed: string): boolean =>
-    initiative.kind === "person" && sameRoot(resolve(pressed.trim()), root) && broadFolder(root) === undefined;
+  const choiceOf = (initiative: WidgetDevInitiative, root: string, pressed: string): ChosenFolderId | undefined =>
+    initiative.kind === "person" && sameRoot(resolve(pressed.trim()), root) && broadFolder(root) === undefined ? folderIdOf(root) : undefined;
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {
     const session = live.get(stored.sessionId);
@@ -369,6 +503,7 @@ export function createWidgetDevSessions(
       sessionId: stored.sessionId,
       status: stored.status,
       ...(stored.status === "stopped" && stored.stopReason !== undefined ? { stopReason: stored.stopReason } : {}),
+      ...(stored.status === "stopped" && stored.stopReason === "root-refused" && stored.stopCode !== undefined ? { stopCode: stored.stopCode } : {}),
       root: stored.root,
       ...(latest === undefined ? {} : { packageId: latest.packageId, version: latest.version, latest }),
       startedAt: stored.startedAt,
@@ -451,6 +586,16 @@ export function createWidgetDevSessions(
       if (approval?.decision === "granted" && approval.operationDigest === scope) {
         const active = activeGeneration(installDeps(), asked.listing.packageId, services().runtime.identity.nodeId);
         const approvalId = asked.approvalId;
+        if (active?.snapshotDigest !== asked.generation.digest) {
+          const install = answerInstalling(approvalId);
+          // The inbox is still installing what the person granted: the session looks again on its next poll, still asking.
+          if (install === "installing") return;
+          if (install === "given-up") {
+            process.stderr.write(
+              `widget dev: ${sessionId} stopped waiting for the install that approval ${approvalId} runs, as none was recorded within ${String(ANSWER_INSTALL_WAIT_MS / 1000)} s; it goes on to install its newest build\n`,
+            );
+          }
+        }
         stored = update(sessionId, (current) => {
           const { pending: _answered, ...rest } = current;
           // Installed by the inbox's decision: what runs is the generation that was asked about.
@@ -462,7 +607,7 @@ export function createWidgetDevSessions(
         });
         if (session !== undefined && active?.snapshotDigest === asked.generation.digest) {
           session.baseline = manifestAt(asked.listing.source.kind === "local" ? asked.listing.source.path : "");
-          prune(sessionId);
+          await prune(sessionId);
         }
       } else {
         const denied = approval?.decision === "denied";
@@ -580,7 +725,7 @@ export function createWidgetDevSessions(
     }
     const stored = update(sessionId, (current) => ({ ...current, pending: { generation: latest.generation, listing: latest.listing } }));
     if (stored === undefined) return;
-    const scope = devConsentScopeOf(latest.listing, latest.manifest);
+    const scope = devConsentScopeOf(latest.listing, { ...latest.manifest, skippedFacets: latest.skippedFacets });
     const consentApproval = stored.consent?.scope === scope ? stored.consent.approvalId : undefined;
     const granted =
       consentApproval === undefined
@@ -625,7 +770,7 @@ export function createWidgetDevSessions(
       if (session !== undefined) session.baseline = latest.manifest;
       // Only when nobody was asked: a build the person approved in the inbox was shown to them with what it adds.
       if (granted === undefined) sayWidened(stored, latest);
-      prune(sessionId);
+      await prune(sessionId);
       return;
     }
     if (outcome.kind === "approval-required") {
@@ -637,23 +782,52 @@ export function createWidgetDevSessions(
     update(sessionId, (current) => (current.pending === undefined ? current : { ...current, pending: { ...current.pending, refused } }));
   };
 
+  /**
+   * Note snapshots a session made that no session lists any more (`readOrphanedSnapshots`), so a boot can remove them.
+   * Written before the session store drops them: a crash between the two leaves a digest on both, never on neither.
+   */
+  const orphan = (digests: readonly (string | undefined)[]): void => {
+    const given = digests.filter((digest): digest is string => digest !== undefined);
+    if (given.length > 0) writeOrphanedSnapshots(dataDir(), [...readOrphanedSnapshots(dataDir()), ...given]);
+  };
+
   /** Remember a snapshot the session made, so it can be removed once nothing runs or waits on it. */
   const remember = (sessionId: string, digest: string): void => {
-    update(sessionId, (current) => {
-      const known = current.snapshots ?? [];
-      if (known.includes(digest)) return current;
-      // The oldest are forgotten past the bound; pruning keeps the list to a handful, so this is a backstop.
-      return { ...current, snapshots: [...known, digest].slice(-WIDGET_DEV_SNAPSHOTS_MAX) };
-    });
+    const known = read(sessionId)?.snapshots ?? [];
+    if (known.includes(digest)) return;
+    const snapshots = [...known, digest];
+    // Past the bound the oldest leave the list, and are noted as orphaned so they are not left in the cache for good. A
+    // session's list grows only while no build installs (one waits on the person, or is refused); an install prunes it.
+    orphan(snapshots.slice(0, -WIDGET_DEV_SNAPSHOTS_MAX));
+    update(sessionId, (current) => ({ ...current, snapshots: snapshots.slice(-WIDGET_DEV_SNAPSHOTS_MAX) }));
   };
+
+  /** Whether a session runs or waits on the snapshot, or a watched session's engine built it last. */
+  const usedBySession = (digest: string): boolean =>
+    readDevSessions(dataDir()).some((stored) => stored.running?.generation.digest === digest || stored.pending?.generation.digest === digest) ||
+    [...live.values()].some((session) => session.engine.latest()?.generation.digest === digest);
+
+  /** Whether a generation on this node still names the snapshot, as what runs, or as one a rollback returns to. */
+  const recorded = (digest: string): boolean =>
+    oneRow<{ found: number }>(
+      services().runtime.db,
+      "SELECT 1 AS found FROM package_generations WHERE node_id = ? AND instr(document, ?) > 0",
+      services().runtime.identity.nodeId,
+      digest,
+    ) !== undefined;
 
   /**
    * Remove what superseded generations of a session left behind: their generation records, except the newest superseded
    * one (the generation a rollback returns to), and their snapshots in the package cache, except the ones something
    * still runs, waits on or can roll back to. Only what this session made is touched. A snapshot that cannot be removed
-   * now (a file still open on Windows) is kept on the list and tried again after the next install.
+   * now (a file still open on Windows past the retries), or that a build or an install is placing or reusing meanwhile
+   * (`removeLocalSnapshot`, which asks again as each removal starts), is kept on the list and tried again after the next
+   * install, or at the next boot (`tidy`). It runs on the session's chain, so nothing else of the session interleaves
+   * with it.
+   * `halt` says when to start no further removal: once the node closes, and for the boot's tidying, once a folder is
+   * watched again.
    */
-  const prune = (sessionId: string): void => {
+  const prune = async (sessionId: string, halt: () => boolean = () => closed): Promise<void> => {
     const stored = read(sessionId);
     if (stored === undefined) return;
     const made = new Set(stored.snapshots ?? []);
@@ -666,6 +840,11 @@ export function createWidgetDevSessions(
     };
     keepDigest(stored.running?.generation.digest);
     keepDigest(stored.pending?.generation.digest);
+    /*
+     * The engine's newest build, which neither runs nor waits while the session waits on a question about an older one.
+     * After `close` no engine is found here, and nothing is lost: a prune starts no removal once `close` is called, and
+     * a build made while a prune or an install ran is remembered only later on this chain, so it is not on the list yet.
+     */
     keepDigest(live.get(sessionId)?.engine.latest()?.generation.digest);
 
     const packageId = stored.running?.listing.packageId ?? stored.pending?.listing.packageId;
@@ -697,22 +876,19 @@ export function createWidgetDevSessions(
       }
       const removed: string[] = [];
       for (const digest of made) {
-        if (keep.has(digest)) continue;
-        const stillRecorded = oneRow<{ found: number }>(
-          node.runtime.db,
-          "SELECT 1 AS found FROM package_generations WHERE node_id = ? AND instr(document, ?) > 0",
-          nodeId,
-          digest,
-        );
-        if (stillRecorded !== undefined) continue;
+        if (keep.has(digest) || recorded(digest)) continue;
+        // A closing node removes no more: each removal may wait out its retries, and `close` waits for the one in flight
+        // only (`WIDGET_DEV_CLOSE_WAIT_MS`). What is left stays on the list for the next prune.
+        if (halt()) break;
         const path = cachedLocalSnapshotPath(cacheRoot(), digest);
         if (path === undefined) {
           removed.push(digest);
           continue;
         }
         try {
-          rmSync(path, { recursive: true, force: true, maxRetries: 2 });
-          removed.push(digest);
+          // Asked again as the removal starts: a build or an install may have taken the same bytes since `keep` was read.
+          const outcome = await removeLocalSnapshot(path, { inUse: () => usedBySession(digest) || recorded(digest), options: SNAPSHOT_REMOVAL });
+          if (outcome === "removed") removed.push(digest);
         } catch (cause) {
           process.stderr.write(`widget dev: could not remove the superseded snapshot ${digest} yet: ${messageOf(cause)}\n`);
         }
@@ -725,8 +901,12 @@ export function createWidgetDevSessions(
     }
   };
 
-  /** Stop watching, and say why: the person, a watcher that failed, a folder that is gone, or the node's capacity. */
-  const markStopped = (sessionId: string, reason: WidgetDevStopReason): StoredDevSession | undefined => {
+  /**
+   * Stop watching, and say why: the person, a watcher that failed, a folder that is gone, the node's capacity, or a folder
+   * refused when the node started again. A `root-refused` stop keeps the start check's `code`, which decides what the
+   * person can do next: choose the folder again, or copy the project elsewhere.
+   */
+  const markStopped = (sessionId: string, reason: WidgetDevStopReason, code?: string): StoredDevSession | undefined => {
     const session = live.get(sessionId);
     if (session !== undefined) end(session);
     live.delete(sessionId);
@@ -734,12 +914,13 @@ export function createWidgetDevSessions(
      * The running generation stays installed and keeps rendering where it was placed; only the folder stops being
      * watched. A build that was waiting on a question is dropped with its listing, so the question leaves the inbox.
      */
-    return update(sessionId, ({ pending: _dropped, ...rest }) => ({ ...rest, status: "stopped", stopReason: reason }));
+    return update(sessionId, ({ pending: _dropped, stopCode: _old, ...rest }) => ({ ...rest, status: "stopped", stopReason: reason, ...(reason === "root-refused" && code !== undefined ? { stopCode: code } : {}) }));
   };
 
   /**
-   * Whether a live session's folder has gone (deleted, renamed, or replaced by another folder at the same path while it
-   * was watched); when it has, the session is stopped as `folder-gone` before anything is built or installed from it. A
+   * Whether a live session's folder has gone (deleted, renamed, or no longer a folder; another folder made at the same
+   * path is watched in its place by the engine); when it has, the session is stopped as `folder-gone` before anything is
+   * built or installed from it. A
    * platform watcher does not always report this (Windows reports nothing), so the check is made before each build is
    * followed, not only on a watcher error. The session's engine answers, since it knows which folder it watches; a folder
    * that could not be looked at this time (a busy or locked folder on Windows) is not taken as gone.
@@ -752,6 +933,76 @@ export function createWidgetDevSessions(
       process.stderr.write(`widget dev: ${root} is gone, so its session was stopped; what it ran keeps running\n`);
     }
     return true;
+  };
+
+  /**
+   * Remove orphaned snapshots (`readOrphanedSnapshots`) that nothing uses, at most `WIDGET_DEV_SWEEP_MAX` of them. One a
+   * session lists again (its build made the same bytes once more) is that session's to prune, and leaves the orphaned
+   * list. One a session runs or waits on, or a generation still names, stays there, to be looked at again next boot, and
+   * so does one an install is placing or reusing as its removal starts (`removeLocalSnapshot`): installs are served while
+   * the boot tidies. One whose removal fails (a file held open on Windows past the retries) stays to be tried again next
+   * boot.
+   */
+  const sweep = async (halt: () => boolean): Promise<void> => {
+    try {
+      const orphaned = readOrphanedSnapshots(dataDir());
+      if (orphaned.length === 0) return;
+      const sessions = readDevSessions(dataDir());
+      const listed = new Set(sessions.flatMap((session) => session.snapshots ?? []));
+      const used = new Set(sessions.flatMap((session) => [session.running?.generation.digest, session.pending?.generation.digest]));
+      const settled = new Set<string>();
+      let removals = 0;
+      for (const digest of orphaned) {
+        if (listed.has(digest)) {
+          settled.add(digest);
+          continue;
+        }
+        if (used.has(digest) || recorded(digest)) continue;
+        if (halt() || removals >= WIDGET_DEV_SWEEP_MAX) break;
+        const path = cachedLocalSnapshotPath(cacheRoot(), digest);
+        if (path !== undefined) {
+          removals += 1;
+          try {
+            // Asked again as the removal starts: an install of the same bytes may be placing or recording them now.
+            const outcome = await removeLocalSnapshot(path, { inUse: () => usedBySession(digest) || recorded(digest), options: SNAPSHOT_REMOVAL });
+            if (outcome === "kept") continue;
+          } catch (cause) {
+            process.stderr.write(`widget dev: could not remove the orphaned snapshot ${digest} yet: ${messageOf(cause)}\n`);
+            continue;
+          }
+        }
+        settled.add(digest);
+      }
+      if (settled.size > 0) writeOrphanedSnapshots(dataDir(), readOrphanedSnapshots(dataDir()).filter((digest) => !settled.has(digest)));
+    } catch (cause) {
+      process.stderr.write(`widget dev: could not remove orphaned snapshots: ${messageOf(cause)}\n`);
+    }
+  };
+
+  /**
+   * What sessions left in the package cache, removed at boot before any folder is watched again: each session's
+   * superseded snapshots (`prune`, which keeps what it runs, waits on or can roll back to), including ones a held file or
+   * a closing node left over and ones of a session that never installs again, then orphaned ones no session lists
+   * (`sweep`).
+   *
+   * The invariant that keeps a snapshot in use from being removed: this tidying removes a snapshot only while no session
+   * watches a folder. A snapshot it removes is one no session runs or waits on and no generation names, so the only
+   * session that could still need it is one whose engine is building the same bytes again: a build reuses a folder
+   * already at its content-addressed name, and the session learns of the build (and keeps its snapshot) only once it is
+   * made. Only a watched session's engine builds. So `resume` watches no folder until this ends, a `start` waits for it
+   * before it watches one (and nothing is awaited between the two), and each removal starts only while nothing is
+   * watched (`halt`), which ends the tidying early if a session is watched anyway (a `resume` called again while
+   * sessions are live). What it leaves is looked at again next boot. Once `close` is called it starts no removal either.
+   * An install, which the node serves meanwhile, holds the snapshot it places or reuses until its generation is recorded,
+   * and each removal asks about both as it starts (`removeLocalSnapshot`), so an install of the same bytes keeps them.
+   */
+  const tidy = async (): Promise<void> => {
+    const halt = (): boolean => closed || live.size > 0;
+    for (const stored of readDevSessions(dataDir())) {
+      if (halt()) return;
+      await serial(stored.sessionId, () => prune(stored.sessionId, halt));
+    }
+    if (!halt()) await sweep(halt);
   };
 
   const watch = (stored: StoredDevSession): LiveSession => {
@@ -775,6 +1026,7 @@ export function createWidgetDevSessions(
         root: stored.root,
         cacheRoot: cacheRoot(),
         watch: options.watch !== false,
+        ...(options.rootUnreadableMs === undefined ? {} : { rootUnreadableMs: options.rootUnreadableMs }),
         generationsBefore: before,
         allowedIsolations: WIDGET_DEV_ALLOWED_ISOLATIONS,
         baseline: () => live.get(sessionId)?.baseline,
@@ -789,7 +1041,7 @@ export function createWidgetDevSessions(
           });
         },
         onWatchError: (error) => {
-          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}\n`);
+          process.stderr.write(`widget dev: ${sessionId} stopped watching ${stored.root}: ${error.message}; what it ran keeps running\n`);
           // Said as it is: a session whose folder is no longer watched is stopped, not live.
           void serial(sessionId, async () => {
             if (live.get(sessionId) === session) markStopped(sessionId, "watch-failed");
@@ -840,21 +1092,33 @@ export function createWidgetDevSessions(
       .slice(0, sessions.length - WIDGET_DEV_STORE_MAX + 1)
       .map((session) => session.sessionId);
     const kept = sessions.filter((session) => !forgettable.includes(session.sessionId));
-    return kept.length < WIDGET_DEV_STORE_MAX ? kept : undefined;
+    if (kept.length >= WIDGET_DEV_STORE_MAX) return undefined;
+    // What a forgotten session made is no longer on any list: noted, so the next boot removes what nothing uses.
+    orphan(
+      sessions
+        .filter((session) => forgettable.includes(session.sessionId))
+        .flatMap((session) => [...(session.snapshots ?? []), session.running?.generation.digest, session.pending?.generation.digest]),
+    );
+    return kept;
   };
 
   return {
     async start(input) {
+      // No folder is watched while the boot removes what sessions left behind (`tidy`). Nothing is awaited from here to
+      // `watch`.
+      await tidying;
+      if (closed) return refusal(503, "WIDGET_DEV_UNAVAILABLE", "this node is closing, so it starts no widget dev session; start it again once the node is back");
       const initiative = input.initiative ?? { kind: "person" };
       const checked = checkRoot(input.root, initiative);
       if (!checked.ok) return checked;
       const root = checked.value;
+      const choice = choiceOf(initiative, root, input.root);
       if (input.conversationId !== undefined && !conversationExists(input.conversationId)) return noConversation(input.conversationId);
       const sessions = readDevSessions(dataDir());
       const existing = sessions.find((session) => sameRoot(session.root, root) && session.status === "live" && live.has(session.sessionId));
       if (existing !== undefined) {
         const view = await serial(existing.sessionId, async () => {
-          if (choosesFolder(initiative, root, input.root)) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
+          if (choice !== undefined) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true, chosenFolderId: choice }));
           await settle(existing.sessionId, "start");
           return sessionView(existing.sessionId);
         });
@@ -873,7 +1137,7 @@ export function createWidgetDevSessions(
           `this node keeps ${String(WIDGET_DEV_STORE_MAX)} widget dev sessions and each still runs what it built; uninstall some of those packages first`,
         );
       }
-      const { stopReason: _old, placed: oldPlaced, ...carried } = reopened ?? { sessionId: services().conductor.newId("wdev"), root };
+      const { stopReason: _old, stopCode: _oldCode, placed: oldPlaced, ...carried } = reopened ?? { sessionId: services().conductor.newId("wdev"), root };
       // A conversation named now replaces where the reopened session placed its widget before.
       const placed = oldPlaced !== undefined && input.conversationId !== undefined && oldPlaced.conversationId !== input.conversationId ? undefined : oldPlaced;
       const stored: StoredDevSession = {
@@ -883,7 +1147,7 @@ export function createWidgetDevSessions(
         startedAt: nowInstant(),
         initiative,
         // The person starting a folder is them choosing it; Clark picking up a folder they chose keeps the mark.
-        ...(choosesFolder(initiative, root, input.root) ? { chosenByPerson: true as const } : {}),
+        ...(choice === undefined ? {} : { chosenByPerson: true as const, chosenFolderId: choice }),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(input.widgetId === undefined ? {} : { widgetId: input.widgetId }),
         ...(placed === undefined ? {} : { placed }),
@@ -999,7 +1263,7 @@ export function createWidgetDevSessions(
           dataDir(),
           sessions.map((session) => {
             if (session.chosenByPerson !== true || !matches(session.root)) return session;
-            const { chosenByPerson: _forgotten, ...rest } = session;
+            const { chosenByPerson: _forgotten, chosenFolderId: _which, ...rest } = session;
             return rest;
           }),
         );
@@ -1022,15 +1286,24 @@ export function createWidgetDevSessions(
       } catch (cause) {
         process.stderr.write(`widget dev: could not create the widget workspace: ${messageOf(cause)}\n`);
       }
+      if (closed) return;
+      // Set before anything is awaited, so a start made from now on waits for it.
+      tidying = serial(TIDY_CHAIN, tidy).catch((cause: unknown) => {
+        process.stderr.write(`widget dev: could not remove what sessions left behind: ${messageOf(cause)}\n`);
+      });
+      await tidying;
       for (const stored of readDevSessions(dataDir())) {
+        // Closed while an earlier session's first build was followed: the rest stay live in the store for the next boot.
+        if (closed) return;
         if (stored.status !== "live" || live.has(stored.sessionId)) continue;
         // The folder is checked again as a start checks it (where its path resolves to now, for whoever started the
         // session): what was allowed then, such as a root the person has since removed, is not taken as allowed now.
         const checked = checkRoot(stored.root, { kind: stored.initiative?.kind ?? "person" });
         if (!checked.ok) {
           const gone = checked.code === "ROOT_NOT_FOUND" || checked.code === "ROOT_NOT_A_FOLDER";
-          markStopped(stored.sessionId, gone ? "folder-gone" : "root-refused");
-          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}), so its session was stopped; what it ran keeps running\n`);
+          // A folder that is there but cannot be read is not gone, nor refused: watching it failed.
+          markStopped(stored.sessionId, gone ? "folder-gone" : checked.code === "ROOT_UNREADABLE" ? "watch-failed" : "root-refused", checked.code);
+          process.stderr.write(`widget dev: ${stored.root} could not be watched again (${checked.code}: ${checked.message}), so its session was stopped; what it ran keeps running\n`);
           continue;
         }
         if (live.size >= WIDGET_DEV_LIVE_MAX) {
@@ -1044,9 +1317,23 @@ export function createWidgetDevSessions(
       }
     },
 
-    close() {
+    async close() {
+      closed = true;
       for (const session of live.values()) end(session);
       live.clear();
+      // Each chain already settles rather than rejects; work queued behind a closed session finds it gone and returns.
+      const started = Promise.all([...chains.values()]);
+      let bound: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<boolean>((done) => {
+        bound = setTimeout(() => done(true), options.closeWaitMs ?? WIDGET_DEV_CLOSE_WAIT_MS);
+      });
+      try {
+        if (await Promise.race([started.then(() => false), timedOut])) {
+          process.stderr.write("widget dev: work a session started was still running at close; closing anyway\n");
+        }
+      } finally {
+        clearTimeout(bound);
+      }
     },
   };
 }

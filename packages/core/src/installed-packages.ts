@@ -1,4 +1,14 @@
-import { directoryEntrySchema, directorySourceRefSchema, riskLaneFor, type DirectorySourceRef, type RiskLane } from "@clarkcant/contracts";
+import {
+  directoryEntrySchema,
+  directorySourceRefSchema,
+  UNREADABLE_SKIPPED_FACETS,
+  readSkippedFacetsRecord,
+  riskLaneFor,
+  skippedFacetsRecordLanes,
+  type DirectorySourceRef,
+  type RecordedSkippedFacet,
+  type RiskLane,
+} from "@clarkcant/contracts";
 import { allRows, parseJson, oneRow } from "@clarkcant/storage";
 
 import type { InstallDeps } from "./install-lifecycle.ts";
@@ -56,6 +66,13 @@ export interface InstalledPackageView {
    * this source only. Absent for a package installed before the source was recorded.
    */
   directorySource?: DirectorySourceRef;
+  /**
+   * The facets the install left out because this node did not know their kind (`PackageGeneration.skippedFacets`):
+   * declared but not understood, so never run, shown or granted for this generation. Their lanes count in `lane`.
+   * Absent when nothing was skipped. "unreadable" when the generation holds a record this node cannot parse: every
+   * reader then treats the package as unreadable, and lane counts it as 	rusted-native.
+   */
+  skippedFacets?: RecordedSkippedFacet[] | typeof UNREADABLE_SKIPPED_FACETS;
 }
 
 /**
@@ -114,9 +131,12 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
       lockCoverage?: string;
       snapshotDigest?: string;
       directorySource?: unknown;
+      skippedFacets?: unknown;
     }>(row.document, "package_generations.document");
     // Read through its schema: a record this node cannot read names no source, rather than a source it guessed.
     const directorySource = directorySourceRefSchema.safeParse(generation.directorySource);
+    // A record that is there but does not parse fails closed: no reader can tell which facets it held back.
+    const skippedFacets = readSkippedFacetsRecord(generation.skippedFacets);
 
     return {
       packageId: row.package_id,
@@ -129,7 +149,8 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
         rationale: plan?.candidate?.rationale ?? "",
         artifactUrl: plan?.candidate?.artifactUrl ?? "",
       },
-      lane: riskLaneFor(isolations),
+      // A skipped facet's lane counted in the lane its capabilities were granted in, so it counts in the lane shown.
+      lane: riskLaneFor([...isolations, ...skippedFacetsRecordLanes(skippedFacets)]),
       consentedDigest: planRow?.consented_digest ?? undefined,
       lock:
         generation.lockRef === undefined || generation.lockDigest === undefined
@@ -142,6 +163,7 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
       previousVersion: previousPackageVersion(deps, row.package_id),
       ...(generation.snapshotDigest === undefined ? {} : { snapshotDigest: generation.snapshotDigest }),
       ...(directorySource.success ? { directorySource: directorySource.data } : {}),
+      ...(skippedFacets !== UNREADABLE_SKIPPED_FACETS && skippedFacets.length === 0 ? {} : { skippedFacets }),
     };
   });
 }

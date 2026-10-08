@@ -195,7 +195,7 @@ describe("slash commands in a conversation", () => {
       // The card only offers: nothing starts until the person presses it.
       expect(services.widgetDev.list()).toEqual([]);
     } finally {
-      services.widgetDev.close();
+      await services.widgetDev.close();
     }
   });
 
@@ -210,7 +210,7 @@ describe("slash commands in a conversation", () => {
       // The word is the command's, not a folder: nothing is offered to develop.
       expect(card?.rows.some((row) => row.rowId === "proposed")).toBe(false);
     } finally {
-      services.widgetDev.close();
+      await services.widgetDev.close();
     }
   });
 });

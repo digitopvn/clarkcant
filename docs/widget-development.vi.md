@@ -78,7 +78,8 @@ Một package có thể có nhiều facets:
 - tools/services;
 - skills;
 - recipes;
-- themes.
+- themes;
+- hướng dẫn dự án.
 
 UI facet phải update/activate độc lập khỏi Pi worker khi không có facet Pi thay đổi.
 
@@ -145,6 +146,7 @@ Mỗi loại facet chỉ chạy trong đúng một lane, và schema từ chối 
 | `ui` | `isolated-ui` | Widget vẽ trong frame riêng. `id` phải trùng với id nằm trong `definition`. |
 | `tools` | `service` | Một service mà node chạy trong container, nói MCP qua stdio và khai báo mọi capability nó cung cấp. |
 | `skills`, `prompts`, `themes`, `setup` | `declarative` | Dữ liệu mà host đọc, không bao giờ chạy. |
+| `instructions` | `declarative` | Hướng dẫn dự án có điều kiện, chỉ được nêu như dữ liệu trong những dự án mà người dùng đã bật. Cần `schemaVersion` 3. |
 | `driver`, `voice` | `service` hoặc `trusted-native` | Có trong bộ từ vựng để listing hiển thị được lane. Hiện chưa host nào chạy loại này từ package. |
 
 Reader cũng từ chối manifest khi:
@@ -155,7 +157,52 @@ Reader cũng từ chối manifest khi:
   hoặc nằm dưới namespace mà capability của chính node dùng (`canvas`, `clarkcant`, `dev`, `mcp`, `project`);
 - `entry` hoặc `definition` của facet nằm ngoài package (`..`, đường dẫn tuyệt đối, ký tự ổ đĩa) hoặc là URL;
 - `ref` của một capability trong facet `tools` không nằm dưới package id (`<package id>.<name>@<major>`), hoặc một
-  tool hay capability bị khai báo hai lần.
+  tool hay capability bị khai báo hai lần;
+- một facet `instructions` được khai báo với `"schemaVersion": 2`.
+
+**Schema version 3.** `schemaVersion` là 2 cho mọi package, trừ package có facet `instructions`, vốn cần 3; công cụ
+luôn ghi version thấp nhất mà package cần, nên package không có facet đó vẫn cài được trên host chỉ đọc version 2. Host
+như vậy từ chối toàn bộ package version 3, kèm thông báo nêu rõ version, chứ không cài nó mà bỏ qua facet. Host đọc được
+version 3 kiểm tra facet này như mọi facet khác.
+
+**Loại facet mà host không biết.** Kể từ host có quy tắc này, host đọc lướt qua facet có `kind` là một tên viết thường
+(chữ cái, chữ số và dấu gạch nối) mà nó không biết (`readPackageManifest` trong `packages/contracts/src/install.ts`).
+Host cài các facet nó biết và để riêng facet đó ra. Facet được báo là đã khai báo nhưng không hiểu trong công cụ của tác
+giả (bên dưới), trong `clarkcant instructions check`, trong các trường chưa đọc của listing, và dưới dạng `skippedFacets`
+của package trong `GET /packages`; câu trả lời khi cài và thẻ cài đặt hiện chưa hiển thị nó. Node không bao giờ chạy,
+liệt kê hay cấp gì cho facet đó. Generation ghi lại facet (loại, id và isolation đã khai báo), và mọi nơi đọc một package
+đã cài đều để facet đó ra ngoài trong generation ấy, nên một host sau này được cập nhật để hiểu loại đó vẫn giữ facet
+không hoạt động. Cài lại cùng version khi nó đang chạy sẽ nhập vào lần cài đó và giữ bản ghi, còn khôi phục một package đã gỡ thì mang bản ghi của nó trở lại; chỉ một lần cập nhật lên version khác, hoặc gỡ cài đặt rồi cài mới, mới cài package lại từ đầu với sự đồng ý mới (cài lại một package được liệt kê bằng đường dẫn mà tệp đã thay đổi cũng vậy). Bản ghi mà node không phân tích được sẽ giữ lại mọi facet của package, và package khi đó được coi là không đọc được.
+
+`isolation` mà facet khai báo được tính vào lane dùng để cấp các capability package yêu cầu, và facet không nêu lane nào
+host biết thì được tính là `trusted-native`, nên facet này chỉ có thể làm việc cấp quyền khó hơn. Lane quyết định cách
+cấp capability, không quyết định package có được cài hay không. Lane của package trong `GET /packages`, cùng bước kiểm
+tra lane, listing và phạm vi đồng ý của một phiên phát triển widget, đều tính facet theo cùng cách.
+
+Listing nêu loại như vậy trong `facets` hoặc `isolations` cũng được đọc theo cách đó, và loại ấy được nêu trong các
+trường chưa đọc của listing. Listing không còn loại nào host biết, ở một trong hai danh sách, sẽ bị để ra ngoài
+directory, chứ không làm cả directory không đọc được. `declaredReach` của listing không thể được đối chiếu với facet mà
+host không đọc được: khi nó khác với phạm vi tiếp cận của các facet host biết, việc cài bị từ chối với
+`DECLARED_REACH_MISMATCH`, và thông báo nói package còn khai báo facet mà phiên bản này không hiểu, nên cập nhật ClarkCant
+có thể là cách khắc phục. Bước cài kiểm tra cả `hostApi` của chính manifest chứ không chỉ của listing. Các host có trước
+quy tắc này từ chối toàn bộ package như vậy.
+
+Chỉ loại facet được bỏ qua. Loại đã biết mà có trường hoặc giá trị host không chấp nhận, trường cấp cao nhất mà host
+không biết, `schemaVersion` mà host không đọc, và manifest mà mọi facet đều thuộc loại không biết thì vẫn bị từ chối.
+Cũng bị từ chối: loại có chữ hoa hoặc dấu gạch dưới, loại `widget` của version 1 trong manifest version 2 hoặc 3 (thông
+báo bảo đặt tên là `ui`), và facet bị bỏ qua có `id` trùng với `id` của facet khác. Trường cấp cao nhất có thể chi phối
+mọi facet (package chạm tới đâu, chạy với tài nguyên nào), nên host không thể biết bỏ qua nó có an toàn hay không; còn
+một facet là một phần mà host có thể từ chối trọn vẹn. Từ đó có quy tắc thay đổi định dạng:
+
+- loại facet mới được thêm trong `schemaVersion` hiện tại, và các host từ quy tắc này trở đi bỏ qua nó;
+- trường mới trong một facet đã có hoặc ở cấp cao nhất cần `schemaVersion` mới, mà host cũ từ chối kèm thông báo bảo
+  cập nhật ClarkCant;
+- package mà mục đích phụ thuộc vào một facet mới hơn thì nâng `hostApi.min`, để host cũ không liệt kê hay cài nó.
+
+Công cụ của tác giả vẫn nghiêm ngặt: `clark widget test`, `clark theme test`, `pack` và `publish` đánh lỗi loại facet
+mà chúng không biết, vì với tác giả đó thường là gõ sai hơn là một loại mới, và listing tạo ra khi thiếu facet đó sẽ mô
+tả ít hơn những gì package có. Các bước kiểm tra này bắt được loại gõ sai trước khi xuất bản; manifest được viết hoặc
+đóng gói bằng cách khác vẫn có thể mang một loại mà host bỏ qua. `clarkcant instructions check` thì cảnh báo về nó.
 
 Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ
 đoạn code nào của package chạy. Việc cài package chính là sự đồng ý với những gì package khai báo; mỗi lời gọi vẫn do
@@ -199,6 +246,24 @@ chạm tới nút Phê duyệt và Từ chối của một yêu cầu, các câu
 từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
+
+**Node đọc facet hướng dẫn như thế nào.** Một gói khai báo tối đa một facet `instructions`. `entry` của facet là một tệp quy tắc theo cùng hợp đồng mở
+với `.clarkcant/instructions.json` của dự án (`projectInstructionRuleSchema` trong
+`packages/contracts/src/project-instructions.ts`; xem [giao diện mở](open-interfaces.vi.md#package-instructions)), ví dụ
+`{ "kind": "instructions", "id": "rules", "entry": "rules/instructions.json", "isolation": "declarative" }`. Đoạn hướng
+dẫn mà một quy tắc đưa vào là `instructions/<name>.md` nằm cạnh tệp đó (ở đây là `rules/instructions/<name>.md`), gọi
+bằng một tên đơn, nên quy tắc không thể chạm tới tệp của host, của dự án hay của gói khác. Node đọc cả hai từ các byte
+đã cài, qua cùng cơ chế giới hạn như tệp của widget, theo các giới hạn của tệp dự án, và cắt đoạn hướng dẫn ở 1.500 ký
+tự (`packages/core/src/installed-instructions.ts`). Cài gói không nêu gì cả. Các quy tắc chỉ áp dụng trong dự án mà
+người dùng đã bật hướng dẫn của gói, bằng cách nhờ Clark (`manage_package` `enable_instructions`, do execution policy
+quyết định), và chỉ khi dự án đó nằm trong một thư mục gốc người dùng đã cấp. Trong dự án, đường dẫn tính tương đối từ
+dự án và `when.project` là tên thư mục của nó. Đoạn hướng dẫn của gói được nêu sau hướng dẫn riêng của dự án, trong
+phần ngân sách riêng của lượt, được bọc bằng mã của session, bị giữ lại khi vượt mức dữ liệu model nhận được, được ghi
+nhãn và ghi audit kèm id và phiên bản của gói, và không bao giờ được ghim: `pin` của quy tắc bị bỏ qua. Đoạn hướng dẫn
+không cấp quyền nào. Cài đặt → Tiện ích & widget liệt kê các dự án đang bật hướng dẫn của từng gói, kèm nút Tắt. Gỡ gói
+sẽ tắt hướng dẫn của nó ở mọi nơi, nên cài lại hoặc khôi phục sẽ bắt đầu với hướng dẫn tắt; nâng cấp hoặc quay lui giữ chúng bật ở
+những nơi đã bật. `clarkcant instructions check <thư mục gói>` kiểm tra manifest cùng quy tắc và đoạn hướng dẫn của
+facet.
 
 **Gói tham chiếu.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) và
 [Neo Brutalism](../examples/themes/neo-brutalism/README.md) là gói tổng quát chỉ chứa dữ liệu, cài qua vòng đời
@@ -2136,8 +2201,11 @@ có handler bị từ chối với `ACTION_NOT_OFFERED`. Output mang token bị 
 **Không mở thì không thực hiện.** Một lần perform bị từ chối với `FRAME_NOT_MOUNTED` trong các trường hợp sau:
 
 - không trang nào đang hiện widget;
-- bên gọi đang chạy lượt không tới được frame (CLI, một relay, một trang cũ hơn, hoặc một cửa sổ desktop đã tách);
+- bên gọi đang chạy lượt không tới được frame (CLI, một relay hoặc một trang cũ hơn);
 - frame chưa được mount.
+
+Widget đang mở trong cửa sổ desktop riêng thì bị từ chối với `FRAME_DETACHED`: hãy gắn lại để Clark thao tác được.
+Không có gì được gửi tới frame nào.
 
 Trang mà hội thoại đã đổi trước khi kịp hỏi thì trả `SURFACE_GONE`. Trang không đọc được sự kiện thì trả
 `PERFORM_UNREADABLE`, hoặc `PERFORM_VERSION_UNSUPPORTED` với phiên bản khác. Không có gì được xếp hàng để làm sau và
@@ -2181,8 +2249,12 @@ phần trăm`, được chuyển cho lượt giọng nói của Clark như mọi
 động Clark thực hiện được và trang của phiên đã gửi `widgetPerform: 1`, dữ liệu của lượt còn liệt kê widget và từng
 hành động được cho phép: binding id, nhãn, mô tả và schema input. Danh sách được đọc khi lượt bắt đầu, nên một lượt
 phải chờ sau lượt khác sẽ không nhận được gì nếu trong lúc đó widget đã đóng hoặc một widget khác được chọn. Mô tả chỉ
-được liệt kê từ một định nghĩa mà widget có thể đã được đặt từ đó: một gói đang chạy, cùng phiên bản và digest của
-instance, khai báo hành động với đúng nhãn và schema input mà binding của nó đã ghi lại. Id widget, nhãn, mô tả và
+được liệt kê từ đúng thế hệ gói (package generation) mà binding của nó được đặt từ đó, khi thế hệ ấy còn đang chạy:
+`place_widget` ghi thế hệ này vào binding của từng hành động được cho phép (`packageGeneration`), và định nghĩa vẫn
+phải cùng phiên bản và digest của instance, khai báo hành động với đúng nhãn và schema input mà binding đã ghi lại. Một
+gói giả mạo chép lại id widget, phiên bản, schema và nhãn sẽ chạy dưới một thế hệ khác nên không cung cấp mô tả nào;
+một binding được tạo trước khi binding perform ghi lại thế hệ của mình cũng vậy. Cài lại, sửa chữa hoặc build lại trong
+phiên phát triển widget ở cùng phiên bản cũng tạo ra một thế hệ mới, nên mô tả cũng bị ẩn cho đến khi widget được đặt lại. Id widget, nhãn, mô tả và
 schema là lời của chính gói, mỗi phần được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có thể thực hiện một hành động qua
 `perform_widget_action`, cùng công cụ, schema, chính sách thực thi và thẻ của host như một yêu cầu gõ chữ. Thẻ mà lượt
 đặt ra được đọc lên bằng ngôn ngữ của người dùng. Host không thêm quy tắc khớp nào, gói không khai báo cách nói nào, và
@@ -2223,18 +2295,53 @@ Các surface còn lại:
 - historical inline snapshot; hoặc
 - read-only preview.
 
-Detach không reset state/subscription/media.
+Detach giữ state bền của instance: widget bắt đầu trong cửa sổ mới, và khi về lại hội thoại, từ những gì nó đã lưu
+trên node. Composition được chuyển nguyên trạng. Widget chạy trong khung riêng được mount lại trong cửa sổ mới, nên
+view state (`ephemeralStateKeys`) và vị trí phát đều bắt đầu lại; nó không bao giờ phát ở hai nơi.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
 
 Cửa sổ detached giữ lease live-owner của instance dưới bề mặt `detached` và làm mới nó trong lúc còn mở. Cửa sổ đóng lại,
 và trả instance về, khi phần hiển thị trong hội thoại đã mở nó biến mất, khi cửa sổ hội thoại đóng, khi ứng dụng thoát,
-hoặc khi một bề mặt khác đã lấy lease.
+hoặc khi một bề mặt khác đã lấy lease. Việc trả instance về chỉ chờ node xác nhận nhả lease trong tối đa vài giây: node không trả lời
+thì widget cũng không bị kẹt ở chế độ chỉ đọc khi không còn cửa sổ nào mở, và lease của cửa sổ sẽ tự hết hạn.
 
-Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
-thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
-semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
-Việc detach một isolated frame được theo dõi ở [#577](https://github.com/digitopvn/clarkcant/issues/577).
+Widget chạy trong khung riêng (isolated frame) cũng detach được trên desktop. Cửa sổ vẫn không giữ credential nào.
+Desktop host chuyển tiếp từng yêu cầu của frame, cho đúng một instance mà nó đã mở cửa sổ này, bằng token của chính nó:
+
+- mỗi lần đọc widget, kèm một frame grant mới (URL hết hạn thì được làm mới bằng cách đọc lại);
+- mỗi lần ghi state, được trả lời bằng những gì node đã lưu hoặc bằng state node đang giữ;
+- mỗi lần publish semantic;
+- mỗi lần bấm, được gửi như của người dùng, giống một lần bấm trong hội thoại. Host tự phân giải digest của binding từ
+  lần đọc mới nhất của nó;
+- mỗi yêu cầu về tệp (`artifacts@1`). Người dùng trả lời một lần chọn hay lưu tệp ngay trong khung của cửa sổ, như trong
+  hội thoại, và host mở hộp thoại của hệ điều hành bên trên cửa sổ tách rời. Các byte đi giữa ổ đĩa và node qua host;
+  cửa sổ chỉ biết tham chiếu của node và tên trần của tệp, hoặc tệp đã được lưu hay chưa, không bao giờ biết đường dẫn.
+  "Thay tệp gốc" ghi đè lên tệp được chọn gần nhất trong cửa sổ đó. Tệp mà widget đính kèm được đưa vào ô soạn tin của
+  cửa sổ hội thoại;
+- mỗi lần đọc, liệt kê và huỷ job (`jobs@1`);
+- mỗi yêu cầu browser token (`tokens@1`), chỉ khi package của widget khai báo browser token. Host kết thúc mọi phiên
+  token mà các frame của cửa sổ đã được cấp khi cửa sổ đóng, sau khi trả lease và trước khi hội thoại nhận lại widget, và
+  khi một lần đọc cho thấy frame đã có bản dựng mới.
+
+Cửa sổ không nêu tên hội thoại lẫn instance. Các relay có giới hạn, và frame hỏi quá nhanh thì bị từ chối chứ không
+xếp hàng (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). Relay mà node không trả lời trong 30 giây (10 giây với publish semantic)
+kết thúc với `NODE_TIMEOUT` và nhả chỗ của nó. Riêng một lần bấm thì chờ 330 giây, lâu hơn thời hạn dài nhất mà node
+đặt cho một lần gọi dịch vụ hay một workflow (300 giây với workflow), nên host không ngừng chờ một lần bấm như vậy khi
+node vẫn đang chạy nó. Nút `agent` chạy một lượt của mô hình, vốn không có thời hạn như vậy, nên một lượt dài vẫn có thể
+vượt quá thời gian chờ. Nếu một lần bấm hết giờ, widget được báo rằng yêu cầu đã được gửi nhưng chưa rõ đã có hiệu lực hay chưa (`uncertain`), không bao giờ báo là
+bị từ chối. Trạng thái bản dựng của phiên phát triển widget được hiện trong cửa sổ, không kèm đường dẫn thư mục, kể cả
+bên trong thông báo lỗi dựng: thư mục được thay bằng `.`, nên một tệp bên trong nó được đọc theo đường dẫn tương đối
+với package. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai, và các lần perform của
+Clark trên widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại.
+
+Relay tệp, job và token có các giới hạn riêng, giống hệt một frame trong hội thoại, và một lần chọn hay lưu tệp chỉ giữ
+một hộp thoại mở tại một thời điểm. Widget nhận cùng câu trả lời và cùng mã từ chối ở cả hai cửa sổ.
+
+Cửa sổ tách rời chưa có: các hành động Clark thực hiện (`offeredActions`). Frame được báo là chúng không được cung cấp,
+và chúng chạy lại khi widget được gắn lại. Widget mà package đã mất (`frame: null`) không có nút
+detach; nó hiện văn bản thay thế trong hội thoại. Phần việc còn lại được theo dõi ở
+[#577](https://github.com/digitopvn/clarkcant/issues/577) và [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
 Audio/call/player không được duplicate playback khi chuyển surface.
 
@@ -2874,6 +2981,12 @@ Local isolated host có:
 `clark widget dev [dir] [--port N] [--builtin <id>]`: không có `[dir]` thì lấy thư mục hiện tại, và
 `--builtin <id>` xem một widget của catalog trong **cùng** host đó thay vì một package trên đĩa — chi tiết ở 23.5.
 
+Dev host chỉ lắng nghe trên `127.0.0.1` và không có cờ nào để mở nó ra mạng. Nó chỉ trả lời các yêu cầu gửi tới
+`127.0.0.1:<port>`, `localhost:<port>` hoặc `[::1]:<port>`, và từ chối mọi `Host` khác bằng `403`. Nhờ vậy, một trang
+web trỏ tên miền của chính nó về máy bạn (DNS rebinding) không thể đọc trạng thái của shell hay điều khiển nó. Một yêu
+cầu `POST` hoặc `DELETE` có ghi `Origin` cũng phải đến từ một trong các địa chỉ đó. Hãy mở URL mà dev host in ra. Một
+tên máy tự đặt, một tunnel hay một proxy chuyển tiếp `Host` của riêng nó sẽ bị từ chối.
+
 Với một package, dev host thực hiện bắt tay `init` thật của bridge. Nó gửi props của fixture đang chọn và đưa ra
 `artifacts@1` (§10.1). Control **File picker** của nó giả lập lựa chọn của người dùng. Control này liệt kê các tệp
 trong `fixtures/files/` của package, thêm một mục Huỷ, và lần `pick` kế tiếp trả về mục đang được chọn. Nó chỉ liệt kê
@@ -2956,14 +3069,27 @@ của hệ thống; trình duyệt, hoặc ứng dụng desktop nối với mộ
 máy chạy node. Nếu Clark muốn phát triển một thư mục bạn chưa chọn, không có gì được bắt đầu và chính thẻ đó hiện ra với
 nút **Phát triển thư mục này**. Thẻ nêu thư mục mà đường dẫn thật sự dẫn tới, và nói rõ khi nó khác đường dẫn được đưa
 ra; đường dẫn không tìm thấy thì không có nút. Lần bấm chỉ giữ thư mục làm lựa chọn của bạn nếu lúc bấm đường dẫn vẫn
-chính là thư mục đó, nên một liên kết được đặt vào chỗ nó trong lúc chờ không được gì. Khi bạn đã bắt đầu một thư mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi
-lại, cho tới khi bạn thu hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh
-thư mục đó. Thu hồi không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua
-thư mục đó (câu trả lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn
-thu hồi được. Chỉ tin nhắn do bạn gửi mới khiến Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
-phiên, nhưng Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển,
-và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
-dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
+chính là thư mục đó, nên một liên kết được đặt vào chỗ nó trong lúc chờ không được gì. Khi bạn đã bắt đầu một thư
+mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi lại, cho tới khi bạn thu
+hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh thư mục đó. Thu hồi
+không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua thư mục đó (câu trả
+lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn thu hồi được; nó được
+tính lại khi chính thư mục đó được chuyển về, còn một thư mục mới ở đường dẫn đó được chọn khi chính bạn bắt đầu phát
+triển nó. Có một giới hạn: một số hệ thống tệp có thể cấp cho một thư mục bị xoá (không phải bị chuyển đi) rồi được tạo
+lại ở cùng đường dẫn đúng mã tệp của thư mục đã xoá, và khi đó nó vẫn được tính là thư mục bạn đã chọn. Trên Linux
+(ext4 và các hệ thống tệp tương tự), một mã đã được giải phóng có thể quay lại vào bất kỳ lúc nào về sau, chẳng hạn cho
+một lần `git clone` mới vào cùng đường dẫn vào ngày hôm sau. Trên Windows, ổ FAT32 và exFAT (chẳng hạn USB) có thể cấp
+cùng mã cho một thư mục được tạo lại, và ở đó không có gì giữ thư mục ở trạng thái mở, nên điều này có thể xảy ra ngay
+cả khi có phiên đang theo dõi nó. Hãy thu hồi một thư mục trước khi xoá nó nếu không muốn một thư mục tạo ở đó về sau
+thừa hưởng lựa chọn. Nếu một phiên do Clark bắt đầu dừng lại sau một lần khởi động lại vì Clark không còn được phép tự
+theo dõi thư mục của nó (chẳng hạn nó đã bị xoá rồi tạo lại), những gì nó đã dựng vẫn tiếp tục chạy; hãy bấm **Phát
+triển lại** ở dòng của phiên đó trên thẻ `/develop` để chọn lại thư mục. Nếu thư mục giờ dẫn tới một thư mục chia sẻ
+qua mạng hoặc vào thư mục dữ liệu của node, chọn lại nó cũng bị từ chối, nên dòng đó không có nút: hãy chép dự án vào
+không gian widget của Clark hoặc một thư mục khác trên máy này, rồi phát triển từ đó. Chỉ tin nhắn do bạn gửi mới khiến
+Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một phiên, nhưng
+Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển, và một thư mục chia
+sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần dịch vụ, công cụ hoặc
+native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
 
 Widget hiện trong cuộc hội thoại bằng frame của bản chính thức, với đúng sandbox, bridge, state và migration của bản
 chính thức. Một generation mới chỉ mount lại frame; instance và state của nó được giữ, và state đi qua các migration của
@@ -2975,10 +3101,12 @@ Chính sách thực thi quyết định mỗi lần cài như mọi lần cài k
 của chính Clark, nên chế độ có kiểm soát hỏi trước lần cài đầu tiên của nó; còn phiên bắt đầu qua route của chủ máy là
 yêu cầu của bạn. Khi chế độ yêu cầu hỏi, lần cài đầu tiên là một câu hỏi, và mỗi lần dựng làm đổi những gì gói tiếp cận cũng vậy:
 reach đã khai báo, tài nguyên, lane của facet, các facet, quyền, hoặc các capability gói yêu cầu. Một lần dựng chỉ đổi mã
-hay UI dùng lại câu trả lời đó và chạy ngay. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp
-cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
-đã duyệt trong hộp thư thì đã được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một
-thứ khác trên node: một gói đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
+hay UI dùng lại câu trả lời đó và chạy ngay; khi bạn duyệt một lần dựng trong hộp thư trong lúc đã có những lần dựng mới
+hơn đang chờ, lần dựng bạn duyệt được cài trước, rồi đến lần dựng mới nhất khi câu trả lời của bạn bao trùm những gì nó
+tiếp cận. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp cận nhiều hơn lần trước và không
+ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn đã duyệt trong hộp thư thì đã
+được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một thứ khác trên node: một gói
+đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
 
 Dừng một phiên là dừng theo dõi thư mục; bản dựng cuối vẫn chạy ở nơi nó đã được đặt. Khi node tự dừng theo dõi, dòng
 trạng thái cạnh frame nói lý do. Có thể bộ theo dõi đã bị lỗi, hoặc thư mục đã bị xoá hay đổi tên; node kiểm tra thư mục
@@ -2986,6 +3114,9 @@ mỗi giây, vì Windows không báo gì. Cũng có thể node đã theo dõi s�
 thể không còn là thư mục mà phiên được theo dõi. Một lần dựng có thư mục quá lớn, hoặc chứa liên kết trỏ ra ngoài, sẽ nói
 điều đó và cần đổi gì. Các bản dựng đã bị thay thế được dọn dẹp khi bản mới được cài. Node giữ bản dựng đang chạy và bản mà thao tác quay lại bản
 trước sẽ trở về.
+Một phiên không cài lại nữa, hoặc một lần xoá còn sót do tệp bị giữ hay do node đang đóng, được dọn ở lần khởi động kế
+tiếp của node, trước khi thư mục nào được theo dõi lại. Lần khởi động đó cũng xoá các bản dựng không còn phiên nào liệt
+kê, khi không còn gì chạy chúng.
 
 ### test
 
@@ -3337,8 +3468,9 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng không gian widget và thư mục gốc dự án do người dùng cấu hình và được quyết định như đề
   xuất của Clark, chỉ facet frame và dữ liệu, dọn dẹp các bản dựng đã bị thay thế, chỉ mount lại frame, và trạng thái
   bản dựng do host sở hữu. Ghim một widget đang phát triển đã
-  chạy được; tách một widget cách ly ra cửa sổ riêng, cùng các điều khiển fixture, viewport, theme và reduced motion của
-  dev host đặt cạnh một frame trên node, thì chưa có.
+  chạy được, và tách nó ra cửa sổ desktop riêng cũng vậy (§11), cửa sổ đó hiện trạng thái bản dựng mà không kèm đường
+  dẫn thư mục. Các điều khiển fixture, viewport, theme và reduced motion của dev host đặt cạnh một frame trên node thì
+  chưa có.
 - State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).
 - Gỡ / khôi phục / quay về package từ Settings và qua `manage_package` trong hội thoại; dữ liệu được giữ.
 - Câu hỏi capability đang chờ được trả lời trong Settings (do host sở hữu; model không duyệt được). Frame chỉ
@@ -3379,7 +3511,10 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   `detachedWindowOptions`, `apps/web/src/App.tsx` phục vụ `?detached=1`), và được
   `apps/desktop/test/detached-window.spec.ts` cùng `apps/web/e2e/detach.spec.ts` phủ — **không phải** bởi
   check `detach` của bộ conformance: harness chỉ chạy trên dev host trong trình duyệt, mà dev host không có
-  cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có.
+  cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có. Một widget chạy trong khung
+  riêng được tách thật do smoke test desktop (`pnpm --filter @clarkcant/app-desktop smoke`) điều khiển: nó mount widget
+  từ lần đọc của host và chuyển tiếp một lần ghi state, một lần publish, một lần bấm và một lần đọc phiên phát triển tới
+  một node giả lập.
 - Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
 
 ---
@@ -3572,8 +3707,15 @@ còn nêu đúng phiên bản và digest của generation đó (cùng phiên b�
 nó tạo một plan và generation mới thay vì nhập vào cái cũ; một plan đã xong chỉ được nhập vào khi snapshot của
 generation đang chạy chính là artifact của plan đó. Một generation được cài từ đường dẫn trước khi có snapshot thì không
 có `snapshotDigest` và vẫn đọc đường dẫn của nó cho tới khi được cài lại. Mỗi lần tạo snapshot sẽ dọn các thư mục
-`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache; ngoài ra chưa có gì dọn các mục cache không còn dùng, với snapshot
-cũng như với artifact git và npm.
+`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache. Các phiên widget dev xoá những snapshot chúng đã tạo khi không còn gì
+chạy, chờ hay có thể quay lại chúng: sau mỗi lần cài, và lúc khởi động trước khi thư mục nào được theo dõi lại, kể cả
+những snapshot đã rơi khỏi danh sách của một phiên (`orphaned-snapshots.json` trong thư mục của kho phiên). Một
+snapshot không bao giờ bị xoá trong lúc một lần dựng hay một lần cài đang đặt hoặc dùng lại nó (`removeLocalSnapshot`).
+Một lần cài giữ nó cho tới khi generation của nó được ghi lại, hoặc cho tới khi lần cài kết thúc mà không có generation
+nào: lần cài thất bại, bị từ chối, hoặc phải hỏi người dùng trước. Bản dựng mới nhất của một phiên giữ nó cho tới khi
+một bản dựng mới hơn thay thế nó, phiên dừng lại, hoặc node đóng. Một snapshot được tạo trong lúc một lần xoá đang chạy
+sẽ chờ lần xoá đó xong rồi đặt bản sao đã chuẩn bị sẵn của nó vào chỗ. Ngoài ra chưa có gì dọn các mục cache không còn
+dùng: snapshot của một lần cài thông thường, và artifact git và npm, vẫn được giữ.
 
 `digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw

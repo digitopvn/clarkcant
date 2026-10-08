@@ -27,6 +27,15 @@ const themes = [
   { packageId: "org.clarkcant.pixel-arcade", facet: "pixel-arcade", orb: "plasma" },
   { packageId: "org.clarkcant.neo-brutalism", facet: "neo-brutalism", orb: "glass" },
 ];
+/*
+ * The page runs with reduced motion except for the one stretch that checks the widget follows motion both ways.
+ *
+ * With motion on, the docked hero orb redraws every frame, and a CI runner has no GPU: Chromium draws WebGL in
+ * software there, and measured on a workstation the browser then keeps three to five cores busy while the page sits
+ * still (a twentieth of a core with reduced motion). A four-core Windows runner has nothing left for the node or the
+ * test runner, so a step that answers in milliseconds waited 18 to 33 seconds and the test ran out of time. This spec
+ * is about the widget, not the orb; `orb.spec.ts` covers the orb's own motion.
+ */
 for (const theme of themes) for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const) {
   test(`an isolated widget follows ${theme.facet} appearance in place at ${width} ${scheme}`, async ({ page, request }) => {
     mkdirSync(evidence, { recursive: true });
@@ -42,14 +51,18 @@ for (const theme of themes) for (const width of [1280, 390]) for (const scheme o
       if (step === 15) throw new Error("The personal Orb choice did not reset");
     }
     expect((await request.put(`${node}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } })).ok()).toBe(true);
-    const directory = JSON.parse(readFileSync(join(process.cwd(), "apps/web/e2e/fixtures/directory.json"), "utf8")) as { packageId: string; digest: string }[];
-    const entry = directory.find((candidate) => candidate.packageId === theme.packageId)!;
-    const listed = await (await request.get(`${node}/packages`, { headers })).json() as { packages: { packageId: string }[] };
-    if (!listed.packages.some((candidate) => candidate.packageId === entry.packageId)) {
+    const directory = JSON.parse(readFileSync(join(process.cwd(), "apps/web/e2e/fixtures/directory.json"), "utf8")) as { packageId: string; version: string; digest: string }[];
+    const entry = directory.find((candidate) => candidate.packageId === theme.packageId && candidate.version === "1.0.0")!;
+    /*
+     * Version 1.0.0, not merely installed: a spec before this one on the same node can leave a later version behind,
+     * such as the Dusk 1.1.0 whose colours are too dim to draw, and then the theme is not offered at all.
+     */
+    const listed = await (await request.get(`${node}/packages`, { headers })).json() as { packages: { packageId: string; version: string }[] };
+    if (!listed.packages.some((candidate) => candidate.packageId === entry.packageId && candidate.version === "1.0.0")) {
       expect((await request.post(`${node}/packages/install`, { headers, data: { packageId: entry.packageId, version: "1.0.0", localDigest: entry.digest } })).ok()).toBe(true);
     }
     await page.setViewportSize({ width, height: 900 });
-    await page.emulateMedia({ colorScheme: scheme, reducedMotion: "no-preference" });
+    await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" });
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(node)}`);
     await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
     const composer = page.locator("[data-composer='true']");
@@ -91,7 +104,7 @@ for (const theme of themes) for (const width of [1280, 390]) for (const scheme o
     const canonical = await (await request.get(`${node}/appearance`, { headers })).json() as AppearanceResponse;
     if (canonical.theme === null) throw new Error("The installed theme was not applied by the canonical route");
     expect((await readWidget(frame)).appearance).toEqual(compileAppearance({
-      scheme, theme: canonical.theme, themeRef: canonical.appliedRef, customization: canonical.customization,
+      scheme, theme: canonical.theme, themeRef: canonical.appliedRef, customization: canonical.customization, reducedMotion: true,
     }));
     if (theme.orb !== undefined) {
       const orb = page.locator("canvas[data-orb-profile]").first();
@@ -101,8 +114,14 @@ for (const theme of themes) for (const width of [1280, 390]) for (const scheme o
     }
     const hostAccent = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase());
     await expect.poll(async () => (await readWidget(frame)).accent).toBe(await hostAccent());
-    await page.locator(`[data-theme-choice='${scheme === "dark" ? "light" : "dark"}']`).click();
-    await expect.poll(async () => (await readWidget(frame)).appearance?.scheme).toBe(scheme === "dark" ? "light" : "dark");
+    const flipped = scheme === "dark" ? "light" : "dark";
+    await page.locator(`[data-theme-choice='${flipped}']`).click();
+    await expect.poll(async () => (await readWidget(frame)).appearance?.scheme).toBe(flipped);
+    // Motion turned on reaches the widget as the theme's own motion, and turned off again as none at all.
+    const themeMotion = compileAppearance({ scheme: flipped, theme: canonical.theme, themeRef: canonical.appliedRef, customization: canonical.customization }).tokens.motion;
+    expect(themeMotion.micro).not.toBe("0ms");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect.poll(async () => (await readWidget(frame)).appearance?.tokens.motion).toEqual(themeMotion);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect.poll(async () => {
       const current = (await readWidget(frame)).appearance;
@@ -119,6 +138,22 @@ for (const theme of themes) for (const width of [1280, 390]) for (const scheme o
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
     await page.keyboard.press("Escape");
     await page.screenshot({ path: join(evidence, `iframe-${theme.facet}-${width}-${scheme}.png`) });
-    expect((await request.put(`${node}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } })).ok()).toBe(true);
   });
 }
+
+/*
+ * Clark Default again for the specs after this one, also after a failure or a timeout. It runs in a hook on its own
+ * request context: a reset at the end of the test was cut off with the test's own context when the test ran out of
+ * time, and the report named the reset instead of the step that was slow.
+ */
+test.afterEach(async ({ playwright }) => {
+  const context = await playwright.request.newContext();
+  try {
+    const reset = await context.put(`${node}/preferences/experience.themeRef`, {
+      headers: { authorization: `Bearer ${token()}` }, data: { value: "builtin:clark" },
+    });
+    expect(reset.ok(), await reset.text()).toBe(true);
+  } finally {
+    await context.dispose();
+  }
+});

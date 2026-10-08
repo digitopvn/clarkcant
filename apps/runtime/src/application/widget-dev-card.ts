@@ -1,4 +1,4 @@
-import { type CommandCard, type Instant, type WidgetDevSessionView } from "@clarkcant/contracts";
+import { type CommandCard, type Instant, type WidgetDevSessionView, widgetDevRootRefusedCode } from "@clarkcant/contracts";
 
 /**
  * The card a person chooses a folder to develop a widget from: `/develop`, Clark's answer when it was asked to develop
@@ -57,8 +57,8 @@ export function developFolderCard(input: {
     note: found
       ? say("Clark được phát triển trong thư mục này và mọi thư mục bên trong nó.", "Clark may develop in this folder and every folder inside it.")
       : say(
-          "Hiện không tìm thấy thư mục này ở đường dẫn đó (đã bị chuyển, xoá hoặc thay bằng một liên kết), nên nó không cho Clark quyền gì; nếu nó trở lại đúng chỗ này, quyền sẽ có lại. Thu hồi để bỏ hẳn.",
-          "This folder is not found at this path now (moved, removed or replaced by a link), so it gives Clark nothing; if it comes back here, so does the access. Forget it to drop it for good.",
+          "Hiện không tìm thấy thư mục này ở đường dẫn đó (đã bị chuyển, xoá, hoặc thay bằng một liên kết hay một thư mục khác), nên nó không cho Clark quyền gì; nếu chính thư mục này trở lại đúng chỗ này, quyền sẽ có lại. Một thư mục mới ở đường dẫn này được chọn khi chính bạn bắt đầu phát triển nó. Thu hồi để bỏ hẳn.",
+          "This folder is not found at this path now (moved, removed, or replaced by a link or by another folder), so it gives Clark nothing; if this same folder comes back here, so does the access. A new folder at this path is chosen when you start developing it yourself. Forget it to drop it for good.",
         ),
     badge: found ? { text: say("bạn đã chọn", "you chose"), tone: "success" } : { text: say("không tìm thấy", "not found now"), tone: "warning" },
     actions: [{ actionId: "forget", label: say("Thu hồi", "Forget"), action: { kind: "develop-folder-forget", root } }],
@@ -142,17 +142,47 @@ export function developFolderCard(input: {
     .slice(0, SESSIONS_LISTED);
   for (const session of listed) {
     const named = session.packageId === undefined ? undefined : session.version === undefined ? session.packageId : `${session.packageId}@${session.version}`;
+    // Stopped when the node started again because the folder failed the start check. Which check decides what helps: a
+    // folder Clark is no longer allowed to watch on its own (a chosen folder deleted and made again, which is another
+    // folder, or one the person forgot) is chosen again by the person's own start; a folder that now resolves to a network
+    // share or into the data folder is refused for anyone, so the row offers no button that could only fail. The code is
+    // what that restart found: a press of Another folder, or of a row that has one, checks the folder again as it is now.
+    const refusedCode = widgetDevRootRefusedCode(session);
+    const nowhere = refusedCode === "ROOT_NOT_LOCAL" || refusedCode === "ROOT_IN_DATA_FOLDER";
+    const refused =
+      session.status !== "stopped" || session.stopReason !== "root-refused"
+        ? undefined
+        : refusedCode === "ROOT_NOT_LOCAL"
+          ? say(
+              "Thư mục này giờ dẫn tới một thư mục chia sẻ qua mạng hoặc một đường dẫn thiết bị, nơi Clark không phát triển widget được, nên chọn lại nó cũng bị từ chối; những gì nó đã dựng vẫn chạy. Hãy chép dự án vào không gian widget của Clark hoặc vào một thư mục trên ổ đĩa của máy này, rồi chọn thư mục đó.",
+              "This folder now leads to a network share or device path, where Clark can't develop widgets, so choosing it again is refused too; what it built keeps running. Copy the project into Clark's widget workspace or into a folder on this machine's own drives, then choose that folder.",
+            )
+          : refusedCode === "ROOT_IN_DATA_FOLDER"
+            ? say(
+                "Thư mục này giờ chứa hoặc nằm trong thư mục dữ liệu của Clark, nơi Clark không phát triển widget được, nên chọn lại nó cũng bị từ chối; những gì nó đã dựng vẫn chạy. Hãy chép dự án vào không gian widget của Clark hoặc vào một thư mục dự án khác, rồi chọn thư mục đó.",
+                "This folder now holds or lies inside Clark's data folder, where Clark can't develop widgets, so choosing it again is refused too; what it built keeps running. Copy the project into Clark's widget workspace or into another project folder, then choose that folder.",
+              )
+            : refusedCode === "ROOT_NOT_OWNED"
+              ? say(
+                  "Clark không còn được phép tự theo dõi thư mục này (chẳng hạn vì nó đã bị xoá rồi tạo lại sau khi bạn chọn); những gì nó đã dựng vẫn chạy. Bấm Phát triển lại để chọn lại thư mục.",
+                  "Clark is no longer allowed to watch this folder on its own (for example, it was deleted and made again after you chose it); what it built keeps running. Press Develop again to choose the folder again.",
+                )
+              : say(
+                  "Khi Clark khởi động lại, nó không thể theo dõi thư mục này nữa; những gì nó đã dựng vẫn chạy. Bấm Phát triển lại để thử lại; nếu bị từ chối, hãy chép dự án vào không gian widget của Clark.",
+                  "When Clark restarted, it could no longer watch this folder; what it built keeps running. Press Develop again to try again; if that is refused, copy the project into Clark's widget workspace.",
+                );
+    const note = [named, refused].filter((part): part is string => part !== undefined).join(" · ");
     rows.push({
       rowId: `session:${session.sessionId}`,
       label: shown(session.root),
-      ...(named === undefined ? {} : { note: named }),
+      ...(note === "" ? {} : { note }),
       badge:
         session.status === "live"
           ? { text: say("đang theo dõi", "watching"), tone: "active" }
           : { text: say("đã dừng", "stopped"), tone: "neutral" },
       // A live session is already watching; a stopped one is picked up again, with what it runs and was granted.
       actions:
-        session.status === "live"
+        session.status === "live" || nowhere
           ? []
           : [{ actionId: "develop", label: say("Phát triển lại", "Develop again"), action: { kind: "develop-folder", root: session.root } }],
     });

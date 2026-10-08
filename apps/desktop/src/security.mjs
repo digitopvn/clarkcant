@@ -58,9 +58,29 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:detachWidget",
   "desktop:attachWidget",
   "desktop:updateAppearance",
+  // The shell says the installed packages changed, so a detached frame re-reads the document it runs.
+  "desktop:notifyPackagesChanged",
   "detached:bootstrap",
   "detached:intent",
   "detached:release",
+  "detached:frame.read",
+  "detached:state.save",
+  "detached:semantic.publish",
+  "detached:dev.session",
+  "detached:artifacts.pick",
+  "detached:artifacts.describe",
+  "detached:artifacts.create",
+  "detached:artifacts.read",
+  "detached:artifacts.write",
+  "detached:artifacts.finalize",
+  "detached:artifacts.export",
+  "detached:artifacts.attach",
+  "detached:artifacts.discard",
+  "detached:jobs.get",
+  "detached:jobs.list",
+  "detached:jobs.cancel",
+  "detached:tokens.request",
+  "detached:tokens.end",
 ]);
 
 /**
@@ -70,7 +90,38 @@ export const IPC_CHANNELS = Object.freeze([
  * for a detached bootstrap could read a widget's composition without owning it, and a detached window that could
  * call `desktop:getSession` would hold the token this design exists to keep away from it.
  */
-export const DETACHED_WINDOW_CHANNELS = Object.freeze(["detached:bootstrap", "detached:intent", "detached:release"]);
+export const DETACHED_WINDOW_CHANNELS = Object.freeze([
+  "detached:bootstrap",
+  "detached:intent",
+  "detached:release",
+  /*
+   * The relays an isolated widget's frame needs, each performed by the host with its own credential against the
+   * instance the window was opened for. None of them takes an id, a gateway or a token, and there is no generic
+   * "call the node" verb: a window that could name the path could reach the whole conversation.
+   */
+  "detached:frame.read",
+  "detached:state.save",
+  "detached:semantic.publish",
+  "detached:dev.session",
+  /*
+   * Files, jobs and browser tokens, the same way: one channel per verb, each bound to that instance. A pick and an export
+   * open the OS dialog parented to the detached window, and the bytes and the path stay in the main process.
+   */
+  "detached:artifacts.pick",
+  "detached:artifacts.describe",
+  "detached:artifacts.create",
+  "detached:artifacts.read",
+  "detached:artifacts.write",
+  "detached:artifacts.finalize",
+  "detached:artifacts.export",
+  "detached:artifacts.attach",
+  "detached:artifacts.discard",
+  "detached:jobs.get",
+  "detached:jobs.list",
+  "detached:jobs.cancel",
+  "detached:tokens.request",
+  "detached:tokens.end",
+]);
 
 /**
  * Schemes `openExternal` will hand to the OS.
@@ -161,14 +212,41 @@ export function contentSecurityPolicy(input = {}) {
  * `script-src` added on top would refuse that document outright, since every policy a response carries is enforced.
  * A framed document with no policy of its own gets the window's, so nothing is framed with less than that.
  *
- * @param {{ resourceType?: string, responseHeaders?: Record<string, string | string[]> }} details
+ * Only the node's widget-frame documents (`<node>/frame/<grant>/...`) keep their own policy, and only a policy that
+ * says something: an empty header is no policy at all, and a frame from anywhere else gets the window's policy as
+ * well as whatever it brought, since every policy a response carries is enforced.
+ *
+ * @param {{ resourceType?: string, url?: string | undefined, responseHeaders?: Record<string, string | string[]> }} details
  * @param {string} policy
+ * @param {{ nodeOrigin?: string }} [frames]
  */
-export function withContentSecurityPolicy(details, policy) {
+export function withContentSecurityPolicy(details, policy, frames = {}) {
   const headers = { ...(details.responseHeaders ?? {}) };
-  const ownPolicy = Object.keys(headers).some((name) => name.toLowerCase() === "content-security-policy");
-  if (details.resourceType === "subFrame" && ownPolicy) return headers;
+  if (details.resourceType === "subFrame" && isWidgetFrame(details.url, frames.nodeOrigin) && hasOwnPolicy(headers)) {
+    return headers;
+  }
   return { ...headers, "Content-Security-Policy": [policy] };
+}
+
+/** Whether a response carries a Content-Security-Policy with at least one non-empty value. */
+function hasOwnPolicy(headers) {
+  return Object.entries(headers).some(([name, value]) => {
+    if (name.toLowerCase() !== "content-security-policy") return false;
+    const values = Array.isArray(value) ? value : [value];
+    return values.some((entry) => typeof entry === "string" && entry.trim() !== "");
+  });
+}
+
+/** Whether a URL is a widget-frame document the node serves. */
+function isWidgetFrame(value, nodeOrigin) {
+  const node = originOf(nodeOrigin);
+  if (node === undefined || typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.origin === node && url.pathname.startsWith("/frame/");
+  } catch {
+    return false;
+  }
 }
 
 /** The hosts a dev server may be on: this machine and nothing else. */

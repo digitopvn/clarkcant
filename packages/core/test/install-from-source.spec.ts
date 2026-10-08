@@ -9,6 +9,7 @@ import { listRestorablePackages, restorePackage, uninstallPackage } from "../src
 import { createInstance } from "../src/widget-service.ts";
 import { readInstanceState } from "../src/widget-lifecycle.ts";
 import { applyWidgetStatePatch } from "../src/widget-state.ts";
+import { parseManifest } from "../src/widget-package.ts";
 
 /**
  * Installing from a source.
@@ -436,6 +437,30 @@ describe("what the node reports as installed", () => {
     // A package is as trusted as its least isolated part; a listing that took the publisher's word for it would make
     // the label decorative.
     expect(listInstalledPackages(deps)[0]?.lane).toBe("trusted-native");
+  });
+
+  it("reports the facets its install skipped, and fails closed on a record of them it cannot read", () => {
+    const installed = installFromSource(deps, input({ skippedFacets: [{ kind: "agents", id: "com.example.calendar.agents", isolation: "service" }] }));
+    expect(installed.ok).toBe(true);
+    const [recorded] = listInstalledPackages(deps);
+    expect(recorded?.skippedFacets).toEqual([{ kind: "agents", id: "com.example.calendar.agents", isolation: "service" }]);
+    expect(recorded?.lane).toBe("service");
+
+    // A record that is there but does not parse names no facets it held back, so none may be taken as allowed.
+    for (const broken of [[{ kind: "Agents" }], "agents", { kind: "agents" }, [{ kind: "agents", index: 1 }], null]) {
+      deps.db
+        .prepare("UPDATE package_generations SET document = json_set(document, '$.skippedFacets', json(?))")
+        .run(JSON.stringify(broken));
+      const [unreadable] = listInstalledPackages(deps);
+      expect(unreadable?.skippedFacets, JSON.stringify(broken)).toBe("unreadable");
+      expect(unreadable?.lane).toBe("trusted-native");
+    }
+    // And a reader handed that view reads the package as unreadable rather than with nothing held back.
+    expect(parseManifest({}, { skippedAtInstall: "unreadable" })).toEqual({
+      ok: false,
+      problems: [expect.stringContaining("the record of the facets this package's install skipped cannot be read")],
+    });
+    expect(parseManifest({}, { skippedAtInstall: [{ kind: "Agents" }] as never }).ok).toBe(false);
   });
 
   it("reports a local package under the name the directory gives it, not its path", () => {

@@ -1,0 +1,205 @@
+=== AgentSession.prompt, from the bash/custom flush to _runAgentPrompt ===
+// Flush any pending bash and custom messages before the new prompt
+    this._flushPendingBashMessages();
+    this._flushPendingCustomMessages();
+    // Validate model
+    if (!this.model) {
+        throw new Error(formatNoModelSelectedMessage());
+    }
+    const hasConfiguredAuth = this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
+        (await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
+    if (!hasConfiguredAuth) {
+        const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
+        if (isOAuth) {
+            throw new Error(`Authentication failed for "${this.model.provider}". ` +
+                `Credentials may have expired or network is unavailable. ` +
+                `Run '/login ${this.model.provider}' to re-authenticate.`);
+        }
+        throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+    }
+    // Check if we need to compact before sending (catches aborted responses).
+    // The user's new prompt is sent below, so do not call agent.continue() here.
+    const lastAssistant = this._findLastAssistantMessage();
+    if (lastAssistant) {
+        await this._checkCompaction(lastAssistant, false);
+    }
+    // Emit before_agent_start before normalizing images so extension-driven model
+    // selection determines the resize profile used for the request and history.
+    const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
+    const result = await this._extensionRunner.emitBeforeAgentStart(expandedText, currentImages, this._baseSystemPromptOptions);
+    // Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
+    // which updates the live loadout instead. An explicit edit wins; otherwise the live
+    // loadout is authoritative, so a setActiveTools() call is not undone here.
+    const handlerEditedTools = result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
+        result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
+    if (!handlerEditedTools)
+        result.systemPromptOptions.selectedTools = this.getActiveToolNames();
+    const normalized = await this._normalizePromptImages(currentImages);
+    const userText = normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
+    // Build messages only after hooks and image normalization have completed.
+    const messages = [];
+    const userContent = [{ type: "text", text: userText }];
+    userContent.push(...normalized.images);
+    messages.push({
+        role: "user",
+        content: userContent,
+        timestamp: Date.now(),
+    });
+    // Inject any pending "nextTurn" messages as context alongside the user message
+    for (const msg of this._pendingNextTurnMessages) {
+        messages.push(msg);
+    }
+    this._pendingNextTurnMessages = [];
+    for (const msg of result.messages) {
+        messages.push({
+            role: "custom",
+            customType: msg.customType,
+            // Untyped extensions can pass null/missing content; normalize at ingestion.
+            content: msg.content ?? [],
+            display: msg.display,
+            details: msg.details,
+            timestamp: Date.now(),
+        });
+    }
+    const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
+    this._runSystemPromptOptions = result.systemPromptOptions;
+    if (updateMessage)
+        messages.unshift(updateMessage);
+    preflightResult?.("started");
+    await this._runAgentPrompt(messages);
+
+=== AgentSession._flushPendingBashMessages ===
+_flushPendingBashMessages() {
+    if (this._pendingBashMessages.length === 0)
+        return;
+    for (const bashMessage of this._pendingBashMessages) {
+        this.sessionManager.appendMessage(bashMessage);
+    }
+    this._pendingBashMessages = [];
+    this._refreshFinalizedContext();
+}
+
+=== AgentSession._flushPendingCustomMessages ===
+_flushPendingCustomMessages() {
+    if (this._pendingCustomMessages.length === 0)
+        return;
+    const pending = this._pendingCustomMessages;
+    this._pendingCustomMessages = [];
+    for (const appMessage of pending) {
+        this._appendCustomMessage(appMessage);
+    }
+}
+
+=== AgentSession._normalizePromptImages ===
+async _normalizePromptImages(images) {
+    if (!images)
+        return { images: [], hints: [] };
+    const normalizedImages = [];
+    const hints = [];
+    for (const image of images) {
+        const processed = await processImage(Buffer.from(image.data, "base64"), image.mimeType, {
+            autoResizeImages: this.settingsManager.getImageAutoResize(),
+            resizeOptions: this._limitsModel()?.inputLimits?.images?.resize,
+        });
+        if (!processed.ok) {
+            hints.push(processed.message);
+            continue;
+        }
+        normalizedImages.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
+        hints.push(...processed.hints);
+    }
+    return { images: normalizedImages, hints };
+}
+
+=== AgentSession._preparePromptAndToolLoadout ===
+_preparePromptAndToolLoadout(options, messages = this.agent.state.messages) {
+    options.selectedTools = this._applyToolLoadout(options.selectedTools).map((tool) => tool.name);
+    // The tool list must match the declarations the request carries, so hidden tools are not listed.
+    options.toolSnippets = Object.fromEntries(Object.entries(options.toolSnippets).filter(([name]) => !this._hiddenDeclarations.has(name)));
+    const sections = diffSystemPromptSections(getCurrentSystemMessage(messages)?.sections ?? {}, buildSystemPromptSections(options));
+    return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
+}
+
+=== AgentSession._runAgentPrompt ===
+async _runAgentPrompt(messages) {
+    this._agentRunAbortRequested = false;
+    // Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+    this._failedResponse = undefined;
+    this._recordSelection();
+    // The run records the loadout in the transcript; restored tools that did not register by now
+    // are dropped, so a tool that never registers does not stay pending.
+    this._pendingToolNames.clear();
+    this._isAgentRunActive = true;
+    try {
+        await this.agent.prompt(messages);
+        while (!this._agentRunAbortRequested) {
+            if (await this._handlePostAgentRun()) {
+                if (this._agentRunAbortRequested)
+                    break;
+                await this.agent.continue();
+                continue;
+            }
+            if (this._agentRunAbortRequested || !(await this._runBeforeSettleBoundary()))
+                break;
+            if (this._agentRunAbortRequested)
+                break;
+            await this.agent.continue();
+        }
+    }
+    finally {
+        if (this._agentRunAbortRequested)
+            this._finishCancelledRetry();
+        this._failedResponse = undefined;
+        this._runSystemPromptOptions = undefined;
+        this._flushPendingBashMessages();
+        this._flushPendingCustomMessages();
+        await this._emitAgentSettled();
+    }
+}
+
+=== ExtensionRunner.emitBeforeAgentStart ===
+async emitBeforeAgentStart(prompt, images, systemPromptOptions) {
+    const currentOptions = normalizeBuildSystemPromptOptions(systemPromptOptions);
+    const renderCurrentSystemPrompt = () => buildSystemPrompt(currentOptions);
+    const ctx = Object.defineProperties({}, Object.getOwnPropertyDescriptors(this.createContext()));
+    ctx.getSystemPrompt = () => {
+        this.assertActive();
+        return renderCurrentSystemPrompt();
+    };
+    const messages = [];
+    for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
+        for (const handler of handlers) {
+            try {
+                const event = {
+                    type: "before_agent_start",
+                    prompt,
+                    images,
+                    get systemPrompt() {
+                        return renderCurrentSystemPrompt();
+                    },
+                    systemPromptOptions: currentOptions,
+                };
+                const handlerResult = await handler(event, ctx);
+                if (handlerResult) {
+                    const result = handlerResult;
+                    if (result.message)
+                        messages.push(result.message);
+                    if (result.systemPrompt !== undefined) {
+                        currentOptions.forceSystemPrompt = result.systemPrompt;
+                    }
+                }
+            }
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                const stack = err instanceof Error ? err.stack : undefined;
+                this.emitError({
+                    extensionPath: ext.path,
+                    event: "before_agent_start",
+                    error: message,
+                    stack,
+                });
+            }
+        }
+    }
+    return { messages, systemPromptOptions: currentOptions };
+}

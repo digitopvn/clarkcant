@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView, WidgetDevFolderForgetResult, WidgetDevSessionView } from "@clarkcant/contracts";
 
-import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
+import { type GatewayClient, GatewayError, type Timeline, type WidgetDevSessionRead } from "./api.ts";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { nodeViewRefusalText } from "./node-view-refusal.ts";
 import type {
   ArtifactOpenState,
   BlockActions,
@@ -81,12 +82,39 @@ export function feedbackReportToReuse(previous: FeedbackCardState | undefined, r
  * use: the node keeps a choice only for the folder itself (`pressed` was its own path, not a link to it) and never for a
  * whole drive or the home folder (`chosenByPerson`).
  */
-export function developOutcomeMessage(view: WidgetDevSessionView, t: (key: MessageKey) => string, pressed?: string): string {
-  const outcome = sessionOutcome(view, t);
+export function developOutcomeMessage(view: WidgetDevSessionRead, t: (key: MessageKey) => string, pressed?: string): string {
+  // A newer node sent more than this app reads: said, so the outcome is never taken for all the node answered.
+  const outcome = view.unreadFields === undefined ? sessionOutcome(view, t) : `${sessionOutcome(view, t)} ${t("shell.dev.nodeNewer")}`;
   if (pressed === undefined || view.chosenByPerson === true) return outcome;
   const leadsElsewhere = pressed.trim().replace(/[\\/]+$/u, "").toLowerCase() !== view.root.replace(/[\\/]+$/u, "").toLowerCase();
   const kept = fillMessage(t(leadsElsewhere ? "commandCard.develop.notKeptLink" : "commandCard.develop.notKeptBroad"), { folder: view.root });
   return `${outcome} ${kept}`;
+}
+
+/**
+ * What a `/develop` start that did not come back as a session the app could read settles on.
+ *
+ * An answer the app cannot read (`NodeViewUnreadable`) only arrives once the node said yes, so the session started and
+ * runs on the node: the card says so, and that this app cannot read its state, with the version advice, rather than
+ * "failed" with the schema's text. Any other error is a start that did not happen, said as the node's reason.
+ */
+export function developStartRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
+  const unread = nodeViewRefusalText(error, t, "commandCard.develop.startedUnread");
+  if (unread !== undefined) return { status: "done", message: unread };
+  return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
+}
+
+/**
+ * What a Forget press that did not come back as an answer the app could read settles on.
+ *
+ * An answer the app cannot read (`NodeViewUnreadable`) means the node answered, but what it said cannot be read: it may
+ * not have forgotten the folder, or Clark may still reach it through another. Neither is claimed, so the state is
+ * `unknown` rather than done, and the row keeps the badge it was drawn with. Any other error is said as the node's reason.
+ */
+export function forgetRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
+  const unread = nodeViewRefusalText(error, t, "shell.nodeView.answered");
+  if (unread !== undefined) return { status: "unknown", message: unread };
+  return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
 }
 
 /** What a Forget press did, saying so when the folder stays reachable through a folder that holds it. */
@@ -524,7 +552,7 @@ export function useBlockActions({
       settle({ status: "pending" });
       void client.startWidgetDevSession({ root, conversationId }).then(
         (view) => settle({ status: "done", message: developOutcomeMessage(view, t, root) }),
-        (error: unknown) => settle({ status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
+        (error: unknown) => settle(developStartRefused(error, t)),
       );
     },
     [client, conversationId, t],
@@ -600,7 +628,7 @@ export function useBlockActions({
                 status: "done",
                 message: forgetOutcomeMessage(result, t),
               }),
-            fail,
+            (error: unknown) => settle(forgetRefused(error, t)),
           );
           return;
       }

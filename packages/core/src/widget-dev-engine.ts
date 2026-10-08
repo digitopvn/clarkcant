@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
-import { closeSync, lstatSync, openSync, readdirSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { closeSync, lstatSync, openSync, readdirSync, realpathSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
   WIDGET_DEV_DIAGNOSTICS_MAX,
   canonicalReach,
   compareDevReach,
   type DirectoryEntry,
+  recordSkippedFacets,
+  skippedFacetLane,
   type PackageManifest,
+  type RecordedSkippedFacet,
   type WidgetDevBuild,
   type WidgetDevDiagnostic,
   type WidgetDevGeneration,
@@ -43,11 +46,41 @@ export const DEV_ENGINE_DEBOUNCE_MS = 150;
 /** How often a watched folder is checked to still be there, for a platform whose watcher does not say it went away. */
 export const DEV_ENGINE_ROOT_CHECK_MS = 1_000;
 /**
+ * How long a watched folder may keep failing to be looked at, for a reason other than not being there, before watching
+ * stops. An antivirus or indexer holds a folder for a moment; one that cannot be looked at for this long is not being
+ * watched in any useful sense (and on older Windows builds, a folder deleted while the watcher holds it reads as `EPERM`
+ * until the watcher lets go, which it never would).
+ */
+export const DEV_ENGINE_ROOT_UNREADABLE_MS = 30_000;
+/**
  * How long after watching starts the folder is built once more, for a save the platform watcher could not see yet. On
  * macOS, FSEvents starts watching asynchronously and reports only what happens after that, so a save right after the first
  * build would otherwise be lost; inotify and Windows watch from the moment `watch` returns.
  */
 export const DEV_ENGINE_WATCH_CATCH_UP_MS = 500;
+/**
+ * How long after a build is reported a change build is reported only when it is news. A platform watcher can report part
+ * of a save after the build that already read all of it (FSEvents on macOS delivers events in batches, late under load),
+ * and the build that late report causes finds the files exactly as they were built. Whether a report is late can only be
+ * told from the files, not from timestamps a network share or a coarse clock would make wrong, so the build still runs and
+ * says nothing when it finds nothing new; a save made meanwhile changes the files, which is news.
+ */
+const DEV_ENGINE_LATE_EVENT_MS = 1_000;
+/**
+ * How many looks in a row may find a watched folder under a new file id (`replaced`), with no look between them finding
+ * the same folder again, before watching stops. A build that makes its output folder again re-arms once and the next
+ * look finds the new folder unchanged, however often that happens; a filesystem that gives the folder a new id on every
+ * look would otherwise re-watch and copy the whole folder every second, without end.
+ */
+export const DEV_ENGINE_REARM_MAX = 30;
+/**
+ * How long a watched folder may be missing before it counts as gone. A build that deletes its output folder and makes it
+ * again (`rm -rf out && build`, `rmdir /s /q out && xcopy src out`) leaves the path empty for a moment, and the old
+ * watcher reports the deletion straight away; a folder back at the same real path within this time is watched anew
+ * rather than stopping the session. Nothing is built while the folder is missing: a build asked for meanwhile, or one that
+ * fails because the folder went while it ran, is held, and the folder is built once when it is back.
+ */
+export const DEV_ENGINE_ROOT_MISSING_GRACE_MS = 2_000;
 /**
  * Folders at the package root that are not the package: version control, and the author's installed dependencies, which
  * the package does not ship and which may hold thousands of files and links (a pnpm `node_modules` is junctions). Left
@@ -66,6 +99,11 @@ const LOCAL_PUBLISHER = { id: "local-development", sourceUrl: "local", license: 
 export interface DevGenerationRecord {
   generation: WidgetDevGeneration;
   manifest: PackageManifest;
+  /**
+   * The facets of a kind this node does not know, which the reader left out of `manifest`: never run, but their lanes
+   * count in the listing's risk lane and they are part of the consent scope, as they are for an install.
+   */
+  skippedFacets: RecordedSkippedFacet[];
   /** The directory entry that lists this generation's files by their digest, as `clark widget publish` would. */
   listing: DirectoryEntry;
 }
@@ -99,14 +137,28 @@ export interface DevEngineOptions {
    * naming a second generation 1.
    */
   generationsBefore?: number;
-  /** Told about every build the watcher or `rebuild` ran, including ones that produced nothing new. */
+  /**
+   * Told about every build `rebuild` ran, and every build the watcher ran, including ones that produced nothing new, except
+   * a watcher build that says nothing new: the catch-up build after watching starts, or a change build in the moments
+   * after another build was reported (a change the watcher reported late).
+   */
   onBuild?: (event: DevEngineEvent) => void;
-  /** Told when the watcher itself fails (the folder was removed, the platform cannot watch it). */
+  /**
+   * Told when the watcher itself fails (the folder was removed, the platform cannot watch it), or when the folder could
+   * not be looked at for `rootUnreadableMs`; watching has stopped.
+   */
   onWatchError?: (error: Error) => void;
-  /** Told once when the watched folder is no longer there (deleted or renamed); watching has stopped. */
+  /**
+   * Told once when the watched folder is no longer there (deleted or renamed and not back within `rootMissingGraceMs`, no
+   * longer a folder, or reached through a link); watching has stopped.
+   */
   onRootGone?: () => void;
   /** How often a watched folder is checked to still be there (`DEV_ENGINE_ROOT_CHECK_MS`). */
   rootCheckMs?: number;
+  /** How long a folder may keep failing to be looked at before watching stops (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
+  rootUnreadableMs?: number;
+  /** How long a watched folder may be missing before it counts as gone (`DEV_ENGINE_ROOT_MISSING_GRACE_MS`). */
+  rootMissingGraceMs?: number;
   /**
    * The facet lanes a build may declare. A package with a facet in any other lane is a failed build
    * (`FACET_LANE_UNSUPPORTED`), not a generation. Absent, every lane builds: the standalone dev host runs none of them.
@@ -115,26 +167,35 @@ export interface DevEngineOptions {
 }
 
 export interface DevEngine {
+  /** The folder's real path: `options.root` resolved once, through any link or junction it was given through. */
   readonly root: string;
   /** The first build, which runs before anything is watched. */
   readonly ready: Promise<DevEngineEvent>;
   /** The newest successful generation. */
   latest(): DevGenerationRecord | undefined;
   lastBuild(): WidgetDevBuild | undefined;
-  /** Build now, after any build already running. */
+  /**
+   * Build now, after any build already running. While a watched folder is being made again, this waits for the build
+   * that runs once it is back (reported through `onBuild` by that build, not twice), or, should it not come back within
+   * the grace, settles with why it was not built.
+   */
   rebuild(trigger?: WidgetDevTrigger): Promise<DevEngineEvent>;
   /** Whether the folder is being watched: false after `close`, after a watch failure, or when watching was not asked for. */
   watching(): boolean;
   /**
-   * Whether the folder is gone (`devRootState`): deleted, no longer a folder, or, while it was watched, replaced by another
-   * folder at the same path. False when it could not be looked at for another reason.
+   * Whether the folder is gone (`devRootState`): deleted, no longer a folder, or another folder reached through a link or
+   * junction. False when another folder is at the path itself (the watcher moves to it), when it could not be looked at
+   * for another reason, or, while watching, when it has been missing for less than `rootMissingGraceMs` (a build that
+   * deletes and makes it again is not done yet).
    */
   rootGone(): boolean;
   close(): void;
 }
 
 /** What a scope reads from the manifest, beyond the listing. */
-type ScopeManifest = Pick<PackageManifest, "requestedCapabilities" | "facets">;
+type ScopeManifest = Pick<PackageManifest, "requestedCapabilities" | "facets"> & {
+  skippedFacets?: readonly RecordedSkippedFacet[] | undefined;
+};
 
 /** Manifests of snapshots already read, by snapshot path. A snapshot is content-addressed, so its manifest never changes. */
 const scopeManifests = new Map<string, ScopeManifest>();
@@ -148,7 +209,10 @@ function scopeManifestOf(listing: DirectoryEntry): ScopeManifest | null {
   let read: ScopeManifest | null;
   try {
     const pkg = readPackage(path);
-    read = pkg.problems.length === 0 ? pkg.manifest : null;
+    read =
+      pkg.problems.length === 0
+        ? { requestedCapabilities: pkg.manifest.requestedCapabilities, facets: pkg.manifest.facets, skippedFacets: recordSkippedFacets(pkg.skippedFacets) }
+        : null;
   } catch {
     read = null;
   }
@@ -180,6 +244,15 @@ export function devConsentScopeOf(listing: DirectoryEntry, manifest?: ScopeManif
     permissions: [...listing.permissionsSummary].sort(),
     requestedCapabilities: read === null ? null : [...new Set(read.requestedCapabilities)].sort(),
     facets: read === null ? null : read.facets.map((facet) => `${facet.kind}:${facet.id}:${facet.isolation}`).sort(),
+    /*
+     * A facet of a kind this node does not know is bound too, by kind, id and the lane it counts in, so adding or
+     * removing one is a new question. Only when there is one, so a scope without any reads as it always has.
+     */
+    ...(read === null || (read.skippedFacets ?? []).length === 0
+      ? {}
+      : {
+          skippedFacets: (read.skippedFacets ?? []).map((facet) => `${facet.kind}:${facet.id ?? ""}:${skippedFacetLane(facet)}`).sort(),
+        }),
   };
   return `widget-dev-scope:sha256:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -223,6 +296,20 @@ function sizeOf(root: string): number {
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
+/**
+ * Whether `path` is a folder (not a link to one). A `change` the watcher reports for a folder is about the folder's own
+ * entry, not its files: Windows reports one when a build first lists a folder made a moment ago (its last-access time is
+ * set), so building on it would build the files just built again. A file added, removed or saved in a folder is
+ * reported under the file's own name.
+ */
+function isFolderAt(path: string): boolean {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Holds `root` open where that keeps its file id from being given to a folder made again there; undefined elsewhere. */
 function pinRoot(root: string): number | undefined {
   if (process.platform === "win32") return undefined;
@@ -239,10 +326,23 @@ export interface DevRootIdentity {
   ino: bigint;
 }
 
-/** The identity of the folder at `root` now, or undefined when it cannot be read as a folder. */
-function devRootIdentityOf(root: string): DevRootIdentity | undefined {
+/**
+ * The identity of the folder at `root` now, or undefined when it cannot be read as a folder.
+ *
+ * By default a link or junction at `root` is followed, as a watch follows it, and the folder it leads to gives the id.
+ * With `followLinks: false` the path itself must be the folder: a link or junction there gives no id, as a mark that
+ * names the chosen folder must not take the id of whatever a link leads to.
+ *
+ * A folder's device and file id say which folder it is only as long as the filesystem does not give a folder made later
+ * the same id. Some do, and then a folder deleted and made again at the same path reads as the same folder: on Linux
+ * (ext4) a freed file id can be handed back at any later time, not only at once, and on Windows FAT32 and exFAT drives
+ * keep no lasting file id, while nothing holds a folder open there. Its birth time is no second check: it is no finer
+ * than the filesystem's clock tick, and where it cannot be read Node reports the change time, which moves with every
+ * file added or removed.
+ */
+export function devRootIdentityOf(root: string, options: { followLinks?: boolean } = {}): DevRootIdentity | undefined {
   try {
-    const stat = statSync(root, { bigint: true });
+    const stat = options.followLinks === false ? lstatSync(root, { bigint: true }) : statSync(root, { bigint: true });
     return stat.isDirectory() ? { dev: stat.dev, ino: stat.ino } : undefined;
   } catch {
     return undefined;
@@ -252,27 +352,93 @@ function devRootIdentityOf(root: string): DevRootIdentity | undefined {
 /** The errors that say a path is not there: anything else (a busy or locked folder on Windows) may pass on the next look. */
 const GONE_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]);
 
+type DevRootLook =
+  | { state: "present" }
+  | { state: "replaced"; identity: DevRootIdentity }
+  /** `missing`: nothing is at the path (`ENOENT`, `ENOTDIR`), which a build that makes the folder again also leaves for a moment. */
+  | { state: "gone"; missing?: true }
+  | { state: "unknown"; code: string };
+
+/** Whether a folder on `path`, or `path` itself, is a link or junction. */
+function linkOnPath(path: string): boolean {
+  for (let at = path; ; at = dirname(at)) {
+    if (lstatSync(at).isSymbolicLink()) return true;
+    if (dirname(at) === at) return false;
+  }
+}
+
 /**
- * Whether a dev folder is still the folder being developed.
- *
- * - `gone`: nothing is at the path, something other than a folder is, or — given the `identity` it was watched with — a
- *   different folder is. A folder deleted and made again keeps its path but not its identity, and a watcher on the old
- *   one hears nothing from the new one.
- * - `unknown`: the folder could not be looked at for another reason (`EPERM`, `EBUSY` while an antivirus or indexer holds
- *   it). That is not a folder that went away; the caller looks again next time.
- * - `present`: the same folder is there.
+ * Whether `real` (where `root` resolves now) is `canonical`, the real path `root` was at the start. Where the filesystem
+ * usually ignores case (Windows, macOS), a real path that differs only in case is the same place when nothing on the
+ * path is a link: a folder made again as `Out` for `out` is the folder chosen, but a folder above it swapped for a link
+ * to a sibling named in another case (on a case-sensitive volume) is not.
  */
-export function devRootState(root: string, identity?: DevRootIdentity): "present" | "gone" | "unknown" {
+const samePlace = (root: string, real: string, canonical: string): boolean =>
+  real === canonical ||
+  ((process.platform === "win32" || process.platform === "darwin") && real.toLowerCase() === canonical.toLowerCase() && !linkOnPath(root));
+
+/**
+ * Whether `root` still leads to `canonical`: it is not itself a link or junction, and it resolves there. When it could
+ * not be looked at, the look that says why.
+ */
+function leadsTo(root: string, canonical: string | undefined): boolean | DevRootLook {
+  if (canonical === undefined) return false;
+  try {
+    return !lstatSync(root).isSymbolicLink() && samePlace(root, realpathSync.native(root), canonical);
+  } catch (cause) {
+    return lookFailed(cause);
+  }
+}
+
+/** The canonical path of `root`, or undefined when it cannot be resolved. */
+function canonicalPathOf(root: string): string | undefined {
+  try {
+    return realpathSync.native(root);
+  } catch {
+    return undefined;
+  }
+}
+
+const lookFailed = (cause: unknown): DevRootLook => {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return code !== undefined && GONE_CODES.has(code) ? { state: "gone", missing: true } : { state: "unknown", code: code ?? messageOf(cause) };
+};
+
+function lookAtDevRoot(root: string, identity?: DevRootIdentity, canonical?: string): DevRootLook {
   let stat: BigIntStats;
   try {
     stat = statSync(root, { bigint: true });
   } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException).code;
-    return code !== undefined && GONE_CODES.has(code) ? "gone" : "unknown";
+    return lookFailed(cause);
   }
-  if (!stat.isDirectory()) return "gone";
-  if (identity !== undefined && (stat.dev !== identity.dev || stat.ino !== identity.ino)) return "gone";
-  return "present";
+  if (!stat.isDirectory()) return { state: "gone" };
+  if (identity !== undefined && (stat.dev !== identity.dev || stat.ino !== identity.ino)) {
+    // Another folder at the path is the folder being developed only when the path still leads where it led when watching
+    // started: the path itself, or a folder above it, swapped for a link or junction leads into a tree nobody chose.
+    const leads = leadsTo(root, canonical);
+    if (leads !== true) return leads === false ? { state: "gone" } : leads;
+    return { state: "replaced", identity: { dev: stat.dev, ino: stat.ino } };
+  }
+  return { state: "present" };
+}
+
+/**
+ * Whether a dev folder is still the folder being developed.
+ *
+ * - `gone`: nothing is at the path, or something other than a folder is.
+ * - `replaced`: given the `identity` it was watched with, a different folder is at the path. A folder deleted and made
+ *   again (`rm -rf out && build`) keeps its path but not its identity, and a watcher on the old one hears nothing from the
+ *   new one (a watching engine waits `DEV_ENGINE_ROOT_MISSING_GRACE_MS` for a missing folder to come back); some
+ *   filesystems (FUSE mounts without stable inode numbers, some network drives) also give a folder that is still there a
+ *   new id. Either way there is a folder to watch, so the watcher moves to it. A different folder
+ *   reached through a link or junction (at the path or at a folder above it), so that the path no longer resolves to
+ *   the canonical path watching started from, is `gone` instead: it is not the folder that was chosen.
+ * - `unknown`: the folder could not be looked at for another reason (`EPERM`, `EBUSY` while an antivirus or indexer holds
+ *   it). That is not a folder that went away; the caller looks again next time.
+ * - `present`: the same folder is there.
+ */
+export function devRootState(root: string, identity?: DevRootIdentity): "present" | "replaced" | "gone" | "unknown" {
+  return lookAtDevRoot(root, identity).state;
 }
 
 /** Whether two failed builds failed the same way: the same diagnostics, so a second one tells nobody anything new. */
@@ -291,13 +457,31 @@ const devFilesCodeOf = (code: string): "FILES_TOO_LARGE" | "FILES_LINK_REFUSED" 
   code === "ARTIFACT_TOO_LARGE" ? "FILES_TOO_LARGE" : code === "ARTIFACT_SYMLINK_ESCAPE" ? "FILES_LINK_REFUSED" : "FILES_UNREADABLE";
 
 export function startDevEngine(options: DevEngineOptions): DevEngine {
-  const root = resolve(options.root);
+  const given = resolve(options.root);
+  /**
+   * Where the folder's path resolved when the engine started: a folder at the path that resolves elsewhere is not it. A
+   * folder given through a link or junction (a symlinked projects folder, a junctioned workspace) is watched and built at
+   * this real path, so the link it was given through is not taken for a swap.
+   */
+  const canonical = canonicalPathOf(given);
+  const root = canonical ?? given;
   const limits = options.limits ?? DEV_ENGINE_LIMITS;
   const now = options.now ?? (() => new Date().toISOString());
   // Only the newest generation is kept: older ones are named in their build records and the caller's own state.
   let newest: DevGenerationRecord | undefined;
+  /**
+   * The hold on the newest generation's snapshot (`snapshotLocalPackage`), kept until a newer generation replaces it or
+   * the engine closes: from the moment a build places or reuses the snapshot until the caller has followed the build,
+   * nothing removes it (`removeLocalSnapshot`).
+   */
+  let newestHold: (() => void) | undefined;
   let last: WidgetDevBuild | undefined;
   let closed = false;
+
+  const releaseNewest = (): void => {
+    newestHold?.();
+    newestHold = undefined;
+  };
 
   const fail = (trigger: WidgetDevTrigger, diagnostics: WidgetDevDiagnostic[]): DevEngineEvent => {
     last = { ok: false, at: now(), trigger, ...capped(diagnostics) };
@@ -305,7 +489,11 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   };
 
   /** Read a folder as a package: its manifest and widget ids, or what is wrong with it. */
-  const read = (folder: string): { ok: true; manifest: PackageManifest; widgetIds: string[] } | { ok: false; diagnostics: WidgetDevDiagnostic[] } => {
+  const read = (
+    folder: string,
+  ):
+    | { ok: true; manifest: PackageManifest; skippedFacets: RecordedSkippedFacet[]; widgetIds: string[] }
+    | { ok: false; diagnostics: WidgetDevDiagnostic[] } => {
     let pkg: ReturnType<typeof readPackage>;
     try {
       pkg = readPackage(folder);
@@ -317,7 +505,11 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     }
     const allowed = options.allowedIsolations;
     if (allowed !== undefined) {
-      const outside = pkg.manifest.facets.filter((facet) => !allowed.includes(facet.isolation));
+      // A facet of a kind this node does not know counts in its lane too, and in the strongest when it names none.
+      const outside = [
+        ...pkg.manifest.facets.map((facet) => ({ kind: facet.kind, id: facet.id, lane: facet.isolation, known: true })),
+        ...pkg.skippedFacets.map((facet) => ({ kind: facet.kind, id: facet.id ?? `#${String(facet.index)}`, lane: skippedFacetLane(facet), known: false })),
+      ].filter((facet) => !allowed.includes(facet.lane));
       if (outside.length > 0) {
         return {
           ok: false,
@@ -325,7 +517,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
             severity: "error" as const,
             path: "clarkcant.json",
             code: "FACET_LANE_UNSUPPORTED",
-            message: `facet ${facet.kind}:${facet.id} runs as ${facet.isolation}, outside the widget frame; a widget dev session runs only ${allowed.join(" and ")} facets, so install this package the ordinary way`,
+            message: `facet ${facet.kind}:${facet.id} ${facet.known ? "runs" : "is of a kind this version of ClarkCant does not understand, and counts"} as ${facet.lane}, outside the widget frame; a widget dev session runs only ${allowed.join(" and ")} facets, so install this package the ordinary way`,
           })),
         };
       }
@@ -337,15 +529,32 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         diagnostics: [{ severity: "error", path: "clarkcant.json", message: "the package declares no widget facet, so there is nothing to show" }],
       };
     }
-    return { ok: true, manifest: pkg.manifest, widgetIds };
+    return { ok: true, manifest: pkg.manifest, skippedFacets: recordSkippedFacets(pkg.skippedFacets), widgetIds };
   };
 
+  /**
+   * Whether the path now leads somewhere other than where it led at the start, through a link or junction swapped in at
+   * the folder or above it. Checked before and after the files are taken, so the window in which a swap could have a
+   * foreign tree built is the copy itself; closing it fully would need reads relative to a held folder handle.
+   */
+  const ledElsewhere = (): boolean => canonical !== undefined && leadsTo(root, canonical) === false;
+  const elsewhere = (trigger: WidgetDevTrigger): DevEngineEvent =>
+    fail(trigger, [
+      {
+        severity: "error",
+        code: "FILES_LINK_REFUSED",
+        message: "the folder's path now leads to another folder through a link or junction, so it was not built",
+      },
+    ]);
+
   const build = async (trigger: WidgetDevTrigger): Promise<DevEngineEvent> => {
+    if (ledElsewhere()) return elsewhere(trigger);
     const source = read(root);
     if (!source.ok) return fail(trigger, source.diagnostics);
 
     let folder = root;
     let digest: string;
+    let hold: (() => void) | undefined;
     try {
       if (options.cacheRoot === undefined) {
         const digested = digestOfDirectory(root, { exclude: DEV_ENGINE_EXCLUDED_ROOT_NAMES, excludeAnyCase: true, limits });
@@ -373,67 +582,189 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         }
         folder = snapshot.artifact.path;
         digest = snapshot.artifact.digest;
+        hold = snapshot.release;
       }
     } catch (cause) {
       return fail(trigger, [{ severity: "error", code: "FILES_UNREADABLE", message: `the files could not be read: ${messageOf(cause)}` }]);
     }
+    // Every way out below but a new generation lets go of this build's hold: the newest generation keeps its own.
+    if (ledElsewhere()) {
+      hold?.();
+      return elsewhere(trigger);
+    }
 
     const previous = newest;
     if (previous !== undefined && previous.generation.digest === digest) {
+      hold?.();
       last = { ok: true, at: now(), trigger, generation: previous.generation.generation, diagnostics: [] };
       return { kind: "unchanged", build: last };
     }
     // What the generation is, read from the bytes it names: the copy, when there is one, since the folder may have moved on.
     const copy = folder === root ? source : read(folder);
-    if (!copy.ok) return fail(trigger, copy.diagnostics);
-
-    const manifest = copy.manifest;
-    const publisher = manifest.publisher;
-    const generation: WidgetDevGeneration = Object.freeze({
-      generation: (previous?.generation.generation ?? options.generationsBefore ?? 0) + 1,
-      packageId: manifest.id,
-      version: manifest.version,
-      digest,
-      builtAt: now(),
-      trigger,
-      widgetIds: copy.widgetIds,
-      delta: compareDevReach(options.baseline === undefined ? previous?.manifest : options.baseline(), manifest),
-      warnings: [],
-    });
-    let sizeBytes = 0;
-    try {
-      sizeBytes = sizeOf(folder);
-    } catch {
-      // Descriptive only; a listing whose size could not be summed still names its bytes by digest.
+    if (!copy.ok) {
+      hold?.();
+      return fail(trigger, copy.diagnostics);
     }
-    const record: DevGenerationRecord = Object.freeze({
-      generation,
-      manifest,
-      listing: directoryEntryOf(manifest, {
-        source: { kind: "local", path: folder },
-        publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
-        sizeBytes,
+
+    let record: DevGenerationRecord;
+    try {
+      const manifest = copy.manifest;
+      const publisher = manifest.publisher;
+      const generation: WidgetDevGeneration = Object.freeze({
+        generation: (previous?.generation.generation ?? options.generationsBefore ?? 0) + 1,
+        packageId: manifest.id,
+        version: manifest.version,
         digest,
-      }),
-    });
-    newest = record;
-    last = { ok: true, at: generation.builtAt, trigger, generation: generation.generation, diagnostics: [] };
+        builtAt: now(),
+        trigger,
+        widgetIds: copy.widgetIds,
+        // The caller's own callback, which may throw: the build then rejects, and lets go of its hold below.
+        delta: compareDevReach(options.baseline === undefined ? previous?.manifest : options.baseline(), manifest),
+        warnings: [],
+      });
+      let sizeBytes = 0;
+      try {
+        sizeBytes = sizeOf(folder);
+      } catch {
+        // Descriptive only; a listing whose size could not be summed still names its bytes by digest.
+      }
+      record = Object.freeze({
+        generation,
+        manifest,
+        skippedFacets: copy.skippedFacets,
+        listing: directoryEntryOf(
+          manifest,
+          {
+            source: { kind: "local", path: folder },
+            publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
+            sizeBytes,
+            digest,
+          },
+          copy.skippedFacets,
+        ),
+      });
+      newest = record;
+      newestHold?.();
+      newestHold = hold;
+      // The newest generation keeps the hold from here on.
+      hold = undefined;
+    } finally {
+      // A build that threw before it became the newest generation keeps nothing held.
+      hold?.();
+    }
+    // A build that ends after the engine closed keeps nothing held: the caller follows no build of a closed engine.
+    if (closed) releaseNewest();
+    last = { ok: true, at: record.generation.builtAt, trigger, generation: record.generation.generation, diagnostics: [] };
     return { kind: "generation", record, build: last };
   };
 
-  // Builds run one at a time, in order: a change that lands during a build is built after it.
-  let queue: Promise<DevEngineEvent> = build("start");
-  const ready = queue;
-  const enqueue = (job: () => Promise<DevEngineEvent>): Promise<DevEngineEvent> => {
-    queue = queue.then(job, job);
-    return queue;
+  /**
+   * A build put off while the watched folder is being made again (`hold`), and those waiting on it: a rebuild or first build
+   * asked for meanwhile settles with the build that runs once the folder is back, or, should it not come back, with why it
+   * was not built.
+   */
+  type Held = { promise: Promise<DevEngineEvent>; settle: (event: DevEngineEvent) => void; failure: DevEngineEvent; trigger?: WidgetDevTrigger };
+  let held: Held | undefined;
+  /** How many absences or re-arms the watched folder has had: a failed build during which this moved failed on a folder being made again. */
+  let disturbances = 0;
+
+  /**
+   * What a build attempt came to: an event to report, with the held build it ends (settled by `done` once the event is
+   * reported, so a rebuild waiting on it sees what that report made of it), or a build held until the folder is back.
+   */
+  type Attempt = { event: DevEngineEvent; ends?: Held } | { held: Promise<DevEngineEvent> };
+  const done = (outcome: Attempt): void => {
+    if ("event" in outcome) outcome.ends?.settle(outcome.event);
   };
 
   /**
+   * Put a build off while the folder is being made again, rather than building (or reporting a failure from) missing or
+   * half-written files: the build that runs once the folder is back is the one reported. Not while the folder is not
+   * watched: nothing would bring that build about.
+   */
+  const hold = (trigger: WidgetDevTrigger, failure?: DevEngineEvent): Attempt => {
+    if (closed || watcher === undefined) {
+      const event = failure ?? missingBuild(trigger);
+      last = event.build;
+      return { event };
+    }
+    if (held === undefined) {
+      let settle: (event: DevEngineEvent) => void = () => undefined;
+      const promise = new Promise<DevEngineEvent>((resolve) => (settle = resolve));
+      held = { promise, settle, failure: failure ?? missingBuild(trigger) };
+    } else if (failure !== undefined) {
+      held.failure = failure;
+    }
+    // A rebuild asked for meanwhile is built as a rebuild once the folder is back, so it asks again what it would have asked.
+    if (trigger !== "change") held.trigger = trigger;
+    return { held: held.promise };
+  };
+  /** A build that did not run because the folder was missing, as a failure that says so. */
+  const missingBuild = (trigger: WidgetDevTrigger): DevEngineEvent => ({
+    kind: "failed",
+    build: {
+      ok: false,
+      at: now(),
+      trigger,
+      diagnostics: [{ severity: "error", code: "FILES_UNREADABLE", message: "the folder was missing, so it was not built" }],
+    },
+  });
+  /** Settle a held build with the folder's last word on it, when the folder will not be built anymore (gone, or closed). */
+  const releaseHeld = (): void => {
+    const waiting = held;
+    held = undefined;
+    if (waiting === undefined) return;
+    last = waiting.failure.build;
+    waiting.settle(waiting.failure);
+  };
+
+  /**
+   * Whether the watched folder is being made again now: missing within the grace, or already back under a new id (which
+   * is watched anew here, and that re-arm schedules the one build the new folder gets).
+   */
+  const recreating = (): boolean => {
+    if (closed || watcher === undefined) return false;
+    const look = lookAtDevRoot(root, identity, canonical);
+    // Not when watching it anew failed instead: there is nothing to wait for then.
+    if (look.state === "replaced") return rootStillThere();
+    // A build about to read the folder that is there covers a return the next look would otherwise build for.
+    if (look.state === "present") missingSince = undefined;
+    return stillAwaited(look);
+  };
+
+  /** Build, unless the folder is being made again; a build that failed because it was is held rather than reported. */
+  const attempt = async (trigger: WidgetDevTrigger): Promise<Attempt> => {
+    if (recreating()) return hold(trigger);
+    const before = last;
+    const seen = disturbances;
+    const event = await build(held?.trigger ?? trigger);
+    // The counter first: a folder that went and came back while the files were read, and was watched anew meanwhile,
+    // looks present now, so only the counter says this failure was the absence. A look now is still needed for an
+    // absence no look has seen yet, and it is taken only after the build has failed, since it may watch the folder anew.
+    if (event.kind === "failed" && (disturbances !== seen || recreating())) {
+      last = before;
+      return hold(trigger, event);
+    }
+    const ends = held;
+    held = undefined;
+    return ends === undefined ? { event } : { event, ends };
+  };
+  const eventOf = (outcome: Attempt): DevEngineEvent | Promise<DevEngineEvent> => ("event" in outcome ? outcome.event : outcome.held);
+
+  /**
    * The folder watched, by identity: a folder deleted and made again at the same path before the next look is a folder
-   * the watcher does not hear (Windows keeps watching the deleted one), so it counts as gone. Only taken when watching.
+   * the watcher does not hear (Windows keeps watching the deleted one), so the watcher moves to it. Only taken when
+   * watching.
    */
   let identity: DevRootIdentity | undefined;
+  /** When the folder first failed to be looked at, in the run of failures going on now (`DEV_ENGINE_ROOT_UNREADABLE_MS`). */
+  let unreadableSince: number | undefined;
+  /** When the folder was first found missing, in the absence going on now (`DEV_ENGINE_ROOT_MISSING_GRACE_MS`). */
+  let missingSince: number | undefined;
+  /** How many looks in a row found the folder under a new id, with none finding it unchanged between (`DEV_ENGINE_REARM_MAX`). */
+  let rearmsInARow = 0;
+  const unreadableMs = options.rootUnreadableMs ?? DEV_ENGINE_ROOT_UNREADABLE_MS;
+  const missingGraceMs = options.rootMissingGraceMs ?? DEV_ENGINE_ROOT_MISSING_GRACE_MS;
   /**
    * The watched folder held open, on Linux and macOS, while it is watched. A folder deleted there frees its file id, and
    * one made again at the same path straight after is commonly given the same id back, so it would read as the same
@@ -446,13 +777,8 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   let rootCheck: ReturnType<typeof setInterval> | undefined;
   let catchUp: ReturnType<typeof setTimeout> | undefined;
   const debounceMs = options.debounceMs ?? DEV_ENGINE_DEBOUNCE_MS;
-  const stopWatching = (): void => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-    if (catchUp !== undefined) clearTimeout(catchUp);
-    catchUp = undefined;
-    if (rootCheck !== undefined) clearInterval(rootCheck);
-    rootCheck = undefined;
+  /** Let go of the watched folder: its watcher and, where it is held open, its handle. */
+  const release = (): void => {
     watcher?.close();
     watcher = undefined;
     if (pin !== undefined) {
@@ -464,80 +790,241 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       pin = undefined;
     }
   };
+  const stopWatching = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (catchUp !== undefined) clearTimeout(catchUp);
+    catchUp = undefined;
+    if (rootCheck !== undefined) clearInterval(rootCheck);
+    rootCheck = undefined;
+    release();
+    releaseHeld();
+  };
+  const watchFailed = (cause: unknown): void => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));
+  /**
+   * The moments after the folder is watched anew. A new watcher reports more than the saves made after it: FSEvents on
+   * macOS can deliver the writes that made the folder, from just before the stream started, and Windows reports folders the
+   * first build lists. Until `until`, once the build the re-arm asked for has been reported, a change build is reported
+   * only when it is news, as the catch-up build is; a save made meanwhile changes the files, which is news. Every build
+   * reported opens the same window for `DEV_ENGINE_LATE_EVENT_MS`, for a change the watcher reports after it was built.
+   */
+  let settling: { until: number; reported: boolean } | undefined;
+  /** Whether a change build starting now is past the first report after a re-arm and inside its settling window. */
+  const settlingNow = (): boolean => {
+    if (settling === undefined) return false;
+    if (performance.now() >= settling.until) {
+      settling = undefined;
+      return false;
+    }
+    return settling.reported;
+  };
+  const reportBuild = (event: DevEngineEvent): void => {
+    // Whatever was reported, a change the watcher reports late is about files this build read (`DEV_ENGINE_LATE_EVENT_MS`).
+    const until = performance.now() + DEV_ENGINE_LATE_EVENT_MS;
+    settling = { until: Math.max(settling?.until ?? 0, until), reported: true };
+    options.onBuild?.(event);
+  };
+  /** Whether a build says anything the last one did not: new files, a new failure, or the end of a failure. */
+  const isNews = (before: WidgetDevBuild | undefined, event: DevEngineEvent): boolean =>
+    event.kind === "generation" ||
+    (event.kind === "failed" && !sameFailure(before, event.build)) ||
+    // Files back to the newest generation after a failed build: the failure is over, which is news.
+    (event.kind === "unchanged" && before?.ok === false);
+  /** Build after the last change of a burst, and report what it built. */
+  const scheduleBuild = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = undefined;
+      // A folder watched anew by this look has its own build scheduled; building here as well would build it twice.
+      if (closed || !rootStillThere() || timer !== undefined) return;
+      void enqueue(async (): Promise<{ outcome: Attempt; report: boolean }> => {
+        const quiet = settlingNow();
+        const before = last;
+        const outcome = await attempt("change");
+        if (!("event" in outcome)) return { outcome, report: false };
+        const report = !quiet || outcome.ends !== undefined || isNews(before, outcome.event);
+        if (!report && before !== undefined) last = before;
+        return { outcome, report };
+      }).then(({ outcome, report }) => {
+        try {
+          if (!closed && report && "event" in outcome) reportBuild(outcome.event);
+        } finally {
+          done(outcome);
+        }
+      }, watchFailed);
+    }, debounceMs);
+    timer.unref();
+  };
+  /** Watch the folder at `root` now, held open where that keeps its id (`pinRoot`). */
+  const arm = (): void => {
+    pin = pinRoot(root);
+    const next = watch(root, { recursive: true }, (event, filename) => {
+      const name = typeof filename === "string" ? filename : "";
+      if (event === "change" && name !== "" && isFolderAt(join(root, name))) return;
+      if (!rootStillThere()) return;
+      if (isExcludedRootName(name.split(/[\\/]/)[0] ?? "")) return;
+      scheduleBuild();
+    });
+    watcher = next;
+    // The watcher never keeps a process alive by itself: the dev host's server or the node does that.
+    next.unref();
+    next.on("error", (error) => {
+      // An error from a watcher already let go of (the folder was replaced and is watched anew) says nothing now.
+      if (watcher !== next) return;
+      // A folder that went away is said as that, not as a watcher failure.
+      if (!rootStillThere()) return;
+      stopWatching();
+      options.onWatchError?.(error);
+    });
+  };
   /**
    * Whether the folder is still there, and if not, stop watching and say so. A folder deleted, renamed or replaced while
    * watched is not reported by every platform's watcher (Windows reports neither an event nor an error), so this is
-   * checked on every change and on a timer rather than left to the watcher. A folder that could not be looked at this
-   * time (`unknown`) is looked at again on the next tick rather than taken as gone.
+   * checked on every change and on a timer rather than left to the watcher.
+   *
+   * - Another folder at the path (`replaced`) is watched in place of the old one and built: it is where the person's
+   *   files are now, whether a build made it again or the filesystem gave the same folder a new id. One reached through a
+   *   link or junction is `gone`. More than `DEV_ENGINE_REARM_MAX` of these in a row, with no look between them finding
+   *   the folder unchanged, stops watching as a watch failure.
+   * - A folder missing from the path (`gone`, not found) counts as gone only once it has been missing for
+   *   `rootMissingGraceMs`: until then no build starts and `rootGone` says not gone either; a build already running that
+   *   fails on the missing files is held rather than reported (`attempt`). The path is looked at again, and a folder back
+   *   at the same real path is watched anew (`replaced`) and built once. Anything else that is `gone` (not a folder, or
+   *   reached through a link) is gone at once.
+   * - A folder that could not be looked at this time (`unknown`) is looked at again on the next tick rather than taken as
+   *   gone, until it has failed for `rootUnreadableMs` in a row: then watching stops as a watch failure that says why.
    */
+  /**
+   * Whether `look` found the watched folder missing for less than `rootMissingGraceMs` so far: it may be on its way back,
+   * so it is not gone yet. The absence is timed from the first look that found it, whichever asked.
+   */
+  const stillAwaited = (look: DevRootLook): boolean => {
+    if (look.state !== "gone" || look.missing !== true || closed || watcher === undefined) return false;
+    const at = performance.now();
+    if (missingSince === undefined) {
+      missingSince = at;
+      disturbances += 1;
+    }
+    return at - missingSince < missingGraceMs;
+  };
   const rootStillThere = (): boolean => {
     if (closed || watcher === undefined) return !closed;
-    if (devRootState(root, identity) !== "gone") return true;
+    const look = lookAtDevRoot(root, identity, canonical);
+    if (look.state === "unknown") {
+      // A monotonic clock: a clock set back, or a machine asleep, neither stretches nor cuts short the bound.
+      const at = performance.now();
+      unreadableSince ??= at;
+      if (at - unreadableSince < unreadableMs) return true;
+      stopWatching();
+      const failingMs = Math.round(at - unreadableSince);
+      const failing = failingMs < 1000 ? `${String(failingMs)} ms` : `${String(Math.round(failingMs / 1000))} s`;
+      options.onWatchError?.(new Error(`the folder could not be looked at for ${failing} (${look.code}), so it is no longer watched`));
+      return false;
+    }
+    unreadableSince = undefined;
+    if (stillAwaited(look)) return false;
+    const returned = missingSince !== undefined;
+    missingSince = undefined;
+    if (look.state === "present") {
+      rearmsInARow = 0;
+      // Back as the very folder that went (renamed away and back): what changed meanwhile, or a build held, is built now.
+      if (returned) scheduleBuild();
+      return true;
+    }
+    if (look.state === "replaced") {
+      rearmsInARow += 1;
+      const idOf = (id: DevRootIdentity | undefined): string => (id === undefined ? "none" : `${String(id.dev)}:${String(id.ino)}`);
+      if (rearmsInARow > DEV_ENGINE_REARM_MAX) {
+        stopWatching();
+        options.onWatchError?.(
+          new Error(
+            `the folder was found under a new file id on more than ${String(DEV_ENGINE_REARM_MAX)} looks in a row (last ${idOf(identity)} to ${idOf(look.identity)}), so it is no longer watched; its filesystem may not keep file ids stable`,
+          ),
+        );
+        return false;
+      }
+      process.stderr.write(`widget dev: watching ${root} anew: its file id changed from ${idOf(identity)} to ${idOf(look.identity)}\n`);
+      release();
+      disturbances += 1;
+      try {
+        identity = look.identity;
+        arm();
+      } catch (cause) {
+        stopWatching();
+        watchFailed(cause);
+        return false;
+      }
+      settling = { until: performance.now() + 2 * DEV_ENGINE_WATCH_CATCH_UP_MS + debounceMs, reported: false };
+      scheduleBuild();
+      // As at the start: a save the new watcher could not see yet (FSEvents starts asynchronously) is built then.
+      scheduleCatchUp();
+      return true;
+    }
     stopWatching();
     options.onRootGone?.();
     return false;
   };
+  /**
+   * Build once more `DEV_ENGINE_WATCH_CATCH_UP_MS` after a watcher starts, for a save made before the platform watcher was
+   * live. Only news is reported: files that did not change build nothing new, and a folder that was already failing fails
+   * the same way, so where the watcher saw everything this is silent. A build with no news leaves the last build as it
+   * was, rather than relabelled as a change made now.
+   */
+  const scheduleCatchUp = (): void => {
+    if (catchUp !== undefined) clearTimeout(catchUp);
+    catchUp = setTimeout(() => {
+      catchUp = undefined;
+      // A change already waiting to build reads the folder anyway; so does the build of a folder this look watched anew.
+      if (closed || timer !== undefined || !rootStillThere() || timer !== undefined) return;
+      void enqueue(async (): Promise<{ outcome: Attempt; news: boolean }> => {
+        // Read once every build before it has settled, the first one included: a first build slower than the catch-up
+        // delay has not set the last build when the timer fires, and its failure would otherwise be news twice.
+        const before = last;
+        const outcome = await attempt("change");
+        // Held while the folder is made again: the build once it is back is reported by whoever runs it.
+        if (!("event" in outcome)) return { outcome, news: false };
+        // The build a rebuild was held for is reported, whatever it found.
+        const news = outcome.ends !== undefined || isNews(before, outcome.event);
+        if (!news && before !== undefined) last = before;
+        return { outcome, news };
+      }).then(
+        ({ outcome, news }) => {
+          try {
+            if (!closed && news && "event" in outcome) reportBuild(outcome.event);
+          } finally {
+            done(outcome);
+          }
+        },
+        watchFailed,
+      );
+    }, DEV_ENGINE_WATCH_CATCH_UP_MS);
+    catchUp.unref();
+  };
+
+  // Builds run one at a time, in order: a change that lands during a build is built after it. The first one starts
+  // before anything is watched.
+  let queue: Promise<unknown> = attempt("start");
+  // The first build is not reported through `onBuild`: whoever started the engine reads it here.
+  const ready = (queue as Promise<Attempt>).then((outcome) => {
+    done(outcome);
+    return eventOf(outcome);
+  });
+  const enqueue = <T>(job: () => Promise<T>): Promise<T> => {
+    const next = queue.then(job, job);
+    queue = next;
+    return next;
+  };
+
   if (options.watch !== false) {
     try {
-      pin = pinRoot(root);
       identity = devRootIdentityOf(root);
-      watcher = watch(root, { recursive: true }, (_event, filename) => {
-        const name = typeof filename === "string" ? filename : "";
-        if (!rootStillThere()) return;
-        if (isExcludedRootName(name.split(/[\\/]/)[0] ?? "")) return;
-        if (timer !== undefined) clearTimeout(timer);
-        timer = setTimeout(() => {
-          timer = undefined;
-          if (closed || !rootStillThere()) return;
-          void enqueue(() => build("change")).then(
-            (event) => {
-              if (!closed) options.onBuild?.(event);
-            },
-            (cause: unknown) => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause))),
-          );
-        }, debounceMs);
-        timer.unref();
-      });
-      // The watcher never keeps a process alive by itself: the dev host's server or the node does that.
-      watcher.unref();
-      watcher.on("error", (error) => {
-        // A folder that went away is said as that, not as a watcher failure.
-        if (!rootStillThere()) return;
-        stopWatching();
-        options.onWatchError?.(error);
-      });
+      arm();
       rootCheck = setInterval(() => void rootStillThere(), options.rootCheckMs ?? DEV_ENGINE_ROOT_CHECK_MS);
       rootCheck.unref();
-      // A save made before the platform watcher was live is built here. Only news is reported: files that did not change
-      // build nothing new, and a folder that was already failing fails the same way, so where the watcher saw everything
-      // this is silent. A build with no news leaves the last build as it was, rather than relabelled as a change made now.
-      catchUp = setTimeout(() => {
-        catchUp = undefined;
-        if (closed || timer !== undefined || !rootStillThere()) return;
-        let news = false;
-        void enqueue(async () => {
-          // Read once every build before it has settled, the first one included: a first build slower than the catch-up
-          // delay has not set the last build when the timer fires, and its failure would otherwise be news twice.
-          const before = last;
-          const event = await build("change");
-          news =
-            event.kind === "generation" ||
-            (event.kind === "failed" && !sameFailure(before, event.build)) ||
-            // Files back to the newest generation after a failed build: the failure is over, which is news.
-            (event.kind === "unchanged" && before?.ok === false);
-          if (!news && before !== undefined) last = before;
-          return event;
-        }).then(
-          (event) => {
-            if (!closed && news) options.onBuild?.(event);
-          },
-          (cause: unknown) => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause))),
-        );
-      }, DEV_ENGINE_WATCH_CATCH_UP_MS);
-      catchUp.unref();
+      scheduleCatchUp();
     } catch (cause) {
-      watcher = undefined;
-      options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));
+      stopWatching();
+      watchFailed(cause);
     }
   }
 
@@ -547,14 +1034,25 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     latest: () => newest,
     lastBuild: () => last,
     rebuild: async (trigger = "rebuild") => {
-      const event = await enqueue(() => build(trigger));
-      if (!closed) options.onBuild?.(event);
-      return event;
+      const outcome = await enqueue(() => attempt(trigger));
+      // Held while the folder is made again: the build that runs once it is back reports itself, and this settles with it.
+      if (!("event" in outcome)) return outcome.held;
+      try {
+        if (!closed) reportBuild(outcome.event);
+      } finally {
+        done(outcome);
+      }
+      return outcome.event;
     },
     watching: () => watcher !== undefined && !closed,
-    rootGone: () => devRootState(root, identity) === "gone",
+    rootGone: () => {
+      // A folder being made again is not gone: a build that overlaps it is held until it is back.
+      const look = lookAtDevRoot(root, identity, canonical);
+      return look.state === "gone" && !stillAwaited(look);
+    },
     close: () => {
       closed = true;
+      releaseNewest();
       stopWatching();
     },
   };

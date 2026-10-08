@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createOrbRenderer, orbPointerFromClient } from "../src/orb.ts";
+import {
+  createOrbFrameScheduler,
+  createOrbRenderer,
+  isSoftwareRenderer,
+  orbRendererKind,
+  ORB_GPU_BUDGET,
+  ORB_SOFTWARE_BUDGET,
+  orbFrameBudget,
+  orbPixelRatio,
+  orbPointerFromClient,
+  type OrbFrameClock,
+} from "../src/orb.ts";
 import { ORB_FRAGMENT_SHADER, ORB_PALETTE, ORB_SHAPE, ORB_VERTEX_SHADER } from "../src/orb-shader.ts";
 
 /**
@@ -200,7 +211,7 @@ describe("the orb answers the pointer", () => {
  * code path at all: React only runs the effect twice under StrictMode in development, and the
  * browser suite runs a production build.
  */
-function fakeWebgl() {
+function fakeWebgl(renderer: { plain?: string; unmasked?: string } = { plain: "WebKit WebGL", unmasked: "ANGLE (NVIDIA GeForce RTX 3060)" }) {
   let lost = false;
   const compiled = new Map<object, boolean>();
   /**
@@ -227,10 +238,16 @@ function fakeWebgl() {
     ONE: 10,
     ONE_MINUS_SRC_ALPHA: 11,
     COLOR_BUFFER_BIT: 12,
+    RENDERER: 13,
 
     isContextLost: () => lost,
-    getExtension: (name: string) =>
-      name === "WEBGL_lose_context" ? { loseContext: () => { lost = true; } } : null,
+    getExtension: (name: string) => {
+      if (name === "WEBGL_lose_context") return { loseContext: () => { lost = true; } };
+      if (name === "WEBGL_debug_renderer_info" && renderer.unmasked !== undefined) return { UNMASKED_RENDERER_WEBGL: 14 };
+      return null;
+    },
+    getParameter: (parameter: number) =>
+      parameter === 13 ? renderer.plain ?? null : parameter === 14 ? renderer.unmasked ?? null : null,
 
     createShader: () => ({}),
     shaderSource: () => undefined,
@@ -322,5 +339,231 @@ describe("an orb rebuilt on the same canvas", () => {
       expect(created.reason).toContain("lost");
       expect(created.reason).not.toContain("did not compile");
     }
+  });
+});
+
+/**
+ * The orb on a machine without a GPU.
+ *
+ * Drawn by the CPU, the animated orb alone took three to seven cores of an idle page. The renderer recognises a
+ * software rasteriser by its name and draws on a reduced budget there, and leaves a GPU exactly as it was.
+ */
+describe("the orb on a machine without a GPU", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("recognises the software rasterisers each platform falls back to", () => {
+    for (const name of [
+      "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "Google SwiftShader",
+      "llvmpipe (LLVM 15.0.7, 256 bits)",
+      "Mesa softpipe",
+      "ANGLE (Mesa, lavapipe (LLVM 17.0.6, 256 bits), Vulkan 1.3)",
+      "ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "Apple Software Renderer",
+    ]) {
+      expect(isSoftwareRenderer(name), name).toBe(true);
+    }
+  });
+
+  it("treats a GPU, and a machine that will not say, as a GPU", () => {
+    for (const name of [
+      "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "Apple M2",
+      "Mesa Intel(R) Xe Graphics (TGL GT2)",
+      "AMD Radeon Pro 5500M OpenGL Engine",
+      "WebKit WebGL",
+      "",
+    ]) {
+      expect(isSoftwareRenderer(name), name).toBe(false);
+    }
+    expect(isSoftwareRenderer(undefined)).toBe(false);
+  });
+
+  it("matches the Apple software renderer by its full name, not any name that says software", () => {
+    // The word alone is not a rasteriser: a hardware adapter or a driver note may carry it.
+    expect(isSoftwareRenderer("ANGLE (Vendor, Hardware Adapter (Software Compatible) Direct3D11 vs_5_0 ps_5_0, D3D11)")).toBe(false);
+    expect(isSoftwareRenderer("Software")).toBe(false);
+    expect(isSoftwareRenderer("apple software renderer")).toBe(true);
+  });
+
+  it("holds nothing back on a GPU, and draws less often at a lower resolution without one", () => {
+    expect(orbFrameBudget(false)).toBe(ORB_GPU_BUDGET);
+    expect(ORB_GPU_BUDGET.minFrameIntervalMs).toBe(0);
+    expect(ORB_GPU_BUDGET.pixelRatioCap).toBe(Number.POSITIVE_INFINITY);
+    expect(orbFrameBudget(true)).toBe(ORB_SOFTWARE_BUDGET);
+    // Still animated: a cap, not a stop.
+    expect(ORB_SOFTWARE_BUDGET.minFrameIntervalMs).toBeGreaterThan(0);
+    expect(1000 / ORB_SOFTWARE_BUDGET.minFrameIntervalMs).toBeGreaterThanOrEqual(15);
+    expect(ORB_SOFTWARE_BUDGET.pixelRatioCap).toBeLessThan(1);
+  });
+
+  it("halves a large orb's resolution without a GPU, keeps a small one sharp, and changes nothing on a GPU", () => {
+    // The hero orb as it sits on a 1280 pixel start screen, on a plain display and a high-density one.
+    expect(orbPixelRatio(ORB_SOFTWARE_BUDGET, 388, 1, 1.25)).toBe(0.5);
+    expect(orbPixelRatio(ORB_SOFTWARE_BUDGET, 388, 2, 1.25)).toBe(0.5);
+    // The header orb and the Settings preview: their buffers stay at the element's own size, or its 128 pixel floor.
+    expect(orbPixelRatio(ORB_SOFTWARE_BUDGET, 30, 1, 2)).toBe(1);
+    expect(orbPixelRatio(ORB_SOFTWARE_BUDGET, 30, 2, 2)).toBe(2);
+    expect(orbPixelRatio(ORB_SOFTWARE_BUDGET, 96, 2, 2)).toBeCloseTo(128 / 96, 5);
+    // Never above what the caller allows.
+    expect(orbPixelRatio(ORB_SOFTWARE_BUDGET, 30, 1, 0.75)).toBe(0.75);
+    // A GPU: the caller's ceiling, as before.
+    expect(orbPixelRatio(ORB_GPU_BUDGET, 388, 2, 1.25)).toBe(1.25);
+    expect(orbPixelRatio(ORB_GPU_BUDGET, 30, 3, 2)).toBe(2);
+    expect(orbPixelRatio(ORB_GPU_BUDGET, 30, 1, 2)).toBe(1);
+  });
+
+  it("reads the unmasked name when the plain one is masked, and the plain one when it is real", () => {
+    const masked = fakeWebgl({ plain: "WebKit WebGL", unmasked: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device), SwiftShader driver)" });
+    const fromDebug = createOrbRenderer(masked.canvas);
+    expect(fromDebug.ok && fromDebug.renderer.software).toBe(true);
+
+    // Firefox answers RENDERER with the real name, and the debug extension is not needed.
+    const plain = fakeWebgl({ plain: "llvmpipe, or similar" });
+    const fromPlain = createOrbRenderer(plain.canvas);
+    expect(fromPlain.ok && fromPlain.renderer.software).toBe(true);
+
+    const gpu = fakeWebgl();
+    const fromGpu = createOrbRenderer(gpu.canvas);
+    expect(fromGpu.ok && fromGpu.renderer.software).toBe(false);
+
+    // Nothing to go on: drawn as designed.
+    const silent = fakeWebgl({ plain: "WebKit WebGL" });
+    const fromSilent = createOrbRenderer(silent.canvas);
+    expect(fromSilent.ok && fromSilent.renderer.software).toBe(false);
+  });
+
+  it("reports what draws the orb: a GPU, the CPU, or no WebGL at all", () => {
+    expect(orbRendererKind(createOrbRenderer(fakeWebgl().canvas))).toBe("gpu");
+    expect(orbRendererKind(createOrbRenderer(fakeWebgl({ plain: "Google SwiftShader" }).canvas))).toBe("software");
+
+    // A browser that gives no WebGL context: the orb falls back to its still gradient, and the page learns there is
+    // no GPU to draw with, which the composer glow reads the same way as a software rasteriser.
+    const noContext = { getContext: () => null } as unknown as HTMLCanvasElement;
+    const missing = createOrbRenderer(noContext);
+    expect(missing.ok).toBe(false);
+    expect(orbRendererKind(missing)).toBe("none");
+
+    // WebGL is there but the orb failed for a reason of its own: that says nothing about the machine.
+    expect(orbRendererKind({ ok: false, reason: "shader did not compile: ERROR" })).toBeUndefined();
+  });
+
+  it("sizes the drawing buffer by the budget without a GPU, and at the caller's ceiling with one", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 2 });
+
+    const gpu = fakeWebgl();
+    const onGpu = createOrbRenderer(gpu.canvas, { maxPixelRatio: 1.25 });
+    if (!onGpu.ok) throw new Error(onGpu.reason);
+    onGpu.renderer.resize();
+    expect(gpu.canvas.width).toBe(Math.round(148 * 1.25));
+
+    const cpu = fakeWebgl({ plain: "WebKit WebGL", unmasked: "Google SwiftShader" });
+    const onCpu = createOrbRenderer(cpu.canvas, { maxPixelRatio: 1.25 });
+    if (!onCpu.ok) throw new Error(onCpu.reason);
+    onCpu.renderer.resize();
+    // 148 pixels across: half would be 74, under the floor, so the buffer is held at 128.
+    expect(cpu.canvas.width).toBe(128);
+  });
+
+  /** A clock that runs only when the test says so. */
+  function fakeClock() {
+    let now = 0;
+    let nextHandle = 1;
+    const frames = new Map<number, (timeMs: number) => void>();
+    const timers = new Map<number, { at: number; callback: () => void }>();
+    const clock: OrbFrameClock = {
+      requestAnimationFrame: (callback) => {
+        const handle = nextHandle++;
+        frames.set(handle, callback);
+        return handle;
+      },
+      cancelAnimationFrame: (handle) => {
+        frames.delete(handle);
+      },
+      setTimeout: (callback, delayMs) => {
+        const handle = nextHandle++;
+        timers.set(handle, { at: now + delayMs, callback });
+        return handle as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimeout: (handle) => {
+        timers.delete(handle as unknown as number);
+      },
+    };
+    /** Advance by one 60 Hz display frame: due timers fire, then pending animation frames run. */
+    const tick = (): void => {
+      now += 1000 / 60;
+      for (const [handle, timer] of [...timers]) {
+        if (timer.at <= now) {
+          timers.delete(handle);
+          timer.callback();
+        }
+      }
+      const due = [...frames];
+      frames.clear();
+      for (const [, callback] of due) callback(now);
+    };
+    return { clock, tick, pendingFrames: () => frames.size, pendingTimers: () => timers.size };
+  }
+
+  it("draws on every display frame with no interval", () => {
+    const { clock, tick } = fakeClock();
+    const frames = createOrbFrameScheduler(clock, 0);
+    let drawn = 0;
+    const loop = (): void => {
+      drawn += 1;
+      frames.request(loop, true);
+    };
+    frames.request(loop, false);
+    for (let frame = 0; frame < 60; frame += 1) tick();
+    expect(drawn).toBe(60);
+  });
+
+  it("waits out the interval on a timer, asking for no display frames in between", () => {
+    const { clock, tick, pendingFrames } = fakeClock();
+    const frames = createOrbFrameScheduler(clock, 50);
+    let drawn = 0;
+    let framesAskedWhileWaiting = 0;
+    const loop = (): void => {
+      drawn += 1;
+      frames.request(loop, true);
+    };
+    // The first frame of a start is drawn at once.
+    frames.request(loop, false);
+    tick();
+    expect(drawn).toBe(1);
+    for (let frame = 0; frame < 59; frame += 1) {
+      // Between draws nothing holds a display frame: that request is what kept the compositor busy.
+      if (pendingFrames() > 0) framesAskedWhileWaiting += 1;
+      tick();
+    }
+    // About fifteen a second (a 50 ms wait lands on every fourth 60 Hz display frame), and still moving.
+    expect(drawn).toBeGreaterThanOrEqual(15);
+    expect(drawn).toBeLessThanOrEqual(20);
+    expect(framesAskedWhileWaiting).toBeLessThan(drawn);
+  });
+
+  it("stops completely when cancelled, and ignores a second request while one is pending", () => {
+    const { clock, tick, pendingFrames, pendingTimers } = fakeClock();
+    const frames = createOrbFrameScheduler(clock, 50);
+    let drawn = 0;
+    const loop = (): void => {
+      drawn += 1;
+      frames.request(loop, true);
+    };
+    frames.request(loop, false);
+    frames.request(loop, false);
+    tick();
+    expect(drawn).toBe(1);
+    expect(frames.pending).toBe(true);
+
+    frames.cancel();
+    expect(frames.pending).toBe(false);
+    expect(pendingFrames()).toBe(0);
+    expect(pendingTimers()).toBe(0);
+    for (let frame = 0; frame < 30; frame += 1) tick();
+    expect(drawn).toBe(1);
   });
 });

@@ -86,6 +86,11 @@ export interface OfferedActionTarget {
   action: string;
   label: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * The package generation the binding was placed from (`ActionBinding.packageGeneration`). A binding made before
+   * perform bindings recorded one holds the definition digest instead, which matches no generation.
+   */
+  packageGeneration: string;
 }
 
 const OFFERED_SEARCH_INSTANCES = 50;
@@ -113,6 +118,7 @@ function instanceOfferedActions(services: Pick<NodeServices, "conductor">, owner
         action: binding.proposal.action,
         label: binding.label,
         inputSchema: binding.inputSchema,
+        packageGeneration: binding.packageGeneration,
       },
     ];
   });
@@ -178,10 +184,12 @@ export const FOCUSED_WIDGET_HEADING = "[The widget focused on the person's scree
  *
  * Read from the node's own bindings on that instance, so only an action the package declared and `place_widget` bound
  * can be listed, and only on a widget of this conversation that `perform_widget_action` would accept. A description is
- * read only from a definition the instance could have been placed from: one a package runs now, with the instance's own
- * version and digest, declaring the action with the very label and input schema its binding recorded when it was placed.
- * Any other definition of the same widget id — another package's, another version's, or one that no longer runs —
- * contributes no description. Every word a package wrote is quoted on one line, made inert: data, never guidance.
+ * read only from the exact package generation the binding was placed from, while that generation runs, with the
+ * instance's own version and digest, declaring the action with the very label and input schema its binding recorded.
+ * Any other definition of the same widget id — another package's that copies its id, version, schemas and label,
+ * another version's or generation's, or one that no longer runs — contributes no description, and neither does a
+ * binding made before perform bindings recorded their generation. Every word a package wrote is quoted on one line,
+ * made inert: data, never guidance.
  */
 export function focusedWidgetActionsContext(
   services: PlaceServices,
@@ -197,10 +205,14 @@ export function focusedWidgetActionsContext(
   const placedFrom =
     located.ok &&
     located.active &&
+    located.generationId !== undefined &&
     located.definition.version === instance.definitionRef.version &&
     definitionDigest(located.definition) === instance.definitionRef.packageDigest;
+  const generation = placedFrom ? located.generationId : undefined;
   const declared = placedFrom ? (located.definition.offeredActions ?? []) : [];
   const describedAs = (target: OfferedActionTarget): string | undefined => {
+    // Only the generation this binding was placed from may describe it; nothing else is one that placed it.
+    if (generation === undefined || target.packageGeneration !== generation) return undefined;
     const entry = declared.find((candidate) => candidate.name === target.action);
     const asBound = entry !== undefined && entry.label === target.label && JSON.stringify(entry.inputSchema) === JSON.stringify(target.inputSchema);
     return asBound ? entry.description : undefined;
@@ -598,6 +610,8 @@ export function placeWidget(
       action: { kind: "perform", action: offered.name },
       ownerPrincipalId: owner,
       offeredActions: definition.offeredActions ?? [],
+      // The generation the action is read from: its description is later taken from this generation only.
+      widgetGeneration,
     });
     if (!result.ok) return { text: `Not placed: the host refused the offered action ${offered.name}: ${result.message}` };
     compiled.push(result);

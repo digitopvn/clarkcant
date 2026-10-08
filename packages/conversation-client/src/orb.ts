@@ -131,7 +131,137 @@ export function orbPointerFromClient(input: OrbPointerRect & { clientX: number; 
   return { x: (u - 0.5) * 2 * aspect, y: (v - 0.5) * 2, strength };
 }
 
+/**
+ * Renderer names that mean WebGL is being drawn by the CPU rather than a GPU.
+ *
+ * Chromium and Electron fall back to SwiftShader everywhere; Mesa's llvmpipe, softpipe and lavapipe are what a
+ * Linux machine without a working driver gets; Windows' WARP adapter reports itself as the Microsoft Basic Render
+ * Driver; macOS names its own "Apple Software Renderer". A name that matches none of these — including no name at
+ * all — is treated as a GPU, so an unknown machine keeps the orb exactly as designed.
+ */
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|lavapipe|basic render driver|apple software renderer/i;
+
+export function isSoftwareRenderer(name: string | undefined): boolean {
+  return name !== undefined && SOFTWARE_RENDERER.test(name);
+}
+
+/**
+ * The name of whatever draws this context.
+ *
+ * `RENDERER` first, because Firefox and newer Chromium answer it with the real (if coarsened) name and Firefox warns
+ * when the debug extension is asked for. Chromium still answers the masked "WebKit WebGL" there, and gives the real
+ * name through `WEBGL_debug_renderer_info`.
+ */
+export function readWebglRenderer(gl: WebGLRenderingContext): string | undefined {
+  const plain: unknown = gl.getParameter(gl.RENDERER);
+  if (typeof plain === "string" && plain !== "" && !/^webkit webgl$/i.test(plain.trim())) return plain;
+  const debug = gl.getExtension("WEBGL_debug_renderer_info");
+  const unmasked: unknown = debug === null ? undefined : gl.getParameter(debug.UNMASKED_RENDERER_WEBGL);
+  return typeof unmasked === "string" && unmasked !== "" ? unmasked : undefined;
+}
+
+/**
+ * How often, and at what resolution, the orb may be drawn.
+ *
+ * On a GPU nothing is held back: every animation frame, at the caller's own pixel-ratio ceiling. Without one, the
+ * fragment shader runs on the CPU for every pixel of every frame, and the animated orb alone took three to seven
+ * cores of an idle page. There it waits at least 50 ms between frames (about fifteen a second on a 60 Hz
+ * display, since each one still lands on a display frame) and draws into a buffer of half the element's size, which
+ * the browser scales up: the orb is a soft glow, so the picture is the same orb, still moving, for about a tenth of
+ * the work. A small orb keeps its full resolution, because its few pixels cost nothing and halving them is what
+ * would show.
+ */
+export interface OrbFrameBudget {
+  /** Shortest time between two drawn frames. Zero draws on every animation frame. */
+  minFrameIntervalMs: number;
+  /** Ceiling on the drawing buffer's pixel ratio, applied under the caller's own `maxPixelRatio`. */
+  pixelRatioCap: number;
+  /** The cap above never takes the buffer below this many pixels across, nor above the caller's own ceiling. */
+  minBufferPx: number;
+}
+
+export const ORB_GPU_BUDGET: OrbFrameBudget = {
+  minFrameIntervalMs: 0,
+  pixelRatioCap: Number.POSITIVE_INFINITY,
+  minBufferPx: 0,
+};
+export const ORB_SOFTWARE_BUDGET: OrbFrameBudget = { minFrameIntervalMs: 50, pixelRatioCap: 0.5, minBufferPx: 128 };
+
+/** The drawing buffer's pixel ratio for an element `sidePx` across, within a budget and the caller's ceiling. */
+export function orbPixelRatio(budget: OrbFrameBudget, sidePx: number, devicePixelRatio: number, maxPixelRatio: number): number {
+  const natural = Math.min(devicePixelRatio, maxPixelRatio);
+  const floor = Math.min(natural, budget.minBufferPx / Math.max(sidePx, 1));
+  return Math.max(Math.min(natural, budget.pixelRatioCap), floor);
+}
+
+export function orbFrameBudget(software: boolean): OrbFrameBudget {
+  return software ? ORB_SOFTWARE_BUDGET : ORB_GPU_BUDGET;
+}
+
+/** The parts of `window` the frame scheduler uses, so a test can drive it with a fake clock. */
+export interface OrbFrameClock {
+  requestAnimationFrame(callback: (timeMs: number) => void): number;
+  cancelAnimationFrame(handle: number): void;
+  setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+  clearTimeout(handle: ReturnType<typeof setTimeout>): void;
+}
+
+export interface OrbFrameScheduler {
+  /**
+   * Ask for one call of `callback` on an animation frame. `afterInterval` waits out the budget's interval first,
+   * which is what the loop asks for after a frame it drew; the first frame of a (re)start is drawn at once.
+   * A request while one is already pending is ignored.
+   */
+  request(callback: (timeMs: number) => void, afterInterval: boolean): void;
+  cancel(): void;
+  readonly pending: boolean;
+}
+
+/**
+ * Schedule the orb's frames within a budget.
+ *
+ * With no interval this is `requestAnimationFrame`, exactly as before. With one, the wait is a timer and not a run of
+ * skipped animation frames: a page that keeps asking for animation frames keeps the compositor producing them, and
+ * without a GPU that alone cost half a core while the orb drew nothing. The draw itself still lands on an animation
+ * frame, so it is in step with the display.
+ */
+export function createOrbFrameScheduler(clock: OrbFrameClock, minFrameIntervalMs: number): OrbFrameScheduler {
+  let frame = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onFrame = (callback: (timeMs: number) => void) => (timeMs: number): void => {
+    frame = 0;
+    callback(timeMs);
+  };
+  return {
+    request(callback, afterInterval) {
+      if (frame !== 0 || timer !== undefined) return;
+      if (!afterInterval || minFrameIntervalMs <= 0) {
+        frame = clock.requestAnimationFrame(onFrame(callback));
+        return;
+      }
+      timer = clock.setTimeout(() => {
+        timer = undefined;
+        frame = clock.requestAnimationFrame(onFrame(callback));
+      }, minFrameIntervalMs);
+    },
+    cancel() {
+      if (timer !== undefined) clock.clearTimeout(timer);
+      timer = undefined;
+      if (frame !== 0) clock.cancelAnimationFrame(frame);
+      frame = 0;
+    },
+    get pending() {
+      return frame !== 0 || timer !== undefined;
+    },
+  };
+}
 export interface OrbRenderer {
+  /**
+   * Whether this context is drawn by the CPU. Decided once, when the renderer is built, from the renderer's name.
+   * The caller reads `orbFrameBudget(software)` for how often to call `frame()`; `resize()` already applies its
+   * resolution ceiling.
+   */
+  readonly software: boolean;
   /** Draw one frame. `timeMs` is a monotonic clock; only its deltas matter. */
   frame(timeMs: number): void;
   /** Match the drawing buffer to the element's size and pixel ratio. */
@@ -147,9 +277,28 @@ export interface OrbRenderer {
   dispose(): void;
 }
 
+/**
+ * A failed creation says whether WebGL itself was missing (`noWebgl`), rather than the orb's own shader or a lost
+ * context: only that case tells the page there is no WebGL to draw with at all.
+ */
 export type OrbCreation =
   | { ok: true; renderer: OrbRenderer }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; noWebgl?: true };
+
+/** What draws the orb, as the canvas publishes it on `data-orb-renderer`. */
+export type OrbRendererKind = "gpu" | "software" | "none";
+
+/**
+ * The renderer kind a creation reports.
+ *
+ * `none` is a browser with no WebGL context at all, where the orb shows its still gradient; that is as much a machine
+ * without a GPU as a software rasteriser is, and the composer glow reads it the same way. A failure with WebGL present
+ * (a shader that did not compile, a lost context) says nothing about the machine, so it reports no kind.
+ */
+export function orbRendererKind(creation: OrbCreation): OrbRendererKind | undefined {
+  if (creation.ok) return creation.renderer.software ? "software" : "gpu";
+  return creation.noWebgl === true ? "none" : undefined;
+}
 
 const UNIFORM_NAMES = [
   "u_resolution",
@@ -226,6 +375,7 @@ export function createOrbRenderer(
     return {
       ok: false,
       reason: "this browser did not provide a WebGL context, so the orb cannot be drawn",
+      noWebgl: true,
     };
   }
   // Rebound after the check so the type is non-null by construction rather than by control-flow
@@ -257,6 +407,8 @@ export function createOrbRenderer(
     pointerResponse: options.physics?.pointerResponse ?? ORB_PHYSICS_DEFAULTS.pointerResponse,
   };
   const palette = { ...ORB_PALETTE, ...(options.palette ?? {}) };
+  const software = isSoftwareRenderer(readWebglRenderer(gl));
+  const budget = orbFrameBudget(software);
 
   const vertex = compile(gl, gl.VERTEX_SHADER, ORB_VERTEX_SHADER);
   if (!vertex.ok) return vertex;
@@ -421,6 +573,7 @@ export function createOrbRenderer(
   return {
     ok: true,
     renderer: {
+      software,
       frame: draw,
       setPointer(sample: OrbPointerSample): void {
         if (disposed) return;
@@ -433,7 +586,12 @@ export function createOrbRenderer(
         const rect = canvas.getBoundingClientRect();
         // Capped, and the cap is an option because the orb's size is not fixed: the docked orb is an
         // order of magnitude larger than the one in the header, and the same ratio is wasteful there.
-        const ratio = Math.min(window.devicePixelRatio || 1, options.maxPixelRatio ?? 2);
+        const ratio = orbPixelRatio(
+          budget,
+          Math.max(rect.width, rect.height),
+          window.devicePixelRatio || 1,
+          options.maxPixelRatio ?? 2,
+        );
         const width = Math.max(1, Math.round(rect.width * ratio));
         const height = Math.max(1, Math.round(rect.height * ratio));
         if (canvas.width !== width || canvas.height !== height) {

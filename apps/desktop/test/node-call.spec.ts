@@ -75,10 +75,90 @@ describe("calling the node", () => {
     expect(await callNode("/x")).toMatchObject({ ok: false, code: "NODE_UNREACHABLE", refused: "the node could not be reached (ECONNREFUSED)" });
   });
 
+  it("adds a caller's headers without letting them replace the host's credential", async () => {
+    const send = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => answer(200, {}));
+    const callNode = createNodeCaller({ readSession: () => SESSION, fetch: send });
+    await callNode("/x", { headers: { "x-clarkcant-surface": "composer", authorization: "Bearer forged" } });
+    expect(send.mock.calls[0]?.[1]?.headers).toEqual({
+      "x-clarkcant-surface": "composer",
+      "content-type": "application/json",
+      authorization: `Bearer ${SESSION.token}`,
+    });
+  });
+
+  it("drops a caller's header the host sets, in any spelling, so the two values are never joined", async () => {
+    const send = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => answer(200, {}));
+    const callNode = createNodeCaller({ readSession: () => SESSION, fetch: send });
+    await callNode("/x", {
+      headers: { "X-ClarkCant-Surface": "composer", Authorization: "Bearer forged", AUTHORIZATION: "Bearer forged", "Content-Type": "text/plain" },
+    });
+    const sent = send.mock.calls[0]?.[1]?.headers;
+    expect(sent).toEqual({
+      "x-clarkcant-surface": "composer",
+      "content-type": "application/json",
+      authorization: `Bearer ${SESSION.token}`,
+    });
+    // What the node reads, after the fetch layer folds names together.
+    const folded = new Headers(sent);
+    expect(folded.get("authorization")).toBe(`Bearer ${SESSION.token}`);
+    expect(folded.get("content-type")).toBe("application/json");
+  });
+
+  it("gives up on a node that sends its status and never finishes the body", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: async (_url: URL | RequestInfo, init?: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+            }),
+        }) as unknown as Response,
+    });
+    expect(await callNode("/x", { timeoutMs: 20 })).toMatchObject({ ok: false, code: "NODE_TIMEOUT" });
+  });
+
+  it("gives up on a call the node accepts and never answers, and says so", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: (_url: URL | RequestInfo, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    });
+    expect(await callNode("/x", { timeoutMs: 20 })).toMatchObject({ ok: false, code: "NODE_TIMEOUT" });
+  });
+
   it("refuses before calling when there is no node session", async () => {
     const send = vi.fn();
     const callNode = createNodeCaller({ readSession: () => ({ ok: false, refused: "no --data-dir was given" }), fetch: send });
     expect(await callNode("/x")).toMatchObject({ ok: false, refused: "no --data-dir was given", code: "NO_NODE_SESSION" });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("an export from the node", () => {
+  it("answers the bytes, unparsed, with the node's name and type for them", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: async () =>
+        new Response("hello", {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8", "content-disposition": 'attachment; filename="notes.txt"' },
+        }),
+    });
+    const result = await callNode("/artifacts/art_1/export", { method: "POST", body: {}, binary: true });
+    expect(result).toMatchObject({ ok: true, contentType: "text/plain; charset=utf-8", contentDisposition: 'attachment; filename="notes.txt"' });
+    expect(result.ok && "bytes" in result ? Buffer.from(result.bytes as Uint8Array).toString("utf8") : undefined).toBe("hello");
+  });
+
+  it("still reads a refusal as the node's JSON", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: async () => answer(403, { code: "ARTIFACT_NOT_OWNED", message: "not yours" }),
+    });
+    expect(await callNode("/artifacts/art_1/export", { method: "POST", binary: true })).toMatchObject({ ok: false, code: "ARTIFACT_NOT_OWNED" });
   });
 });

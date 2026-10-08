@@ -13,7 +13,16 @@ import {
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import type { BlockActions, SurfaceBlockRef } from "./blocks.tsx";
-import { distanceFromBottom, followScrollBehavior, followsBottom, stillFollowsBottom } from "./follow-bottom.ts";
+import {
+  distanceFromBottom,
+  followScrollBehavior,
+  followsBottom,
+  noteLayoutScroll,
+  reportScroll,
+  scrollAsTranscript,
+  stillFollowsBottom,
+  type ScrollReport,
+} from "./follow-bottom.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
 import { computeTranscriptWindow, rowVisibility, sameTranscriptWindow, viewportTopFor, type TranscriptWindow } from "./transcript-window.ts";
@@ -198,12 +207,24 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
    * focus or a `scrollIntoView` that brought something into view - moved the scroll position since the anchor was
    * taken; it is what the reader is now looking at, so the anchor is taken from it instead of the view being pulled
    * back to where it was.
+   *
+   * The moves it makes, and the browser's pull of the view up to a bottom that came closer, are the layout's: they are
+   * noted as such (`noteLayoutScroll`), so a reader following the bottom is not taken for one who scrolled up.
    */
   const holdPlace = useCallback((): void => {
     const node = scroller.current;
     const rows = list.current;
     if (node === null || rows === null) return;
     if (Math.abs(node.scrollTop - anchoredTop.current) >= 1) {
+      /*
+       * Pulled up to a bottom that came closer: the browser's move, because less is below the view, not the reader's.
+       *
+       * Counted once because of the order a browser keeps: it reports a scroll (the report) and then runs the frame's
+       * callbacks (`sync`, which moves `anchoredTop` to the new position) before any later task can draw the transcript
+       * again. A report taken after this pull but before `anchoredTop` caught up would hold the pull twice, once in its
+       * position and once here, and leave the check lenient by its size.
+       */
+      if (node.scrollTop < anchoredTop.current && distanceFromBottom(node) < 1) noteLayoutScroll(node, node.scrollTop - anchoredTop.current);
       anchor.current = captureAnchor(node, rows);
       anchoredTop.current = node.scrollTop;
       return;
@@ -212,7 +233,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     const slot = held === undefined ? undefined : slotById(rows, held.id);
     if (held !== undefined && slot !== undefined) {
       const delta = slot.getBoundingClientRect().top - node.getBoundingClientRect().top - held.offset;
-      if (Math.abs(delta) >= 1) node.scrollTo({ top: node.scrollTop + delta, behavior: "instant" });
+      if (Math.abs(delta) >= 1) scrollAsTranscript(node, { top: node.scrollTop + delta, behavior: "instant" });
     }
     anchoredTop.current = node.scrollTop;
   }, [scroller]);
@@ -246,14 +267,22 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       if (frame === 0) frame = requestAnimationFrame(sync);
     };
     node.addEventListener("scroll", onScroll, { passive: true });
-    const resize = new ResizeObserver(onScroll);
+    /*
+     * The screen changing height. A screen that got taller - a docked panel closing, a soft keyboard going away - pulls a
+     * view at the bottom up, and nothing else draws the transcript to see it before more of a reply can land below and
+     * the view is no longer at the bottom: the place is held here, in the frame of the change, so that pull is recorded.
+     */
+    const resize = new ResizeObserver(() => {
+      holdPlace();
+      onScroll();
+    });
     resize.observe(node);
     return () => {
       node.removeEventListener("scroll", onScroll);
       resize.disconnect();
       if (frame !== 0) cancelAnimationFrame(frame);
     };
-  }, [nearTop, scroller]);
+  }, [holdPlace, nearTop, scroller]);
 
   /* Measuring rows: a row that changes height above the one being read must not move it. */
   const measure = useMemo(
@@ -306,7 +335,7 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
     if (held !== heldMessages.current) {
       heldMessages.current = held;
       if (node !== null && rows !== null && distanceFromBottom(node) > 0 && followsBottomNow()) {
-        node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+        scrollAsTranscript(node, { top: node.scrollHeight, behavior: "instant" });
         anchor.current = captureAnchor(node, rows);
         anchoredTop.current = node.scrollTop;
       }
@@ -473,13 +502,13 @@ export function JumpToLatest({ scroller, newest }: { scroller: RefObject<HTMLDiv
   const [far, setFar] = useState(false);
   const [unseen, setUnseen] = useState(false);
   const atBottom = useRef(true);
-  const reportedTop = useRef(0);
+  const reported = useRef<ScrollReport>({ top: 0, layout: 0 });
 
   useEffect(() => {
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
-      reportedTop.current = node.scrollTop;
+      reported.current = reportScroll(node);
       atBottom.current = followsBottom(node);
       setFar(distanceFromBottom(node) > node.clientHeight);
       if (atBottom.current) setUnseen(false);
@@ -496,7 +525,7 @@ export function JumpToLatest({ scroller, newest }: { scroller: RefObject<HTMLDiv
     }
     const node = scroller.current;
     // A scroll up the browser has not reported yet still leaves the reader above what arrived.
-    if (node === null ? !atBottom.current : !stillFollowsBottom(atBottom.current, reportedTop.current, node.scrollTop)) setUnseen(true);
+    if (node === null ? !atBottom.current : !stillFollowsBottom(atBottom.current, reported.current, node)) setUnseen(true);
   }, [newest, scroller]);
 
   if (!far || !unseen) return null;

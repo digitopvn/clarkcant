@@ -38,7 +38,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/node` | – |
+| GET | `/node` | – — danh tính của node, `model` đã cấu hình, và `clarkVersion`: phiên bản Clark node đang chạy, hoặc `"unknown"` khi bản build không đọc được hồ sơ của chính nó (xem [Đọc câu trả lời của node](#đọc-câu-trả-lời-của-node)) |
 | GET | `/changelog?since=` | – — phiên bản Clark này thay đổi gì, đọc từ ghi chú phát hành đi kèm bản build (không cần mạng, chỉ đọc); `since` chỉ giữ các phiên bản sau một phiên bản như `1.4`; bản chạy từ mã nguồn có thêm `notesCover`, commit và ngày mà ghi chú dừng lại; `400` khi giá trị không phải phiên bản, `503 CHANGELOG_UNAVAILABLE` khi bản build không có ghi chú đọc được ([phát hành](releases.vi.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
@@ -85,8 +85,8 @@ khác không được gửi event nào, và lần thực hiện bị từ chối
 - `{ status: "refused", by: "page" | "widget", code, message }`;
 - `{ status: "no-answer", message }`.
 
-`by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
-`PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
+`by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `FRAME_DETACHED` (widget đang
+mở trong cửa sổ desktop riêng), `SURFACE_GONE`, `PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
 trả lời theo `performId` của nó. Lời từ chối của widget tới Clark dưới dạng `WIDGET_REFUSED`, với mã của widget trong
 `detail.widgetCode` và lý do của chính widget, khi widget có nêu, trong `detail.widgetMessage`. Cả hai là lời của
 widget, không phải của host: bề mặt nào hiển thị hoặc đọc chúng lên đều trích dẫn chúng như lời của widget.
@@ -181,13 +181,33 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   `hostWritten: { "kind": "host-continuation", "version": 1 }`. Client vẽ tin nhắn như vậy thành một dòng lặng lẽ của
   host bằng ngôn ngữ của chính client ("Đã duyệt — Clark tiếp tục") thay vì lời của người dùng, và xử lý y như vậy với
   mọi kind hoặc version nó không biết; tìm kiếm và phần tóm tắt cho phiên mới đều bỏ qua nó.
-- Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào
-  lượt đang chạy, ngắt lượt đó, hoặc chạy nền. Một tin nhắn có nguồn gốc khác với lượt đang chạy, một tin nhắn gõ
-  trong lúc đang có lượt nói bằng giọng, hoặc một tin nhắn có tệp đính kèm, không bao giờ được nhập (steer) vào lượt đó. Khi steer được chọn cho một tin
-  nhắn như vậy, nó cũng không ngắt lượt đang chạy: nó chờ và được trả lời thành một lượt riêng với nguồn gốc của chính
-  nó, và Stop hủy được nó trong lúc chờ. Lượt đang chạy chỉ bị ngắt khi bộ quyết định chọn ngắt, khi tin nhắn mới có
-  tham chiếu, hoặc khi chạy nền mà không có worker nào nhận. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký audit cùng nguồn
-  gốc.
+- Trên cả `/messages` và `/messages/stream`, `attachmentIds` được kiểm tra trước mọi thứ khác xử lý tin nhắn. Một tệp
+  không còn dùng được, hoặc một `attachmentIds` không phải danh sách id, bị từ chối với `400 ATTACHMENT_NOT_AVAILABLE`
+  trên mọi đường đi: lệnh gạch chéo (slash command), lệnh ứng dụng gõ bằng chữ, hay trên `/messages` một tin nhắn gửi
+  trong lúc có lượt đang trả lời, khi đó lượt đang chạy được giữ nguyên. Một lệnh của host, dù là lệnh gạch chéo
+  (`/new`, `/thinking`) hay lệnh gõ bằng chữ (như "mở cài đặt" hay "dừng lại"), nói về ứng dụng chứ không về tệp, nên
+  vẫn được host trả lời kể cả khi tin nhắn có tệp đính kèm, và các tệp đó không được gắn vào tin nhắn nào. Điều này
+  gồm cả một lệnh mà host nhận ra rồi từ chối, như xoá cuộc trò chuyện khi đang có câu trả lời chạy: lời từ chối là câu
+  trả lời, và lượt đang chạy được giữ nguyên. Ngoại lệ duy nhất là `/background` có yêu cầu và có tệp đính kèm: yêu
+  cầu của nó có thể nói về các tệp đó và việc chạy nền chỉ mang theo chữ, nên tin nhắn được lưu cùng tệp của nó và
+  được trả lời thành một lượt, với đúng phần chữ đã gõ. Một `/background` không kèm yêu cầu luôn nhận hướng dẫn cách
+  dùng. Một câu trông giống
+  lệnh nhưng không khớp lệnh nào sẽ được trả lời là "không hiểu" khi không có tệp đính kèm; khi có tệp đính kèm, nó
+  được lưu cùng các tệp đó và được trả lời thành một lượt. Client phân biệt hai trường hợp qua frame `done` của luồng:
+  `resolution: "app-intent"` nghĩa là host đã trả lời một lệnh và không tệp nào được gắn; mọi giá trị khác nghĩa là
+  tin nhắn đã được lưu cùng các tệp. Ô soạn thảo đi kèm giữ lại các chip tệp cho tin nhắn tiếp theo sau bất kỳ lệnh nào,
+  với một ghi chú ngắn rằng lệnh không mang theo tệp, kể cả một lệnh bị từ chối hoặc bị huỷ. Bắt đầu lại, bằng lệnh hay
+  bằng nút trên thanh đầu trang, sẽ bỏ các chip đó, nên chúng không bao giờ theo sang cuộc trò chuyện mới.
+- Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
+  đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
+  không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có
+  nguồn gốc khác với lượt đang chạy, một tin nhắn gõ trong lúc đang có lượt nói bằng giọng, hoặc một tin nhắn có tệp
+  đính kèm, không bao giờ được nhập (steer) vào lượt đó, và một tin nhắn có tệp đính kèm không bao giờ chạy nền. Khi bộ
+  quyết định chọn steer cho một tin nhắn như vậy, hoặc chọn chạy nền cho một tin nhắn có tệp đính kèm, tin nhắn đó cũng
+  không ngắt lượt đang chạy: nó chờ và được trả lời thành một lượt riêng với nguồn gốc và tệp của chính nó, và Stop
+  hủy được nó trong lúc chờ. Lượt đang chạy chỉ bị ngắt khi bộ quyết định chọn ngắt, khi tin nhắn mới có tham chiếu,
+  hoặc khi chạy nền mà không có worker nào nhận. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký audit cùng
+  nguồn gốc.
 - Một lượt chỉ đang được chuẩn bị — phiên của nó còn đang được tạo, hoặc việc đổi model còn chưa xong — thì chưa trả
   lời. Stop vẫn chạm tới nó, nhưng tin nhắn mới không được quyết định dựa trên nó: tin nhắn đó không bao giờ dừng nó, và
   được trả lời sau nó như mục tiếp theo mô tả. Hai tin nhắn gửi liên tiếp ngay sau khi đổi model đều được trả lời.
@@ -829,6 +849,15 @@ chuyển đổi hay bị xoá. Các thư mục tạm mà một lần cài bị d
 xoá khi chúng đã cũ hơn một giờ; ngoài ra bộ nhớ đệm gói không có cơ chế dọn rác, với snapshot cũng như với artifact git
 và npm, nên một snapshot không còn generation nào dùng vẫn nằm trên đĩa cho tới khi bộ nhớ đệm được xoá bằng tay.
 
+Gói có manifest khai báo một facet thuộc loại mà node này không biết sẽ được cài mà không có facet đó
+([phát triển widget §4](widget-development.vi.md#4-package-manifest)). Generation của nó ghi facet đó vào
+`skippedFacets` (`[{ kind, id?, isolation? }]`), `GET /packages` lặp lại trường này trên gói, và `lane` của gói ở đó tính
+cả lane mà facet khai báo, hoặc `trusted-native` khi facet không nêu lane nào, giống như lúc cấp capability. Mọi nơi đọc
+gói đã cài đều để facet đã ghi ra ngoài trong generation đó, kể cả trên một node sau này được cập nhật để hiểu loại ấy,
+Cài lại cùng version đang chạy sẽ nhập vào lần cài đó, còn khôi phục một gói đã gỡ thì mang bản ghi trở lại; chỉ một lần cập nhật lên version khác, hoặc gỡ rồi cài mới, mới xoá bản ghi. Bản ghi mà node không phân tích được được báo là `"unreadable"`, được tính là `trusted-native`, và khiến mọi nơi đọc coi gói là không đọc được. Bước cài từ chối với `400 HOST_API_MISMATCH` manifest mà chính `hostApi` của
+nó không bao gồm node này, và thông báo `409 DECLARED_REACH_MISMATCH` nói rõ khi phạm vi tiếp cận trong listing có thể
+tính cả những facet node không đọc được.
+
 Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
@@ -867,21 +896,36 @@ cuộc hội thoại bằng frame widget dùng trong bản chính thức. Dạng
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Bắt đầu theo dõi `root` (đường dẫn tuyệt đối trên node). Trả `201` kèm phiên sau khi lần dựng đầu tiên đã chạy và đã được kích hoạt trong phạm vi chính sách cho phép. Có `conversationId` thì widget được đặt vào đó (ghim mở) ngay khi một generation chạy. Bắt đầu một thư mục đã có phiên bị dừng sẽ tiếp tục chính phiên đó. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` hoặc `root-refused`). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
+| `GET /widget-dev/sessions/:id` | Một phiên: `latest` (bản dựng tốt mới nhất), `running` (generation node đang chạy), `activation` (`active`, `awaiting-approval` kèm `approvalId`, `refused` kèm `code` và `message`, hoặc `none`), `lastBuild` (kèm `diagnostics` khi lỗi), `showingLastKnownGood`, `placed`, và với phiên đã dừng là `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` hoặc `root-refused`, lý do có thể kèm `stopCode`; xem bên dưới). Việc đọc không thay đổi gì: nó không dựng, không cài và không theo một câu trả lời. Phiên tự theo câu trả lời từ hộp thư trong khoảng hai giây. |
 | `DELETE /widget-dev/sessions/:id` | Dừng theo dõi (`stopReason: "requested"`). Generation đang chạy vẫn được cài và vẫn hiển thị ở nơi nó đã được đặt. |
 | `POST /widget-dev/sessions/:id/rebuild` | Dựng thư mục ngay. `409 SESSION_STOPPED` với phiên đã dừng. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Đặt widget đang chạy vào một cuộc hội thoại. |
 | `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Thu hồi lựa chọn một thư mục của người dùng (`widgetDevFolderForgetSchema`): lựa chọn đó không còn cho Clark bắt đầu phiên trong thư mục đó, hay trong các thư mục bên trong nó, nữa. Trả `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` khi thư mục chưa được chọn, nên bấm hai lần cũng không sao. `stillCoveredBy` nêu một thư mục Clark vẫn được phát triển và chứa thư mục này (một thư mục khác đã chọn, hoặc một giá trị `workspace.roots` người dùng đã ghi), nên Clark vẫn có quyền ở đó cho tới khi thư mục đó cũng bị thu hồi. Các phiên và những gì chúng chạy vẫn giữ nguyên. Chỉ người dùng được gọi. |
 
-Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` và
-`503 WIDGET_DEV_UNAVAILABLE`:
+**Đọc view của phiên.** Ứng dụng desktop và một node trên máy khác được cập nhật riêng, nên ứng dụng đọc view của phiên
+(`readNodeView` trong `packages/contracts/src/node-view-read.ts`) một cách khoan dung: một trường ở cấp trên cùng mà
+nó không biết, do một node mới hơn ứng dụng gửi, bị bỏ qua và không bao giờ được chuyển tiếp, còn dòng trạng thái cạnh
+widget và thẻ `develop` nói rằng node mới hơn và một số điều node gửi không được hiển thị. Mọi trường ứng dụng biết vẫn
+giữ nguyên các giới hạn của nó, nên một giá trị ứng dụng không biết trong một trường như vậy (một `stopReason`,
+`status`, `state` của activation, `verdict` hay `trigger` mới) vẫn làm view bị từ chối. Một trường lạ nằm trong
+`activation`, `latest`, `running`, `lastBuild` hoặc `placed` cũng vẫn làm view bị từ chối: `activation`, `latest` và
+`running` mang trạng thái kích hoạt, phê duyệt và phạm vi truy cập mà ứng dụng không được hành động dựa trên một phần
+của chúng, còn `lastBuild` và `placed` mang trạng thái bản dựng và vị trí đặt widget. Các yêu cầu gửi tới node, và các
+phiên node ghi và lưu, vẫn chặt. Vì một ứng dụng cũ hơn bỏ qua một trường mới ở cấp trên cùng và chỉ kèm lời báo
+chung, trạng thái phê duyệt hay phạm vi truy cập không bao giờ được thêm vào view thành một trường mới ở cấp trên cùng;
+nó nằm trong một đối tượng lồng nhau đọc chặt, hoặc dạng của view đổi theo cách mà ứng dụng cũ hơn từ chối.
 
+Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
+`404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
+`409 NOT_PLACED` và `503 WIDGET_DEV_UNAVAILABLE`:
+
+- `403 ROOT_UNREADABLE` dành cho thư mục vẫn còn đó nhưng không đọc được, chẳng hạn khi phần mềm diệt virus đang giữ nó;
+  thông báo ghi rõ lỗi, ví dụ `EPERM`.
 - `409 TOO_MANY_SESSIONS` dành cho phiên đang chạy thứ chín trên node, hoặc cho kho lưu đã giữ 256 phiên mà phiên nào
   cũng vẫn đang chạy bản đã dựng. Các phiên đã dừng cũ hơn và không còn chạy gì sẽ bị quên trước để lấy chỗ.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` và `409 NOT_PLACED` dành cho lần đặt khi chưa có gì chạy, khi gói không khai báo
   widget đó, hoặc khi widget không đặt được.
-- `503 WIDGET_DEV_UNAVAILABLE` dành cho node không chạy phiên phát triển.
+- `503 WIDGET_DEV_UNAVAILABLE` dành cho node không chạy phiên phát triển, hoặc đang đóng.
 
 **Thư mục nào.** `root` được phân giải thành đường dẫn thật (đi theo liên kết tượng trưng và junction) trước khi kiểm:
 
@@ -897,10 +941,31 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   không cấp quyền gì. Lựa chọn này gồm thư mục đó và mọi thư mục bên trong nó. Bắt đầu lại phiên đó vẫn giữ dấu này, và
   Clark tiếp tục phiên đó về sau cũng vậy. Cả một ổ đĩa (gốc của hệ thống tệp hoặc của ổ đĩa) hay chính thư mục home
   không bao giờ được đánh dấu: một phiên vẫn có thể chạy ở đó, nhưng Clark không giữ quyền lâu dài với nó.
-- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu. Nếu về sau đường dẫn đó dẫn tới nơi khác
-  (thư mục bị thay bằng một liên kết hoặc junction, bị chuyển đi hoặc bị xoá), lựa chọn không còn được tính, nên một
-  liên kết bị tráo không mở rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu
-  thư mục trở lại đúng đường dẫn đó, lựa chọn lại được tính.
+- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu, cùng với mã thiết bị và mã tệp của chính
+  thư mục đó (`chosenFolderId` trong kho phiên). Nếu về sau đường dẫn đó dẫn tới nơi khác (thư mục bị thay bằng một
+  liên kết hoặc junction, bị chuyển đi hoặc bị xoá), hoặc chứa một thư mục khác (được tạo ở đó sau khi thư mục đã chọn
+  không còn), lựa chọn không còn được tính, nên cả một liên kết bị tráo lẫn một thư mục được tạo vào chỗ đó đều không mở
+  rộng được nó (trong giới hạn của mã thư mục, xem bên dưới). Nó vẫn được liệt kê, với trạng thái không tìm thấy, để
+  người dùng thu hồi; nếu chính thư mục đó trở lại đúng đường dẫn đó (được chuyển về), lựa chọn lại được tính. Một lựa
+  chọn được lưu từ trước khi mã thư mục được giữ thì không có mã: nó nhận mã của thư mục được tìm thấy ở đường dẫn đó vào
+  lần đầu tiên có thư mục ở đó, và từ đó chỉ gắn với thư mục ấy. Một thư mục mới ở đường dẫn đó được chọn khi chính
+  người dùng bắt đầu nó, và lần bắt đầu ấy ghi lại mã của nó (kể cả với một phiên vẫn đang chạy ở đó).
+- **Giới hạn của mã thư mục.** Mã này chỉ phân biệt được các thư mục khi hệ thống tệp không cấp lại đúng mã đó cho một
+  thư mục tạo sau. NTFS (Windows) cấp mã mới cho một thư mục được tạo lại. Một số hệ thống tệp có thể cấp cho một thư
+  mục bị xoá (không phải bị chuyển đi) rồi được tạo lại ở cùng đường dẫn đúng mã của thư mục đã xoá, và khi đó nó được
+  tính là thư mục đã chọn:
+  - Các hệ thống tệp trên Linux như ext4 có thể cấp lại một mã tệp đã được giải phóng vào bất kỳ lúc nào về sau, không
+    chỉ ngay lập tức: chẳng hạn cho một lần `git clone` mới vào cùng đường dẫn vào ngày hôm sau. Trên Linux và macOS
+    node giữ thư mục đang theo dõi ở trạng thái mở, nên điều này không xảy ra khi có phiên đang theo dõi nó; nó có thể
+    xảy ra giữa các phiên hoặc khi node đang dừng.
+  - Trên Windows, ổ FAT32 và exFAT (chẳng hạn USB) không giữ mã tệp lâu dài, nên một thư mục được tạo lại ở cùng đường
+    dẫn có thể nhận cùng mã. Trên Windows không có gì giữ thư mục ở trạng thái mở, nên điều này có thể xảy ra ngay cả khi
+    có phiên đang theo dõi nó.
+
+  Không có tín hiệu thứ hai nào được thêm vào: thời điểm tạo của thư mục không mịn hơn một nhịp đồng hồ của hệ thống
+  tệp (trên ext4, một thư mục bị xoá rồi tạo lại trong cùng một nhịp có cùng mã và cùng thời điểm tạo), và ở nơi không
+  đọc được nó, Node trả về thời điểm thay đổi, vốn đổi mỗi khi có tệp được thêm hay xoá. Hãy thu hồi một thư mục trước
+  khi xoá nó nếu không muốn một thư mục khác tạo ở đó thừa hưởng lựa chọn.
 - Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
   `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
   `develop_widget`). Thu hồi không dừng phiên đang chạy. Một thư mục nằm trong một thư mục đã chọn khác, hoặc trong một
@@ -963,16 +1028,73 @@ mới nhất, tức generation mà thao tác quay lại bản trước sẽ tr�
 **Khi việc theo dõi dừng.** Một phiên mà thư mục không còn theo dõi được sẽ được đánh dấu là đã dừng, kèm lý do, thay vì
 vẫn hiện là đang chạy:
 
-- `watch-failed`: bộ theo dõi bị lỗi.
-- `folder-gone`: thư mục đã bị xoá hoặc đổi tên, hoặc bị xoá rồi một thư mục mới được tạo lại ở cùng đường dẫn, mà bộ
-  theo dõi không còn nghe thấy (node so sánh device và file id của thư mục với những giá trị lúc bắt đầu theo dõi). Node
-  kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được
-  theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục tạm thời không xem được vì lý do khác, chẳng hạn
-  phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra
-  lại. Lý do này cũng dùng khi thư mục không còn sau một lần khởi động lại.
+- `watch-failed`: bộ theo dõi bị lỗi; thư mục không xem được liên tục trong 30 giây vì một lý do khác "không tìm
+  thấy" (xem bên dưới); thư mục mang một file id mới ở hơn 30 lần xem liên tiếp, không có lần xem nào ở giữa thấy nó
+  không đổi; hoặc, sau một lần khởi động lại, thư mục không đọc được (`ROOT_UNREADABLE`). Nhật ký của node ghi rõ lỗi, ví
+  dụ `EPERM`.
+- `folder-gone`: thư mục đã bị xoá hoặc đổi tên và không trở lại trong vòng 2 giây, đường dẫn không còn là một thư mục,
+  hoặc đường dẫn giờ dẫn tới một thư mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một
+  thư mục phía trên nó). Node kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì
+  khi một thư mục đang được theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục không xem được vì lý
+  do khác, chẳng hạn phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy
+  và được kiểm tra lại, tối đa 30 giây lỗi liên tục; sau đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng
+  khi thư mục không còn sau một lần khởi động lại.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
-- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
-  phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
+- `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Những gì
+  phiên đã chạy vẫn tiếp tục chạy. `stopCode` trong view của phiên cho biết bước kiểm nào, và dòng trạng thái, dòng của
+  phiên trên thẻ `develop` cùng những gì Clark được báo đều nói điều gì giúp được trong từng trường hợp:
+  - `ROOT_NOT_OWNED`: một phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget và mọi thư mục người dùng đã
+    chọn, chẳng hạn một thư mục đã chọn bị xoá (hay bị chuyển đi) rồi được tạo lại ở cùng đường dẫn trong lúc node dừng.
+    Thư mục ở đó không phải thư mục đã chọn, nên Clark không được phép tự theo dõi nó. Chính lần bắt đầu của người dùng
+    (**Phát triển lại**) chọn thư mục đang ở đường dẫn đó; chép dự án vào không gian widget cũng được.
+  - `ROOT_NOT_LOCAL` hoặc `ROOT_IN_DATA_FOLDER`: thư mục giờ dẫn tới một thư mục chia sẻ qua mạng hoặc đường dẫn thiết
+    bị, hoặc chứa hay nằm trong thư mục dữ liệu của node. Không lần bắt đầu nào được theo dõi nó, nên chọn lại nó cũng
+    bị từ chối và dòng đó không có nút **Phát triển lại**; người dùng chép dự án vào không gian widget hoặc một thư mục
+    dự án khác trên máy rồi phát triển từ đó.
+
+  `stopCode` không bắt buộc. Một phiên dừng từ trước khi node giữ trường này thì không có nó, và một mã client không
+  biết chỉ được nói bằng lý do, kèm lời khuyên đúng cho mọi trường hợp. Một trường ở cấp trên cùng mới hơn ứng dụng thì
+  bị bỏ qua và ứng dụng nói rằng node mới hơn (xem **Đọc view của phiên** ở trên). Một ứng dụng dựng trước cách đọc
+  khoan dung đó, bao gồm mọi ứng dụng cũ hơn `stopCode`, thì từ chối cả view. Mọi ứng dụng cũng từ chối một view có
+  trường mới hơn nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`, hoặc có một giá trị ứng dụng
+  không biết trong một trường nó biết, chẳng hạn một `stopReason`, `status` hay trạng thái kích hoạt mới. Trong những
+  trường hợp đó, ứng dụng nói mỗi bên đang chạy Clark phiên bản nào và, khi node mới hơn, đề nghị cập nhật ứng dụng
+  (xem [Đọc câu trả lời của node](#đọc-câu-trả-lời-của-node)); hãy giữ ứng dụng desktop ở cùng bản dựng với node mà nó
+  kết nối tới, kể cả một node trên máy khác.
+  Mã này là điều bước kiểm tìm thấy ở lần khởi động lại đó và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu
+  kiểm thư mục như nó đang có lúc ấy.
+
+  **Hạ phiên bản.** `sessions.json` cũng được đọc bằng một schema chặt. Một bản dựng cũ hơn một trường mà kho đang giữ,
+  chẳng hạn `stopCode` hay `chosenFolderId`, thấy cả tệp không khớp, chuyển nó sang
+  `sessions.json.unreadable-<thời điểm>` và khởi động không có phiên nào (xem **Kho lưu** ở trên). Tệp không mất gì,
+  nhưng các phiên, và các thư mục người dùng đã chọn, không được thấy cho tới khi một bản dựng biết các trường đó đọc
+  lại tệp (chuyển nó về bằng tay).
+
+Một thư mục vẫn còn đó nhưng mang định danh khác không làm phiên dừng. Node so sánh device và file id của thư mục với
+những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
+`rm -rf out && build`), hoặc hệ thống tệp đã cấp cho nó một id mới (một số ổ FUSE và ổ mạng làm vậy). Node theo dõi thư
+mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu, và ghi id cũ lẫn id mới vào nhật ký.
+
+Một thư mục không có ở đó khi node xem, vì một lần dựng đã xoá nó mà chưa tạo lại, sẽ được tìm lại trong 2 giây trước
+khi phiên dừng. Trong lúc đó không có lần dựng mới nào bắt đầu, và không lần dựng nào bị báo là thất bại: một lần dựng
+đang chạy khi thư mục biến mất, một lần lưu, hoặc một lần dựng lại được yêu cầu trong 2 giây đó sẽ chờ, và thư mục được
+dựng một lần khi nó trở lại. Một lần dựng lại sẽ trả về chính lần dựng đó. Một lần dựng cần lâu hơn 2 giây để tạo lại
+thư mục sẽ làm phiên dừng với lý do `folder-gone`, và một lần dựng lại đang chờ sẽ trả lời rằng thư mục đã không còn.
+
+Một thay đổi mà nền tảng báo cho một thư mục bên trong gói, thay vì cho một tệp, không khởi động lần dựng nào. Windows
+báo một thay đổi như vậy vào lần đầu một lần dựng liệt kê một thư mục vừa được tạo, còn một tệp được thêm, xoá hay lưu
+thì được báo bằng chính tên của nó. Trong khoảng một giây sau khi một thư mục được tạo lại bắt đầu được theo dõi lại,
+một lần dựng thấy các tệp giống hệt lần dựng trước sẽ không được báo: macOS có thể báo những lần ghi đã tạo ra thư mục
+sau khi việc theo dõi bắt đầu. Một lần lưu trong khoảng đó làm thay đổi tệp, nên vẫn được dựng và được báo.
+
+Một thư mục được chọn qua một liên kết hay junction được theo dõi ở đường dẫn thật mà nó dẫn tới lúc phiên bắt đầu. Một
+thư mục được tạo lại chỉ được tính khi đường dẫn của nó vẫn phân giải về đúng đường dẫn thật đó. Trên Windows và macOS,
+hai đường dẫn chỉ khác nhau về chữ hoa chữ thường được coi là một khi không có thư mục nào trên đường dẫn là liên kết.
+Một liên kết được tráo vào ở thư mục hoặc phía trên nó dẫn tới một thư mục không ai chọn, nên phiên dừng với lý do
+`folder-gone`. Một lần dựng thấy đường dẫn dẫn tới nơi khác ngay trước hoặc ngay sau khi chép tệp sẽ thất bại với
+`FILES_LINK_REFUSED`.
+
+Trong mọi trường hợp, generation đang chạy vẫn tiếp tục chạy.
 
 **Sự đồng ý.** Chính sách quyết định mỗi lần cài theo một **phạm vi đồng ý** thay vì theo artifact. Phạm vi là id gói
 cùng mọi thứ bản dựng ràng buộc về phạm vi tiếp cận của nó:
@@ -1045,6 +1167,61 @@ trường này thấy đúng phản hồi như trước.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
+
+### Đọc câu trả lời của node
+
+Ứng dụng desktop và một node trên máy khác được cập nhật riêng, nên ứng dụng đọc câu trả lời của node theo một trong hai
+cách (`readNodeView` và `readNodeViewList` trong `packages/contracts/src/node-view-read.ts`):
+
+- **Khoan dung.** Câu trả lời mà cấp trên cùng không ràng buộc điều gì: một trường ở cấp trên cùng mà ứng dụng không
+  biết, do một node mới hơn gửi, bị bỏ qua và không bao giờ được chuyển tiếp. Mọi trường ứng dụng biết vẫn giữ nguyên
+  các giới hạn của nó, và mọi đối tượng nằm trong một trường như vậy vẫn được đọc chặt.
+- **Chặt.** Câu trả lời mang một phê duyệt, một quyết định hay điều Clark còn truy cập được ngay ở cấp trên cùng: chỉ
+  một trường ứng dụng không biết cũng làm nó bị từ chối, vì bỏ trường đó có thể đổi điều người dùng phê duyệt hay điều
+  họ được cho biết. Câu trả lời của một hành động trên thông báo là câu trả lời khoan dung duy nhất có nêu một phê
+  duyệt (`approvalId`, cùng hai con số `pendingCapabilities` và `deniedCapabilities`). Điều đó an toàn vì không có gì
+  được phê duyệt từ câu trả lời này: phê duyệt chỉ là con trỏ tới một mục đang chờ, và người dùng quyết định trên mục
+  đó, mục mà hộp thư đọc chặt.
+
+| Câu trả lời | Cách đọc | Phần vẫn chặt, và điều ứng dụng nói |
+|---|---|---|
+| `GET /inbox`: câu trả lời, từng thông báo và từng thông báo đang tạm ẩn | khoan dung | Từng mục đang chờ vẫn chặt, và bị bỏ ra rồi được đếm khi không đọc được, như trước. `subject`, `actions`, `reachChange` và `unreadFields` của một thông báo vẫn chặt; thông báo bị chúng từ chối thì bị bỏ ra và được đếm. Hộp thư nói rằng node mới hơn và một số điều node gửi không được hiển thị. |
+| `GET /inbox/summary` | khoan dung | Cả hai con số. Dấu đếm trên thanh đầu không nói; hộp thư mà nó mở thì nói. |
+| `POST /inbox/notices/{id}/actions/{action}` | khoan dung | `action`, `outcome` và `state`. Không nói rằng node mới hơn khi chỉ có một trường bị bỏ qua. Một lần từ chối nói rằng node đã trả lời nhưng ứng dụng không đọc được node đã làm gì; với một bản cập nhật, nó đề nghị xem hộp thư, nơi hiện bản cài đang chờ phê duyệt. |
+| `POST /effects/{id}/reconcile` | khoan dung | `outcome` và `settled`. Không nói khi chỉ có một trường bị bỏ qua. Một lần từ chối nói rằng node đã ghi nhận câu trả lời nhưng ứng dụng không đọc được phần node trả lời thêm. |
+| `GET /memory`: danh sách và từng mục | khoan dung | `counts`, nên một loại ứng dụng không biết làm danh sách bị từ chối. Thẻ Bộ nhớ nói rằng node mới hơn. |
+| `GET /suggestions`: câu trả lời và từng gợi ý | khoan dung | Mọi trường của gợi ý, vì bấm vào sẽ gửi `text` của nó. Không nói: gợi ý chỉ là lời mách, không phải hồ sơ. |
+| `GET /composer/suggestions` | khoan dung | Từng dòng, vì tham chiếu của dòng được gửi lại nguyên vẹn. Không nói. |
+| Ảnh chụp và danh sách job của một widget | khoan dung | `status`, `progress` và `resultRefs`. Cả danh sách bị từ chối khi một job không đọc được. Không nói. |
+| `attachmentRef` của một artifact widget | khoan dung | Mọi trường. Không nói: tệp vẫn được đính kèm. |
+| View của một phiên phát triển widget | khoan dung | `activation`, `latest`, `running`, `lastBuild` và `placed` (xem [Đọc view của phiên](#phiên-phát-triển-widget)). |
+| `POST /conversations/{id}/delete` | chặt | Câu trả lời có thể mang một quyết định người dùng xác nhận. |
+| `POST /app-intents/confirm` | chặt | Câu trả lời chính là quyết định. |
+| `POST /widget-dev/chosen-folders/forget` | chặt | `stillCoveredBy` nói Clark còn truy cập được ở đâu. |
+| Token trình duyệt cho khung widget | chỉ lấy bốn trường | Token trao cho khung vẫn giữ schema chặt. |
+
+Các yêu cầu ứng dụng gửi, và những gì node ghi và lưu, vẫn chặt. Một trường mới hơn ứng dụng nằm trong một đối tượng
+đọc chặt, hoặc một giá trị ứng dụng không biết trong một trường nó biết (một trạng thái, kết quả hay loại mới), làm câu
+trả lời bị từ chối. Không trường enum đã biết nào chuyển sang giá trị "không rõ": những trường đó quyết định điều
+ứng dụng hiển thị hay làm, và đoán một giá trị là hành động dựa trên điều chưa ai kiểm.
+
+**Từ chối có nêu phiên bản.** `GET /node` trả về `clarkVersion`. Khi ứng dụng không đọc được một câu trả lời, nó hỏi node
+phiên bản đó và so với phiên bản của chính nó; một lần hỏi thất bại không được giữ lại, và một phiên bản dài hơn 64 ký
+tự hay không có dạng phiên bản được coi là không rõ. Khi node chạy Clark mới hơn, ứng dụng nêu cả hai phiên bản và đề
+nghị người dùng cập nhật ứng dụng. Khi node không chạy Clark mới hơn, ứng dụng nói rằng nó không bị cũ và đề nghị thử
+lại. Khi không biết một trong hai phiên bản, ứng dụng nói rằng có lẽ node mới hơn. Lời báo cũng nói điều gì được giữ
+nguyên: một lần đọc không thay đổi gì; một hành động trên thông báo chỉ nói rằng node đã trả lời, không bao giờ nói rằng
+nó đã được thực hiện, vì giá trị ứng dụng không đọc được có thể nghĩa là nó đang chờ điều gì đó (một bản cập nhật đề
+nghị xem hộp thư); một lần đối chiếu nói rằng node đã ghi nhận câu trả lời; bỏ chọn một thư mục chỉ nói rằng node đã trả lời, không nói thư mục đã được bỏ chọn hay Clark còn truy cập được ở đâu, và dòng đó giữ nhãn cũ; một lần bắt đầu `/develop` đã bắt đầu phiên, nên thẻ của nó hiện lần bắt đầu là đã xong chứ không phải thất bại. Nội dung lỗi của
+schema chỉ được ghi ra console.
+
+**Quy tắc cho người viết.** Không bao giờ thêm trạng thái ràng buộc (một phê duyệt, một quyền được cấp, một phạm vi truy
+cập, một lần kích hoạt, một xác nhận) thành một trường mới ở cấp trên cùng của câu trả lời mà ứng dụng đọc khoan dung:
+một ứng dụng cũ hơn sẽ bỏ nó và chỉ kèm lời báo chung. Hãy đặt nó trong một đối tượng đọc chặt, hoặc đổi câu trả lời
+theo cách mà ứng dụng cũ hơn từ chối. `packages/conversation-client/test/node-view-author-rule.spec.ts` liệt kê mọi câu
+trả lời được đọc khoan dung và mọi trường ở cấp trên cùng của chúng có tên nói về trạng thái ràng buộc, nên thêm một
+trong hai đều cần được xem xét. Phép kiểm dựa vào tên trường, nên nó bắt được lỗi thường gặp chứ không chứng minh
+rằng không còn lỗi nào.
 
 ## MCP
 
@@ -1152,7 +1329,7 @@ socket `/voice` và `/terminal`:
 ## CLI
 
 `apps/cli` (`@clarkcant/cli`) là client của gateway. Ngoại lệ duy nhất là `instructions check`: lệnh này không liên
-lạc với node nào mà kiểm tra một tệp cục bộ theo một hợp đồng mở. CLI chưa được publish lên npm; chạy từ checkout bằng
+lạc với node nào mà kiểm tra các tệp cục bộ theo một hợp đồng mở. CLI chưa được publish lên npm; chạy từ checkout bằng
 `node apps/cli/src/main.ts` hoặc `pnpm clarkcant`.
 
 | Lệnh | |
@@ -1164,7 +1341,7 @@ lạc với node nào mà kiểm tra một tệp cục bộ theo một hợp đ�
 | `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người và việc cài gói |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
-| `clarkcant instructions check [file\|folder]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án (xem bên dưới) |
+| `clarkcant instructions check [file\|folder]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án, hoặc các facet `instructions` của một gói (xem bên dưới) |
 
 Kết nối: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, nếu không thì đọc `identity.json` trong
 `--data-dir` / `CLARKCANT_DATA_DIR` (mặc định `~/.clarkcant`). File identity chỉ được đọc cho node trên chính máy
@@ -1197,7 +1374,17 @@ này, và `clarkcant instructions check` cũng dùng đúng schema đó để ki
   thường, chữ số và `-`, tối đa 64 ký tự), và `pin` không bắt buộc. `when` có thể nêu `project`, `path`, `operation`
   (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) và `skill`.
   Mỗi trường nhận một giá trị hoặc một danh sách tối đa 16 giá trị. Một glob `path` có tối đa 200 ký tự, 16 ký tự đại
-  diện và 32 thư mục. Tệp lớn hơn 64 KB không được đọc.
+  diện và 32 thư mục, và mọi glob `path` của một tệp cộng lại có tối đa 4.000 ký tự: node bỏ qua, theo thứ tự trong
+  tệp, quy tắc làm tệp vượt mức này, và lệnh kiểm tra báo quy tắc đó. Tệp lớn hơn 64 KB không được đọc.
+- Việc so khớp luôn có giới hạn, dù tệp viết gì. Một đường dẫn tốn tối đa 200.000 bước so khớp với các quy tắc của một
+  tệp; đường dẫn cần nhiều hơn, hoặc đường dẫn tương đối với dự án dài quá 4.096 ký tự, không thỏa điều kiện `path` nào:
+  hướng dẫn có thể bị thiếu, nhưng không bao giờ được nêu cho một đường dẫn mà nó không nói tới. Mỗi lần hỏi chỉ kiểm
+  tra tối đa 96 đường dẫn được chạm: 64 đường dẫn gần nhất của session và tối đa 32 chỗ mà tin nhắn trỏ tới, và kết quả
+  cho một đường dẫn được giữ lại khi tệp không đổi, nên một tool call chỉ so khớp những gì nó mới chạm tới. Chữ hoa
+  thường được gộp trên Windows và macOS và giữ nguyên trên Linux và mọi nền tảng khác, cả trong glob `path` lẫn khi node
+  tìm root đã cấp chứa dự án. Việc một đường dẫn có nằm trong một dự án hay không, và đó là dự án nào, được quyết định
+  theo đường dẫn thật trên ổ đĩa, nên trên một ổ phân biệt chữ hoa thường, hai thư mục có tên chỉ khác nhau về chữ hoa
+  thường vẫn là hai dự án.
 - Khóa lạ: ở cấp cao nhất chỉ cho phép `$schema` (một chuỗi, dành cho JSON schema của trình soạn thảo), và mọi khóa lạ
   khác ở cấp cao nhất khiến node không đọc gì từ tệp. Một khóa lạ bên trong một quy tắc hoặc bên trong `when` của nó chỉ
   làm bỏ qua quy tắc đó. Lệnh kiểm tra báo cả hai trường hợp.
@@ -1208,9 +1395,49 @@ này, và `clarkcant instructions check` cũng dùng đúng schema đó để ki
   không hợp lệ đều được báo trên một dòng riêng, và mã thoát là 1. Một quy tắc include một tên không có
   `instructions/<name>.md` nằm cạnh tệp chỉ là cảnh báo; mã thoát vẫn là 0. `--json` in
   `{ path, ok, problems, warnings }`. Tệp mặc định là `.clarkcant/instructions.json` trong thư mục hiện tại, và có thể
-  truyền thư mục dự án thay cho tệp.
+  truyền thư mục dự án thay cho tệp. Một thư mục gói (thư mục có `clarkcant.json`), hoặc chính tệp `clarkcant.json`
+  đó, được kiểm tra như một gói: xem bên dưới.
 - Một hướng dẫn không cấp quyền gì. Node chỉ đọc nó từ một dự án nằm trong root mà người dùng đã cấp, và mọi tác động
-  vẫn đi qua chính sách thực thi. Hiện một gói chưa thể đóng góp quy tắc.
+  vẫn đi qua chính sách thực thi.
+
+### Package instructions
+
+Một gói có thể mang quy tắc theo cùng hợp đồng này qua một facet `instructions`, là nội dung khai báo và cần
+`"schemaVersion": 3` ([widget development §4](widget-development.vi.md#4-package-manifest)). Một gói khai báo tối đa một
+facet như vậy. `entry` của facet là tệp quy tắc, và mỗi đoạn hướng dẫn là `instructions/<name>.md` nằm cạnh tệp đó, bên
+trong gói.
+
+- **Tắt cho tới khi người dùng bật, theo từng dự án.** Preference của node `instructions.packages` (scope `node`) liệt
+  kê các cặp `{ "project": "<thư mục tuyệt đối>", "packageId": "<id>" }`, tối đa 64 cặp
+  (`packages/contracts/src/package-instructions.ts`). Việc ghi hoặc hoàn tác preference này trên
+  `/preferences/instructions.packages` chỉ dành cho con người: không AI client, widget hay bề mặt máy từ xa nào chạm
+  tới được. Clark chỉ thay đổi nó qua `manage_package` `enable_instructions` / `disable_instructions`, một tác động mà
+  chính sách thực thi quyết định như một thao tác ghi cục bộ: nó chạy, hoặc trở thành một thẻ phê duyệt do host sở hữu,
+  hoặc bị từ chối. Một thẻ chỉ bao gói ở đúng phiên bản và digest mà nó đã hiển thị; gói được cập nhật hoặc quay lui
+  trong lúc thẻ chờ sẽ bị từ chối (`PACKAGE_CHANGED`). Để bật, dự án phải là một thư mục nằm trong root đã cấp và gói
+  phải được cài với một facet `instructions` đọc được; việc bật không cấp root nào.
+- **Tắt cho một dự án.** `POST /packages/instructions/turn-off` `{ "packageId", "project" }` bỏ đúng cặp đó khỏi những
+  gì node đang giữ và trả về `{ packageId, project, removed }`; một cặp đã tắt trả về `removed: false` và không ghi gì,
+  và route này không bao giờ thêm lại một cặp. Route chỉ dành cho con người, như preference; Cài đặt → Tiện ích & widget
+  dùng nó cho nút Tắt.
+- **Nơi áp dụng.** Chỉ cho công việc bên trong một dự án đã bật mà, sau khi phân giải liên kết, vẫn nằm trong root đã
+  cấp. Glob `path` tính tương đối với dự án đó và `when.project` là tên thư mục của nó. Một quy tắc chỉ include được các
+  đoạn hướng dẫn của chính facet của nó.
+- **Thứ tự ưu tiên và ngân sách.** Hướng dẫn riêng của dự án được nêu trước. Các đoạn hướng dẫn của gói dùng phần còn
+  lại, và tối đa 2.000 ký tự mỗi lượt cho tất cả các gói; một đoạn bị cắt ở 1.500 ký tự. `pin` của một gói bị bỏ qua,
+  nên mỗi đoạn được nêu một lần mỗi session.
+- **Tin cậy.** Đoạn hướng dẫn của gói là dữ liệu: được bao bằng mã của session, các thẻ của nó bị vô hiệu hoá, và bị giữ
+  lại khi vượt quá các lớp dữ liệu của model nhận. Khối của nó mang `package="<id>@<version>"` và
+  `source="<id>@<version>/<name>"`, và một ghi chú của host nói rằng các khối như vậy xếp sau hướng dẫn riêng của dự án.
+  Mỗi đoạn được nêu đều được ghi vào nhật ký audit với kind `instructions`, kèm id gói, phiên bản và tên đoạn, không
+  bao giờ kèm nội dung; một đoạn bị giữ lại được ghi một lần mỗi hội thoại.
+- **Gỡ bỏ.** Tắt một cặp sẽ bỏ các quy tắc của nó khỏi lượt kế tiếp. Gỡ cài đặt gói sẽ xoá mọi cặp của gói ngay sau khi
+  gỡ cài đặt, và khôi phục gói hoặc cài gói khi nó chưa được cài sẽ xoá mọi cặp còn sót lại cho id đó, nên gói bắt đầu
+  với hướng dẫn tắt ở mọi nơi cho tới khi người dùng bật lại. Khi khởi động, node cũng bỏ mọi cặp có gói không được cài.
+  Nâng cấp hoặc quay lui giữ nguyên các cặp, vì gói vẫn được cài.
+- `clarkcant instructions check <thư mục gói>` đọc manifest theo cách node đọc (`readPackageManifest`), rồi kiểm tra
+  tệp quy tắc và các đoạn hướng dẫn của facet `instructions`. Lệnh cảnh báo khi có `pin`, khi một đoạn dài hơn mức node
+  nêu, và khi có facet thuộc loại mà bản build này không biết (node sẽ bỏ qua facet đó).
 
 ## Thay đổi một bề mặt
 

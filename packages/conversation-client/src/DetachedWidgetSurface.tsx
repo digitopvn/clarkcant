@@ -1,11 +1,27 @@
-import { type ReactElement, useEffect, useRef, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MiniAppSurface, STATE_EVENT_OPERATION, actionForIntent } from "./mini-app-surface.tsx";
-import { toSurfaceViewFromLive } from "./DesktopSurfaces.tsx";
-import type { IsolatedFrameLiveResponse, LiveWidgetResponse } from "./api.ts";
+import { frameStateNotice, keepMountedFrame, toSurfaceViewFromLive } from "./DesktopSurfaces.tsx";
+import { type IsolatedFrameLiveResponse, type LiveWidgetResponse, withFrameExpiry } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { AppearanceSnapshot } from "@clarkcant/contracts";
 import { applyRelayedAppearance } from "./appearance.ts";
+import {
+  type DetachedFrameBridge,
+  detachedArtifactFiles,
+  detachedDevStatusClient,
+  detachedFrameTransport,
+  detachedJobTransport,
+  detachedTokenTransport,
+  frameHostCallbacks,
+  frameJobBroker,
+  frameTokenBroker,
+  offersBrowserTokens,
+  relayRefusalError,
+} from "./frame-host-callbacks.ts";
+import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
+import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
+import { WidgetDevStatus } from "./widget-dev-status.tsx";
 
 /**
  * The detached widget window's document.
@@ -32,11 +48,307 @@ export interface DetachedBridge {
     actionBindingId: string;
     expectedRevision: number;
     input: Record<string, unknown>;
-  }): Promise<{ ok: boolean; result?: unknown; refused?: string }>;
+    invocationId?: string;
+  }): Promise<{ ok: boolean; result?: unknown; refused?: string; code?: string; details?: Record<string, unknown> }>;
   release(): Promise<{ ok: boolean }>;
   onAppearance?(listener: (snapshot: unknown) => void): () => void;
+  /*
+   * The relays a widget in its own frame needs. Optional in the type because a composition needs none of them; a window
+   * asked to run a frame without them says it cannot rather than drawing a frame that cannot save.
+   */
+  frameRead?: DetachedFrameBridge["frameRead"];
+  saveState?: DetachedFrameBridge["saveState"];
+  publishSemantic?: DetachedFrameBridge["publishSemantic"];
+  devSession?: DetachedFrameBridge["devSession"];
+  artifacts?: DetachedFrameBridge["artifacts"];
+  jobs?: DetachedFrameBridge["jobs"];
+  tokens?: DetachedFrameBridge["tokens"];
+  onPackagesChanged?: DetachedFrameBridge["onPackagesChanged"];
 }
 
+/** The bridge, when it carries every relay a frame needs. */
+function frameBridge(bridge: DetachedBridge): DetachedFrameBridge | undefined {
+  const { frameRead, saveState, publishSemantic, devSession, artifacts, jobs, tokens, onPackagesChanged } = bridge;
+  if (
+    frameRead === undefined ||
+    saveState === undefined ||
+    publishSemantic === undefined ||
+    devSession === undefined ||
+    artifacts === undefined ||
+    jobs === undefined ||
+    tokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    frameRead: () => frameRead(),
+    saveState: (write) => saveState(write),
+    publishSemantic: (input) => publishSemantic(input),
+    devSession: () => devSession(),
+    artifacts,
+    jobs,
+    tokens,
+    ...(onPackagesChanged === undefined ? {} : { onPackagesChanged: (listener: () => void) => onPackagesChanged(listener) }),
+    intent: async (input) => {
+      const answer = await bridge.intent(input);
+      return answer.ok ? { ok: true, result: answer.result } : { ok: false, refused: answer.refused, code: answer.code, details: answer.details };
+    },
+  };
+}
+
+/** How often a frame whose bindings call a service re-reads, as the conversation's surface does. */
+const SERVICE_AVAILABILITY_MS = 5_000;
+
+/**
+ * A widget in its own frame, run in the detached window.
+ *
+ * The same `WidgetFrame` the conversation mounts, with the same sandbox and the same session; only the transport
+ * differs. Every read, state write, publish and press is a relay the host performs with its own credential against the
+ * instance it opened this window for, and the window never names either id. The first read happens here rather than
+ * reusing the bootstrap's URL: each read carries a fresh grant, and the one the conversation held was minted for it.
+ */
+function DetachedFrame({ bridge, instanceRef, title }: { bridge: DetachedBridge; instanceRef: string; title: string }): ReactElement {
+  const t = useT();
+  const relays = useMemo(() => frameBridge(bridge), [bridge]);
+  const [live, setLive] = useState<IsolatedFrameLiveResponse | undefined>(undefined);
+  const [problem, setProblem] = useState<string | undefined>(undefined);
+
+  const read = useCallback(async (): Promise<IsolatedFrameLiveResponse> => {
+    if (relays === undefined) throw new Error(t("widgets.detached.isolatedFrame"));
+    const sentAt = Date.now();
+    const answer = await relays.frameRead();
+    if (!answer.ok) throw relayRefusalError(answer);
+    if (answer.live === undefined) throw relayRefusalError({ ok: false, code: "MALFORMED_RESPONSE", refused: "the host answered without the widget" });
+    return withFrameExpiry(answer.live, sentAt);
+  }, [relays, t]);
+
+  /** Re-reads the widget, keeping the mounted frame's URL while its document is the same (`keepMountedFrame`). */
+  const merge = useCallback((fresh: IsolatedFrameLiveResponse): void => {
+    setLive((previous) => {
+      const kept = keepMountedFrame(previous, fresh);
+      return kept.kind === "isolated-frame" ? kept : fresh;
+    });
+  }, []);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      merge(await read());
+      setProblem(undefined);
+    } catch (cause) {
+      setProblem(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [merge, read]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // A package installed, updated or removed elsewhere: re-read, so a new build loads and a removed one says so.
+  useEffect(() => relays?.onPackagesChanged?.(() => void load()), [relays, load]);
+
+  const watchesServices = live?.bindings.some((entry) => entry.available !== undefined) ?? false;
+  useEffect(() => {
+    if (!watchesServices) return;
+    const timer = setInterval(() => void load(), SERVICE_AVAILABILITY_MS);
+    return () => clearInterval(timer);
+  }, [watchesServices, load]);
+
+  // A fresh URL when the frame has to load its document again after the old grant lapsed; it refreshes the view too.
+  const renewUrl = useCallback(async (): Promise<FrameSource> => {
+    const fresh = await read();
+    merge(fresh);
+    if (fresh.frame === null) throw new Error("the widget's package is no longer installed, so it has no frame to load");
+    return { url: fresh.frame.url, urlExpiresAt: fresh.frame.urlExpiresAt };
+  }, [merge, read]);
+
+  return (
+    <DetachedFrameView
+      relays={relays}
+      instanceRef={instanceRef}
+      title={title}
+      live={live}
+      problem={problem}
+      release={() => void bridge.release()}
+      reload={() => void load()}
+      renewUrl={renewUrl}
+    />
+  );
+}
+
+/**
+ * What the detached window draws for a widget in its own frame, given what the relays answered.
+ *
+ * Kept apart from the reads so what is drawn for each answer can be checked without a window.
+ */
+export function DetachedFrameView({
+  relays,
+  instanceRef,
+  title,
+  live,
+  problem,
+  release,
+  reload,
+  renewUrl,
+}: {
+  relays: DetachedFrameBridge | undefined;
+  instanceRef: string;
+  title: string;
+  live: IsolatedFrameLiveResponse | undefined;
+  problem: string | undefined;
+  release: () => void;
+  reload: () => void;
+  renewUrl: () => Promise<FrameSource>;
+}): ReactElement {
+  const t = useT();
+  const devClient = useMemo(() => (relays === undefined ? undefined : detachedDevStatusClient(relays)), [relays]);
+  const main = useRef<HTMLElement>(null);
+
+  const reattach = (
+    <button type="button" data-detached-release="true" onClick={release}>
+      {t("widgets.detached.reattach")}
+    </button>
+  );
+
+  if (relays === undefined || (live === undefined && problem !== undefined)) {
+    return (
+      <main className="cc-card" data-detached-surface="true" data-detached-error="true">
+        <h1 className="cc-card-title">{t("widgets.detached.cannotOpen")}</h1>
+        <p className="cc-card-note">{problem ?? t("widgets.detached.isolatedFrame")}</p>
+        {reattach}
+      </main>
+    );
+  }
+  if (live === undefined) {
+    return (
+      <main className="cc-card" data-detached-surface="true" data-detached-loading="true">
+        <p className="cc-card-note">{t("widgets.detached.opening")}</p>
+      </main>
+    );
+  }
+
+  const frame = live.frame;
+  return (
+    <main ref={main} tabIndex={-1} className="cc-detached" data-detached-surface="true" data-detached-instance={instanceRef} data-detached-frame="true">
+      <header className="cc-detached-head">
+        <h1 className="cc-detached-title">{title}</h1>
+        {reattach}
+      </header>
+      {/* A dev session's build status, without the developer's folder: the conversation still shows where it is. */}
+      {live.development !== undefined && devClient !== undefined && (
+        <WidgetDevStatus client={devClient} sessionId={live.development.sessionId} onRunningChange={reload} />
+      )}
+      {problem !== undefined && (
+        <p className="cc-freshness" data-detached-notice="true" role="status">
+          {problem}
+        </p>
+      )}
+      {live.stateStatus.kind !== "writable" && (
+        <p className="cc-freshness" data-live-notice="true" data-state-status={live.stateStatus.kind} role="status">
+          {frameStateNotice(live.stateStatus, t)}
+        </p>
+      )}
+      {frame === null ? (
+        // The package went away while the window was open: what the widget said about itself is what is left.
+        <p data-widget-text-fallback="true" style={{ margin: 0 }}>
+          {live.textFallback ?? title}
+        </p>
+      ) : (
+        <DetachedWidgetFrame
+          relays={relays}
+          instanceRef={instanceRef}
+          title={title}
+          live={live}
+          frame={frame}
+          reload={reload}
+          renewUrl={renewUrl}
+          focus={() => main.current?.focus()}
+        />
+      )}
+    </main>
+  );
+}
+
+/**
+ * The frame itself, with every broker the conversation's frame is given, each through the host's relays: files, jobs,
+ * browser tokens. A pick or a save opens the OS dialog over this window; the panel asking the person first is drawn
+ * here, beside the frame, as the conversation draws it. Clark's performs are not offered in this window yet.
+ */
+function DetachedWidgetFrame({
+  relays,
+  instanceRef,
+  title,
+  live,
+  frame,
+  reload,
+  renewUrl,
+  focus,
+}: {
+  relays: DetachedFrameBridge;
+  instanceRef: string;
+  title: string;
+  live: IsolatedFrameLiveResponse;
+  frame: NonNullable<IsolatedFrameLiveResponse["frame"]>;
+  reload: () => void;
+  renewUrl: () => Promise<FrameSource>;
+  focus: () => void;
+}): ReactElement {
+  const t = useT();
+  const files = useMemo(() => detachedArtifactFiles(relays.artifacts), [relays]);
+  // An attached file goes to the conversation's composer: the host hands it to the shell, never this window's.
+  const artifactHost = useWidgetArtifactHost({ files, widgetTitle: title });
+  const jobs = useMemo(() => frameJobBroker(detachedJobTransport(relays.jobs)), [relays]);
+  const tokens = useMemo(() => frameTokenBroker(detachedTokenTransport(relays.tokens)), [relays]);
+  return (
+    <>
+      <WidgetFrame
+        instanceId={live.instanceId}
+        url={frame.url}
+        urlExpiresAt={frame.urlExpiresAt}
+        renewUrl={renewUrl}
+        title={title}
+        props={live.props}
+        state={live.state}
+        stateRevision={live.stateRevision}
+        ephemeralStateKeys={live.ephemeralStateKeys}
+        {...frameHostCallbacks({
+          transport: detachedFrameTransport(relays, instanceRef),
+          bindings: live.bindings,
+          t,
+          // A refusal may be a service that stopped; re-reading shows why.
+          onPressRefused: reload,
+        })}
+        contextBindings={live.bindings.flatMap((entry) =>
+          entry.contextRefs !== undefined && entry.contextRefs.length > 0 ? [entry.actionBindingId] : [],
+        )}
+        brokeredCapabilities={frame.grantedCapabilities}
+        allowedOrigins={frame.allowedOrigins}
+        knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
+        actionAvailability={live.bindings.flatMap((entry) =>
+          entry.available === undefined
+            ? []
+            : [
+                {
+                  actionBindingId: entry.actionBindingId,
+                  available: entry.available,
+                  ...(entry.unavailableReason === undefined ? {} : { reason: entry.unavailableReason }),
+                },
+              ],
+        )}
+        revision={live.revision}
+        chrome={{
+          focus,
+          resize: () => undefined,
+          requestPin: () => undefined,
+          openExternal: () => undefined,
+        }}
+        artifacts={artifactHost.broker}
+        jobs={jobs}
+        tokens={offersBrowserTokens(frame) ? tokens : undefined}
+      />
+      {artifactHost.chrome}
+    </>
+  );
+}
 export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): ReactElement {
   const t = useT();
   const [loaded, setLoaded] = useState<
@@ -94,20 +406,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
 
   const live = loaded.live;
   if (live.kind === "isolated-frame") {
-    /*
-     * A widget in its own frame needs the conversation's credential to save state and renew its URL, and this window
-     * has none. The conversation does not offer Detach for one and the host refuses it; this is the answer for any
-     * caller that got past both, said rather than drawn as a frame that cannot save.
-     */
-    return (
-      <main className="cc-card" data-detached-surface="true" data-detached-error="true" data-detached-unsupported="isolated-frame">
-        <h1 className="cc-card-title">{t("widgets.detached.cannotOpen")}</h1>
-        <p className="cc-card-note">{t("widgets.detached.isolatedFrame")}</p>
-        <button type="button" data-detached-release="true" onClick={() => void bridge.release()}>
-          {t("widgets.detached.reattach")}
-        </button>
-      </main>
-    );
+    return <DetachedFrame bridge={bridge} instanceRef={loaded.instanceRef} title={loaded.title} />;
   }
   const view = toSurfaceViewFromLive(live, false);
   return (

@@ -1,9 +1,12 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { WidgetDevGeneration, WidgetDevSessionView } from "@clarkcant/contracts";
 
+import { readStoredLocale } from "../src/i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
-import { widgetDevDiagnosticText, widgetDevRefusalReason, widgetDevStatusLine } from "../src/widget-dev-status.tsx";
+import { WidgetDevStatusReport, widgetDevDiagnosticText, widgetDevRefusalReason, widgetDevStatusLine } from "../src/widget-dev-status.tsx";
 
 /**
  * What the host says beside a widget dev session's frame. "Last successful build" is said exactly when the node says the
@@ -110,12 +113,52 @@ describe("the widget dev status line", () => {
       notice: true,
     });
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "watch-failed" }), vi).text).toContain("Việc theo dõi thư mục bị lỗi");
+    // Why watching failed, and that what runs keeps running.
+    const failed = widgetDevStatusLine(view({ status: "stopped", stopReason: "watch-failed" }), en).text;
+    expect(failed).toContain("build 2 keeps running");
+    expect(failed).toContain("could not be read for 30 seconds");
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "requested" }), en).notice).toBe(false);
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "folder-gone", running: undefined, activation: { state: "none" } }), en).text).toBe(
       "No longer watching the folder · no build runs yet. The folder is gone.",
     );
-    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), vi).text).toContain("hãy chép dự án vào đó");
-    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), en).text).toContain("copy the project there");
+  });
+
+  it("says what helps a folder refused at a restart, by the check that refused it", () => {
+    const refused = (stopCode?: string) => (t: (key: MessageKey) => string) =>
+      widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused", ...(stopCode === undefined ? {} : { stopCode }) }), t).text;
+
+    // Clark is no longer allowed to watch it on its own, for example a chosen folder made again: choosing it again helps.
+    const owned = refused("ROOT_NOT_OWNED");
+    expect(owned(en)).toContain("build 2 keeps running");
+    expect(owned(en)).toContain("Clark is no longer allowed to watch this folder on its own");
+    expect(owned(en)).toContain("choose the folder again with /develop");
+    expect(owned(en)).not.toContain("may no longer");
+    expect(owned(vi)).toContain("hãy chọn lại thư mục bằng /develop");
+    expect(owned(vi)).toContain("chép dự án vào không gian widget của Clark");
+
+    // A network share or the data folder is refused for anyone: choosing again is not offered, copying the project is.
+    for (const [code, where, whereVi] of [
+      ["ROOT_NOT_LOCAL", "network share or device path", "thư mục chia sẻ qua mạng"],
+      ["ROOT_IN_DATA_FOLDER", "Clark's data folder", "thư mục dữ liệu của Clark"],
+    ] as const) {
+      const line = refused(code);
+      expect(line(en), code).toContain(where);
+      expect(line(en), code).toContain("choosing it again is refused too");
+      expect(line(en), code).toContain("Copy the project into Clark's widget workspace");
+      expect(line(en), code).not.toContain("choose the folder again");
+      expect(line(vi), code).toContain(whereVi);
+      expect(line(vi), code).toContain("chọn lại nó cũng bị từ chối");
+      expect(line(vi), code).not.toContain("hãy chọn lại thư mục bằng /develop");
+    }
+
+    // A stop recorded before nodes kept the code, or a code this surface does not know, gets the line that holds for every case.
+    for (const line of [refused(), refused("ROOT_SOMETHING_NEW")]) {
+      expect(line(en)).toContain("it could no longer watch this folder");
+      expect(line(en)).toContain("if that is refused too, copy the project into Clark's widget workspace");
+      expect(line(vi)).toContain("không thể theo dõi thư mục này nữa");
+    }
+    // The code means something only with root-refused.
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "capacity", stopCode: "ROOT_NOT_LOCAL" }), en).text).toContain("as many folders as it can");
   });
 
   it("says a problem the host found in the person's language and the package's own words as written", () => {
@@ -129,5 +172,21 @@ describe("the widget dev status line", () => {
     expect(widgetDevDiagnosticText({ code: "FILES_LINK_REFUSED", message: "ARTIFACT_SYMLINK_ESCAPE" }, en)).toContain("remove the link");
     expect(widgetDevDiagnosticText({ code: "FILES_LINK_REFUSED", message: "x" }, vi)).toContain("hãy xoá liên kết");
     expect(widgetDevDiagnosticText({ message: "widget.json: not JSON" }, vi)).toBe("widget.json: not JSON");
+  });
+  it("says beside the frame when a newer node sent fields this app left out, and only then", () => {
+    const report = (unreadFields?: { count: number; names: string[] }) =>
+      renderToStaticMarkup(createElement(WidgetDevStatusReport, { view: { ...view({}), ...(unreadFields === undefined ? {} : { unreadFields }) } }));
+    // Rendered outside a locale provider, so in the stored (default) locale.
+    const said = CATALOGS[readStoredLocale()]["shell.dev.nodeNewer"];
+    const partial = report({ count: 1, names: ["fooCode"] });
+    expect(partial).toContain('data-widget-dev-node-newer="1"');
+    expect(partial).toContain(said);
+    expect(partial).toContain('data-live-notice="true"');
+    // Names are the node's text and stay out of the sentence.
+    expect(partial).not.toContain("fooCode");
+    const complete = report();
+    expect(complete).not.toContain("data-widget-dev-node-newer");
+    expect(complete).not.toContain(said);
+    expect(complete).not.toContain("data-live-notice");
   });
 });

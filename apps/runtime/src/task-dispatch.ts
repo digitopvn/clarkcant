@@ -72,6 +72,7 @@ import {
   taskProfileDir,
 } from "./task-browser.ts";
 import { createWorkerCommandBroker, parseWorkerCommandRequest } from "./worker-command-broker.ts";
+import { auditPackageInstructions } from "./application/package-instructions.ts";
 import { type ConditionalInstructions, taskInstructions } from "./conditional-instructions.ts";
 import { type ContextBundles, type ContextReader, reportContextBundle } from "./context-bundle.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
@@ -558,16 +559,30 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     plan: { read: readonly string[]; write: readonly string[]; repositories: readonly string[]; scoped: boolean },
     capability: string,
     launch: WorkerModelLaunch | undefined,
+    taskId: string,
   ): string => {
     try {
       const instructions = deps.conditionalInstructions?.();
       if (instructions === undefined) return "";
       const write = [...(plan.scoped ? plan.write : plan.read), ...plan.repositories];
+      const principalId = deps.ownerPrincipalId?.();
       return taskInstructions(instructions, {
         read: [...plan.read, ...plan.repositories],
         write,
         capability,
         allowed: allowedFor(launch),
+        // A package's snippets in a task's brief are audited by package id and version, as in a conversation.
+        ...(principalId === undefined
+          ? {}
+          : {
+              onPackages: (outcomes) => {
+                auditPackageInstructions(
+                  { db: deps.conductor.db, nodeId: deps.conductor.nodeId, principalId, newId: deps.conductor.newId, now: at },
+                  outcomes,
+                  `task ${taskId}`,
+                );
+              },
+            }),
       });
     } catch {
       return "";
@@ -1000,7 +1015,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
      */
     try {
       const context = await taskContext(task, launch);
-      const instructions = browsing ? "" : instructionsFor(plan, job.capabilityRef, launch);
+      const instructions = browsing ? "" : instructionsFor(plan, job.capabilityRef, launch, job.taskId);
       /*
        * The send boundary, on everything the worker is handed to send: the goal and the project guidance. Its retrieved
        * context is read on demand through a reader already narrowed to this model, and what its tools return is checked

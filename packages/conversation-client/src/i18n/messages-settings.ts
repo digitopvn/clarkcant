@@ -481,6 +481,11 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.extensions.installed.uninstall": "Gỡ",
   "settings.extensions.installed.rollback": "Quay về {version}",
   "settings.extensions.installed.working": "Đang thực hiện…",
+  "settings.extensions.instructions.label": "Hướng dẫn dự án đang bật cho",
+  "settings.extensions.instructions.turnOff": "Tắt",
+  "settings.extensions.instructions.turnOffFor": "Tắt hướng dẫn của {package} cho {project}",
+  "settings.extensions.instructions.turnedOff": "Đã tắt hướng dẫn của {package} cho {project}; từ lượt sau không còn nêu nữa.",
+  "settings.extensions.instructions.failed": "Chưa tắt được hướng dẫn của {package}: {reason}",
   "settings.extensions.installed.uninstalled":
     "Đã gỡ {package}. {offline} widget chuyển sang chỉ xem, hiển thị bản văn bản; dữ liệu và lịch sử được giữ. Có thể khôi phục ở mục Đã gỡ bên dưới.",
   "settings.extensions.installed.rolledBack":
@@ -508,6 +513,7 @@ export const MESSAGES_SETTINGS_VI = {
   // MemorySettings
   "settings.memory.loading": "Đang đọc những gì đã ghi nhớ…",
   "settings.memory.retry": "Thử lại",
+  "settings.memory.nodeNewer": "Node này mới hơn ứng dụng này, nên một số thông tin về những điều được ghi nhớ không được hiển thị. Hãy cập nhật ứng dụng để thấy đầy đủ.",
   "settings.memory.empty": "Chưa có gì được ghi nhớ",
   "settings.memory.emptyNote": "Những gì Clark ghi nhớ sẽ hiện ở đây, và bạn có thể xoá từng mục.",
   "settings.memory.deleteAria": "Xoá mục đã ghi nhớ",
@@ -1007,6 +1013,11 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.extensions.installed.uninstall": "Uninstall",
   "settings.extensions.installed.rollback": "Roll back to {version}",
   "settings.extensions.installed.working": "Working…",
+  "settings.extensions.instructions.label": "Project instructions on for",
+  "settings.extensions.instructions.turnOff": "Turn off",
+  "settings.extensions.instructions.turnOffFor": "Turn off {package}'s instructions for {project}",
+  "settings.extensions.instructions.turnedOff": "Turned off {package}'s instructions for {project}; they are not stated from the next turn.",
+  "settings.extensions.instructions.failed": "Could not turn off {package}'s instructions: {reason}",
   "settings.extensions.installed.uninstalled":
     "Uninstalled {package}. {offline} widget(s) are now read-only and show their text version; their data and history are kept. You can restore it under Uninstalled below.",
   "settings.extensions.installed.rolledBack":
@@ -1033,6 +1044,7 @@ export const MESSAGES_SETTINGS_EN = {
 
   "settings.memory.loading": "Reading what has been remembered…",
   "settings.memory.retry": "Retry",
+  "settings.memory.nodeNewer": "This node is newer than this app, so some of what it says about these memories is not shown. Update the app to see everything.",
   "settings.memory.empty": "Nothing has been remembered yet",
   "settings.memory.emptyNote": "What Clark remembers shows up here, and you can delete any of it.",
   "settings.memory.deleteAria": "Delete remembered item",

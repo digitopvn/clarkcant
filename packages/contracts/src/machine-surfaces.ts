@@ -1,4 +1,5 @@
 import { MAP_TILE_POLICY_PREFERENCE } from "./map-view.ts";
+import { PACKAGE_INSTRUCTIONS_PREFERENCE } from "./package-instructions.ts";
 import { COMPOSER_SURFACE_HEADER } from "./surfaces.ts";
 
 /**
@@ -22,7 +23,9 @@ import { COMPOSER_SURFACE_HEADER } from "./surfaces.ts";
  * reason: it is the consent that lets the package act on that account. Writing the node's map tile policy directly, or
  * undoing a write, is the person's too: a machine surface that wants it changed asks Clark, whose `set_map_tiles` is
  * decided by the execution policy like any other effect. Entering or removing the map tile key is the person's alone:
- * it binds the key to the one origin the node will send it to, and nothing else can move it to another.
+ * it binds the key to the one origin the node will send it to, and nothing else can move it to another. Writing which
+ * projects a package's instructions apply in, or undoing a write, is the person's too: a machine surface that wants one
+ * enabled asks Clark, whose `manage_package` is decided by the execution policy.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
@@ -35,7 +38,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
   const [first, second, third, fourth, fifth, sixth] = segments;
   // PUT /preferences/maps.tilePolicy and POST /preferences/maps.tilePolicy/undo: which host every map on the node may
   // fetch tiles from, and so tell what it shows. An AI client that could name that host could widen the node's reach.
-  if (first === "preferences" && second === MAP_TILE_POLICY_PREFERENCE) {
+  if (first === "preferences" && (second === MAP_TILE_POLICY_PREFERENCE || second === PACKAGE_INSTRUCTIONS_PREFERENCE)) {
     return (verb === "PUT" && segments.length === 2) || (verb === "POST" && segments.length === 3 && third === "undo");
   }
   // PUT and DELETE /map-tiles/key: the tile provider's key, and the origin it is bound to. Reading whether one is saved,
@@ -80,7 +83,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "widget-dev" && second === "chosen-folders" && third === "forget") ||
         // POST /packages/:id/connection: connecting a package's service to the person's account. Consent is the host's
         // and the person's; an AI client that could start it could grant a package an account nobody chose to give it.
-        (first === "packages" && third === "connection")
+        (first === "packages" && third === "connection") ||
+        // POST /packages/instructions/turn-off: the person's Turn off in Settings, one pair at a time. A machine surface
+        // that wants a package's instructions off asks Clark, whose `manage_package` the execution policy decides.
+        (first === "packages" && second === "instructions" && third === "turn-off")
       );
     case 4:
       // POST /feedback/reports/:id/publish: filing a report on GitHub with the person's token, only on the person's own
@@ -119,7 +125,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
 
 /**

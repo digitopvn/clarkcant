@@ -37,7 +37,7 @@ The stable surface is the one `/openapi.json` describes:
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/node` | – |
+| GET | `/node` | – — the node's identity, its configured `model`, and `clarkVersion`: the Clark version it runs, or `"unknown"` when the build cannot read its own record (see [Reading a node's answers](#reading-a-nodes-answers)) |
 | GET | `/changelog?since=` | – — what this version of Clark changed, from the release notes embedded with the build (offline, read-only); `since` keeps the releases after a version such as `1.4`; a build run from source adds `notesCover`, the commit and date its notes reach; `400` for a value that is not a version, `503 CHANGELOG_UNAVAILABLE` when the build carries no readable notes ([releases](releases.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — person-owned deletion; policy may ask or refuse |
@@ -84,8 +84,8 @@ mounted frame and answers `POST /app-intents/widget-perform/{performId}` with on
 - `{ status: "refused", by: "page" | "widget", code, message }`;
 - `{ status: "no-answer", message }`.
 
-`by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
-`PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
+`by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `FRAME_DETACHED` (the widget is
+open in its own desktop window), `SURFACE_GONE`, `PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
 still answers under its `performId`. A widget's refusal reaches Clark as `WIDGET_REFUSED`, with the widget's code in
 `detail.widgetCode` and its own reason, when it gave one, in `detail.widgetMessage`. Both are the widget's words, not
 the host's: a surface that shows or speaks them quotes them as the widget's.
@@ -177,14 +177,32 @@ The origin stays with the work it started:
   `hostWritten: { "kind": "host-continuation", "version": 1 }`. A client draws such a message as a quiet line from the
   host in its own language ("Approved — Clark carries on") rather than as the person's words, and treats any kind or
   version it does not know the same way; search and a new session's recap leave it out.
-- On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the
-  running turn (a steer), interrupts it, or runs in the background. A message whose origin differs from the running
-  turn's, a typed message during a spoken turn, or a message that carries attachments, is never steered into it. When
-  a steer was chosen for such a
-  message, it does not interrupt the running turn either: it waits and is answered as a turn of its own, with its own
-  origin, and Stop cancels it while it waits. A running turn is interrupted only when the decider chose that, when the
-  new message carries references, or when a background run has no worker to take it. A message sent to the background lane is recorded in the audit log with its
-  origin.
+- On both `/messages` and `/messages/stream`, `attachmentIds` is checked before anything else acts on the message. A
+  file that is not available, or an `attachmentIds` that is not a list of ids, is refused with
+  `400 ATTACHMENT_NOT_AVAILABLE` on every path: a slash command, a typed app command, or on `/messages` a message sent
+  while a turn is answering, whose running turn is left as it was. A host command, slash (`/new`, `/thinking`) or typed
+  (such as "open settings" or "stop"), is about the app, not a file, so it is answered by the host even when the
+  message carries attachments, and those attachments are not attached to any message. That includes a command the
+  host recognises and turns down, such as deleting the conversation while a reply is running: the refusal is the
+  answer, and a running turn is left as it was. The one exception is `/background` with a request and attachments:
+  its request may be about them and a background run carries only words, so the message is stored with its files and
+  answered as a turn, with its text as typed. A bare `/background` gets its usage hint either way. A sentence shaped
+  like a command that names none is answered "not understood" without attachments; with attachments it is stored with
+  them and answered as a turn. A client tells the two apart from the stream's `done` frame: `resolution: "app-intent"`
+  means the host answered a command and no file was attached; anything else means the message was stored with them.
+  The bundled composer keeps the file chips for the next message after any command, with a short note that commands
+  don't carry files, including a command that is refused or declined. Starting over, by a command or the header's
+  button, drops them, so they never ride into the new conversation.
+- On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
+  steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
+  that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A
+  message whose origin differs from the running turn's, a typed message during a spoken turn, or a message that
+  carries attachments, is never steered into it, and a message that carries attachments never runs in the background.
+  When the decider chose a steer for such a message, or the background for a message with attachments, the message
+  does not interrupt the running turn either: it waits and is answered as a turn of its own, with its own origin and
+  files, and Stop cancels it while it waits. A running turn is interrupted only when the decider chose that, when the
+  new message carries references, or when a background run has no worker to take it. A message sent to the background
+  lane is recorded in the audit log with its origin.
 - A turn that is only being set up — its session still being created, or a model switch still pending — is not
   answering yet. A Stop reaches it, but a new message is not decided against it: the message never stops it, and is
   answered after it the way the next point describes. Two quick messages after a model switch are both answered.
@@ -824,6 +842,15 @@ again; nothing is migrated or deleted. Temporary folders a stopped install left 
 install once they are an hour old; otherwise the package cache has no garbage collection, for snapshots as for git and
 npm artifacts, so a snapshot no generation uses any more stays on disk until the cache is cleared by hand.
 
+A package whose manifest declares a facet of a kind this node does not know installs without that facet
+([widget development §4](widget-development.md#4-package-manifest)). Its generation records the facet as
+`skippedFacets` (`[{ kind, id?, isolation? }]`), which `GET /packages` repeats on the package, and the package's `lane`
+there counts the facet's declared lane, or `trusted-native` when it names none, as the capability grants did. Every
+reader of the installed package leaves a recorded facet out for that generation, also on a node updated later to
+understand its kind. Installing the same running version again joins that install and restoring an uninstalled package brings the record back; only an update to another version, or an uninstall followed by a fresh install, clears it. A record the node cannot parse is reported as `"unreadable"`, counts as `trusted-native`, and makes every reader treat the package as unreadable. The install refuses with `400 HOST_API_MISMATCH`
+a manifest whose own `hostApi` leaves this node out, and its `409 DECLARED_REACH_MISMATCH` message says when a listed
+reach may count facets the node could not read.
+
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
@@ -864,21 +891,35 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Start watching `root` (an absolute path on the node). Answers `201` with the session once its first build ran and was activated as far as the policy allows. With `conversationId`, the widget is placed there (pinned open) once a generation runs. Starting a folder that has a stopped session picks that session up again. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` or `root-refused`). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
+| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` or `root-refused`, which may carry `stopCode`; see below). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
 | `DELETE /widget-dev/sessions/:id` | Stop watching (`stopReason: "requested"`). The running generation stays installed and keeps rendering where it was placed. |
 | `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
 | `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Take back the person's choice of a folder (`widgetDevFolderForgetSchema`): it no longer lets Clark start sessions in it, or in the folders inside it. Answers `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` when the folder was not chosen, so pressing twice is harmless. `stillCoveredBy` names a folder Clark may still develop in that holds this one (another chosen folder, or a `workspace.roots` value the person recorded), so Clark keeps access there until that one goes too. Sessions and what they run stay as they are. Person-only. |
 
-Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `404 CONVERSATION_NOT_FOUND`,
-`404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`, `409 NOT_PLACED` and
-`503 WIDGET_DEV_UNAVAILABLE`:
+**Reading a session view.** A desktop app and a node on another machine are updated separately, so the app reads a
+session view (`readNodeView` in `packages/contracts/src/node-view-read.ts`) tolerantly: a top-level field it does not
+know, sent by a node newer than the app, is left out and never passed on, and the status line beside the widget and
+the `develop` card say the node is newer and that some of what it said is not shown. Every field the app knows keeps
+its bounds, so a value it does not know in such a field (a new `stopReason`, `status`, activation `state`, `verdict`
+or `trigger`) still refuses the view. A field it does not know inside `activation`, `latest`, `running`, `lastBuild`
+or `placed` still refuses the view too: `activation`, `latest` and `running` carry activation, approval and reach
+state the app must not act on in part, and `lastBuild` and `placed` carry build and placement state. Requests to the
+node, and the sessions the node writes and stores, stay strict. Because an older app drops a new top-level field with
+only the generic note, approval or reach state is never added to the view as a new top-level field; it goes inside a
+strict nested object, or the view's shape changes in a way older apps refuse.
 
+Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
+`404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
+`409 NOT_PLACED` and `503 WIDGET_DEV_UNAVAILABLE`:
+
+- `403 ROOT_UNREADABLE` is for a folder that is there but cannot be read, for example while an antivirus holds it; the
+  message names the error, such as `EPERM`.
 - `409 TOO_MANY_SESSIONS` is for a ninth live session on the node, or for a store that already holds 256 sessions that
   all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
   does not declare, or a widget that cannot be placed.
-- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions.
+- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions, or is closing.
 
 **Which folders.** `root` is resolved to its real path (symbolic links and junctions followed) before it is checked:
 
@@ -893,10 +934,28 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   nothing. The choice covers the folder and every folder inside it. Starting it again keeps the mark, and so
   does Clark picking the session up later. A whole drive (a filesystem or drive root) or the home folder itself is
   never marked: a session may still run there, but Clark gets no lasting access to it.
-- A chosen folder is kept as the real path it had when the person started it. If that path later leads somewhere else
-  (the folder was replaced by a link or junction, moved or removed), the choice no longer counts, so a swapped link
-  cannot widen it. It is still listed, as not found, so the person can forget it; if the folder comes back at that
-  path, the choice counts again.
+- A chosen folder is kept as the real path it had when the person started it, together with that folder's device and
+  file id (`chosenFolderId` in the session store). If that path later leads somewhere else (the folder was replaced by
+  a link or junction, moved or removed), or holds another folder (one made there after the chosen one went), the choice
+  no longer counts, so neither a swapped link nor a folder made in its place can widen it (within the limit of the
+  folder id, below). It is still listed, as not found, so the person can forget it; if that same folder comes back at
+  that path (moved back), the choice counts again. A choice stored before folder ids were kept has none: it takes the
+  id of the folder found at its path the first time one is, and from then on is held to that folder. A new folder at
+  the path is chosen when the person starts it themselves, which records its id (also for a session still live there).
+- **Limit of the folder id.** The id tells folders apart only while the filesystem does not give a later folder the
+  same one. NTFS (Windows) gives a folder made again a new id. Some filesystems can give a folder deleted (not moved)
+  and made again at the same path the id the deleted one had, and then it counts as the chosen folder:
+  - Linux filesystems such as ext4 can hand a freed file id back at any later time, not only at once: for example to a
+    fresh `git clone` into the same path the next day. The node holds a watched folder open on Linux and macOS, so this
+    cannot happen while a session watches it; it can between sessions or while the node is stopped.
+  - On Windows, FAT32 and exFAT drives (such as USB sticks) keep no lasting file id, so a folder made again at the same
+    path can get the same id. Nothing holds a folder open on Windows, so this can happen even while a session watches
+    it.
+
+  No second signal is added: a folder's birth time is no finer than the filesystem's clock tick (on ext4 a folder
+  deleted and made again within one tick has the same id and birth time), and where it cannot be read Node reports the
+  change time, which moves with every file added or removed. Forget a folder before deleting it if another folder made
+  there must not inherit the choice.
 - The person takes a choice back with `POST /widget-dev/chosen-folders/forget`, the **Forget** button on the card
   `/develop forget` answers with, or the same card Clark shows when asked in words (`develop_widget` action
   `folders`). Forgetting does not stop a running session. A folder inside another chosen folder, or inside a
@@ -958,16 +1017,72 @@ node starts with no sessions; the file is never overwritten.
 **When watching stops.** A session whose folder can no longer be watched is marked stopped, with the reason, rather than
 reading as live:
 
-- `watch-failed`: the watcher failed.
-- `folder-gone`: the folder was deleted or renamed, or it was deleted and a new folder was made at the same path, which
-  the watcher no longer hears (the node compares the folder's device and file id with the ones it started watching).
-  The node checks for the folder at least once a second and before each build, because Windows reports nothing when a
-  watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an
-  antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again. The same reason
-  applies when the folder is missing after a restart.
+- `watch-failed`: the watcher failed; the folder could not be looked at for 30 seconds in a row for a reason other
+  than "not found" (see below); the folder was found under a new file id on more than 30 looks in a row, with no look
+  between them finding it unchanged; or, after a restart, the folder cannot be read (`ROOT_UNREADABLE`). The node's log
+  names the error, for example `EPERM`.
+- `folder-gone`: the folder was deleted or renamed and is not back within 2 seconds, the path no longer names a folder,
+  or the path now leads to another folder through a symbolic link or junction (at the folder itself or at a folder
+  above it). The node checks for the folder at least once a second and before each build, because Windows reports
+  nothing when a watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another
+  reason, such as an antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again,
+  for up to 30 seconds of continuous failures; after that the session stops as `watch-failed`. The same reason applies
+  when the folder is missing after a restart.
 - `capacity`: the node is already watching eight folders as it resumes.
-- `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
-  whose folder is outside the widget workspace.
+- `root-refused`: after a restart, the folder fails the same check a start makes. What the session ran keeps running.
+  The session view's `stopCode` names the check, and the status line, the session's row on the `develop` card and what
+  Clark is told say what helps for each:
+  - `ROOT_NOT_OWNED`: a session Clark started whose folder is outside the widget workspace and every folder the person
+    chose, for example a chosen folder deleted (or moved away) and made again at the same path while the node was
+    stopped. The folder there is not the one chosen, so Clark is not allowed to watch it on its own. The person's own
+    start (**Develop again**) chooses the folder now at the path; copying the project into the widget workspace also
+    works.
+  - `ROOT_NOT_LOCAL` or `ROOT_IN_DATA_FOLDER`: the folder now resolves to a network share or device path, or holds or
+    lies inside the node's data folder. Nobody's start may watch it, so choosing it again is refused too and the row
+    offers no **Develop again**; the person copies the project into the widget workspace or another local project
+    folder and develops it from there.
+
+  `stopCode` is optional. A session stopped before nodes kept it has none, and a code the client does not know gets
+  the reason alone, with advice that holds for every case. A top-level field newer than the app is left out and the
+  app says the node is newer (see **Reading a session view** above). An app built before that tolerant read, which
+  includes every app older than `stopCode`, refuses the whole view instead. Any app also refuses a view with a newer
+  field inside `activation`, `latest`, `running`, `lastBuild` or `placed`, or with a value it does not know in a field
+  it knows, such as a new `stopReason`, `status` or activation state. In those cases the app says which Clark each
+  side runs and, when the node is newer, asks for the app to be updated (see
+  [Reading a node's answers](#reading-a-nodes-answers)); keep the desktop app on the same build as the node it connects
+  to, including a node on another machine. The code is what the check found at
+  that restart and is not checked again while the session stays stopped; a start checks the folder as it is then.
+
+  **Downgrade.** `sessions.json` is read with a strict schema too. A build older than a field the store holds, such as
+  `stopCode` or `chosenFolderId`, finds the whole file does not match, moves it aside as
+  `sessions.json.unreadable-<time>` and starts with no sessions (see **The store** above). Nothing is lost from the
+  file, but the sessions, and the folders the person chose, are not seen until a build that knows those fields reads
+  the file again (move it back by hand).
+
+A folder that is still there with another identity does not stop the session. The node compares the folder's device and
+file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
+`rm -rf out && build`), or the filesystem gave it a new id (some FUSE mounts and network drives do). The node watches
+the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids.
+
+A folder that is missing when the node looks, because a build deleted it and has not made it again yet, is looked for
+again for 2 seconds before the session stops. No build starts meanwhile, and none is reported as failed: a build
+already running when the folder went, a save, or a rebuild asked for in those 2 seconds waits, and the folder is built
+once when it is back. A rebuild answers with that build. A build that takes longer than 2 seconds to make the folder
+again stops the session as `folder-gone`, and a rebuild that was waiting answers that the folder was missing.
+
+A change the platform reports for a folder inside the package, rather than for a file, does not start a build. Windows
+reports one the first time a build lists a folder made a moment ago, and a file added, removed or saved is reported
+under its own name. For about a second after a folder made again is watched anew, a build that finds the same files as
+the build before it is not reported: macOS can report the writes that made the folder after the watch began. A save
+made in that time changes the files, so it is built and reported.
+
+A folder chosen through a link or junction is watched at the real path it led to when the session started. A folder
+made again counts only while its path still resolves to that real path. Paths that differ only in case count as the
+same on Windows and macOS when no folder on the path is a link. A link swapped in at the folder or above it leads to a
+folder nobody chose, so the session stops as `folder-gone` instead. A build that finds the path leading elsewhere just
+before or after it copies the files fails with `FILES_LINK_REFUSED`.
+
+In every case, the generation that runs keeps running.
 
 **Consent.** The policy decides each install under a **consent scope** rather than the artifact. The scope is the
 package id together with everything the build binds about its reach:
@@ -1039,6 +1154,59 @@ same capability call and are handed the same value. Files stay `ArtifactRef`s
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
+
+### Reading a node's answers
+
+A desktop app and a node on another machine are updated separately, so the app reads the node's answers in one of two
+ways (`readNodeView` and `readNodeViewList` in `packages/contracts/src/node-view-read.ts`):
+
+- **Tolerant.** An answer whose top level binds nothing: a top-level field the app does not know, sent by a newer node,
+  is left out and never passed on. Every field the app knows keeps its bounds, and every object inside one stays strict.
+- **Strict.** An answer that carries an approval, a decision or what Clark may still reach at its top level: one field
+  the app does not know refuses it, because dropping that field could change what the person approves or is told.
+  A notice action's answer is the one tolerant answer that names an approval (`approvalId`, with the
+  `pendingCapabilities` and `deniedCapabilities` counts). That is safe because nothing is approved from it: the
+  approval is a pointer to a waiting item, and the person decides on that item, which the inbox reads strictly.
+
+| Answer | Read | What stays strict, and what the app says |
+|---|---|---|
+| `GET /inbox`: the answer, each notice and each snoozed notice | tolerant | Each waiting item stays strict and is left out and counted when it does not read, as before. A notice's `subject`, `actions`, `reachChange` and `unreadFields` stay strict; a notice they refuse is left out and counted. The inbox says the node is newer and that some of what it said is not shown. |
+| `GET /inbox/summary` | tolerant | Both counts. Not said in the header mark; the inbox it opens says it. |
+| `POST /inbox/notices/{id}/actions/{action}` | tolerant | `action`, `outcome` and `state`. Not said that the node is newer when only a field is left out. A refusal says the node answered but the app can't read what it did; for an update, it says to check the inbox, where an install that waits for approval shows. |
+| `POST /effects/{id}/reconcile` | tolerant | `outcome` and `settled`. Not said when only a field is left out. A refusal says the node recorded the answer but the app can't read the rest of its reply. |
+| `GET /memory`: the list and each record | tolerant | `counts`, so a kind the app does not know refuses the list. The Memory tab says the node is newer. |
+| `GET /suggestions`: the answer and each chip | tolerant | Every chip field, since pressing one sends its `text`. Not said: a chip is a hint, not a record. |
+| `GET /composer/suggestions` | tolerant | Each row, whose reference is sent back as it is. Not said. |
+| A widget's job snapshot and job list | tolerant | `status`, `progress` and `resultRefs`. A list refuses as a whole when one job does not read. Not said. |
+| A widget artifact's `attachmentRef` | tolerant | Every field. Not said: the file is attached either way. |
+| A widget dev session view | tolerant | `activation`, `latest`, `running`, `lastBuild` and `placed` (see [Reading a session view](#widget-dev-sessions)). |
+| `POST /conversations/{id}/delete` | strict | It may carry a decision the person confirms. |
+| `POST /app-intents/confirm` | strict | It is the decision. |
+| `POST /widget-dev/chosen-folders/forget` | strict | `stillCoveredBy` says what Clark can still reach. |
+| A browser token for a widget frame | four fields picked | The token handed to the frame keeps its strict schema. |
+
+Requests the app sends, and what the node writes and stores, stay strict. A field newer than the app inside a strict
+object, or a value the app does not know in a field it knows (a new status, outcome or kind), refuses the answer. No
+known enum field falls back to an "unknown" value: such fields decide what the app shows or does, and guessing one
+would act on a value nobody checked.
+
+**Version-aware refusals.** `GET /node` answers `clarkVersion`. When the app cannot read an answer, it asks the node
+for that version and compares it with its own; a lookup that fails is not kept, and a version longer than 64
+characters or not shaped like one counts as unknown. When the node runs a newer Clark, the app names both versions and
+asks the person to update the app. When the node does not run a newer Clark, the app says it is not out of date and to
+try again. When either version is not known, the app says the node is probably newer. The message also says what was
+preserved: a read changed nothing; a notice action says only that the node answered, never that it was carried out,
+since the value the app cannot read may mean it waits on something (an update says to check the inbox); a reconcile
+says the node recorded the answer; forgetting a chosen folder says only that the node answered, claiming neither that
+the folder was forgotten nor what Clark can still reach, and the row keeps its badge; a `/develop` start started the
+session, so its card shows the start as done rather than failed. The schema's own error text goes to the console only.
+
+**Author rule.** Never add binding state (an approval, a grant, a reach, an activation, a confirmation) as a new
+top-level field of an answer the app reads tolerantly: an older app would drop it with only the generic note. Put it
+inside a strict object, or change the answer in a way older apps refuse.
+`packages/conversation-client/test/node-view-author-rule.spec.ts` lists every answer read tolerantly and every
+top-level field there whose name speaks of binding state, so adding either needs a review. The check goes by field
+names, so it catches the usual mistake rather than proving there is none.
 
 ## MCP
 
@@ -1147,7 +1315,7 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 ## CLI
 
 `apps/cli` (`@clarkcant/cli`) is a client of the gateway. The only exception is `instructions check`, which contacts
-no node and checks a local file against an open contract. The CLI is not published to npm yet; run it from a checkout
+no node and checks local files against an open contract. The CLI is not published to npm yet; run it from a checkout
 with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 
 | Command | |
@@ -1159,7 +1327,7 @@ with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision or installing a package |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
-| `clarkcant instructions check [file\|folder]` | checks a project's `.clarkcant/instructions.json` offline (see below) |
+| `clarkcant instructions check [file\|folder]` | checks a project's `.clarkcant/instructions.json`, or a package's `instructions` facets, offline (see below) |
 
 Connection: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, else `identity.json` in `--data-dir` /
 `CLARKCANT_DATA_DIR` (default `~/.clarkcant`). The identity file is only read for a node on this machine
@@ -1192,7 +1360,16 @@ it, and `clarkcant instructions check` validates it with the same schema. How a 
   digits and `-`, up to 64 characters), and an optional `pin`. `when` may name `project`, `path`, `operation`
   (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) and
   `skill`. Each takes one value or a list of up to 16. A `path` glob has at most 200 characters, 16 wildcards and
-  32 folders. A file larger than 64 KB is not read.
+  32 folders, and all `path` globs of one file have at most 4,000 characters together: the node leaves out, in file
+  order, a rule that would take the file over, and the check reports that rule. A file larger than 64 KB is not read.
+- Matching is bounded whatever the file says. A path may cost at most 200,000 matching steps against one file's rules,
+  and a path that needs more, or a project-relative path longer than 4,096 characters, meets no `path` condition: the
+  guidance is missing, never stated for a path it is not about. One ask checks at most 96 touched paths, the session's
+  newest 64 and at most 32 of the places a message points at, and the answer for a path is kept while the file is
+  unchanged, so a tool call matches only what it newly touched. Case is folded on Windows and macOS and kept on Linux
+  and every other platform, both in a `path` glob and when the node finds which granted root holds the project. Whether
+  a path lies inside a project, and which project it is, are decided on the volume's real paths, so two folders whose
+  names differ only in case on a case-sensitive volume stay two projects.
 - Unknown keys: at the top level only `$schema` (a string, for an editor's JSON schema) is allowed, and any other
   unknown top-level key makes the node read nothing from the file. An unknown key inside a rule or inside its `when`
   leaves out only that rule. The check reports both.
@@ -1203,9 +1380,50 @@ it, and `clarkcant instructions check` validates it with the same schema. How a 
   are each reported on their own line, and the exit code is 1. A rule that includes a name with no
   `instructions/<name>.md` beside the file is a warning; the exit code stays 0. `--json` prints
   `{ path, ok, problems, warnings }`. The default file is `.clarkcant/instructions.json` in the current folder, and a
-  project folder can be given instead of the file.
+  project folder can be given instead of the file. A package folder (one with a `clarkcant.json`), or that
+  `clarkcant.json`, is checked as a package: see below.
 - An instruction grants nothing. The node reads it only from a project inside a root the person granted, and every
-  effect still goes through the execution policy. A package cannot contribute rules yet.
+  effect still goes through the execution policy.
+
+### Package instructions
+
+A package can carry rules in the same contract through an `instructions` facet, declarative content that needs
+`"schemaVersion": 3` ([widget development §4](widget-development.md#4-package-manifest)). A package declares at most one
+such facet. The facet's `entry` is the rules file, and a snippet is `instructions/<name>.md` beside it inside the
+package.
+
+- **Off until the person turns it on, per project.** The node preference `instructions.packages` (scope `node`) lists
+  `{ "project": "<absolute folder>", "packageId": "<id>" }` pairs, at most 64
+  (`packages/contracts/src/package-instructions.ts`). Writing or undoing it on `/preferences/instructions.packages`
+  is person-only: no AI client, widget or remote machine surface reaches it. Clark changes it only through
+  `manage_package` `enable_instructions` / `disable_instructions`, an effect the execution policy decides as a local
+  write: it runs, or becomes a host-owned approval card, or is refused. A card covers the package at the version and
+  digest it showed; a package updated or rolled back while the card waited is refused (`PACKAGE_CHANGED`). Enabling
+  needs the project to be a folder inside a granted root and the package to be installed with a readable
+  `instructions` facet; it grants no root.
+- **Turning one project off.** `POST /packages/instructions/turn-off` `{ "packageId", "project" }` removes that one pair
+  from what the node holds now and answers `{ packageId, project, removed }`; a pair already off answers
+  `removed: false` and writes nothing, and it never adds a pair back. It is person-only, like the preference; Settings →
+  Extensions & widgets uses it for Turn off.
+- **Where they apply.** Only for work inside an enabled project that is, links resolved, still inside a granted root.
+  `path` globs are relative to that project and `when.project` names its folder. A rule can include only its own
+  facet's snippets.
+- **Precedence and budget.** The project's own instructions are stated first. A package's snippets use what they left,
+  and at most 2,000 characters a turn among all packages; one snippet is clipped at 1,500 characters. A package's `pin`
+  is ignored, so a snippet is stated once per session.
+- **Trust.** A package snippet is data: framed with the session's code, its tags defused, and withheld above the
+  receiving model's data classes. Its block carries `package="<id>@<version>"` and `source="<id>@<version>/<name>"`, and
+  a host note says such blocks rank after the project's own. Each snippet stated is written to the audit log as kind
+  `instructions` with the package id, version and snippet name, never its text; a withheld one is written once per
+  conversation.
+- **Removal.** Turning a pair off removes its rules from the next turn. Uninstalling the package removes every pair it
+  had right after the uninstall, and restoring it or installing it while it was not installed removes any pair left for
+  its id, so the package starts with its instructions off everywhere until the person turns them on again. A node also
+  drops, at start, every pair whose package is not installed. An upgrade or a rollback keeps the pairs, because the
+  package stays installed.
+- `clarkcant instructions check <package folder>` reads the manifest as a node does (`readPackageManifest`) and checks
+  its `instructions` facet's rules file and snippets. It warns about a `pin`, about a snippet longer than a node
+  states, and about a facet of a kind this build does not know, which a node skips.
 
 ## Changing a surface
 

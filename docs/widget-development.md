@@ -78,7 +78,8 @@ A package can have several facets:
 - tools/services;
 - skills;
 - recipes;
-- themes.
+- themes;
+- project instructions.
 
 A UI facet must update/activate independently of the Pi worker when no Pi facet has changed.
 
@@ -144,6 +145,7 @@ Each facet kind runs in exactly one lane, and the schema refuses any other pairi
 | `ui` | `isolated-ui` | A widget drawn in its own frame. `id` must equal the id inside `definition`. |
 | `tools` | `service` | A service the node runs in a container, speaking MCP over stdio, that declares every capability it provides. |
 | `skills`, `prompts`, `themes`, `setup` | `declarative` | Data a host reads and never runs. |
+| `instructions` | `declarative` | Conditional project instructions, stated as data only in projects the person enabled them for. Needs `schemaVersion` 3. |
 | `driver`, `voice` | `service` or `trusted-native` | Part of the vocabulary, so a listing can show the lane. No host runs one from a package yet. |
 
 The reader also refuses a manifest when:
@@ -155,7 +157,52 @@ The reader also refuses a manifest when:
   `project`);
 - a facet's `entry` or `definition` is outside the package (`..`, an absolute path, a drive letter) or is a URL;
 - a `tools` capability `ref` is not named under the package id (`<package id>.<name>@<major>`), or a tool or
-  capability is declared twice.
+  capability is declared twice;
+- an `instructions` facet is declared with `"schemaVersion": 2`.
+
+**Schema version 3.** `schemaVersion` is 2 for every package except one that carries an `instructions` facet, which
+needs 3; the tools write the lowest version a package needs, so a package without that facet stays installable on a
+host that reads only version 2. Such a host refuses a version 3 package as a whole, with a message that names the
+version, rather than install it without the facet. A host that reads version 3 validates the facet like any other.
+
+**Facet kinds a host does not know.** From the host that added this rule on, a host reads past a facet whose `kind` is
+a lowercase name (letters, digits and hyphens) it does not know (`readPackageManifest` in
+`packages/contracts/src/install.ts`). It installs the facets it knows and leaves that facet out. The facet is reported
+as declared but not understood by the author's tools (below), by `clarkcant instructions check`, in a listing's unread
+fields, and as `skippedFacets` on the package in `GET /packages`; the install answer and the install card do not show it
+yet. The node never runs, lists or grants anything for that facet. The generation records it (its kind, id and declared
+isolation), and every reader of an installed package leaves it out for that generation, so a host updated later to
+understand the kind still keeps the facet inert. Installing the same version again while it runs joins that install and keeps the record, and restoring an uninstalled package brings its record back; only an update to another version, or an uninstall followed by a fresh install, installs the package anew under new consent (as does reinstalling a package listed by a path whose files changed). A record the node cannot parse holds back every facet of the package, which is then read as unreadable.
+
+The facet's declared `isolation` counts toward the lane the package's requested capabilities are granted in, and a
+facet that names no known lane counts as `trusted-native`, so the facet can only make a grant harder. The lane decides
+how capabilities are granted, not whether the package installs. The package's lane in `GET /packages`, and a widget dev
+session's lane check, listing and consent scope, count the facet the same way.
+
+A listing that names such a kind in `facets` or `isolations` is read the same way, and the kind is named in the
+listing's unread fields. A listing left with no kind the host knows, in either list, is left out of the directory rather
+than making the directory unreadable. A listing's `declaredReach` cannot be checked against a facet the host cannot
+read: when it differs from the reach of the facets the host knows, the install is refused with
+`DECLARED_REACH_MISMATCH`, and the message says the package also declares facets this version does not understand, so
+updating ClarkCant may be the fix. The install checks the manifest's own `hostApi` as well as the listing's. Hosts from
+before this rule refuse such a package as a whole.
+
+Only the facet kind is tolerated. A known kind with a field or value the host does not accept, an unknown top-level
+field, a `schemaVersion` the host does not read, and a manifest whose facets are all of unknown kinds are still
+refused. So are a kind with an uppercase letter or an underscore, the version 1 kind `widget` in a version 2 or 3
+manifest (the message says to name it `ui`), and a skipped facet whose `id` repeats another facet's. A top-level field
+can qualify every facet (what the package reaches, the resources it runs with), so a host cannot tell that skipping one
+is safe; a facet is one part the host can decline as a whole. This gives the rule for changing the format:
+
+- a new facet kind is added within the current `schemaVersion`, and hosts from this rule on skip it;
+- a new field in an existing facet or at the top level needs a new `schemaVersion`, which an older host refuses with a
+  message that says to update ClarkCant;
+- a package whose purpose depends on a newer facet raises `hostApi.min`, so an older host does not list or install it.
+
+The author's tools stay strict: `clark widget test`, `clark theme test`, `pack` and `publish` fail a facet kind they do
+not know, since to an author it is more often a misspelling than a newer kind, and a listing made without it would
+describe less than the package holds. These checks catch a misspelled kind before it is published; a manifest written or
+packed by other means can still carry a kind a host skips. `clarkcant instructions check` warns about it.
 
 A `tools` facet declares its capabilities in the manifest, so consent can show them before any of the package's code
 runs. Installing the package is the consent to what it declares; each call is still decided by the execution policy.
@@ -193,6 +240,24 @@ disabled controls, the host's own cards (their edge, plain surface and buttons: 
 approval's Approve and Deny, the inbox's answers or Stop) and reduced motion, from the system or from
 Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
+
+**How the node reads an instructions facet.** A package declares at most one `instructions` facet. Its `entry` is a rules file in the same open
+contract as a project's `.clarkcant/instructions.json` (`projectInstructionRuleSchema` in
+`packages/contracts/src/project-instructions.ts`; see [open interfaces](open-interfaces.md#package-instructions)), such
+as `{ "kind": "instructions", "id": "rules", "entry": "rules/instructions.json", "isolation": "declarative" }`. A snippet a
+rule includes is `instructions/<name>.md` beside that file (`rules/instructions/<name>.md` here), named by a plain name,
+so a rule cannot reach the host's files, a project's or another package's. The node reads both from the installed
+bytes through the same containment as a widget's files, under the project file's limits, and clips a snippet at 1,500
+characters (`packages/core/src/installed-instructions.ts`). Installing the package states nothing. The rules apply only
+in a project the person turned the package's instructions on for, by asking Clark (`manage_package`
+`enable_instructions`, which the execution policy decides) and only while that project is inside a root the person
+already granted. Within it, paths are relative to the project and `when.project` names its folder. A package's
+snippets are stated after the project's own, within their own slice of the turn's budget, framed with the session's
+code, withheld above the receiving model's data classes, labelled and audited with the package id and version, and
+never pinned: a rule's `pin` is ignored. A snippet grants nothing. Settings → Extensions & widgets lists the projects
+each package's instructions are on in, with Turn off. Uninstalling the package turns its instructions off everywhere, so
+installing or restoring it again starts with them off; an upgrade or rollback keeps them on where they were.
+`clarkcant instructions check <package folder>` validates the manifest and each facet's rules and snippets.
 
 **Reference packages.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) and
 [Neo Brutalism](../examples/themes/neo-brutalism/README.md) are generalized data-only packages, installed through
@@ -2140,8 +2205,11 @@ uncertain.
 **Not open means not performed.** A perform is refused with `FRAME_NOT_MOUNTED` in these cases:
 
 - no page is showing the widget;
-- the caller running the turn cannot reach a frame (the CLI, a relay, an older page, or a detached desktop window);
+- the caller running the turn cannot reach a frame (the CLI, a relay or an older page);
 - the frame is not mounted.
+
+A widget that is open in its own desktop window is refused with `FRAME_DETACHED`: reattach it to let Clark act on it.
+Nothing is sent to either frame.
 
 A page whose conversation changed before it could ask answers `SURFACE_GONE`. A page that cannot read the event
 answers `PERFORM_UNREADABLE`, or `PERFORM_VERSION_UNSUPPORTED` for another version. Nothing is queued for later and
@@ -2184,8 +2252,13 @@ as a percentage`, goes to Clark's voice turn like any other sentence, whatever t
 offers actions Clark can perform and the session's page sent `widgetPerform: 1`, the turn's data also lists the widget
 and each offered action: its binding id, label, description and input schema. The list is read when the turn starts,
 so a turn that waited behind another one gets none if the widget was closed or another one focused meanwhile. A
-description is listed only from a definition the widget could have been placed from: a running package, with the
-instance's version and digest, declaring the action with the label and input schema its binding recorded. The widget
+description is listed only from the exact package generation its binding was placed from, while that generation runs:
+`place_widget` records it on each offered action's binding (`packageGeneration`), and the definition must still have
+the instance's version and digest and declare the action with the label and input schema the binding recorded. A
+look-alike package that copies the widget id, version, schemas and label runs as another generation and supplies no
+description; neither does a binding made before perform bindings recorded their generation. A reinstall, repair or
+widget dev-session rebuild at the same version also starts a new generation, so it too hides the descriptions until the
+widget is placed again. The widget
 id, labels, descriptions and schemas are the package's own words, each quoted on one line as data, never as instructions. Clark may then perform one through
 `perform_widget_action`, the same tool, schema, execution policy and host card as a typed request. A card it places is
 read out in the person's language. The host adds no matching rules, a package declares no phrasings, and neither the
@@ -2225,19 +2298,54 @@ The remaining surfaces are:
 - a historical inline snapshot; or
 - a read-only preview.
 
-Detach does not reset state/subscriptions/media.
+Detach keeps the instance's durable state: the widget starts in the new window, and again back in the conversation,
+from what it saved on the node. A composition moves as it is. A widget in its own frame is mounted again in the new
+window, so its view state (`ephemeralStateKeys`) and any playback position start over; it never plays in two places.
 
 Closing a detached window only moves presentation ownership; it does not delete the instance.
 
 A detached window holds the instance's live-owner lease as the `detached` surface and keeps it refreshed while it is
 open. It closes, and hands the instance back, when the conversation view that opened it goes away, when the
-conversation window closes, when the app quits, or when another surface has taken the lease.
+conversation window closes, when the app quits, or when another surface has taken the lease. Handing the instance back waits for the node to confirm the release for at most a few seconds: a node that does
+not answer does not leave the widget read-only with no window open, and the window's lease then lapses on its own.
 
-Only composed widgets can be detached today. A widget that runs in its own (isolated) frame stays in the
-conversation: a detached window holds no credential, and that frame needs the conversation's credential to save
-state, publish its semantic view and renew its URL. The conversation does not offer Detach for it, and the desktop
-host refuses its bootstrap. Detaching an isolated frame is tracked in
-[#577](https://github.com/digitopvn/clarkcant/issues/577).
+A widget that runs in its own (isolated) frame can be detached on the desktop too. The window still holds no
+credential. The desktop host relays each request the frame makes, against the one instance it opened the window for
+and with its own token:
+
+- each read of the widget, with a fresh frame grant (a URL that lapses is renewed by reading again);
+- each state write, answered with what the node committed or with the state it holds;
+- each semantic publish;
+- each press, sent as the person's, as a press in the conversation is. The host resolves the binding's digest from its
+  own newest read;
+- each file request (`artifacts@1`). The person answers a pick or a save in the window's own chrome, as in the
+  conversation, and the host opens the OS dialog over the detached window. The bytes go between the disk and the node
+  through the host; the window learns the node's reference and the file's bare name, or whether it was saved, never a
+  path. "Replace original" writes over the file last picked in that window. A file the widget attaches goes into the
+  conversation window's composer;
+- each job read, list and cancel (`jobs@1`);
+- each browser token request (`tokens@1`), only when the widget's package declares browser tokens. The host ends every
+  token session the window's frames were issued under when the window closes, after the lease is given back and before
+  the conversation takes the widget back, and when a read shows a new build of the frame.
+
+The window names neither the conversation nor the instance. Its relays are bounded, and a frame that asks too fast is
+refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A relay the node does not answer within 30 seconds
+(10 seconds for a semantic publish) ends with `NODE_TIMEOUT` and frees its place. A press waits 330 seconds instead,
+longer than the longest deadline the node sets on a service call or a workflow (300 seconds for a workflow), so the host
+does not give up on such a press while the node is still running it. An `agent` button runs a model turn, which has no
+such deadline, so a long turn can still outlast the wait. If a press times out, the widget is told it was sent and
+whether it took effect is unknown (`uncertain`), never that it was refused. A widget dev session's build status is shown in the window without the folder
+path, inside build messages too: the folder is replaced by `.`, so a file under it reads relative to the package. While
+the widget is detached, the conversation shows a note instead of a second frame, and Clark's performs on it are refused
+with `FRAME_DETACHED` until it is reattached.
+
+File, job and token relays have their own buckets, the same as a frame in the conversation, and a pick or a save holds
+one dialog open at a time. A widget gets the same answers and the same refusal codes in both windows.
+
+Not yet in a detached window: the actions Clark performs (`offeredActions`). The frame is told they are not offered,
+and they work again once the widget is reattached. A widget whose package is gone (`frame: null`)
+is not offered Detach; it shows its text alternative in the conversation. The rest of the work is tracked in
+[#577](https://github.com/digitopvn/clarkcant/issues/577) and [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
 Audio/call/player must not duplicate playback when moving between surfaces.
 
@@ -2885,6 +2993,12 @@ A local isolated host with:
 `clark widget dev [dir] [--port N] [--builtin <id>]`: without `[dir]` it uses the current directory, and
 `--builtin <id>` views a catalog widget in the **same** host instead of a package on disk — details in 23.5.
 
+The dev host listens only on `127.0.0.1` and has no flag to expose it on the network. It answers only requests
+addressed to `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, and refuses any other `Host` with `403`. That
+blocks a website that points its own name at your machine (DNS rebinding) from reading the shell's state or driving
+it. A `POST` or `DELETE` that names an `Origin` must come from one of those addresses too. Open the URL the dev host
+prints. A custom hostname, a tunnel or a proxy that forwards its own `Host` is refused.
+
 For a package, the dev host performs the bridge's real `init` handshake. It sends the selected fixture's props and
 offers `artifacts@1` (§10.1). Its **File picker** control simulates the person's choice. It lists the files in the
 package's `fixtures/files/` and adds Cancel, and the next `pick` returns whichever is selected. It lists only files
@@ -2968,14 +3082,26 @@ system folder dialog; a browser, or a desktop app connected to a node on another
 path on the node's machine instead. If Clark asks to develop a folder you have not chosen, nothing starts and the same
 card appears with **Develop this folder**. The card names the folder the path really leads to, and says so when that
 differs from the path given; a path that is not found gets no button. A press keeps the folder as your choice only if
-the path is still that folder itself when you press, so a link put in its place meanwhile gains nothing. Once you start a folder, Clark may work in it, and in every folder inside it, without
-asking again, until you take that back: type `/develop forget` (or ask Clark which folders it may use) and press
-**Forget** beside the folder. Forgetting does not stop a session that is running, and a folder inside another folder
-you chose stays reachable through that one (the answer says so). A chosen folder that is moved away is listed as not
-found, so you can still forget it. Only a message you sent can make Clark show a folder to choose. A whole drive or your home folder can
-be developed for one session, but Clark never keeps access to it. The node's own data folder is never developed, and neither
-is a network share. A session runs widgets that stay in the frame and declarative data. A package with a service, tools or
-a native part is refused with a problem saying so; install that package the ordinary way.
+the path is still that folder itself when you press, so a link put in its place meanwhile gains nothing. Once you
+start a folder, Clark may work in it, and in every folder inside it, without asking again, until you take that back:
+type `/develop forget` (or ask Clark which folders it may use) and press **Forget** beside the folder. Forgetting does
+not stop a session that is running, and a folder inside another folder you chose stays reachable through that one (the
+answer says so). A chosen folder that is moved away is listed as not found, so you can still forget it; it counts again
+if that same folder is moved back, and a new folder at its path is chosen when you start developing it yourself. One
+limit: some filesystems can give a folder deleted (not moved) and made again at the same path the deleted folder's
+file id, and then it still counts as the one you chose. On Linux (ext4 and similar) a freed id can come back at any
+later time, for example to a fresh `git clone` into the same path the next day. On Windows, FAT32 and exFAT drives
+(such as USB sticks) can give a remade folder the same id, and nothing holds the folder open there, so this can happen
+even while a session watches it. Forget a folder before deleting it if a folder made there later must not inherit the
+choice. If a session Clark started stops after a restart because Clark is no longer allowed to watch its folder on its
+own (for example, it was deleted and made again), what it built keeps running; press **Develop again** on its row in
+the `/develop` card to choose the folder again. If the folder now leads to a network share or into the node's data
+folder, choosing it again is refused too, so the row has no button: copy the project into Clark's widget workspace or
+another folder on this machine, and develop it from there. Only a message you sent can make Clark show a folder to
+choose. A whole drive or your home folder can be developed for one session, but Clark never keeps access to it. The
+node's own data folder is never developed, and neither is a network share. A session runs widgets that stay in the
+frame and declarative data. A package with a service, tools or a native part is refused with a problem saying so;
+install that package the ordinary way.
 
 The widget appears in the conversation in the production frame, with the production sandbox, bridge, state and
 migrations. A new generation remounts only the frame; the instance and its state stay, and the state goes through the
@@ -2987,10 +3113,12 @@ The execution policy decides each install as it decides any other. A session Cla
 proposal, so guarded mode asks before its first install, while a session started on the owner's route is your request. When the
 mode asks, the first install is a question, and so is every build that changes what the package reaches: declared
 reach, resources, facet lanes, facets, permissions, or the capabilities it requests. A build that only changes code or UI
-reuses that answer and runs at once. A mode that does not ask runs every build. When such a build reaches more than the
-one before it, and nobody was asked about it, the conversation says so with what it added; a build you approved in the
-inbox was already shown to you with that. A build is also refused when its package id belongs to something else on the
-node: a listed package, another session, or a package installed the ordinary way.
+reuses that answer and runs at once; when you approve a build in the inbox while newer ones are waiting, the build you
+approved is installed first, and the newest one after it when your answer covers what it reaches. A mode that does not
+ask runs every build. When such a build reaches more than the one before it, and nobody was asked about it, the
+conversation says so with what it added; a build you approved in the inbox was already shown to you with that. A build
+is also refused when its package id belongs to something else on the node: a listed package, another session, or a
+package installed the ordinary way.
 
 Stopping a session stops watching the folder; the last build keeps running where it was placed. When the node stops
 watching on its own, the status beside the frame says why. The watcher may have failed, or the folder may have been
@@ -2998,6 +3126,9 @@ deleted or renamed; the node checks for the folder every second, since Windows r
 watch as many folders as it can. After a restart, the folder may no longer be one the session may watch. A build whose
 folder is too large, or holds a link out of it, says so and what to change. Superseded builds are cleaned up as new ones install. The node keeps the build that
 runs and the one a rollback returns to.
+A session that does not install again, or a removal a held file or a closing node left over, is cleaned up at the
+next start of the node, before any folder is watched again. That start also removes builds that no session lists any
+more, when nothing runs them.
 
 ### test
 
@@ -3350,8 +3481,9 @@ This section states which parts of the document already have code, so that nobod
 - Widget dev sessions in the conversation (§16, "Developing in the conversation"): one build engine shared with the dev
   host, immutable generations, last-known-good, policy-decided installs under a reach-bound consent scope, Clark-started
   sessions confined to the widget workspace and project roots the person configured and decided as Clark's proposal, frame and data facets
-  only, cleanup of superseded builds, frame-only remount, and host-owned build status. Pinning a dev widget works; detaching an isolated widget into its own window,
-  and the dev host's fixture, viewport, theme and reduced-motion controls beside a node frame, are not yet available.
+  only, cleanup of superseded builds, frame-only remount, and host-owned build status. Pinning a dev widget works, and so does detaching it into its own desktop window (§11),
+  which shows its build status without the folder path. The dev host's fixture, viewport, theme and reduced-motion
+  controls beside a node frame are not yet available.
 - Durable state for isolated widgets, declarative host-run migrations, and `ephemeralStateKeys` (§15).
 - Remove / restore / roll back a package from Settings and via `manage_package` in the conversation; data is kept.
 - Pending capability questions are answered in Settings (host-owned; the model cannot approve them). The frame only
@@ -3393,7 +3525,10 @@ This section states which parts of the document already have code, so that nobod
   `detachedWindowOptions`, `apps/web/src/App.tsx` serves `?detached=1`), and it is covered by
   `apps/desktop/test/detached-window.spec.ts` together with `apps/web/e2e/detach.spec.ts` — **not** by the
   conformance suite's `detach` check: the harness only runs on the in-browser dev host, and the dev host has no
-  detached window to drive. The ownership half (`detached` on the live-owner claim) is implemented.
+  detached window to drive. The ownership half (`detached` on the live-owner claim) is implemented. A widget in its
+  own frame detached for real is driven by the desktop smoke test (`pnpm --filter @clarkcant/app-desktop smoke`),
+  which mounts it from the host's read and relays a state write, a publish, a press and a dev-session read to a
+  stand-in node.
 - Runtime for MCP Apps: the isolated-app path is implemented; MCP Apps have not yet been proven on that same path.
 
 ---
@@ -3586,7 +3721,14 @@ it `409 NOT_INSTALLED`. Installing the path again after an edit makes a new copy
 new plan and generation rather than joining the old one; a finished plan is joined only while the running generation's
 snapshot is that plan's artifact. A generation installed from a path before snapshots has no `snapshotDigest` and keeps
 reading its path until it is installed again. A snapshot sweeps `.tmp-*` and `.stale-*` folders older than an hour from
-the cache; nothing else collects unused cache entries yet, for snapshots as for git and npm artifacts.
+the cache. Widget dev sessions remove the snapshots they made once nothing runs, waits on or can roll back to them:
+after each install, and at boot before any folder is watched again, including snapshots that fell off a session's
+list (`orphaned-snapshots.json` in the session store's folder). A snapshot is never removed while a build or an
+install is placing or reusing it (`removeLocalSnapshot`). An install holds it until its generation is recorded, or
+until the install ends without one: it failed, was refused, or asks the person first. A session's newest build holds
+it until a newer build replaces it, the session stops, or the node closes. A snapshot taken while a removal runs waits
+for that removal to end, then puts its staged copy in place. Nothing else collects unused cache entries yet: a
+snapshot an ordinary install took, and git and npm artifacts, stay.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws

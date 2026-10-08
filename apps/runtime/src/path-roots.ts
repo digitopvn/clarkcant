@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /**
  * Whether a path is inside an approved root, by the platform's own rules.
@@ -23,6 +23,31 @@ export function isWithinRoot(root: string, candidate: string): boolean {
   if (resolvedRoot === resolvedCandidate) return true;
   const rel = relative(resolvedRoot, resolvedCandidate);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * Whether the file system a platform usually runs on tells case apart: Windows (NTFS) and macOS (APFS by default) do
+ * not, Linux does.
+ */
+export function caselessPaths(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" || platform === "darwin";
+}
+
+/**
+ * Whether a path is inside a root, with case compared the way `caseless` says rather than the way this host's
+ * `path.relative` happens to: a lookup that only finds something — never a grant — uses it, so a path typed in another
+ * case than its root still finds what is under that root where the file system cannot tell them apart, and Linux keeps
+ * case. Grant checks keep `isWithinRoot`.
+ *
+ * Both sides are resolved first, so separators, `.` and `..` are already the platform's own; what is left is a
+ * folder-by-folder prefix, so `/a/bc` is not inside `/a/b`.
+ */
+export function isWithinRootCased(root: string, candidate: string, caseless: boolean): boolean {
+  const cased = (path: string): string => (caseless ? resolve(path).toLowerCase() : resolve(path));
+  const resolvedRoot = cased(root);
+  const resolvedCandidate = cased(candidate);
+  if (resolvedRoot === resolvedCandidate) return true;
+  return resolvedCandidate.startsWith(resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`);
 }
 
 /** Whether a value the user typed is a path at all, on this platform. */

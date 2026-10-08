@@ -89,6 +89,51 @@ export const FRAME_PERFORM_TIMEOUT_MS = 6_000;
 /** Performs one frame may be asked at once. */
 const MAX_PERFORMS_IN_FLIGHT = 4;
 
+/** The largest message a frame may post, unless its host asks for a smaller ceiling (`maxMessageBytes`). */
+export const FRAME_MESSAGE_MAX_BYTES = 64 * 1024;
+
+/**
+ * The frame session's own default buckets for the brokered capabilities: how many file, job and token requests a frame
+ * may make in a burst, how fast that refills, and how many token requests may wait at once. A desktop host that relays
+ * them for a detached window holds them to the same numbers (`DETACHED_RELAY_LIMITS`).
+ */
+export const FRAME_BROKER_LIMITS = {
+  artifacts: { burst: 300, refillPerSecond: 10 },
+  // Above what the SDK spends following the most jobs it waits on at once (4 polls a second), so a cancel still fits.
+  jobs: { burst: 60, refillPerSecond: 5 },
+  tokens: { burst: 10, refillPerSecond: 0.2, inFlight: 2 },
+} as const;
+
+/**
+ * The limits a desktop host applies when a frame runs in a detached window and every request it makes is relayed
+ * through the host's own credential.
+ *
+ * The frame session already bounds what the frame posts; these bound what the detached window may ask the host to
+ * send to the node, because that window is a second renderer the host cannot tell from an honest one. Each relay has a
+ * bucket of `burst` requests refilled at `refillPerSecond`, and every relay together has at most `inFlight` calls
+ * waiting; a call over either is refused, never queued. Each relay also gives up on a node that does not answer
+ * within `timeoutMs` (`NODE_TIMEOUT`), so a silent node cannot hold the in-flight slots. The Electron host cannot load
+ * TypeScript, so it keeps its own copy, and a test holds the two equal.
+ */
+export const DETACHED_RELAY_LIMITS = {
+  inFlight: 8,
+  "frame.read": { burst: 10, refillPerSecond: 1, timeoutMs: 30_000 },
+  "state.save": { maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5, timeoutMs: 30_000 },
+  "semantic.publish": { maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 },
+  // A press is a frame message the session has already bounded, so it is held to the same ceiling. It waits longer than
+  // the longest deadline the node sets on a service call or a workflow (a workflow's 300 s), so such a press the node
+  // is still running is not given up on. An agent button's model turn has no such deadline and can outlast it.
+  intent: { maxBytes: FRAME_MESSAGE_MAX_BYTES, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 },
+  "dev.session": { burst: 5, refillPerSecond: 1, timeoutMs: 30_000 },
+  // The frame session's own buckets (`FRAME_BROKER_LIMITS`), applied again at the host, which cannot tell a frame
+  // session from a renderer that skips it. Every file verb spends from `artifacts`; the two that open an OS dialog — a
+  // pick and an export — also spend from `artifacts.dialog`, so a window can hold one dialog open at a time.
+  artifacts: { ...FRAME_BROKER_LIMITS.artifacts, timeoutMs: 30_000 },
+  "artifacts.dialog": { burst: 5, refillPerSecond: 0.1, inFlight: 1, timeoutMs: 30_000 },
+  jobs: { ...FRAME_BROKER_LIMITS.jobs, timeoutMs: 30_000 },
+  tokens: { ...FRAME_BROKER_LIMITS.tokens, timeoutMs: 30_000 },
+} as const;
+
 /**
  * What the host answered one artifact request with.
  *
@@ -323,18 +368,17 @@ function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>
 }
 
 export function createFrameSession(input: FrameSessionInput): FrameSession {
-  const maxMessageBytes = input.maxMessageBytes ?? 64 * 1024;
+  const maxMessageBytes = input.maxMessageBytes ?? FRAME_MESSAGE_MAX_BYTES;
   const maxMessages = input.maxMessages ?? 200;
   const maxArtifactMessageBytes = input.maxArtifactMessageBytes ?? 512 * 1024;
-  const artifactBurst = input.artifactBurst ?? 300;
-  const artifactRefillPerSecond = input.artifactRefillPerSecond ?? 10;
+  const artifactBurst = input.artifactBurst ?? FRAME_BROKER_LIMITS.artifacts.burst;
+  const artifactRefillPerSecond = input.artifactRefillPerSecond ?? FRAME_BROKER_LIMITS.artifacts.refillPerSecond;
   const maxArtifactInFlight = input.maxArtifactInFlight ?? 4;
   const maxRecordedRefusals = input.maxRecordedRefusals ?? 64;
   const maxTranscriptEntries = input.maxTranscriptEntries ?? 500;
   const clock = input.now ?? ((): number => Date.now());
-  const jobBurst = input.jobBurst ?? 60;
-  // Above what the SDK spends following the most jobs it waits on at once (4 polls a second), so a cancel still fits.
-  const jobRefillPerSecond = input.jobRefillPerSecond ?? 5;
+  const jobBurst = input.jobBurst ?? FRAME_BROKER_LIMITS.jobs.burst;
+  const jobRefillPerSecond = input.jobRefillPerSecond ?? FRAME_BROKER_LIMITS.jobs.refillPerSecond;
   /** A request bucket that refills for the time since its last request; `take` spends one, or says it is empty. */
   const bucket = (burst: number, refillPerSecond: number): (() => boolean) => {
     let tokens = burst;
@@ -350,8 +394,8 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   };
   const takeArtifactToken = bucket(artifactBurst, artifactRefillPerSecond);
   const takeJobToken = bucket(jobBurst, jobRefillPerSecond);
-  const tokenBurst = input.tokenBurst ?? 10;
-  const tokenRefillPerSecond = input.tokenRefillPerSecond ?? 0.2;
+  const tokenBurst = input.tokenBurst ?? FRAME_BROKER_LIMITS.tokens.burst;
+  const tokenRefillPerSecond = input.tokenRefillPerSecond ?? FRAME_BROKER_LIMITS.tokens.refillPerSecond;
   const takeTokenRequest = bucket(tokenBurst, tokenRefillPerSecond);
   const artifactsInFlight = new Set<string>();
   const jobsInFlight = new Set<string>();
@@ -830,9 +874,10 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           return refuseAnswered("EXTENSION_NOT_OFFERED", `the host did not offer ${TOKENS_EXTENSION}`);
         }
         if (tokensInFlight.has(message.requestId)) return refuse("TOKEN_BUSY", "this token request id is already being answered");
-        if (tokensInFlight.size >= 2) {
-          postTokenResult(message.requestId, { status: "refused", code: "TOKEN_BUSY", message: "at most 2 token requests may wait at once" });
-          return refuseAnswered("TOKEN_BUSY", "at most 2 token requests may wait at once");
+        if (tokensInFlight.size >= FRAME_BROKER_LIMITS.tokens.inFlight) {
+          const busy = `at most ${String(FRAME_BROKER_LIMITS.tokens.inFlight)} token requests may wait at once`;
+          postTokenResult(message.requestId, { status: "refused", code: "TOKEN_BUSY", message: busy });
+          return refuseAnswered("TOKEN_BUSY", busy);
         }
         tokensInFlight.add(message.requestId);
         void input.tokens

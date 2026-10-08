@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   type BigIntStats,
+  type RmOptions,
   constants,
   existsSync,
   lstatSync,
@@ -17,7 +18,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 
-import type { DirectoryEntry, PackageGeneration, PackageSource } from "@clarkcant/contracts";
+import type { DirectoryEntry, PackageGeneration, PackageSource, RecordedSkippedFacet } from "@clarkcant/contracts";
 
 /**
  * Fetching a git or npm package source to an exact artifact this node holds.
@@ -366,6 +367,23 @@ export function installedDirectoryEntries<G extends SnapshottedGeneration>(
   return { entries: readable, withheld };
 }
 
+/**
+ * For a reader walking a listing: the facets the installed generation of each entry skipped at install
+ * (`PackageGeneration.skippedFacets`), so it reads that package without them. Matched the way
+ * `installedDirectoryEntries` matches, by the package id or the local path a generation was recorded under, and the
+ * version; an entry no active generation installed has nothing recorded.
+ */
+export function skippedAtInstallFor(
+  generations: readonly Pick<PackageGeneration, "packageId" | "version" | "skippedFacets">[],
+): (entry: DirectoryEntry) => readonly RecordedSkippedFacet[] | undefined {
+  return (entry) =>
+    generations.find(
+      (generation) =>
+        generation.version === entry.version &&
+        (generation.packageId === entry.packageId || (entry.source.kind === "local" && generation.packageId === entry.source.path)),
+    )?.skippedFacets;
+}
+
 /** Why a withheld entry (`installedDirectoryEntries`) is not served: what failed, what was kept, and what to do next. */
 export function notInstalledAsListedMessage(packageId: string, version: string): string {
   return `${packageId}@${version} is listed with files other than the copy installed on this node, so neither is served. Nothing was changed: the installed copy and its widgets' state are kept. Install the package again to run the files it lists now.`;
@@ -382,8 +400,13 @@ export type SnapshotRefusal =
   // The node could not write the copy into its own package cache; the files at the path are not at fault.
   | "PACKAGE_CACHE_UNAVAILABLE";
 
+/**
+ * A snapshot taken, with its hold (`release`): until released, `removeLocalSnapshot` keeps the folder, so whatever the
+ * caller does with it next (records a generation, lists a build) cannot have its bytes removed underneath. Release it
+ * once something the remover looks at (`inUse`) names the snapshot, or once the caller no longer needs it.
+ */
 export type SnapshotOutcome =
-  | { ok: true; artifact: FetchedArtifact }
+  | { ok: true; artifact: FetchedArtifact; release: () => void }
   | { ok: false; code: SnapshotRefusal; message: string };
 
 type SnapshotRefused = { ok: false; code: SnapshotRefusal; message: string };
@@ -494,8 +517,16 @@ export async function snapshotLocalPackage(input: {
     const destContained = containedOrRefuse(input.cacheRoot, dest);
     if (!destContained.ok) return { ok: false, code: "CACHE_ESCAPE", message: destContained.message };
 
-    await placeSnapshot(tempDest, dest, copied.digest, input.limits);
-    return { ok: true, artifact: { path: dest, digest: copied.digest } };
+    // Held before the folder there is looked at, so a removal either ended before (and the staged copy takes the name)
+    // or starts only once this hold is released.
+    const release = await holdLocalSnapshot(dest);
+    try {
+      await placeSnapshot(tempDest, dest, copied.digest, input.limits);
+    } catch (cause) {
+      release();
+      throw cause;
+    }
+    return { ok: true, artifact: { path: dest, digest: copied.digest }, release };
   } catch (cause) {
     if (cause instanceof PackageCacheFailure) return { ok: false, code: "PACKAGE_CACHE_UNAVAILABLE", message: cause.message };
     return { ok: false, code: "LOCAL_SOURCE_UNREADABLE", message: cause instanceof Error ? cause.message : String(cause) };
@@ -843,6 +874,65 @@ async function removeQuietly(path: string): Promise<void> {
     await rm(path, { recursive: true, force: true, maxRetries: 3 });
   } catch {
     // Left for a later snapshot to sweep (`sweepLeftovers`).
+  }
+}
+
+/**
+ * Who uses a snapshot folder in this process right now: how many holds a snapshot taken there keeps (`SnapshotOutcome`),
+ * and the removal running there, if one is. Keyed by the folder's resolved path. Every snapshot of the cache is placed
+ * (`snapshotLocalPackage`) and removed (`removeLocalSnapshot`) by the one node process that owns the data folder, so a
+ * map in that process is the lock both go through. An entry is dropped once it has neither.
+ */
+const snapshotUses = new Map<string, { holds: number; removing: Promise<void> | undefined }>();
+
+/**
+ * Hold the snapshot folder at `path` against removal. A removal already running there is waited out first, so the caller
+ * looks at the folder only once it is wholly there or wholly gone. Answers the release, which may be called more than once.
+ */
+async function holdLocalSnapshot(path: string): Promise<() => void> {
+  const key = resolve(path);
+  for (let removing = snapshotUses.get(key)?.removing; removing !== undefined; removing = snapshotUses.get(key)?.removing) await removing;
+  // Nothing is awaited from the look above to the hold below, so no removal can start between them.
+  const use = snapshotUses.get(key) ?? { holds: 0, removing: undefined };
+  use.holds += 1;
+  snapshotUses.set(key, use);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    use.holds -= 1;
+    if (use.holds === 0 && use.removing === undefined && snapshotUses.get(key) === use) snapshotUses.delete(key);
+  };
+}
+
+/**
+ * Remove a snapshot folder from the package cache, unless something still uses it: a hold a snapshot taken there keeps
+ * (a build or an install placing or reusing the folder, or a dev engine's newest build), or what `inUse` says (a
+ * generation that names it, a session that runs or waits on it). Both are asked together with the removal's start, with
+ * nothing awaited in between, so a caller that records its use before releasing its hold is never left pointing at a
+ * folder removed underneath it. A snapshot taken while the removal runs waits for it to end and then places its own copy.
+ *
+ * Answers `kept` when something uses it, and `removed` once it is gone (or was never there). A removal that fails rejects
+ * with `rm`'s error; what is left of the folder is checked against its digest by the next snapshot of those bytes.
+ */
+export async function removeLocalSnapshot(path: string, input: { inUse: () => boolean; options: RmOptions }): Promise<"removed" | "kept"> {
+  const key = resolve(path);
+  // Another removal of the same folder is waited out, then the folder is looked at afresh.
+  for (let removing = snapshotUses.get(key)?.removing; removing !== undefined; removing = snapshotUses.get(key)?.removing) await removing;
+  const use = snapshotUses.get(key) ?? { holds: 0, removing: undefined };
+  if (use.holds > 0 || input.inUse()) return "kept";
+  const removal = rm(path, input.options);
+  use.removing = removal.then(
+    () => undefined,
+    () => undefined,
+  );
+  snapshotUses.set(key, use);
+  try {
+    await removal;
+    return "removed";
+  } finally {
+    use.removing = undefined;
+    if (use.holds === 0 && snapshotUses.get(key) === use) snapshotUses.delete(key);
   }
 }
 

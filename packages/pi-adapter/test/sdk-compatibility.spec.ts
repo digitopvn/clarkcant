@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -334,6 +334,60 @@ describe("the public tool surface the adapter relies on instead of the session's
       expect(live.getCallableToolNames()).toEqual(["a", "d"]);
     } finally {
       live.dispose();
+    }
+  });
+});
+
+describe("the SDK 1.0.2 prompt() sequence a re-sent late steer mirrors", () => {
+  /*
+   * `prepareRunWithoutInputHandlers` in `src/real.ts` copies `AgentSession.prompt()` from its bash and custom flush to its
+   * `_runAgentPrompt` call, through private members. The shape check there catches a rename; this catches a change in
+   * what that code does. Whoever upgrades the SDK and sees this fail must re-read `prompt()` and those members, bring
+   * `prepareRunWithoutInputHandlers` in step, and then regenerate `fixtures/sdk-1.0.2-prompt-mirror.txt` from the new SDK.
+   */
+  const UPDATE =
+    "re-read the SDK's AgentSession.prompt() and the members prepareRunWithoutInputHandlers uses, update " +
+    "prepareRunWithoutInputHandlers in packages/pi-adapter/src/real.ts to match, then update the stored copy in " +
+    "packages/pi-adapter/test/fixtures/sdk-1.0.2-prompt-mirror.txt";
+
+  /** The stored copies, by title. */
+  function storedCopies(): Map<string, string> {
+    const text = readFileSync(new URL("./fixtures/sdk-1.0.2-prompt-mirror.txt", import.meta.url), "utf8");
+    const copies = new Map<string, string>();
+    const parts = text.split(/^=== (.+) ===$/m);
+    for (let index = 1; index < parts.length; index += 2) copies.set(parts[index] ?? "", parts[index + 1] ?? "");
+    return copies;
+  }
+
+  /** Source with every run of whitespace removed, so only a change to the code itself is a difference. */
+  const normalized = (source: string): string => source.replace(/\s+/g, "");
+
+  async function liveSources(): Promise<Map<string, string>> {
+    const sdk = await loadSdk();
+    const session = (sdk.AgentSession as { prototype: Record<string, { toString(): string }> }).prototype;
+    const runner = (sdk.ExtensionRunner as { prototype: Record<string, { toString(): string }> }).prototype;
+    const prompt = String(session.prompt);
+    const from = prompt.indexOf("// Flush any pending bash and custom messages before the new prompt");
+    const endMarker = "await this._runAgentPrompt(messages);";
+    const to = prompt.indexOf(endMarker, Math.max(from, 0));
+    const live = new Map<string, string>();
+    live.set(
+      "AgentSession.prompt, from the bash/custom flush to _runAgentPrompt",
+      from < 0 || to < 0 ? "(the start or end of the mirrored sequence is gone)" : prompt.slice(from, to + endMarker.length),
+    );
+    for (const name of ["_flushPendingBashMessages", "_flushPendingCustomMessages", "_normalizePromptImages", "_preparePromptAndToolLoadout", "_runAgentPrompt"]) {
+      live.set(`AgentSession.${name}`, String(session[name] ?? "(missing)"));
+    }
+    live.set("ExtensionRunner.emitBeforeAgentStart", String(runner.emitBeforeAgentStart ?? "(missing)"));
+    return live;
+  }
+
+  it("still has the prompt() sequence and private members the stored copy holds", async () => {
+    const stored = storedCopies();
+    const live = await liveSources();
+    expect([...stored.keys()].sort()).toEqual([...live.keys()].sort());
+    for (const [title, source] of live) {
+      expect(normalized(source), `SDK ${title} changed: ${UPDATE}`).toBe(normalized(stored.get(title) ?? ""));
     }
   });
 });

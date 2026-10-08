@@ -29,6 +29,7 @@ export const facetKindSchema = z.enum([
   "setup",
   "driver",
   "voice",
+  "instructions",
 ]);
 export type FacetKind = z.infer<typeof facetKindSchema>;
 
@@ -169,11 +170,29 @@ export const nativeFacetSchema = z.strictObject({
   isolation: z.enum(["service", "trusted-native"]),
 });
 
+/**
+ * Conditional instruction rules a package contributes, written in the same open contract a project's
+ * `.clarkcant/instructions.json` is (`project-instructions.ts`): `entry` is the rules file in the package, and each
+ * snippet a rule includes is `instructions/<name>.md` in the folder that holds it.
+ *
+ * Data the host reads and never runs, in the declarative lane with themes. A rule grants nothing, and it applies only in
+ * a project where the person enabled this package's instructions (`package-instructions.ts`); installing the package
+ * does not enable it. Needs `schemaVersion` 3.
+ */
+export const instructionsFacetSchema = z.strictObject({
+  kind: z.literal("instructions"),
+  id: facetIdSchema,
+  entry: packagePathSchema,
+  isolation: z.literal("declarative"),
+});
+export type InstructionsFacet = z.infer<typeof instructionsFacetSchema>;
+
 export const facetDeclarationSchema = z.discriminatedUnion("kind", [
   uiFacetSchema,
   toolsFacetSchema,
   declarativeFacetSchema,
   nativeFacetSchema,
+  instructionsFacetSchema,
 ]);
 export type FacetDeclaration = z.infer<typeof facetDeclarationSchema>;
 
@@ -183,10 +202,26 @@ export type FacetDeclaration = z.infer<typeof facetDeclarationSchema>;
  * `1` was the widget-only manifest `clark widget` scaffolded before a package could carry anything but widgets. It is
  * still read — a package installed under it keeps working — but only by `normalizeWidgetManifestV1` in core, which
  * presents it in this shape. Nothing writes `1` any more.
+ *
+ * `3` is `2` plus the `instructions` facet, and is the newest. A host that reads only `2` refuses a `3` manifest as a
+ * whole rather than misreading a facet it does not know, so a package declares `3` only when it carries instructions
+ * (`packageManifestSchemaVersionFor`), and every other package stays installable on those hosts.
  */
-export const PACKAGE_MANIFEST_SCHEMA_VERSION = 2;
+export const PACKAGE_MANIFEST_SCHEMA_VERSION = 3;
 
-/** The most facets one package manifest may declare. */
+/** The canonical manifest versions this build reads; `1` is read only through core's upgrade. */
+export const PACKAGE_MANIFEST_SCHEMA_VERSIONS = [2, 3] as const;
+export type PackageManifestSchemaVersion = (typeof PACKAGE_MANIFEST_SCHEMA_VERSIONS)[number];
+
+/** The facet kinds that need a newer manifest version than `2`, with the version each needs. */
+const FACET_SCHEMA_VERSIONS: Partial<Record<FacetKind, PackageManifestSchemaVersion>> = { instructions: 3 };
+
+/** The lowest manifest version that can carry these facets: what a writer puts in `schemaVersion`. */
+export function packageManifestSchemaVersionFor(facets: readonly { kind: FacetKind }[]): PackageManifestSchemaVersion {
+  return facets.some((facet) => FACET_SCHEMA_VERSIONS[facet.kind] === 3) ? 3 : 2;
+}
+
+/** The most facets one package manifest may declare, counting the ones a reader skips. */
 export const MAX_PACKAGE_FACETS = 64;
 
 /**
@@ -196,7 +231,7 @@ export const MAX_PACKAGE_FACETS = 64;
  * lifecycle: a UI facet updates without touching a service, a skill reloads without restarting a worker.
  */
 export const packageManifestSchema = z.strictObject({
-  schemaVersion: z.literal(PACKAGE_MANIFEST_SCHEMA_VERSION),
+  schemaVersion: z.union([z.literal(2), z.literal(3)]),
   id: z.string().min(1).max(160),
   version: semverSchema,
   displayName: z.string().min(1).max(200),
@@ -257,6 +292,229 @@ export const packageManifestSchema = z.strictObject({
 export type PackageManifest = z.infer<typeof packageManifestSchema>;
 
 /**
+ * A facet kind a reader may skip: a lowercase name, as every kind so far is. A kind that is not one (empty, spaced,
+ * very long, or in another case, such as `UI` or `Tools`) is not a newer kind but a broken facet, so it stays in the
+ * list and the schema refuses it, rather than a mistyped facet being installed without as if it were a version gap.
+ */
+const SKIPPABLE_FACET_KIND = /^[a-z][a-z0-9-]{0,63}$/;
+const KNOWN_FACET_KINDS: readonly string[] = facetKindSchema.options;
+/**
+ * Kinds that are not newer kinds but older names: `widget` is what a `schemaVersion: 1` manifest calls a `ui` facet.
+ * One inside a later manifest is a mistake an update would never fix, so it is refused with what to write instead.
+ */
+const RETIRED_FACET_KINDS: Readonly<Record<string, string>> = {
+  widget: 'kind "widget" is the schemaVersion 1 name of a ui facet; a schemaVersion 2 or 3 manifest names it "ui"',
+};
+
+/** Whether `kind` names a facet kind this build does not know, which a reader skips rather than refuses. */
+export function isUnknownFacetKind(kind: unknown): kind is string {
+  return (
+    typeof kind === "string" &&
+    SKIPPABLE_FACET_KIND.test(kind) &&
+    !KNOWN_FACET_KINDS.includes(kind) &&
+    !Object.hasOwn(RETIRED_FACET_KINDS, kind)
+  );
+}
+
+/**
+ * A facet an install left out because the installing host did not know its kind, as the generation records it: the
+ * kind, and the id and lane when the facet stated valid ones. Kept so a later host that does understand the kind can
+ * tell that nobody consented to that facet, and keeps it inert for this generation (`withoutFacetsSkippedAtInstall`).
+ */
+export const recordedSkippedFacetSchema = z.strictObject({
+  kind: z.string().regex(SKIPPABLE_FACET_KIND),
+  id: facetIdSchema.optional(),
+  isolation: isolationClassSchema.optional(),
+});
+export type RecordedSkippedFacet = z.infer<typeof recordedSkippedFacetSchema>;
+
+/** What a generation records of the facets a reader skipped: everything but their position in the file. */
+export function recordSkippedFacets(skipped: readonly SkippedFacet[]): RecordedSkippedFacet[] {
+  return skipped.map((facet) => ({
+    kind: facet.kind,
+    ...(facet.id === undefined ? {} : { id: facet.id }),
+    ...(facet.isolation === undefined ? {} : { isolation: facet.isolation }),
+  }));
+}
+
+/**
+ * The lane a skipped facet counts in: the one it declares, or the strongest when it declares none this build knows.
+ * A facet nobody here can read is never assumed to be weaker than it might be.
+ */
+export function skippedFacetLane(facet: { isolation?: IsolationClass | undefined }): IsolationClass {
+  return facet.isolation ?? "trusted-native";
+}
+
+/**
+ * Whether a facet was skipped when its generation was installed, so it stays inert for that generation: matched by
+ * kind (every facet of a kind the installing host did not know was skipped) or by id (the same facet, should a later
+ * reading give it another kind).
+ */
+export function wasSkippedAtInstall(
+  facet: { kind: string; id: string },
+  recorded: readonly RecordedSkippedFacet[] | undefined,
+): boolean {
+  return recorded?.some((skipped) => skipped.kind === facet.kind || (skipped.id !== undefined && skipped.id === facet.id)) === true;
+}
+
+/**
+ * A manifest without the facets its generation's install skipped (`PackageGeneration.skippedFacets`).
+ *
+ * The person consented to what the installing host could read. A facet it skipped was never shown, counted in the
+ * reach the person saw, or bound into that consent, so a host that understands its kind later still does not run,
+ * show or grant it for this generation: only an install or upgrade on a host that understands it, under a fresh
+ * consent, does. Every reader of an installed package goes through this, so no consumer can act on such a facet. The one
+ * exception is uninstall's connection revoke, which only takes access away.
+ */
+export function withoutFacetsSkippedAtInstall<M extends { facets: readonly { kind: string; id: string }[] }>(
+  manifest: M,
+  recorded: readonly RecordedSkippedFacet[] | undefined,
+): M {
+  if (recorded === undefined || recorded.length === 0) return manifest;
+  return { ...manifest, facets: manifest.facets.filter((facet) => !wasSkippedAtInstall(facet, recorded)) };
+}
+
+/**
+ * A generation's record of skipped facets that is there but cannot be read. Nobody can tell which facets it held back,
+ * so a reader holds back the whole package rather than run a facet the person never consented to.
+ */
+export const UNREADABLE_SKIPPED_FACETS = "unreadable";
+export type SkippedFacetsRecord = readonly RecordedSkippedFacet[] | typeof UNREADABLE_SKIPPED_FACETS;
+
+/** A generation's `skippedFacets` as stored: absent is nothing skipped, anything that does not parse is unreadable. */
+export function readSkippedFacetsRecord(value: unknown): RecordedSkippedFacet[] | typeof UNREADABLE_SKIPPED_FACETS {
+  if (value === undefined) return [];
+  const read = z.array(recordedSkippedFacetSchema).max(MAX_PACKAGE_FACETS).safeParse(value);
+  return read.success ? read.data : UNREADABLE_SKIPPED_FACETS;
+}
+
+/** The lanes a record counts in; an unreadable one counts as the strongest, since it may hold anything. */
+export function skippedFacetsRecordLanes(record: SkippedFacetsRecord): IsolationClass[] {
+  return record === UNREADABLE_SKIPPED_FACETS ? ["trusted-native"] : record.map(skippedFacetLane);
+}
+
+/**
+ * A facet a reader left out because this build does not know its kind: declared, but not understood here. Only what
+ * can be shown as written is carried (the kind, an id that is a valid facet id, a known isolation class); the rest of
+ * the facet is never read, so nothing in it reaches a consumer.
+ */
+export interface SkippedFacet {
+  /** Its position in the manifest's `facets` list. */
+  index: number;
+  kind: string;
+  id?: string;
+  isolation?: IsolationClass;
+}
+
+/** One line for a skipped facet, as a reader's report says it. */
+export function describeSkippedFacet(facet: SkippedFacet): string {
+  return `facet ${facet.id ?? `#${String(facet.index)}`}: kind "${facet.kind}" is declared but not understood by this version of ClarkCant, so it is skipped`;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read a package manifest the way a host reads one: tolerant of facet kinds it does not know, strict about everything
+ * it does.
+ *
+ * A new facet kind is a new part a package can carry, and a host that does not know it can still run the parts it
+ * does. So a facet whose `kind` is a plain name outside `facetKindSchema` is left out of the manifest and reported in
+ * `skippedFacets`. It is never passed on, so no consumer (installer, directory, service host, consent) sees a value
+ * nobody validated, and it grants nothing: what a host runs, shows and grants comes only from the facets it read.
+ *
+ * Everything else is held to `packageManifestSchema` exactly as before: a known kind with a bad body, an unknown
+ * top-level field, an unknown field inside a known facet, and a `schemaVersion` this build does not read all refuse the
+ * manifest. A manifest whose facets are all skipped is refused too, since this host would have nothing of it to run.
+ *
+ * Writers stay strict: `packageManifestSchema` itself still refuses an unknown kind, and the author's tools fail on
+ * one, where it is more likely a misspelling than a newer format.
+ */
+export function readPackageManifest(
+  candidate: unknown,
+): { success: true; data: PackageManifest; skippedFacets: SkippedFacet[] } | { success: false; error: z.ZodError } {
+  const facets = isPlainRecord(candidate) ? candidate["facets"] : undefined;
+  // Bounded before anything is skipped, so the limit counts every facet the file declares.
+  if (!isPlainRecord(candidate) || !Array.isArray(facets) || facets.length > MAX_PACKAGE_FACETS) {
+    const result = packageManifestSchema.safeParse(candidate);
+    return result.success ? { success: true, data: result.data, skippedFacets: [] } : { success: false, error: result.error };
+  }
+  const known: unknown[] = [];
+  /** Each kept facet's position in the file, so a problem names the facet the author wrote. */
+  const positions: number[] = [];
+  const skippedFacets: SkippedFacet[] = [];
+  for (const [index, facet] of facets.entries()) {
+    const kind = isPlainRecord(facet) ? facet["kind"] : undefined;
+    const retired = typeof kind === "string" && Object.hasOwn(RETIRED_FACET_KINDS, kind) ? RETIRED_FACET_KINDS[kind] : undefined;
+    if (retired !== undefined) {
+      return {
+        success: false,
+        error: new z.ZodError([{ code: "custom", path: ["facets", index, "kind"], message: retired, input: kind }]),
+      };
+    }
+    if (!isPlainRecord(facet) || !isUnknownFacetKind(kind)) {
+      known.push(facet);
+      positions.push(index);
+      continue;
+    }
+    const id = facetIdSchema.safeParse(facet["id"]);
+    const isolation = isolationClassSchema.safeParse(facet["isolation"]);
+    skippedFacets.push({
+      index,
+      kind,
+      ...(id.success ? { id: id.data } : {}),
+      ...(isolation.success ? { isolation: isolation.data } : {}),
+    });
+  }
+  if (skippedFacets.length > 0 && known.length === 0) {
+    const kinds = [...new Set(skippedFacets.map((facet) => facet.kind))].join(", ");
+    return {
+      success: false,
+      error: new z.ZodError([
+        {
+          code: "custom",
+          path: ["facets"],
+          message: `declares no facet kind this version of ClarkCant understands (${kinds}); update ClarkCant`,
+          input: facets,
+        },
+      ]),
+    };
+  }
+  /*
+   * A skipped facet's id is still an id in this package: one that repeats another facet's would make the manifest
+   * unreadable to a host that understands both, which would then drop the whole package. Refused here instead.
+   */
+  const knownIds = new Set(known.map((facet) => (isPlainRecord(facet) ? facet["id"] : undefined)).filter((id) => typeof id === "string"));
+  const seenSkippedIds = new Set<string>();
+  for (const skipped of skippedFacets) {
+    if (skipped.id === undefined) continue;
+    if (knownIds.has(skipped.id) || seenSkippedIds.has(skipped.id)) {
+      return {
+        success: false,
+        error: new z.ZodError([
+          {
+            code: "custom",
+            path: ["facets", skipped.index, "id"],
+            message: `facet id "${skipped.id}" is declared more than once; every facet needs its own id`,
+            input: skipped.id,
+          },
+        ]),
+      };
+    }
+    seenSkippedIds.add(skipped.id);
+  }
+  const result = packageManifestSchema.safeParse({ ...candidate, facets: known });
+  if (result.success) return { success: true, data: result.data, skippedFacets };
+  if (skippedFacets.length === 0) return { success: false, error: result.error };
+  const issues = result.error.issues.map((issue) => {
+    const [field, at, ...rest] = issue.path;
+    return field === "facets" && typeof at === "number" ? { ...issue, path: ["facets", positions[at] ?? at, ...rest] } : issue;
+  });
+  return { success: false, error: new z.ZodError(issues) };
+}
+
+/**
  * What the shape cannot say about a manifest: rules that relate one field to another.
  *
  * Kept apart from the schema so a reader can report every problem at once, with the field named, rather than stop at
@@ -270,6 +528,19 @@ const CAPABILITY_NAMESPACE_PATTERN = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+$/;
 
 export function manifestProblems(manifest: PackageManifest): string[] {
   const problems: string[] = [];
+
+  for (const facet of manifest.facets) {
+    const needs = FACET_SCHEMA_VERSIONS[facet.kind];
+    if (needs !== undefined && manifest.schemaVersion < needs) {
+      problems.push(`facet ${facet.id}: an ${facet.kind} facet needs "schemaVersion": ${String(needs)}`);
+    }
+  }
+  // One rules file per package: every instructions facet is matched against every touched path on every ask, so more
+  // than one would multiply that work without adding anything one file cannot say.
+  const instructionFacets = manifest.facets.filter((facet) => facet.kind === "instructions");
+  if (instructionFacets.length > 1) {
+    problems.push(`facets: a package may declare at most one instructions facet; this one declares ${String(instructionFacets.length)} (${instructionFacets.map((facet) => facet.id).join(", ")})`);
+  }
 
   const ids = manifest.facets.map((facet) => facet.id);
   for (const id of new Set(ids)) {
@@ -827,6 +1098,13 @@ export const packageGenerationSchema = z.strictObject({
    * different publisher until the person chooses it. Absent on a generation installed before this was kept.
    */
   directorySource: directorySourceRefSchema.optional(),
+  /**
+   * The facets the install left out because this host did not know their kind. They were not shown, counted in the
+   * reach the person saw, or covered by the consent this generation runs under, so they stay inert for this
+   * generation on every host, including one that understands their kind later (`withoutFacetsSkippedAtInstall`).
+   * Absent when nothing was skipped.
+   */
+  skippedFacets: z.array(recordedSkippedFacetSchema).max(MAX_PACKAGE_FACETS).optional(),
 });
 export type PackageGeneration = z.infer<typeof packageGenerationSchema>;
 

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type BrowserContext, type Locator, type Page } from "@playwright/test";
 
 /**
  * Choosing a theme a package provides, in the browser.
@@ -51,18 +51,37 @@ function token(): string {
   return parsed.localToken;
 }
 
-async function prepare(request: APIRequestContext): Promise<void> {
-  const headers = { authorization: `Bearer ${token()}` };
-  // Every run starts from Clark Default, whatever an earlier spec or run left chosen.
-  const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } });
+const authorized = (): { authorization: string } => ({ authorization: `Bearer ${token()}` });
+
+/** Choose Clark Default through the node, whatever an earlier spec, run or failed stage left chosen. */
+async function chooseClarkDefault(request: APIRequestContext): Promise<void> {
+  const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers: authorized(), data: { value: "builtin:clark" } });
   expect(reset.ok(), `reset answered ${String(reset.status())}: ${await reset.text()}`).toBe(true);
-  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers })).json()) as { packages: { packageId: string }[] };
-  if (listed.packages.some((entry) => entry.packageId === PACKAGE)) return;
+}
+
+/**
+ * Leave Dusk 1.0.0 installed, and do nothing when it already is.
+ *
+ * Being installed is not enough: a run that failed after installing the unreadable update, or after removing the
+ * package, leaves it that way. A retry that kept it would fail at the first stage instead of reporting the stage that
+ * really failed, and a later spec that finds the package present would not install it and could not draw Dusk.
+ */
+async function restoreDusk(request: APIRequestContext): Promise<void> {
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: authorized() })).json()) as {
+    packages: { packageId: string; version: string }[];
+  };
+  if (listed.packages.some((entry) => entry.packageId === PACKAGE && entry.version === "1.0.0")) return;
   const installed = await request.post(`${GATEWAY}/packages/install`, {
-    headers,
+    headers: authorized(),
     data: { packageId: PACKAGE, version: "1.0.0", localDigest: DUSK_DIGEST },
   });
   expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
+}
+
+/** Every run starts from Clark Default and Dusk 1.0.0. */
+async function prepare(request: APIRequestContext): Promise<void> {
+  await chooseClarkDefault(request);
+  await restoreDusk(request);
 }
 
 /**
@@ -80,10 +99,90 @@ async function settle(page: Page): Promise<void> {
 const accent = (page: Page): Promise<string> =>
   page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase());
 
-test("a package theme restyles the window in place, falls back when removed or unreadable, and returns when restored", async ({
-  page,
-  request,
-}) => {
+/*
+ * One journey on one page, told as six tests that run in order.
+ *
+ * The journey is long — about 130 browser steps and eight screenshots — and it was once a single test under the
+ * suite's 60-second budget. It never hung: every step answered, but on a shared CI runner each step costs two to three
+ * times what it costs on a workstation, and the passing runs spread from 33 to 60 seconds until some ran out of time
+ * with nothing wrong. Split by stage, each stage keeps the whole budget for a few seconds of work, a stage that does
+ * stall still fails on its own, and the report names which one.
+ *
+ * The stages share the page on purpose: what this spec proves is that the window is restyled rather than reloaded, so
+ * the mark on `window`, the half-typed message and the pinned widget have to live through every stage. Serial mode
+ * skips the stages after one that fails, since they would start from a state the journey never reached.
+ */
+test.describe.configure({ mode: "serial" });
+
+let page: Page;
+/** Set only once the page is open, so cleanup after a failure to open one has nothing to close. */
+let context: BrowserContext | undefined;
+let clarkAccent = "";
+let pinId = "";
+/** The conversation the pin was made in, read from the page's own pin request so cleanup can remove it. */
+let pinConversationId = "";
+/** Set once the last stage has pressed Unpin, so cleanup knows the pin may already be gone. */
+let unpinnedByJourney = false;
+
+test.beforeAll(async ({ browser }) => {
+  page = await browser.newPage();
+  context = page.context();
+  page.on("request", (request) => {
+    const match = /\/conversations\/([^/?]+)\/pins$/u.exec(request.url());
+    if (match !== null && request.method() === "POST") pinConversationId = decodeURIComponent(match[1] ?? "");
+  });
+});
+
+/*
+ * Whatever stage the journey stopped at, the specs after this one find Clark Default chosen, Dusk 1.0.0 installed and
+ * no pin of this spec's on the shelf. The journey leaves it that way when it passes, so this does nothing then; after a
+ * failure it is the only cleanup. Each step runs even when one before it failed, and every failure is reported.
+ */
+test.afterAll(async ({ request }) => {
+  const failures: unknown[] = [];
+  const step = async (run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (error) {
+      failures.push(error);
+    }
+  };
+  await step(() => chooseClarkDefault(request));
+  await step(() => restoreDusk(request));
+  await step(async () => {
+    if (pinId === "") return;
+    if (pinConversationId === "") throw new Error(`pin ${pinId} was made, but the conversation it was made in was never seen`);
+    const unpinned = await request.delete(
+      `${GATEWAY}/conversations/${encodeURIComponent(pinConversationId)}/pins/${encodeURIComponent(pinId)}`,
+      { headers: authorized() },
+    );
+    // Not found is expected only when the last stage already unpinned it through the page.
+    const expected = unpinned.ok() || (unpinnedByJourney && unpinned.status() === 404);
+    expect(expected, `unpin answered ${String(unpinned.status())}: ${await unpinned.text()}`).toBe(true);
+  });
+  await step(async () => {
+    await context?.close();
+  });
+  if (failures.length > 0) throw new AggregateError(failures, "cleaning up after the theme journey failed");
+});
+
+const dusk = (): Locator => page.locator(`[data-theme-ref='${DUSK_REF}']`);
+const provenance = (): Locator => page.locator(`[data-theme-provenance='${DUSK_REF}']`);
+const unreadable = (): Locator => page.locator("[data-theme-fallback='THEME_LOW_CONTRAST']");
+/** The page was restyled, not reloaded: the mark set on `window` before the first theme change is still there. */
+async function notReloaded(): Promise<void> {
+  const marked = await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark);
+  expect(marked, "the page was reloaded: the mark set on window before the first theme change is gone").toBe(true);
+}
+
+/** The pin this spec made is still on the shelf, and is the same element rather than one drawn again. */
+async function pinSurvived(): Promise<void> {
+  const same = page.locator(`[data-pin-shelf='true'] [data-pin-id='${pinId}']`);
+  await expect(same).toBeVisible();
+  expect(await same.evaluate((element) => (element as HTMLElement & { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
+}
+
+test("choosing a package theme restyles the window in place", async ({ request }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await prepare(request);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -95,7 +194,7 @@ test("a package theme restyles the window in place, falls back when removed or u
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 
-  const clarkAccent = await accent(page);
+  clarkAccent = await accent(page);
   expect(clarkAccent).not.toBe("#7AA2F7");
 
   // A pinned widget, marked on its own element so that re-creating it — not only losing it — would show.
@@ -107,16 +206,10 @@ test("a package theme restyles the window in place, falls back when removed or u
   const pinsBefore = await pinIds();
   await page.locator("[data-pin-instance]").first().click();
   await expect.poll(async () => (await pinIds()).filter((id) => !pinsBefore.includes(id)).length).toBe(1);
-  const pinId = (await pinIds()).find((id) => !pinsBefore.includes(id)) ?? "";
-  const pinned = page.locator(`[data-pin-shelf='true'] [data-pin-id='${pinId}']`);
-  await pinned.evaluate((element) => {
+  pinId = (await pinIds()).find((id) => !pinsBefore.includes(id)) ?? "";
+  await page.locator(`[data-pin-shelf='true'] [data-pin-id='${pinId}']`).evaluate((element) => {
     (element as HTMLElement & { ccThemeMark?: boolean }).ccThemeMark = true;
   });
-  const pinSurvived = async (): Promise<void> => {
-    const same = page.locator(`[data-pin-shelf='true'] [data-pin-id='${pinId}']`);
-    await expect(same).toBeVisible();
-    expect(await same.evaluate((element) => (element as HTMLElement & { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
-  };
 
   // A half-typed message, and a mark that only survives if the page is never reloaded.
   await page.locator("[data-composer]").fill(DRAFT);
@@ -125,33 +218,33 @@ test("a package theme restyles the window in place, falls back when removed or u
   });
 
   await page.locator("[data-settings='true']").click();
-  const dusk = page.locator(`[data-theme-ref='${DUSK_REF}']`);
-  await expect(dusk).toBeVisible({ timeout: 20_000 });
+  await expect(dusk()).toBeVisible({ timeout: 20_000 });
   // The entry shows what a person chooses by: the name, the description and the package's trust lane.
-  await expect(dusk).toContainText("Dusk");
-  await expect(dusk.locator("[data-theme-provider='package']")).toHaveText("chỉ dữ liệu");
+  await expect(dusk()).toContainText("Dusk");
+  await expect(dusk().locator("[data-theme-provider='package']")).toHaveText("chỉ dữ liệu");
   // The exact build — package id, version and digest — is one click away rather than on every card.
-  const provenance = page.locator(`[data-theme-provenance='${DUSK_REF}']`);
-  await expect(dusk).not.toContainText(PACKAGE);
-  await expect(dusk).not.toContainText("sha256:");
-  await expect(provenance.locator("[data-theme-digest]")).toBeHidden();
-  await provenance.locator("summary").click();
-  await expect(provenance.locator("[data-theme-package]")).toHaveText(`${PACKAGE}@1.0.0`);
+  await expect(dusk()).not.toContainText(PACKAGE);
+  await expect(dusk()).not.toContainText("sha256:");
+  await expect(provenance().locator("[data-theme-digest]")).toBeHidden();
+  await provenance().locator("summary").click();
+  await expect(provenance().locator("[data-theme-package]")).toHaveText(`${PACKAGE}@1.0.0`);
   // The digest of the fixture's bytes, whole, as a published directory lists it.
-  await expect(provenance.locator("[data-theme-digest]")).toHaveText(DUSK_DIGEST);
+  await expect(provenance().locator("[data-theme-digest]")).toHaveText(DUSK_DIGEST);
   expect(DUSK_DIGEST).toMatch(/^sha256:[0-9a-f]{64}$/);
-  await provenance.locator("summary").click();
-  await expect(provenance.locator("[data-theme-digest]")).toBeHidden();
+  await provenance().locator("summary").click();
+  await expect(provenance().locator("[data-theme-digest]")).toBeHidden();
   await expect(page.locator("[data-theme-ref='builtin:clark']")).toHaveAttribute("aria-pressed", "true");
 
-  await dusk.click();
-  await expect(dusk).toHaveAttribute("aria-pressed", "true");
+  await dusk().click();
+  await expect(dusk()).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => accent(page), { timeout: 15_000 }).toBe("#7AA2F7");
-  await expect(dusk).toHaveAttribute("data-theme-applied", "true");
+  await expect(dusk()).toHaveAttribute("data-theme-applied", "true");
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-1280-dark.png") });
   await recordOverflow(page, "theme-picker-1280-dark");
+});
 
+test("the colour scheme redraws the same theme, and a phone-width panel is no wider than the screen", async () => {
   // The colour scheme is a separate choice: switching it redraws the same theme's light colours.
   await page.locator('[data-theme-choice="light"]').click();
   await expect.poll(() => accent(page)).toBe("#2959AA");
@@ -166,21 +259,22 @@ test("a package theme restyles the window in place, falls back when removed or u
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-390-dark.png") });
   await recordOverflow(page, "theme-picker-390-dark");
-  await provenance.locator("summary").click();
-  await expect(provenance.locator("[data-theme-digest]")).toBeVisible();
-  await provenance.scrollIntoViewIfNeeded();
+  await provenance().locator("summary").click();
+  await expect(provenance().locator("[data-theme-digest]")).toBeVisible();
+  await provenance().scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-390-dark-details.png") });
   await recordOverflow(page, "theme-picker-390-dark-details");
-  await provenance.locator("summary").click();
+  await provenance().locator("summary").click();
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // The page was restyled, not reloaded: the mark, the draft and the pinned widget are all still there.
-  expect(await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
+  await notReloaded();
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-composer]")).toHaveValue(DRAFT);
   await pinSurvived();
+});
 
-  // Removing the package from Settings draws Clark Default at once, and the choice is kept.
+test("removing the package draws Clark Default at once, keeps the choice, and says so where it was made", async () => {
   await page.locator("[data-settings='true']").click();
   await page.locator("#cc-tab-extensions").click();
   const row = page.locator(`[data-installed-package='${PACKAGE}']`);
@@ -195,28 +289,31 @@ test("a package theme restyles the window in place, falls back when removed or u
   await expect(notice).toContainText("Clark Default");
   await expect(notice).toContainText("vẫn được giữ");
   await expect(notice).toHaveAttribute("role", "status");
-  await expect(page.locator(`[data-theme-ref='${DUSK_REF}']`)).toHaveCount(0);
+  await expect(dusk()).toHaveCount(0);
   // The details are the page's own sentence, not the node's English message.
   await notice.locator("summary").click();
   await expect(notice.locator(".cc-theme-notice-detail")).toHaveText(`Không gói nào đã cài cung cấp ${DUSK_REF}.`);
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-1280-fallback.png") });
   await recordOverflow(page, "theme-picker-1280-fallback");
+});
 
-  // Restoring the package brings the same theme back without choosing it again.
+test("restoring the package brings the same theme back without choosing it again", async () => {
   await page.locator("#cc-tab-extensions").click();
   await page.locator(`[data-restorable-package='${PACKAGE}'] [data-package-restore]`).click();
   await expect.poll(() => accent(page), { timeout: 15_000 }).toBe("#7AA2F7");
   await page.locator("#cc-tab-experience").click();
-  await expect(page.locator(`[data-theme-ref='${DUSK_REF}']`)).toHaveAttribute("aria-pressed", "true");
+  await expect(dusk()).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("[data-theme-fallback]")).toHaveCount(0);
-  expect(await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
+  await notReloaded();
+});
 
-  /*
-   * An update whose dark accent is too dim to read is refused where it would be drawn: the page shows Clark Default
-   * and says why, naming the pairs that fail, and the choice is kept. The update is installed from outside this page,
-   * as another device would, and reaches it when the window is looked at again.
-   */
+/*
+ * An update whose dark accent is too dim to read is refused where it would be drawn: the page shows Clark Default
+ * and says why, naming the pairs that fail, and the choice is kept. The update is installed from outside this page,
+ * as another device would, and reaches it when the window is looked at again.
+ */
+test("an update too dim to read is refused where it would be drawn, with the failing pairs named", async ({ request }) => {
   const headers = { authorization: `Bearer ${token()}` };
   const dim = await request.post(`${GATEWAY}/packages/install`, {
     headers,
@@ -225,14 +322,13 @@ test("a package theme restyles the window in place, falls back when removed or u
   expect(dim.ok(), `install answered ${String(dim.status())}: ${await dim.text()}`).toBe(true);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => accent(page), { timeout: 15_000 }).toBe(clarkAccent);
-  const unreadable = page.locator("[data-theme-fallback='THEME_LOW_CONTRAST']");
-  await expect(unreadable).toBeVisible({ timeout: 15_000 });
-  await expect(unreadable).toHaveAttribute("role", "status");
-  await expect(unreadable).toContainText("Clark Default");
-  await expect(unreadable).toContainText("khó đọc");
-  await unreadable.locator("summary").click();
+  await expect(unreadable()).toBeVisible({ timeout: 15_000 });
+  await expect(unreadable()).toHaveAttribute("role", "status");
+  await expect(unreadable()).toContainText("Clark Default");
+  await expect(unreadable()).toContainText("khó đọc");
+  await unreadable().locator("summary").click();
   // One failing pair per line, worded and numbered in Vietnamese from the pairs the node sent as data.
-  const pairs = unreadable.locator("[data-theme-contrast] li");
+  const pairs = unreadable().locator("[data-theme-contrast] li");
   await expect(pairs).toHaveText([
     "Chữ nhấn trên nền trang (tối): 2,00:1, cần 4,5:1",
     "Chữ nhấn trên nền cửa sổ (tối): 1,82:1, cần 4,5:1",
@@ -242,14 +338,14 @@ test("a package theme restyles the window in place, falls back when removed or u
     "Nhãn nút trên nút màu nhấn (tối): 2,00:1, cần 4,5:1",
   ]);
   // Nothing of the node's English message reaches a Vietnamese page.
-  const noticeText = await unreadable.innerText();
+  const noticeText = await unreadable().innerText();
   expect(noticeText).not.toMatch(/\b(accent|text|page|needs|scheme|colou?rs?|dark|light|theme|close to read)\b/i);
   // The list of themes Clark could not read words the same pairs the same way.
   await expect(page.locator(`[data-theme-problem='${DUSK_REF}']`)).toContainText("Chữ nhấn trên nền trang (tối): 2,00:1, cần 4,5:1");
   await expect(page.locator(`[data-theme-problem='${DUSK_REF}']`)).not.toContainText("accent text");
-  await expect(page.locator(`[data-theme-ref='${DUSK_REF}']`)).toHaveCount(0);
+  await expect(dusk()).toHaveCount(0);
   const showNotice = async (): Promise<void> => {
-    await unreadable.scrollIntoViewIfNeeded();
+    await unreadable().scrollIntoViewIfNeeded();
     await expect
       .poll(() => page.evaluate(() => document.getAnimations().filter((animation) => animation instanceof CSSTransition).length))
       .toBe(0);
@@ -267,8 +363,10 @@ test("a package theme restyles the window in place, falls back when removed or u
   await page.screenshot({ path: join(EVIDENCE, "theme-fallback-low-contrast-390-dark.png") });
   await recordOverflow(page, "theme-fallback-low-contrast-390-dark");
   await page.setViewportSize({ width: 1280, height: 900 });
+});
 
-  // Rolling the update back draws the kept choice again.
+test("rolling the update back draws the kept choice again, and the conversation was never touched", async ({ request }) => {
+  const headers = { authorization: `Bearer ${token()}` };
   const rolledBack = await request.post(`${GATEWAY}/packages/${encodeURIComponent(PACKAGE)}/rollback`, { headers });
   expect(rolledBack.ok(), `rollback answered ${String(rolledBack.status())}: ${await rolledBack.text()}`).toBe(true);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -281,9 +379,10 @@ test("a package theme restyles the window in place, falls back when removed or u
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-composer]")).toHaveValue(DRAFT);
   await pinSurvived();
-  expect(await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
+  await notReloaded();
 
   // Unpinned again, so a spec after this one finds the shelf as it was.
   await page.locator(`[data-unpin='${pinId}']`).click();
+  unpinnedByJourney = true;
   await expect(page.locator(`[data-pin-id='${pinId}']`)).toHaveCount(0);
 });

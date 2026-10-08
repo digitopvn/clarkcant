@@ -1,10 +1,11 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 
-import { WIDGET_DEV_DIAGNOSTIC_CODES, type WidgetDevSessionView } from "@clarkcant/contracts";
+import { WIDGET_DEV_DIAGNOSTIC_CODES, widgetDevRootRefusedCode, type WidgetDevSessionView } from "@clarkcant/contracts";
 
-import type { GatewayClient } from "./api.ts";
+import type { WidgetDevSessionRead } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
+import { nodeViewRefusalText } from "./node-view-refusal.ts";
 
 /**
  * Host chrome beside a widget frame that runs a widget dev session's build: which build is on screen, and, when it is
@@ -56,13 +57,27 @@ export function widgetDevDiagnosticText(diagnostic: { code?: string | undefined;
   return known === undefined ? diagnostic.message : t(`shell.dev.diagnostic.${known}`);
 }
 
+/**
+ * What the status reads of a session: everything but where its folder is and where it is placed, which the status never
+ * shows. A detached window is given exactly this (the desktop host drops the folder path), and the conversation's full
+ * read satisfies it too.
+ */
+export type WidgetDevStatusView = Omit<WidgetDevSessionRead, "root" | "placed">;
+
 /** The one line the status says, and whether it is a notice (something is not current) rather than plain status. */
-export function widgetDevStatusLine(view: WidgetDevSessionView, t: Translate): { text: string; notice: boolean } {
+export function widgetDevStatusLine(view: Omit<WidgetDevSessionView, "root" | "placed">, t: Translate): { text: string; notice: boolean } {
   const running = view.running?.generation;
   const latest = view.latest?.generation ?? running ?? 0;
   if (view.status === "stopped") {
     const base = running === undefined ? t("shell.dev.stoppedNothing") : fill(t("shell.dev.stopped"), { generation: running });
-    const reason = view.stopReason === undefined || view.stopReason === "requested" ? undefined : t(`shell.dev.stopReason.${view.stopReason}`);
+    // A folder refused at a restart says which check refused it, since that decides whether choosing it again helps.
+    const refusedCode = widgetDevRootRefusedCode(view);
+    const reason =
+      view.stopReason === undefined || view.stopReason === "requested"
+        ? undefined
+        : refusedCode === undefined
+          ? t(`shell.dev.stopReason.${view.stopReason}`)
+          : t(`shell.dev.stopReason.root-refused.${refusedCode}`);
     return reason === undefined ? { text: base, notice: false } : { text: `${base} ${reason}`, notice: true };
   }
   const shown = running ?? "—";
@@ -80,18 +95,31 @@ export function widgetDevStatusLine(view: WidgetDevSessionView, t: Translate): {
 }
 
 export interface WidgetDevStatusProps {
-  client: Pick<GatewayClient, "widgetDevSession">;
+  /** The conversation's client, or a detached window's relay that answers the same view without the folder path. */
+  client: { widgetDevSession: (sessionId: string) => Promise<WidgetDevStatusView> };
   sessionId: string;
   /** Told when the node runs another generation of the session, so the surface re-reads and remounts the frame. */
   onRunningChange: () => void;
 }
 
+/**
+ * What the line says when the session's status could not be read. A view this app does not read names which Clark each
+ * side runs; anything else is the node not answering. The widget keeps running what it shows either way.
+ */
+export function widgetDevUnreachableText(cause: unknown, t: Translate): string {
+  return nodeViewRefusalText(cause, t, "shell.dev.viewUnreadable") ?? t("shell.dev.unreachable");
+}
+
 export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDevStatusProps): ReactElement | null {
   const t = useT();
-  const [view, setView] = useState<WidgetDevSessionView | undefined>(undefined);
-  const [unreachable, setUnreachable] = useState(false);
+  const [view, setView] = useState<WidgetDevStatusView | undefined>(undefined);
+  // Why the status is not known, as the sentence the line shows; undefined while it is.
+  const [unreachable, setUnreachable] = useState<string | undefined>(undefined);
   const seenRunning = useRef<string | undefined>(undefined);
   const changed = useRef(onRunningChange);
+  // Read when a poll fails, in the language the person has then, without restarting the polling when it changes.
+  const words = useRef(t);
+  words.current = t;
   changed.current = onRunningChange;
 
   useEffect(() => {
@@ -102,15 +130,16 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
         const next = await client.widgetDevSession(sessionId);
         if (cancelled) return;
         setView(next);
-        setUnreachable(false);
+        setUnreachable(undefined);
         const running = next.running?.digest;
         if (running !== undefined && seenRunning.current !== undefined && running !== seenRunning.current) changed.current();
         if (running !== undefined) seenRunning.current = running;
         timer = setTimeout(() => void read(), next.status === "live" ? WIDGET_DEV_POLL_MS : STOPPED_POLL_MS);
-      } catch {
+      } catch (cause) {
         if (cancelled) return;
-        // The widget keeps running what it shows; only the status is unknown, and said so.
-        setUnreachable(true);
+        // The widget keeps running what it shows; only the status is unknown, and said so. A view this app does not read
+        // says which version is newer instead of only that it could not be read.
+        setUnreachable(widgetDevUnreachableText(cause, words.current));
         timer = setTimeout(() => void read(), RETRY_MS);
       }
     };
@@ -121,14 +150,20 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
     };
   }, [client, sessionId]);
 
-  if (unreachable) {
+  if (unreachable !== undefined) {
     return (
       <p className="cc-freshness" role="status" data-widget-dev-status="unreachable" style={{ margin: 0 }}>
-        {t("shell.dev.unreachable")}
+        {unreachable}
       </p>
     );
   }
   if (view === undefined) return null;
+  return <WidgetDevStatusReport view={view} />;
+}
+
+/** What the status says for one read of the session: drawn from the view alone, so it can be checked without a node. */
+export function WidgetDevStatusReport({ view }: { view: WidgetDevStatusView }): ReactElement {
+  const t = useT();
   const line = widgetDevStatusLine(view, t);
   const problems = view.lastBuild?.ok === false ? view.lastBuild.diagnostics : [];
   const more = view.lastBuild?.ok === false ? (view.lastBuild.diagnosticsMore ?? 0) : 0;
@@ -141,9 +176,15 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
       data-widget-dev-status={view.status}
       data-widget-dev-generation={view.running?.generation ?? ""}
       data-showing-last-good={view.showingLastKnownGood ? "true" : "false"}
-      data-live-notice={line.notice ? "true" : undefined}
+      data-live-notice={line.notice || view.unreadFields !== undefined ? "true" : undefined}
     >
       <p style={{ margin: 0 }}>{line.text}</p>
+      {/* A newer node sent more than this app reads: said, so the line is never taken for the whole session. */}
+      {view.unreadFields !== undefined && (
+        <p style={{ margin: 0 }} data-widget-dev-node-newer={String(view.unreadFields.count)}>
+          {t("shell.dev.nodeNewer")}
+        </p>
+      )}
       {wider && <p style={{ margin: 0 }} data-widget-dev-wider="true">{t("shell.dev.wider")}</p>}
       {problems.length > 0 && (
         <details data-widget-dev-problems="true">

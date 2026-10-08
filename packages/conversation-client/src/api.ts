@@ -82,7 +82,16 @@ import {
   type VoiceCapabilities,
   type WidgetDevFolderForgetResult,
   type WidgetDevSessionCreate,
+  type UnreadListingFields,
   type WidgetDevSessionView,
+  type Notice,
+  compareReleaseVersions,
+  memoryRecordSchema,
+  readNodeView,
+  readNodeViewList,
+  semverSchema,
+  suggestionSchema,
+  unreadFieldsAcross,
   widgetDevFolderForgetResultSchema,
   widgetDevSessionViewSchema,
 } from "@clarkcant/contracts";
@@ -103,6 +112,12 @@ import {
   connectTerminalSocket,
   terminalSocketUrl,
 } from "./terminal-socket.ts";
+
+/**
+ * A widget dev session as this client read it. `unreadFields` is set when the node sent top-level fields this client does
+ * not know (a newer node): they were left out, and the surface says so rather than showing the session as complete.
+ */
+export type WidgetDevSessionRead = WidgetDevSessionView & { unreadFields?: UnreadListingFields };
 
 /** Where the key in effect for one credential comes from: the key saved in the node, its environment, or neither. */
 export type CredentialSource = "vault" | "environment" | "none";
@@ -126,6 +141,11 @@ export interface GatewayClientOptions {
   token: string;
   /** Injected so tests and the E2E harness can substitute a transport. */
   fetchImpl?: typeof fetch;
+  /**
+   * The Clark version this app was built as. Compared with the node's own (`GET /node`) when an answer from the node does
+   * not read, so the app can say the node is newer than it rather than only that the answer did not read.
+   */
+  appVersion?: string;
 }
 /** What a live composed surface resolves to right now. */
 /**
@@ -225,6 +245,15 @@ export interface IsolatedFrameLiveResponse {
    * beside the frame (`widgetDevSession`). The frame is told nothing about it.
    */
   development?: { sessionId: string };
+}
+
+/**
+ * A frame read with its grant's expiry in this client's clock (`urlExpiresAt`), counted from `sentAt`, the moment the
+ * request went out: the node starts the grant's lifetime later than that, so the deadline can only be early, never late.
+ */
+export function withFrameExpiry(live: IsolatedFrameLiveResponse, sentAt: number): IsolatedFrameLiveResponse {
+  if (live.frame === null || typeof live.frame.urlExpiresInMs !== "number") return live;
+  return { ...live, frame: { ...live.frame, urlExpiresAt: sentAt + live.frame.urlExpiresInMs } };
 }
 
 export type FrameStateStatus =
@@ -728,6 +757,74 @@ export interface TableExportRequest {
   columns?: string[];
 }
 
+/*
+ * How the node's answers to a widget's file, job and token requests are read. Module functions rather than client
+ * methods, so a detached window that receives the same answers through the desktop host's relays reads them the same
+ * way, and refuses the same malformed ones.
+ */
+
+/** The artifact reference an answer carries, or a refusal when it carries none that parses. */
+export function readArtifactRef(body: { artifactRef?: unknown } | undefined): ArtifactRef {
+  const parsed = artifactRefSchema.safeParse(body?.artifactRef);
+  if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable artifact reference");
+  return parsed.data;
+}
+
+/** A read of an artifact's range: its reference, the bytes, and whether the file ended. */
+export function readArtifactRange(body: { artifactRef?: unknown; contentBase64?: unknown; eof?: unknown } | undefined): {
+  artifactRef: ArtifactRef;
+  contentBase64: string;
+  eof: boolean;
+} {
+  if (typeof body?.contentBase64 !== "string" || typeof body.eof !== "boolean") {
+    throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered a read without its bytes");
+  }
+  return { artifactRef: readArtifactRef(body), contentBase64: body.contentBase64, eof: body.eof };
+}
+
+/** An attach: the artifact's reference and the attachment the composer shows. */
+export function readAttachedArtifact(body: { artifactRef?: unknown; attachmentRef?: unknown } | undefined): {
+  artifactRef: ArtifactRef;
+  attachmentRef: AttachmentRef;
+} {
+  // Tolerant of a newer node's field on the reference, which binds nothing; the file is attached either way.
+  const attachment = readNodeView(attachmentRefSchema, body?.attachmentRef);
+  if (!attachment.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node attached the file but returned no attachment");
+  return { artifactRef: readArtifactRef(body), attachmentRef: attachment.data };
+}
+
+/** One job's snapshot, as the frame receives it. */
+export function readWidgetJob(body: { job?: unknown } | undefined): JobSnapshot {
+  // Tolerant of a newer node's top-level field, which is left out before the snapshot reaches the frame; `status`,
+  // `progress` and the result references stay strict.
+  const parsed = readNodeView(jobSnapshotWireSchema, body?.job);
+  if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job snapshot");
+  return parsed.data;
+}
+
+/** The jobs this widget's own bindings started, newest first. */
+export function readWidgetJobs(body: { jobs?: unknown } | undefined): JobSnapshot[] {
+  const parsed = readNodeViewList(jobSnapshotWireSchema, body?.jobs);
+  if (!parsed.success || parsed.data.length > JOB_LIST_LIMIT) {
+    throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job list");
+  }
+  return parsed.data;
+}
+
+/** A browser token the node issued, under the name the frame reads its value by. */
+export function readBrowserToken(body: { token?: unknown } | undefined): BrowserToken {
+  const raw = body?.token;
+  const token = isRecord(raw) ? raw : {};
+  const parsed = browserTokenWireSchema.safeParse({
+    provider: token["provider"],
+    value: token["token"],
+    scopes: token["scopes"],
+    expiresAt: token["expiresAt"],
+  });
+  if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable token");
+  return parsed.data;
+}
+
 /**
  * The file name a `Content-Disposition` header offers, preferring the RFC 5987 UTF-8 form.
  *
@@ -773,8 +870,59 @@ export class GatewayError extends Error {
   }
 }
 
-/** `GET /inbox` as read: the response, and how many of its items did not match the contract and were left out. */
-export type InboxRead = InboxResponse & { unreadable?: number };
+/** The code a `NodeViewUnreadable` carries. */
+export const NODE_VIEW_UNREADABLE = "NODE_VIEW_UNREADABLE";
+
+/**
+ * An answer from the node that this app does not read: a field it knows with a value it does not (a new status), a
+ * newer field where nothing may be left out, or a shape it does not know at all. The usual cause is a node newer than
+ * the app, as when the desktop app talks to a node on another machine that was updated first.
+ *
+ * It carries both versions so a surface can say which case it is (`nodeViewRefusalText`): `nodeNewer` is true when the
+ * node runs a later Clark than the app, false when it does not, and undefined when either version is not known. The
+ * schema's own issues go to the console, never into the sentence: they are the contract's words, not the person's.
+ */
+export class NodeViewUnreadable extends GatewayError {
+  readonly nodeVersion: string | undefined;
+  readonly appVersion: string | undefined;
+  readonly nodeNewer: boolean | undefined;
+
+  constructor(versions: { node: string | undefined; app: string | undefined }, cause: unknown) {
+    const nodeNewer =
+      !isClarkVersion(versions.node) || !isClarkVersion(versions.app)
+        ? undefined
+        : compareReleaseVersions(versions.node, versions.app) > 0;
+    super(
+      502,
+      NODE_VIEW_UNREADABLE,
+      nodeNewer === true
+        ? `this app (Clark ${String(versions.app)}) cannot read the node's answer: the node runs Clark ${String(versions.node)}, which is newer; update the app`
+        : "this app cannot read the node's answer; the node may be newer than the app",
+    );
+    this.name = "NodeViewUnreadable";
+    this.cause = cause;
+    this.nodeVersion = versions.node;
+    this.appVersion = versions.app;
+    this.nodeNewer = nodeNewer;
+  }
+}
+
+/** The longest Clark version this app puts into a sentence; a longer one is treated as not known. */
+export const CLARK_VERSION_MAX = 64;
+
+/** A Clark version this app can name: a release version of bounded length. */
+function isClarkVersion(value: unknown): value is string {
+  return typeof value === "string" && value.length <= CLARK_VERSION_MAX && semverSchema.safeParse(value).success;
+}
+
+/** An answer the node gave as a JSON object, as opposed to a list, a value or nothing. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** `GET /inbox` as read: the response, how many of its items did not match the contract and were left out, and the
+ * top-level fields a newer node sent on the inbox or its notices that this app does not know and left out. */
+export type InboxRead = InboxResponse & { unreadable?: number; unreadFields?: UnreadListingFields };
 
 /**
  * `GET /inbox`, parsed item by item.
@@ -783,6 +931,12 @@ export type InboxRead = InboxResponse & { unreadable?: number };
  * then parsed on its own: one that does not match the contract (a newer node's field, or a node bug) is left out and
  * counted, rather than hiding every question and approval behind one bad row. Items that do parse are exactly what the
  * contract says, so no button is built from a field that was not there.
+ *
+ * A newer node's top-level field on the inbox itself, or on a notice, is left out and reported in `unreadFields`
+ * (`readNodeView`): a notice is a record whose actions the node works out, and everything inside it that binds (its
+ * subject, actions and reach change) stays strict. A waiting item is read strictly, field for field: it is an approval or
+ * a question, and one read without a field could ask the person to approve something other than what the node will run.
+ * Such an item is left out and counted instead, and stays answerable on its card in the conversation.
  */
 export function parseInboxResponse(raw: unknown): InboxRead {
   const body = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined;
@@ -793,7 +947,15 @@ export function parseInboxResponse(raw: unknown): InboxRead {
   if (body === undefined || !Array.isArray(waiting) || !Array.isArray(notices) || !Array.isArray(snoozed)) {
     return inboxResponseSchema.parse(raw);
   }
-  const envelope = inboxResponseSchema.parse({ ...body, waiting: [], notices: [], snoozed: [] });
+  const envelopeRead = readNodeView(inboxResponseSchema, { ...body, waiting: [], notices: [], snoozed: [] });
+  if (!envelopeRead.success) throw envelopeRead.error;
+  const envelope = envelopeRead.data;
+  const unreadFields: (UnreadListingFields | undefined)[] = [envelopeRead.unreadFields];
+  const readNotice = (item: unknown): { success: true; data: Notice } | { success: false; error: unknown } => {
+    const read = readNodeView(noticeSchema, item);
+    if (read.success) unreadFields.push(read.unreadFields);
+    return read;
+  };
   let unreadable = 0;
   const each = <T,>(items: unknown[], parse: (item: unknown) => { success: true; data: T } | { success: false; error: unknown }): T[] =>
     items.flatMap((item) => {
@@ -804,13 +966,15 @@ export function parseInboxResponse(raw: unknown): InboxRead {
       console.error("inbox: an item does not match the contract and is not shown", result.error);
       return [];
     });
-  return {
+  const read: InboxRead = {
     ...envelope,
     waiting: each(waiting, (item) => waitingItemSchema.safeParse(item)),
-    notices: each(notices, (item) => noticeSchema.safeParse(item)),
-    snoozed: each(snoozed, (item) => noticeSchema.safeParse(item)),
+    notices: each(notices, readNotice),
+    snoozed: each(snoozed, readNotice),
     ...(unreadable === 0 ? {} : { unreadable }),
   };
+  const left = unreadFieldsAcross(unreadFields);
+  return left === undefined ? read : { ...read, unreadFields: left };
 }
 
 /** What a message carries besides its text. */
@@ -862,10 +1026,50 @@ export class GatewayClient {
   readonly #packageListeners = new Set<() => void>();
   readonly #modelListeners = new Set<() => void>();
 
+  readonly #appVersion: string | undefined;
+  /** The node's version as last asked: a lookup in flight, or one that answered. A failed lookup is never kept. */
+  #nodeVersion: { answer: Promise<string | undefined>; settled: boolean } | undefined;
+
   constructor(options: GatewayClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
     this.#token = options.token;
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.#appVersion = options.appVersion;
+  }
+
+  /**
+   * The Clark version the node runs (`clarkVersion` on `GET /node`), or undefined when it does not say (a node from
+   * before it did, or a build that cannot read its own record), says something that is not a version of at most
+   * `CLARK_VERSION_MAX` characters, or cannot be asked. Only a version is kept, and concurrent askers share one lookup;
+   * a failed lookup is asked again next time, so one network blip does not pin "probably newer".
+   */
+  nodeVersion(): Promise<string | undefined> {
+    if (this.#nodeVersion !== undefined) return this.#nodeVersion.answer;
+    const entry: { answer: Promise<string | undefined>; settled: boolean } = { answer: Promise.resolve(undefined), settled: false };
+    entry.answer = this.#call<{ clarkVersion?: unknown }>("GET", "/node")
+      .then(
+        (node) => (isClarkVersion(node.clarkVersion) ? node.clarkVersion : undefined),
+        () => undefined,
+      )
+      .then((version) => {
+        entry.settled = true;
+        if (version === undefined && this.#nodeVersion === entry) this.#nodeVersion = undefined;
+        return version;
+      });
+    this.#nodeVersion = entry;
+    return entry.answer;
+  }
+
+  /**
+   * The error for an answer this app does not read, with both versions in it. The schema's issues go to the console for
+   * whoever debugs it; the error carries no text of theirs.
+   */
+  async #unreadable(cause: unknown): Promise<NodeViewUnreadable> {
+    console.error("the node's answer does not match this app's contract", cause);
+    // Asked again on every refusal, unless a lookup is in flight: the node may have updated itself at the same address
+    // since it was last asked, and a stale version would tell the person the wrong thing. Refusals are rare.
+    if (this.#nodeVersion?.settled === true) this.#nodeVersion = undefined;
+    return new NodeViewUnreadable({ node: await this.nodeVersion(), app: this.#appVersion }, cause);
   }
 
   /**
@@ -1079,7 +1283,14 @@ export class GatewayClient {
    */
   async suggestions(): Promise<Suggestion[]> {
     const body = await this.#call<unknown>("GET", "/suggestions");
-    return suggestionsResponseSchema.parse(body).items;
+    // Tolerant of a newer node's fields on the answer and on each chip, which binds nothing: pressing one sends its
+    // `text`, which is read as strictly as before. What was left out is not said: a chip is a hint, not a record.
+    const envelope = readNodeView(suggestionsResponseSchema, { ...(isRecord(body) ? body : {}), items: [] });
+    const items = readNodeViewList(suggestionSchema, isRecord(body) ? body["items"] : undefined);
+    if (!isRecord(body) || !envelope.success || !items.success) {
+      throw await this.#unreadable(!envelope.success ? envelope.error : !items.success ? items.error : undefined);
+    }
+    return items.data;
   }
 
   /**
@@ -1090,14 +1301,21 @@ export class GatewayClient {
    * would be a blank panel with nothing to act on.
    */
   async listMemories(): Promise<
-    | { ok: true; items: MemoryRecord[]; counts: Record<string, number> }
-    | { ok: false; reason: string }
+    | { ok: true; items: MemoryRecord[]; counts: Record<string, number>; unreadFields?: UnreadListingFields }
+    | { ok: false; reason: string; cause?: NodeViewUnreadable }
   > {
     try {
       const body = await this.#call<unknown>("GET", "/memory");
-      const parsed = memoryListSchema.safeParse(body);
-      if (!parsed.success) return { ok: false, reason: "the node's answer was not a list of remembered things" };
-      return { ok: true, items: parsed.data.items, counts: parsed.data.counts };
+      // Tolerant of a newer node's fields on the list and on each record: a record binds nothing, and removing one names
+      // it by id alone. `counts` stays strict, so a kind this app does not know refuses the list.
+      const envelope = readNodeView(memoryListSchema, { ...(isRecord(body) ? body : {}), items: [] });
+      const items = readNodeViewList(memoryRecordSchema, isRecord(body) ? body["items"] : undefined);
+      if (!isRecord(body) || !envelope.success || !items.success) {
+        const cause = await this.#unreadable(!envelope.success ? envelope.error : !items.success ? items.error : undefined);
+        return { ok: false, reason: cause.reason, cause };
+      }
+      const unreadFields = unreadFieldsAcross([envelope.unreadFields, items.unreadFields]);
+      return { ok: true, items: items.data, counts: envelope.data.counts, ...(unreadFields === undefined ? {} : { unreadFields }) };
     } catch (cause) {
       return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
     }
@@ -1135,7 +1353,11 @@ export class GatewayClient {
     const params = new URLSearchParams({ trigger: input.trigger, q: input.query });
     if (input.conversationId !== undefined) params.set("conversationId", input.conversationId);
     const body = await this.#call<unknown>("GET", `/composer/suggestions?${params.toString()}`);
-    return composerSuggestionsResponseSchema.parse(body);
+    // The answer's own top level binds nothing and is read tolerantly; each row stays strict, since its reference is
+    // sent back as it is. What the top level left out is not said: the picker has no line for it.
+    const read = readNodeView(composerSuggestionsResponseSchema, body);
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.data;
   }
 
   /**
@@ -1725,8 +1947,7 @@ export class GatewayClient {
       "GET",
       `/conversations/${conversationId}/widgets/${instanceId}/live`,
     );
-    if (live.kind !== "isolated-frame" || live.frame === null || typeof live.frame.urlExpiresInMs !== "number") return live;
-    return { ...live, frame: { ...live.frame, urlExpiresAt: sentAt + live.frame.urlExpiresInMs } };
+    return live.kind === "isolated-frame" ? withFrameExpiry(live, sentAt) : live;
   }
 
   /** The immutable presentation a message captured. Never carries an action binding. */
@@ -1927,6 +2148,14 @@ export class GatewayClient {
   }
 
   /**
+   * Turn one package's instructions off in one project. The node removes exactly that pair from what it stores now, so
+   * a list this screen read earlier never overwrites a change made since; a pair already off answers `removed: false`.
+   */
+  turnOffPackageInstructions(packageId: string, project: string): Promise<{ packageId: string; project: string; removed: boolean }> {
+    return this.#call("POST", "/packages/instructions/turn-off", { packageId, project });
+  }
+
+  /**
    * Start connecting a package's account. Answers the provider's authorization URL, which the caller opens in the system
    * browser; the provider sends that browser back to the node, which finishes the connection itself. Only from this
    * node's own machine, because the browser has to come back over loopback.
@@ -2055,28 +2284,42 @@ export class GatewayClient {
   }
 
   /** A live widget authoring session: its newest build, what runs, and whether that is the last good build. */
-  async widgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("GET", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
+  async widgetDevSession(sessionId: string): Promise<WidgetDevSessionRead> {
+    return this.#readDevSession(this.#call("GET", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
   }
 
   /** Start developing the package in a folder on the node, placed in `conversationId` once a build of it runs. */
-  async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("POST", "/widget-dev/sessions", input));
+  async startWidgetDevSession(input: WidgetDevSessionCreate): Promise<WidgetDevSessionRead> {
+    return this.#readDevSession(this.#call("POST", "/widget-dev/sessions", input));
   }
 
-  /** Take back the person's choice of a folder: Clark may no longer start sessions in it. Person-only on the node. */
+  /**
+   * Take back the person's choice of a folder: Clark may no longer start sessions in it. Person-only on the node.
+   *
+   * Read strictly: the answer says what Clark can still reach (`stillCoveredBy`), and one read without a newer field
+   * could tell the person Clark lost access it still has.
+   */
   async forgetWidgetDevFolder(root: string): Promise<WidgetDevFolderForgetResult> {
-    return widgetDevFolderForgetResultSchema.parse(await this.#call("POST", "/widget-dev/chosen-folders/forget", { root }));
+    const read = widgetDevFolderForgetResultSchema.safeParse(await this.#call("POST", "/widget-dev/chosen-folders/forget", { root }));
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.data;
+  }
+
+  /** A session view, read tolerantly: a newer node's top-level field is left out and said (`unreadFields`). */
+  async #readDevSession(answer: Promise<unknown>): Promise<WidgetDevSessionRead> {
+    const read = readNodeView(widgetDevSessionViewSchema, await answer);
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.unreadFields === undefined ? read.data : { ...read.data, unreadFields: read.unreadFields };
   }
 
   /** Build the session's folder now, rather than on its next save. */
-  async rebuildWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("POST", `/widget-dev/sessions/${encodeURIComponent(sessionId)}/rebuild`));
+  async rebuildWidgetDevSession(sessionId: string): Promise<WidgetDevSessionRead> {
+    return this.#readDevSession(this.#call("POST", `/widget-dev/sessions/${encodeURIComponent(sessionId)}/rebuild`));
   }
 
   /** Stop watching the folder. What runs keeps running where it was placed. */
-  async stopWidgetDevSession(sessionId: string): Promise<WidgetDevSessionView> {
-    return widgetDevSessionViewSchema.parse(await this.#call("DELETE", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
+  async stopWidgetDevSession(sessionId: string): Promise<WidgetDevSessionRead> {
+    return this.#readDevSession(this.#call("DELETE", `/widget-dev/sessions/${encodeURIComponent(sessionId)}`));
   }
 
   claimLiveOwner(
@@ -2208,10 +2451,7 @@ export class GatewayClient {
   }
 
   async getWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<JobSnapshot> {
-    const body = await this.#call<{ job?: unknown }>("GET", this.#jobPath(conversationId, instanceId, jobId));
-    const parsed = jobSnapshotWireSchema.safeParse(body.job);
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job snapshot");
-    return parsed.data;
+    return readWidgetJob(await this.#call<{ job?: unknown }>("GET", this.#jobPath(conversationId, instanceId, jobId)));
   }
 
   async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
@@ -2220,13 +2460,12 @@ export class GatewayClient {
 
   /** The jobs this widget's own bindings started, newest first, as the node owns them. */
   async listWidgetJobs(conversationId: string, instanceId: string): Promise<JobSnapshot[]> {
-    const body = await this.#call<{ jobs?: unknown }>(
-      "GET",
-      `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs`,
+    return readWidgetJobs(
+      await this.#call<{ jobs?: unknown }>(
+        "GET",
+        `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs`,
+      ),
     );
-    const parsed = jobSnapshotWireSchema.array().max(JOB_LIST_LIMIT).safeParse(body.jobs);
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job list");
-    return parsed.data;
   }
 
   #browserTokenPath(conversationId: string, instanceId: string, rest = ""): string {
@@ -2238,30 +2477,14 @@ export class GatewayClient {
    * mounted the frame asks, and the value goes to that frame and nowhere else.
    */
   async requestBrowserToken(conversationId: string, instanceId: string, session: string, request: TokenRequest): Promise<BrowserToken> {
-    const body = await this.#call<{ token?: { provider?: unknown; token?: unknown; scopes?: unknown; expiresAt?: unknown } }>(
-      "POST",
-      this.#browserTokenPath(conversationId, instanceId),
-      { session, request },
+    return readBrowserToken(
+      await this.#call<{ token?: unknown }>("POST", this.#browserTokenPath(conversationId, instanceId), { session, request }),
     );
-    const parsed = browserTokenWireSchema.safeParse({
-      provider: body.token?.provider,
-      value: body.token?.token,
-      scopes: body.token?.scopes,
-      expiresAt: body.token?.expiresAt,
-    });
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable token");
-    return parsed.data;
   }
 
   /** The frame mounted under `session` has gone: the node revokes what it was given. */
   async endBrowserTokens(conversationId: string, instanceId: string, session: string): Promise<void> {
     await this.#call("DELETE", this.#browserTokenPath(conversationId, instanceId, `/${encodeURIComponent(session)}`));
-  }
-
-  #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {
-    const parsed = artifactRefSchema.safeParse(body.artifactRef);
-    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable artifact reference");
-    return parsed.data;
   }
 
   /** Store a file the person chose in host chrome, granted to this instance to read. Person-only on the node. */
@@ -2274,16 +2497,16 @@ export class GatewayClient {
     contentBase64: string;
   }): Promise<ArtifactRef> {
     const { conversationId, instanceId, ...body } = input;
-    return this.#artifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId, "/pick"), body));
+    return readArtifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId, "/pick"), body));
   }
 
   /** An artifact as this instance may see it: refused when its grant is missing, expired or revoked. */
   async describeWidgetArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<ArtifactRef> {
-    return this.#artifactRef(await this.#call("GET", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}`)));
+    return readArtifactRef(await this.#call("GET", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}`)));
   }
 
   async createArtifact(conversationId: string, instanceId: string, input: { mimeType: string; name?: string }): Promise<ArtifactRef> {
-    return this.#artifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId), input));
+    return readArtifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId), input));
   }
 
   async readArtifactRange(
@@ -2293,14 +2516,12 @@ export class GatewayClient {
     range: { offset: number; length: number },
   ): Promise<{ artifactRef: ArtifactRef; contentBase64: string; eof: boolean }> {
     const query = `?offset=${String(range.offset)}&length=${String(range.length)}`;
-    const body = await this.#call<{ artifactRef?: unknown; contentBase64?: unknown; eof?: unknown }>(
-      "GET",
-      this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/content${query}`),
+    return readArtifactRange(
+      await this.#call<{ artifactRef?: unknown; contentBase64?: unknown; eof?: unknown }>(
+        "GET",
+        this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/content${query}`),
+      ),
     );
-    if (typeof body.contentBase64 !== "string" || typeof body.eof !== "boolean") {
-      throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered a read without its bytes");
-    }
-    return { artifactRef: this.#artifactRef(body), contentBase64: body.contentBase64, eof: body.eof };
   }
 
   async writeArtifactChunk(
@@ -2309,13 +2530,13 @@ export class GatewayClient {
     artifactId: string,
     chunk: { offset: number; contentBase64: string },
   ): Promise<ArtifactRef> {
-    return this.#artifactRef(
+    return readArtifactRef(
       await this.#call("POST", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/chunks`), chunk),
     );
   }
 
   async finalizeArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<ArtifactRef> {
-    return this.#artifactRef(
+    return readArtifactRef(
       await this.#call("POST", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/finalize`), {}),
     );
   }
@@ -2333,9 +2554,7 @@ export class GatewayClient {
       // The widget's proposed name, passed on as it is: the node sanitizes it.
       options.name === undefined ? {} : { name: options.name },
     );
-    const attachment = attachmentRefSchema.safeParse(body.attachmentRef);
-    if (!attachment.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node attached the file but returned no attachment");
-    return { artifactRef: this.#artifactRef(body), attachmentRef: attachment.data };
+    return readAttachedArtifact(body);
   }
 
   /** Give back an artifact this instance made. The node refuses one the person chose, or another widget's. */
@@ -2345,7 +2564,7 @@ export class GatewayClient {
 
   /** What the node holds for an artifact this principal owns: its reference, never where its bytes are. */
   async describeArtifact(artifactId: string): Promise<ArtifactRef> {
-    return this.#artifactRef(await this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`));
+    return readArtifactRef(await this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`));
   }
 
   /**
@@ -2543,7 +2762,9 @@ export class GatewayClient {
       body: JSON.stringify(deletionPermit === undefined ? {} : {deletionPermit}),
     });
     const body = await response.json();
+    // Read strictly: the answer may carry a confirmation the person decides on, which no field may be missing from.
     const parsed = conversationDeleteResultSchema.safeParse(body);
+    if (!parsed.success && response.ok) throw await this.#unreadable(parsed.error);
     if (!parsed.success) throw new GatewayError(response.status, "DELETE_UNCONFIRMED", "The deletion result could not be confirmed. Reload the conversation before trying again.");
     return parsed.data;
   }
@@ -2677,12 +2898,21 @@ export class GatewayClient {
    * one item that does not match leaves the rest readable.
    */
   async inbox(): Promise<InboxRead> {
-    return parseInboxResponse(await this.#call("GET", "/inbox"));
+    const body = await this.#call("GET", "/inbox");
+    try {
+      return parseInboxResponse(body);
+    } catch (cause) {
+      throw await this.#unreadable(cause);
+    }
   }
 
   /** The two counts the header mark polls, without the lists behind them. */
   async inboxSummary(): Promise<InboxSummary> {
-    return inboxSummarySchema.parse(await this.#call("GET", "/inbox/summary"));
+    // Two counts and nothing that binds: a newer node's field is left out. The mark has no room to say so; the inbox
+    // it opens does.
+    const read = readNodeView(inboxSummarySchema, await this.#call("GET", "/inbox/summary"));
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.data;
   }
 
   /** Marks the notices that were on screen as read; with no ids, every notice. */
@@ -2751,7 +2981,11 @@ export class GatewayClient {
     source: "click" | "chat" | "voice",
   ): Promise<EffectReconcileResponse> {
     const body = await this.#call<unknown>("POST", `/effects/${encodeURIComponent(effectId)}/reconcile`, { outcome, source });
-    return effectReconcileResponseSchema.parse(body);
+    // Recorded by the time this is read, so a newer node's field is left out rather than turning a done answer into a
+    // failure; `outcome` and `settled` keep their values strict.
+    const read = readNodeView(effectReconcileResponseSchema, body);
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.data;
   }
 
   /**
@@ -2816,7 +3050,12 @@ export class GatewayClient {
         ...(options.source === undefined ? {} : { source: options.source }),
       },
     );
-    return noticeOperationResponseSchema.parse(body);
+    // Carried out by the time this is read, so a newer node's field is left out rather than turning a done answer into a
+    // failure. `action`, `outcome` and `state` keep their values strict: `approval-required` is what tells the person an
+    // install waits for them.
+    const read = readNodeView(noticeOperationResponseSchema, body);
+    if (!read.success) throw await this.#unreadable(read.error);
+    return read.data;
   }
 
   /** Runs background work that failed or was stopped again, once, as new work with the same words. */

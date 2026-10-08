@@ -22,6 +22,8 @@ import type { Database } from "./db.ts";
  * account connection started, made, renewed or ended: the package, the provider and the scopes — never a token or code.
  * `widget-artifact` is a widget instance's file write a machine surface carried: the surface, the instance, the
  * artifact, the operation and how the execution policy or the person decided it — never the bytes.
+ * `instructions` is a package's instruction snippet stated to a model, or withheld from it: the package id and version
+ * and the snippet's name — never its text.
  *
  * `pending` is an outcome still waiting for the person: an approval card was shown, and the decision gets its own line.
  */
@@ -37,7 +39,8 @@ export type AuditKind =
   | "egress"
   | "browser-token"
   | "connection"
-  | "widget-artifact";
+  | "widget-artifact"
+  | "instructions";
 export type AuditOutcome = "done" | "failed" | "refused" | "stopped" | "pending";
 
 export interface AuditEvent {

@@ -1,4 +1,11 @@
-import type { DependencyLockBinding, DirectoryEntry, DirectorySourceRef, Instant, Platform } from "@clarkcant/contracts";
+import type {
+  DependencyLockBinding,
+  DirectoryEntry,
+  DirectorySourceRef,
+  Instant,
+  Platform,
+  RecordedSkippedFacet,
+} from "@clarkcant/contracts";
 
 import { installFromSource, type InstallOutcome } from "./install-from-source.ts";
 import type { InstallDeps } from "./install-lifecycle.ts";
@@ -45,6 +52,8 @@ export interface InstallFromEntryRequest {
   snapshotDigest?: string;
   /** The directory source the entry was listed by; see `InstallFromSourceInput.directorySource`. */
   directorySource?: DirectorySourceRef;
+  /** The facets the fetched package declares that this node skipped; see `InstallFromSourceInput.skippedFacets`. */
+  skippedFacets?: readonly RecordedSkippedFacet[];
 }
 
 /**
@@ -71,6 +80,7 @@ export function installFromEntry(deps: InstallDeps, request: InstallFromEntryReq
     ...(request.widgetIds === undefined ? {} : { widgetIds: request.widgetIds }),
     ...(request.snapshotDigest === undefined ? {} : { snapshotDigest: request.snapshotDigest }),
     ...(request.directorySource === undefined ? {} : { directorySource: request.directorySource }),
+    ...(request.skippedFacets === undefined ? {} : { skippedFacets: request.skippedFacets }),
     // One plan per package version, so two turns that ask for the same package share it rather than installing it
     // twice — which is what the requirement key exists for.
     requirementKey: `pkg:${request.entry.packageId}@${request.entry.version}`,

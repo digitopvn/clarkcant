@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { BROKER_RELAY_VERBS } from "../src/detached-window.mjs";
 import {
   contentSecurityPolicy,
   createWindowOptions,
+  DETACHED_WINDOW_CHANNELS,
   IPC_CHANNELS,
   normalizeExternalUrl,
   reviewCredentialRequest,
@@ -115,11 +117,38 @@ describe("the window's policy is applied to the window's documents", () => {
     expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
   });
 
+  const NODE = { nodeOrigin: "http://127.0.0.1:8765" };
+  const FRAME_URL = "http://127.0.0.1:8765/frame/grant_abc/widgets/main/index.html";
+
   it("leaves a framed widget document its own policy, which the window's would refuse outright", () => {
     const responseHeaders = { "content-security-policy": [WIDGET_POLICY] };
-    const headers = withContentSecurityPolicy({ resourceType: "subFrame", responseHeaders }, POLICY);
+    const headers = withContentSecurityPolicy({ resourceType: "subFrame", url: FRAME_URL, responseHeaders }, POLICY, NODE);
     expect(headers).toEqual(responseHeaders);
     expect(headers["Content-Security-Policy"]).toBeUndefined();
+  });
+
+  it("adds the window's policy to a framed document that is not one of the node's widget frames", () => {
+    const responseHeaders = { "content-security-policy": [WIDGET_POLICY] };
+    for (const url of [
+      "http://127.0.0.1:8765/conversations/c1",
+      "http://127.0.0.1:9999/frame/grant_abc/index.html",
+      "https://example.com/frame/grant_abc/index.html",
+      undefined,
+    ]) {
+      const headers = withContentSecurityPolicy({ resourceType: "subFrame", url, responseHeaders }, POLICY, NODE);
+      expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
+    }
+    // No node known: no frame keeps its own policy alone.
+    const unknownNode = withContentSecurityPolicy({ resourceType: "subFrame", url: FRAME_URL, responseHeaders }, POLICY);
+    expect(unknownNode["Content-Security-Policy"]).toEqual([POLICY]);
+  });
+
+  it("adds the window's policy to a widget frame whose own policy is empty", () => {
+    for (const empty of [[""], ["   "], [], ""]) {
+      const responseHeaders = { "Content-Security-Policy": empty };
+      const headers = withContentSecurityPolicy({ resourceType: "subFrame", url: FRAME_URL, responseHeaders }, POLICY, NODE);
+      expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
+    }
   });
 
   it("gives a framed document with no policy of its own the window's, so nothing is framed with less", () => {
@@ -311,6 +340,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:getStatus",
       "desktop:minimizeWindow",
       "desktop:notify",
+      "desktop:notifyPackagesChanged",
       "desktop:openExternal",
       "desktop:pickDirectory",
       "desktop:pickFile",
@@ -323,10 +353,70 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:setKeepRunning",
       "desktop:setWindowMode",
       "desktop:updateAppearance",
+      "detached:artifacts.attach",
+      "detached:artifacts.create",
+      "detached:artifacts.describe",
+      "detached:artifacts.discard",
+      "detached:artifacts.export",
+      "detached:artifacts.finalize",
+      "detached:artifacts.pick",
+      "detached:artifacts.read",
+      "detached:artifacts.write",
       "detached:bootstrap",
+      "detached:dev.session",
+      "detached:frame.read",
       "detached:intent",
+      "detached:jobs.cancel",
+      "detached:jobs.get",
+      "detached:jobs.list",
       "detached:release",
+      "detached:semantic.publish",
+      "detached:state.save",
+      "detached:tokens.end",
+      "detached:tokens.request",
     ]);
+  });
+
+  it("lets only the detached document use each detached channel, and refuses it every desktop channel", () => {
+    const detachedUrl = "file:///Applications/clarkcant/shell.html?detached=1";
+    const relays = [
+      "detached:frame.read",
+      "detached:state.save",
+      "detached:semantic.publish",
+      "detached:dev.session",
+      ...BROKER_RELAY_VERBS.map((verb) => `detached:${verb}`),
+    ];
+    expect(DETACHED_WINDOW_CHANNELS).toEqual(expect.arrayContaining(relays));
+    for (const channel of DETACHED_WINDOW_CHANNELS) {
+      expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, detachedUrl).allowed).toBe(true);
+      // The conversation's own document may not ask for them, nor may a frame inside the detached window.
+      expect(reviewIpcCall(sender(SHELL_URL), channel, SHELL_URL, detachedUrl).allowed).toBe(false);
+      expect(reviewIpcCall(sender(detachedUrl, frame(detachedUrl)), channel, SHELL_URL, detachedUrl).allowed).toBe(false);
+      // With no detached window open there is no document entitled to them at all.
+      expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, undefined).allowed).toBe(false);
+    }
+    for (const channel of IPC_CHANNELS.filter((name) => name.startsWith("desktop:"))) {
+      expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, detachedUrl).allowed).toBe(false);
+    }
+  });
+
+  it("offers no generic node call, no external link and no hand-over of a token to a detached window", () => {
+    for (const refused of ["detached:openExternal", "detached:node", "detached:getSession", "detached:pickDirectory", "detached:timeline"]) {
+      expect(IPC_CHANNELS).not.toContain(refused);
+    }
+    // Clark's performs are not relayed to a detached window yet.
+    expect(IPC_CHANNELS.some((name) => /^detached:perform/.test(name))).toBe(false);
+    // Every file, job and token relay names its own verb: none takes a path, a conversation or an instance to act on.
+    expect(IPC_CHANNELS.filter((name) => /^detached:(artifacts|jobs|tokens)\./.test(name)).sort()).toEqual(
+      BROKER_RELAY_VERBS.map((verb) => `detached:${verb}`).sort(),
+    );
+  });
+
+  it("lets only the conversation's document tell the desktop the packages changed", () => {
+    const detachedUrl = "file:///Applications/clarkcant/shell.html?detached=1";
+    expect(reviewIpcCall(sender(SHELL_URL), "desktop:notifyPackagesChanged", SHELL_URL, detachedUrl).allowed).toBe(true);
+    expect(reviewIpcCall(sender(detachedUrl), "desktop:notifyPackagesChanged", SHELL_URL, detachedUrl).allowed).toBe(false);
+    expect(reviewIpcCall(sender(SHELL_URL, frame(SHELL_URL)), "desktop:notifyPackagesChanged", SHELL_URL, detachedUrl).allowed).toBe(false);
   });
 });
 

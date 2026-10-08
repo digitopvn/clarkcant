@@ -1,7 +1,10 @@
+import { spawn } from "node:child_process";
 import type * as fs from "node:fs";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import type * as fsPromises from "node:fs/promises";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type * as os from "node:os";
+import type * as core from "@clarkcant/core";
 import { tmpdir } from "node:os";
 import { join, parse, resolve, sep } from "node:path";
 
@@ -22,23 +25,41 @@ import {
   DIRECTORY_FEED_FORMAT,
   EXECUTION_POLICY_PREFERENCE_KEY,
   OFFICIAL_MARKETPLACE_FEED_URL,
+  activeGenerations,
+  cachedLocalSnapshotPath,
   customFeedId,
+  digestOfDirectory,
   listInstalledPackages,
   refreshDirectory,
+  removeLocalSnapshot,
   setPreference,
   writeRegisteredPreference,
 } from "@clarkcant/core";
 
-import { createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
-import { WIDGET_DEV_STORE_MAX, readDevSessions, writeDevSessions } from "../src/application/widget-dev-store.ts";
+import { SNAPSHOT_REMOVAL, createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
+import {
+  WIDGET_DEV_SNAPSHOTS_MAX,
+  WIDGET_DEV_STORE_MAX,
+  readDevSessions,
+  readOrphanedSnapshots,
+  writeDevSessions,
+  writeOrphanedSnapshots,
+} from "../src/application/widget-dev-store.ts";
 import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
+import { holdDirectory } from "./hold-directory.ts";
 
 /** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+/**
+ * Seen as the runtime starts to remove a path, in either form, before the removal itself runs. The promise form waits
+ * for what it returns, so a test can hold a removal (`options` are the ones the runtime asked for).
+ */
+const removal = vi.hoisted(() => ({ starting: undefined as ((path: string, options?: fs.RmOptions) => void | Promise<void>) | undefined }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -48,8 +69,31 @@ vi.mock("node:fs", async (importOriginal) => {
     }
     return actual.statSync(path, options);
   }) as typeof actual.statSync;
-  return { ...actual, statSync, default: { ...actual, statSync } };
+  const rmSync = ((path: fs.PathLike, options?: fs.RmOptions) => {
+    void removal.starting?.(resolve(String(path)), options);
+    actual.rmSync(path, options);
+  }) as typeof actual.rmSync;
+  return { ...actual, statSync, rmSync, default: { ...actual, statSync, rmSync } };
 });
+
+/** Seen as a file is about to be opened through the promise API; the promise form waits for what it returns, so a test can hold a read. */
+const opening = vi.hoisted(() => ({ starting: undefined as ((path: string) => void | Promise<void>) | undefined }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>();
+  const rm = (async (path: fs.PathLike, options?: fs.RmOptions) => {
+    await removal.starting?.(resolve(String(path)), options);
+    await actual.rm(path, options);
+  }) as typeof actual.rm;
+  const open = (async (...args: Parameters<typeof actual.open>) => {
+    await opening.starting?.(resolve(String(args[0])));
+    return actual.open(...args);
+  }) as typeof actual.open;
+  return { ...actual, rm, open, default: { ...actual, rm, open } };
+});
+
+/** The removal itself, past the mock, for a test that tries a path once on its own. */
+const { rm: actualRm } = await vi.importActual<typeof fsPromises>("node:fs/promises");
 
 /** The home folder the node sees, when a test needs it to be one of the test's own folders. */
 const homeOverride = vi.hoisted(() => ({ path: undefined as string | undefined }));
@@ -58,6 +102,25 @@ vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof os>();
   const homedir = (): string => homeOverride.path ?? actual.homedir();
   return { ...actual, homedir, default: { ...actual, homedir } };
+});
+
+/** How many dev engines were closed, and an error the next ones throw as they close, as a watcher that will not let go. */
+const engineClose = vi.hoisted(() => ({ calls: 0, throws: undefined as Error | undefined }));
+
+vi.mock("@clarkcant/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof core>();
+  const startDevEngine: typeof actual.startDevEngine = (options) => {
+    const engine = actual.startDevEngine(options);
+    return {
+      ...engine,
+      close: () => {
+        engine.close();
+        engineClose.calls += 1;
+        if (engineClose.throws !== undefined) throw engineClose.throws;
+      },
+    };
+  };
+  return { ...actual, startDevEngine };
 });
 
 /**
@@ -190,6 +253,11 @@ function askEveryInstall(): void {
 }
 
 const session = (response: GatewayResponse): WidgetDevSessionView => response.body as WidgetDevSessionView;
+/** The device and file id of the folder at `path` itself, as the session store keeps a chosen folder's. */
+const idOf = (path: string): { dev: string; ino: string } => {
+  const stat = lstatSync(path, { bigint: true });
+  return { dev: String(stat.dev), ino: String(stat.ino) };
+};
 const live = async (conversationId: string, instanceId: string) => {
   const response = await call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
   expect(response.status).toBe(200);
@@ -216,12 +284,16 @@ beforeEach(() => {
   deps = { services, now: () => new Date().toISOString() as never };
 });
 
-afterEach(() => {
+afterEach(async () => {
   statFailure.path = undefined;
   homeOverride.path = undefined;
-  services.widgetDev?.close();
+  removal.starting = undefined;
+  opening.starting = undefined;
+  engineClose.throws = undefined;
+  // A snapshot a session is still removing is finished (or given up on) before the database and the folder go.
+  await services.widgetDev?.close();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true });
+  await removeTestDirectory(dir);
 });
 
 describe("a widget dev session", () => {
@@ -686,9 +758,146 @@ describe("a widget dev session", () => {
     const row = services.widgetDev?.folderCard({ locale: "en", only: "chosen" }).rows[0];
     expect(row).toMatchObject({ label: elsewhere, badge: { text: "not found now", tone: "warning" }, actions: [{ action: { kind: "develop-folder-forget", root: elsewhere } }] });
     expect(row?.note).toContain("not found at this path now");
+    // Starting a new folder there is how it is chosen, said in both languages.
+    expect(row?.note).toContain("A new folder at this path is chosen when you start developing it yourself");
+    expect(services.widgetDev?.folderCard({ locale: "vi", only: "chosen" }).rows[0]?.note).toContain(
+      "Một thư mục mới ở đường dẫn này được chọn khi chính bạn bắt đầu phát triển nó",
+    );
 
     expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: elsewhere })).body).toEqual({ root: elsewhere, forgotten: true });
     expect(services.widgetDev?.marked()).toEqual([]);
+  });
+
+  it("holds a chosen folder's mark to that folder: another folder made at its path does not count, the chosen one moved back does", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    expect(services.widgetDev?.chosen()).toEqual([elsewhere]);
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+
+    // The chosen folder is moved away, and a new real folder (no link) is made at its path.
+    const moved = join(dir, "elsewhere", "moved");
+    renameSync(elsewhere, moved);
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.another" });
+    writePackage("<!doctype html><p>inner</p>\n", [], join(elsewhere, "inner"), { id: "com.example.inner" });
+
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+    expect(services.widgetDev?.folderCard({ locale: "en", only: "chosen" }).rows[0]).toMatchObject({ badge: { text: "not found now" } });
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Not started");
+    expect((await toolFor(conversationId).execute({ action: "start", root: join(elsewhere, "inner") })).text).toContain("Not started");
+
+    // The chosen folder itself back at its path counts again.
+    renameSync(elsewhere, join(dir, "elsewhere", "another"));
+    renameSync(moved, elsewhere);
+    expect(services.widgetDev?.chosen()).toEqual([elsewhere]);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: true }]);
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Running generation 1.");
+  });
+
+  it("gives a mark stored without a folder id the id of the folder first found at its path, and holds it to that folder", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    const store = join(dir, "node");
+    const recorded = readDevSessions(store)[0]?.chosenFolderId;
+    expect(recorded).toBeDefined();
+    // As a store written before folder ids were kept: the mark, with no id.
+    writeDevSessions(
+      store,
+      readDevSessions(store).map(({ chosenFolderId: _id, ...rest }) => rest),
+    );
+
+    // Missing at the first look, it is not found and takes no id.
+    const moved = join(dir, "elsewhere", "moved");
+    renameSync(elsewhere, moved);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+    expect(readDevSessions(store)[0]?.chosenFolderId).toBeUndefined();
+
+    // Found at its path, it counts and takes that folder's id, which is the one the person's start recorded.
+    renameSync(moved, elsewhere);
+    expect(services.widgetDev?.chosen()).toEqual([elsewhere]);
+    expect(readDevSessions(store)[0]?.chosenFolderId).toEqual(recorded);
+
+    // From then on, another folder made at the path is not it.
+    renameSync(elsewhere, moved);
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.another" });
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+  });
+
+  it("drops a chosen folder's id along with the mark when the person forgets it", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    const store = join(dir, "node");
+    expect(readDevSessions(store)[0]).toMatchObject({ chosenByPerson: true, chosenFolderId: idOf(elsewhere) });
+
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: elsewhere })).body).toEqual({ root: elsewhere, forgotten: true });
+    const forgotten = readDevSessions(store)[0];
+    expect(forgotten?.sessionId).toBe(started.sessionId);
+    expect(forgotten?.chosenByPerson).toBeUndefined();
+    expect(forgotten?.chosenFolderId).toBeUndefined();
+  });
+
+  it("records the folder now at the path when the person starts a live session again after its folder was made again", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    const store = join(dir, "node");
+    const first = idOf(elsewhere);
+    expect(readDevSessions(store)[0]?.chosenFolderId).toEqual(first);
+
+    // The chosen folder is moved away and another folder is made at its path while the session is still live.
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const second = idOf(elsewhere);
+    expect(second).not.toEqual(first);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+
+    // The person's start picks up the live session and chooses the folder that is there now.
+    const again = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    expect(again).toMatchObject({ sessionId: started.sessionId, status: "live" });
+    expect(readDevSessions(store)[0]?.chosenFolderId).toEqual(second);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: true }]);
+  });
+
+  it("stops a session Clark started in a chosen folder made again, at the next restart, and asks the person to choose it again", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>chosen</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const chosen = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    await call("DELETE", `/widget-dev/sessions/${chosen.sessionId}`);
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Running generation 1.");
+
+    // The node stops; meanwhile the chosen folder is replaced by another folder at the same path.
+    await services.widgetDev?.close();
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+    writePackage("<!doctype html><p>another</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+
+    const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
+    expect(views.find((view) => view.sessionId === chosen.sessionId)).toMatchObject({ status: "stopped", stopReason: "root-refused", stopCode: "ROOT_NOT_OWNED" });
+    const card = services.widgetDev.folderCard({ locale: "en" });
+    const row = card.rows.find((candidate) => candidate.rowId === `session:${chosen.sessionId}`);
+    expect(row?.note).toContain("Press Develop again to choose the folder again");
+    expect(row?.actions).toMatchObject([{ action: { kind: "develop-folder", root: elsewhere } }]);
+    expect(services.widgetDev.folderCard({ locale: "vi" }).rows.find((candidate) => candidate.rowId === row?.rowId)?.note).toContain(
+      "Bấm Phát triển lại để chọn lại thư mục",
+    );
+
+    // That press, the person's own start, chooses the folder now at the path, and the stop and its code are gone.
+    const again = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    expect(again).toMatchObject({ sessionId: chosen.sessionId, status: "live" });
+    expect(again.stopReason).toBeUndefined();
+    expect(again.stopCode).toBeUndefined();
+    const restarted = readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === chosen.sessionId);
+    expect(restarted?.stopReason).toBeUndefined();
+    expect(restarted?.stopCode).toBeUndefined();
+    expect(services.widgetDev.chosen()).toEqual([elsewhere]);
   });
 
   it("warns that a whole drive or the home folder is watched for the session only, and keeps no choice of it", async () => {
@@ -883,6 +1092,285 @@ describe("a widget dev session", () => {
     expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(2);
   });
 
+  it("removes a superseded snapshot that is held for a moment, as a file still open on Windows holds it", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const local = join(dir, "node", "package-cache", "local");
+    const [first] = readdirSync(local);
+    if (first === undefined) throw new Error("the first build left no snapshot");
+    const firstPath = resolve(local, first);
+    // On Windows a directory that is someone's working directory cannot be removed until they let go; elsewhere the
+    // hold changes nothing. Not timed against the retries: one attempt without them meets the hold, the holder is let go
+    // and has exited, and only then does the removal the runtime asked for run, so its outcome never depends on load.
+    const hold = holdDirectory(firstPath);
+    await hold.ready;
+    let released: Promise<void> | undefined;
+    let asked: fs.RmOptions | undefined;
+    let held: string | undefined;
+    removal.starting = async (path, options) => {
+      if (path !== firstPath || released !== undefined) return;
+      asked = options;
+      held = await actualRm(path, { ...options, maxRetries: 0 }).then(
+        () => undefined,
+        (cause: unknown) => (cause as NodeJS.ErrnoException).code,
+      );
+      released = hold.release();
+      await released;
+    };
+    try {
+      // The second build supersedes the first, which stays as the generation a rollback returns to; the third prunes it.
+      for (const text of ["second", "third"]) {
+        writePackage(`<!doctype html><p>${text}</p>\n`);
+        expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).running?.generation).toBeGreaterThan(1);
+      }
+      expect(released).toBeDefined();
+      // The removal retries a held file (the promise form; `rmSync` would not), for the budget the runtime names.
+      expect(asked).toMatchObject(SNAPSHOT_REMOVAL);
+      // Node waits `retryDelay` ms longer on each retry, so the options passed wait this long in all: at least a second.
+      const retries = asked?.maxRetries ?? 0;
+      const delay = asked?.retryDelay ?? 100;
+      expect((delay * retries * (retries + 1)) / 2).toBeGreaterThanOrEqual(1_000);
+      if (process.platform === "win32") expect(held).toMatch(/^(EBUSY|EPERM)$/);
+      expect(existsSync(firstPath)).toBe(false);
+      // Removed, so no longer on the session's list of snapshots to try again.
+      const listed = readDevSessions(join(dir, "node"))[0]?.snapshots ?? [];
+      expect(listed).toHaveLength(2);
+      expect(listed.some((digest) => digest.endsWith(first))).toBe(false);
+    } finally {
+      removal.starting = undefined;
+      await (released ?? hold.release());
+    }
+  });
+
+  /** Start pruning the first build's snapshot and hold its removal until `finish` is called. */
+  async function holdPrune(): Promise<{ firstPath: string; rebuilding: Promise<GatewayResponse>; finish: () => void; removed: () => boolean }> {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const local = join(dir, "node", "package-cache", "local");
+    const [first] = readdirSync(local);
+    if (first === undefined) throw new Error("the first build left no snapshot");
+    const firstPath = resolve(local, first);
+    let removing = (): void => undefined;
+    const removingStarted = new Promise<void>((done) => {
+      removing = done;
+    });
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => {
+      finish = done;
+    });
+    let removed = false;
+    removal.starting = async (path) => {
+      if (path !== firstPath) return;
+      removing();
+      await gate;
+      // Marked once the removal itself may run; `existsSync` says when it has.
+      removed = true;
+    };
+    writePackage("<!doctype html><p>second</p>\n");
+    await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    // The third build supersedes the second, so the first is pruned, and its removal waits on the gate.
+    writePackage("<!doctype html><p>third</p>\n");
+    const rebuilding = call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    await removingStarted;
+    return { firstPath, rebuilding, finish, removed: () => removed };
+  }
+
+  it("waits on close for a superseded snapshot still being removed", async () => {
+    const { firstPath, rebuilding, finish } = await holdPrune();
+    let closed = false;
+    const closing = Promise.resolve(services.widgetDev?.close()).then(() => {
+      closed = true;
+    });
+    await new Promise((done) => setTimeout(done, 100));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    expect(existsSync(firstPath)).toBe(false);
+    expect((await rebuilding).status).toBe(200);
+  });
+
+  it("stops waiting on close after its bound, so a removal that does not end cannot hold a shutdown", async () => {
+    await services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false, closeWaitMs: 200 });
+    const { firstPath, rebuilding, finish, removed } = await holdPrune();
+    const before = Date.now();
+    await services.widgetDev.close();
+    expect(Date.now() - before).toBeGreaterThanOrEqual(150);
+    expect(removed()).toBe(false);
+    expect(existsSync(firstPath)).toBe(true);
+    // Let it end, so the folder is free before the test's own cleanup.
+    finish();
+    expect((await rebuilding).status).toBe(200);
+    expect(existsSync(firstPath)).toBe(false);
+  });
+
+  it("starts no further removal once closing, so several held snapshots cannot outlast the close bound", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    // A snapshot's removal fails for now, as a file held past its retries makes it fail, so it is left over to try again.
+    const local = join(dir, "node", "package-cache", "local");
+    const snapshots = new Set<string>();
+    removal.starting = (path) => {
+      if (snapshots.has(path)) throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+    };
+    for (const text of ["second", "third"]) {
+      for (const name of readdirSync(local)) snapshots.add(resolve(local, name));
+      writePackage(`<!doctype html><p>${text}</p>\n`);
+      expect((await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).status).toBe(200);
+    }
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(3);
+
+    // The fourth build prunes two: the one left over and the one past the rollback. The first removal is held.
+    const attempts: string[] = [];
+    let removing = (): void => undefined;
+    const removingStarted = new Promise<void>((done) => {
+      removing = done;
+    });
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => {
+      finish = done;
+    });
+    for (const name of readdirSync(local)) snapshots.add(resolve(local, name));
+    removal.starting = async (path) => {
+      // Only the snapshots: the build itself removes a staging folder of its own.
+      if (!snapshots.has(path)) return;
+      attempts.push(path);
+      if (attempts.length > 1) return;
+      removing();
+      await gate;
+    };
+    writePackage("<!doctype html><p>fourth</p>\n");
+    const rebuilding = call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    await removingStarted;
+    const closing = services.widgetDev?.close();
+    finish();
+    await closing;
+    expect((await rebuilding).status).toBe(200);
+    // The removal in flight ended; the other was not started, and stays listed for the next prune.
+    expect(attempts).toHaveLength(1);
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(3);
+  });
+
+  it("keeps the newest build's snapshot when the node closes as the answer the session waited on comes in", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(asked.activation.state).toBe("awaiting-approval");
+    const approvalId = asked.activation.state === "awaiting-approval" ? asked.activation.approvalId : "";
+    const local = join(dir, "node", "package-cache", "local");
+    const before = new Set(readdirSync(local));
+    // The newest build is neither what runs nor what waits: only the session's engine names it.
+    writePackage("<!doctype html><p>second</p>\n");
+    const waiting = session(await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`));
+    expect(waiting.lastBuild).toMatchObject({ ok: true, generation: 2 });
+    expect(waiting.activation).toMatchObject({ state: "awaiting-approval", generation: 1 });
+    const newest = readdirSync(local).filter((name) => !before.has(name));
+    expect(newest).toHaveLength(1);
+    const row = services.runtime.db.prepare("SELECT operation_digest FROM approvals WHERE approval_id = ?").get(approvalId) as { operation_digest: string };
+    expect((await call("POST", `/packages/approvals/${approvalId}/decision`, { decision: "granted", digest: row.operation_digest })).status).toBe(200);
+    await services.widgetDev?.close();
+    await new Promise((done) => setTimeout(done, 100));
+    expect(existsSync(join(local, newest[0] ?? ""))).toBe(true);
+  });
+
+  it("installs a newer build only once the inbox has installed the one the person granted, so the grant never fails", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(asked.activation.state).toBe("awaiting-approval");
+    const approvalId = asked.activation.state === "awaiting-approval" ? asked.activation.approvalId : "";
+    const granted = cachedLocalSnapshotPath(join(dir, "node", "package-cache"), asked.latest?.digest ?? "") ?? "";
+    writePackage("<!doctype html><p>second</p>\n");
+    const newer = session(await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`));
+    expect(newer.lastBuild).toMatchObject({ ok: true, generation: 2 });
+
+    // The inbox's install is held as it starts to read the granted build's snapshot.
+    let release = (): void => undefined;
+    const gate = new Promise<void>((done) => (release = done));
+    let reading = (): void => undefined;
+    const readingStarted = new Promise<void>((done) => (reading = done));
+    opening.starting = async (path) => {
+      if (!path.startsWith(granted + sep)) return;
+      opening.starting = undefined;
+      reading();
+      await gate;
+    };
+    const row = services.runtime.db.prepare("SELECT operation_digest FROM approvals WHERE approval_id = ?").get(approvalId) as { operation_digest: string };
+    const decided = call("POST", `/packages/approvals/${approvalId}/decision`, { decision: "granted", digest: row.operation_digest });
+    await readingStarted;
+    // The session follows the grant while that install runs: it neither installs the newer build nor removes the snapshot.
+    expect((await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`)).status).toBe(200);
+    release();
+    expect((await decided).status).toBe(200);
+
+    // Once the grant is installed, the newer build installs on it, and the granted one stays for a rollback.
+    const view = await eventually(asked.sessionId, (current) => current.activation.state === "active" && current.activation.generation === 2);
+    expect(view.activation).toMatchObject({ state: "active", generation: 2 });
+    const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+    expect(running?.snapshotDigest).toBe(newer.latest?.digest);
+    expect(existsSync(granted)).toBe(true);
+  });
+
+  it("stops waiting for the inbox's install of a grant once its wait runs out, says so, and installs the newest build", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(asked.activation.state).toBe("awaiting-approval");
+    const approvalId = asked.activation.state === "awaiting-approval" ? asked.activation.approvalId : "";
+    writePackage("<!doctype html><p>second</p>\n");
+    const newer = session(await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`));
+    expect(newer.lastBuild).toMatchObject({ ok: true, generation: 2 });
+
+    // Granted a minute and more ago, and no ending of the install that grant runs was ever recorded.
+    const said: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array, ...rest: unknown[]) => {
+      said.push(String(chunk));
+      return (write as (chunk: string | Uint8Array, ...rest: unknown[]) => boolean)(chunk, ...rest);
+    });
+    try {
+      services.runtime.db
+        .prepare("UPDATE approvals SET decision = 'granted', decided_at = ? WHERE approval_id = ?")
+        .run(new Date(Date.now() - 61_000).toISOString(), approvalId);
+
+      const view = await eventually(asked.sessionId, (current) => current.activation.state === "active");
+      expect(view.activation).toMatchObject({ state: "active", generation: 2 });
+      const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+      expect(running?.snapshotDigest).toBe(newer.latest?.digest);
+      expect(said.filter((line) => line.includes(`stopped waiting for the install that approval ${approvalId} runs`))).toHaveLength(1);
+    } finally {
+      vi.mocked(process.stderr.write).mockRestore();
+    }
+  });
+
+  it("ends every session, and resolves, on a close where a watcher fails to let go", async () => {
+    const other = join(dir, "projects", "clock");
+    writePackage("<!doctype html><p>clock</p>\n", [], other);
+    expect((await call("POST", "/widget-dev/sessions", { root })).status).toBe(201);
+    expect((await call("POST", "/widget-dev/sessions", { root: other })).status).toBe(201);
+    engineClose.calls = 0;
+    engineClose.throws = new Error("the watcher would not let go");
+    await expect(Promise.resolve(services.widgetDev?.close())).resolves.toBeUndefined();
+    expect(engineClose.calls).toBe(2);
+  });
+
+  it("watches nothing once closed, neither for a resume still going through the store nor for a late start", async () => {
+    await services.widgetDev?.close();
+    const at = new Date().toISOString();
+    const folders = ["w0", "w1"].map((name) => join(dir, "projects", name));
+    for (const folder of folders) mkdirSync(folder, { recursive: true });
+    writeDevSessions(
+      join(dir, "node"),
+      folders.map((folder, index) => ({ sessionId: `wdev_${String(index)}`, root: folder, status: "live" as const, startedAt: at })),
+    );
+    const sessions = createWidgetDevSessions(() => services, { watch: false });
+    services.widgetDev = sessions;
+    // The first session is watched at once; the node closes while its first build is followed.
+    const resuming = sessions.resume();
+    await sessions.close();
+    await resuming;
+    // Only a watched session rebuilds; both stay live in the store, for the next boot to resume.
+    for (const sessionId of ["wdev_0", "wdev_1"]) expect(await sessions.rebuild(sessionId)).toMatchObject({ ok: false, code: "SESSION_STOPPED" });
+    expect(readDevSessions(join(dir, "node")).map((stored) => stored.status)).toEqual(["live", "live"]);
+
+    expect(await sessions.start({ root })).toMatchObject({ ok: false, status: 503, code: "WIDGET_DEV_UNAVAILABLE" });
+    expect(readDevSessions(join(dir, "node")).some((stored) => stored.root === root)).toBe(false);
+  });
+
   it("forgets the oldest stopped sessions rather than failing when the store is full", async () => {
     const at = new Date(Date.UTC(2026, 0, 1)).toISOString();
     writeDevSessions(
@@ -945,9 +1433,15 @@ describe("a widget dev session", () => {
     await services.widgetDev.resume();
 
     const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
-    expect(views.find((view) => view.sessionId === "wdev_clark")).toMatchObject({ status: "stopped", stopReason: "root-refused" });
-    expect(views.find((view) => view.sessionId === "wdev_data")).toMatchObject({ status: "stopped", stopReason: "root-refused" });
+    expect(views.find((view) => view.sessionId === "wdev_clark")).toMatchObject({ status: "stopped", stopReason: "root-refused", stopCode: "ROOT_NOT_OWNED" });
+    expect(views.find((view) => view.sessionId === "wdev_data")).toMatchObject({ status: "stopped", stopReason: "root-refused", stopCode: "ROOT_IN_DATA_FOLDER" });
     expect(views.find((view) => view.sessionId === "wdev_person")).toMatchObject({ status: "live" });
+    // Choosing the data folder again is refused too, so its row says to copy the project and offers no button that could only fail.
+    const rows = services.widgetDev.folderCard({ locale: "en" }).rows;
+    const dataRow = rows.find((row) => row.rowId === "session:wdev_data");
+    expect(dataRow?.note).toContain("choosing it again is refused too");
+    expect(dataRow?.actions).toEqual([]);
+    expect(rows.find((row) => row.rowId === "session:wdev_clark")?.note).toContain("Press Develop again to choose the folder again");
   });
 
   it("stops as folder-gone, rather than building again, when the folder is deleted before a rebuild", async () => {
@@ -970,7 +1464,7 @@ describe("a widget dev session", () => {
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
   });
 
-  it("stops a watched session as folder-gone when its folder is deleted and made again before anything looks", async () => {
+  it("keeps a watched session live, and builds the new folder, when its folder is deleted and made again before anything looks", async () => {
     services.widgetDev?.close();
     services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
@@ -980,8 +1474,80 @@ describe("a widget dev session", () => {
     // so nothing looks between the delete and the new folder; no retries are asked for, since `rmSync` would not run them.
     rmSync(root, { recursive: true, force: true });
     writePackage("<!doctype html><p>a new folder</p>\n");
+    const rebuilt = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+
+    // The new folder is the one watched: a save in it builds and runs.
+    writePackage("<!doctype html><p>saved in the new folder</p>\n");
+    const saved = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 3);
+    expect(saved).toMatchObject({ status: "live", activation: { state: "active", generation: 3 } });
+  });
+
+  it("keeps a watched session live when another process deletes its folder and makes it again a moment later", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // As `rmdir /s /q out && xcopy source out` in a terminal: another process, and a moment with no folder at the path.
+    const source = join(dir, "source");
+    writePackage("<!doctype html><p>made again by another process</p>\n", [], source);
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, from] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(from, out, { recursive: true }), 400);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    expect(await new Promise((done) => child.on("exit", done))).toBe(0);
+
+    const rebuilt = await eventually(started.sessionId, (view) => view.status === "stopped" || (view.activation.state === "active" && view.activation.generation === 2));
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
+  it("keeps a watched session live when a build runs while another process makes its folder again, and builds it once back", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    const source = join(dir, "source");
+    writePackage("<!doctype html><p>made again by another process</p>\n", [], source);
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, from] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(from, out, { recursive: true }), 800);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    const exited = new Promise((done) => child.on("exit", done));
+
+    // A rebuild asked for while no folder is at the path waits for it rather than failing on the missing files, and
+    // answers with the one build made once it is back.
+    const deadline = Date.now() + 5_000;
+    while (existsSync(root) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 5));
+    expect(existsSync(root)).toBe(false);
+    const during = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    expect(during.status).toBe(200);
+    expect(session(during)).toMatchObject({
+      status: "live",
+      lastBuild: { ok: true, trigger: "rebuild", generation: 2 },
+      activation: { state: "active", generation: 2 },
+    });
+    expect(await exited).toBe(0);
+  });
+
+  it("stops a watched session as watch-failed when its folder cannot be looked at for the time bound, and keeps what runs", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20, rootUnreadableMs: 300 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // The engine looks at the canonical path a start stores (on macOS, `/private/var/...` for a `/var/...` temp folder).
+    statFailure.path = realpathSync.native(root);
+    // Bounded: the node looks at the folder once a second, so the bound is passed on the second look at the latest.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
-    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "watch-failed", activation: { state: "active", generation: 1 } });
   });
 
   it("keeps a watched session live through a folder it cannot look at for a moment", async () => {
@@ -990,7 +1556,8 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    statFailure.path = resolve(root);
+    // The engine looks at the canonical path a start stores (on macOS, `/private/var/...` for a `/var/...` temp folder).
+    statFailure.path = realpathSync.native(root);
     const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
     expect(rebuilt.status).toBe(200);
     expect(session(rebuilt).status).toBe("live");
@@ -1000,6 +1567,464 @@ describe("a widget dev session", () => {
     writePackage("<!doctype html><p>second</p>\n");
     const next = await eventually(started.sessionId, (view) => view.activation.state === "active" && view.activation.generation === 2);
     expect(next).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
+  it("stops a watched session as folder-gone when a folder above it is swapped for a link to another tree, and builds nothing there", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    // `projects/timer` now leads, through `projects`, to a tree the person never chose for this session.
+    const elsewhere = join(dir, "elsewhere");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], join(elsewhere, "timer"), { id: "com.example.elsewhere" });
+    const projects = join(dir, "projects");
+    rmSync(projects, { recursive: true, force: true });
+    symlinkSync(elsewhere, projects, process.platform === "win32" ? "junction" : "dir");
+
+    const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", packageId: PACKAGE, activation: { state: "active", generation: 1 } });
+  });
+
+  it("says a folder that is there but cannot be read cannot be read, at a start and at a resume", async () => {
+    // A start and a resume look at the path as given, before it is made canonical.
+    statFailure.path = resolve(root);
+    const refused = await call("POST", "/widget-dev/sessions", { root });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ code: "ROOT_UNREADABLE" });
+    expect((refused.body as { message: string }).message).toContain("cannot be read on this node (EPERM)");
+
+    writeDevSessions(join(dir, "node"), [{ sessionId: "wdev_unreadable", root, status: "live" as const, startedAt: new Date().toISOString() }]);
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+    const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
+    expect(views.find((view) => view.sessionId === "wdev_unreadable")).toMatchObject({ status: "stopped", stopReason: "watch-failed" });
+  });
+});
+
+describe("what widget dev sessions leave in the package cache", () => {
+  const localCache = (): string => join(dir, "node", "package-cache", "local");
+  const folderOf = (digest: string): string => join(localCache(), digest.slice("sha256:".length));
+  /** The snapshot folders in the cache, leaving out a build's own staging folders. */
+  const snapshotFolders = (): string[] => readdirSync(localCache()).filter((name) => /^[0-9a-f]{64}$/.test(name));
+  const isSnapshot = (path: string): boolean => parse(path).dir === resolve(localCache()) && /^[0-9a-f]{64}$/.test(parse(path).base);
+
+  /** A snapshot folder in the cache that a session made once, named by a digest of its own. */
+  function madeSnapshot(seed: number): string {
+    const hex = seed.toString(16).padStart(64, "0");
+    mkdirSync(join(localCache(), hex), { recursive: true });
+    writeFileSync(join(localCache(), hex, "clarkcant.json"), "{}");
+    return `sha256:${hex}`;
+  }
+
+  function changeSession(sessionId: string, change: (stored: ReturnType<typeof readDevSessions>[number]) => ReturnType<typeof readDevSessions>[number]): void {
+    writeDevSessions(
+      join(dir, "node"),
+      readDevSessions(join(dir, "node")).map((stored) => (stored.sessionId === sessionId ? change(stored) : stored)),
+    );
+  }
+
+  /** Whether a generation on this node names the snapshot, as the boot's sweep and a prune ask before a removal. */
+  const recordedOnNode = (digest: string): boolean =>
+    services.runtime.db
+      .prepare("SELECT 1 AS found FROM package_generations WHERE node_id = ? AND instr(document, ?) > 0")
+      .get(services.runtime.identity.nodeId, digest) !== undefined;
+
+  /** Run `use` while the project folder is listed as an ordinary local package with this digest, and nothing else is. */
+  async function withLocalListing(digest: string, use: () => Promise<void>): Promise<void> {
+    const indexPath = join(dir, "index.json");
+    writeFileSync(
+      indexPath,
+      JSON.stringify([
+        {
+          packageId: PACKAGE,
+          version: VERSION,
+          displayName: "Timer",
+          description: "A timer.",
+          source: { kind: "local", path: root },
+          publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+          preview: {},
+          facets: ["ui"],
+          isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
+          platforms: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64", "web"],
+          hostApi: { min: 1, max: 1 },
+          permissionsSummary: [],
+          riskTier: "isolated-ui",
+          sizeBytes: 1024,
+          digest,
+        },
+      ]),
+    );
+    const previous = { index: process.env["CC_DIRECTORY_INDEX"], official: process.env["CC_OFFICIAL_MARKETPLACE"] };
+    process.env["CC_DIRECTORY_INDEX"] = indexPath;
+    process.env["CC_OFFICIAL_MARKETPLACE"] = "off";
+    try {
+      await use();
+    } finally {
+      if (previous.index === undefined) delete process.env["CC_DIRECTORY_INDEX"];
+      else process.env["CC_DIRECTORY_INDEX"] = previous.index;
+      if (previous.official === undefined) delete process.env["CC_OFFICIAL_MARKETPLACE"];
+      else process.env["CC_OFFICIAL_MARKETPLACE"] = previous.official;
+    }
+  }
+
+  /** A restart: a new registry over the same node, resumed from its store. */
+  async function restart(): Promise<void> {
+    await services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false, answerPollMs: 20 });
+    await services.widgetDev.resume();
+  }
+
+  it("removes on resume what a session that never installs again left over, keeping what it runs and what a rollback returns to", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    // Every snapshot removal fails for now, as a file held open past its retries makes it fail, so nothing is pruned.
+    removal.starting = (path) => {
+      if (isSnapshot(path)) throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+    };
+    for (const text of ["second", "third", "fourth"]) {
+      writePackage(`<!doctype html><p>${text}</p>\n`);
+      expect((await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).status).toBe(200);
+    }
+    removal.starting = undefined;
+    const stopped = session(await call("DELETE", `/widget-dev/sessions/${started.sessionId}`));
+    expect(stopped).toMatchObject({ status: "stopped", activation: { state: "active", generation: 4 } });
+    expect(snapshotFolders()).toHaveLength(4);
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(4);
+
+    await restart();
+    const running = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    expect(snapshotFolders()).toHaveLength(2);
+    expect(existsSync(folderOf(running))).toBe(true);
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(2);
+    // What runs is still served from its snapshot.
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`)).activation).toMatchObject({ state: "active", generation: 4 });
+  });
+
+  it("removes at the next boot the snapshots that fell off a session's list past its bound", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const first = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    // The session's list is full: the oldest of what it made comes first.
+    const made = Array.from({ length: WIDGET_DEV_SNAPSHOTS_MAX - 1 }, (_, index) => madeSnapshot(index + 1));
+    changeSession(started.sessionId, (stored) => ({ ...stored, snapshots: [...made, first] }));
+
+    // One more build pushes the oldest off the list. The install prunes what the list still names.
+    writePackage("<!doctype html><p>second</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 2 });
+    const [oldest] = made;
+    if (oldest === undefined) throw new Error("no snapshot was made");
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).not.toContain(oldest);
+    expect(existsSync(folderOf(oldest))).toBe(true);
+    expect(made.slice(1).some((digest) => existsSync(folderOf(digest)))).toBe(false);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([oldest]);
+
+    await restart();
+    expect(existsSync(folderOf(oldest))).toBe(false);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([]);
+    // What runs and what a rollback returns to stay.
+    expect(snapshotFolders()).toHaveLength(2);
+  });
+
+  it("removes at the next boot the snapshots of a session the store forgot to make room", async () => {
+    const at = new Date(Date.UTC(2026, 0, 1)).toISOString();
+    const left = madeSnapshot(1);
+    writeDevSessions(
+      join(dir, "node"),
+      Array.from({ length: WIDGET_DEV_STORE_MAX }, (_, index) => ({
+        sessionId: `wdev_old_${String(index)}`,
+        root: join(dir, "gone", String(index)),
+        status: "stopped" as const,
+        startedAt: at,
+        ...(index === 0 ? { snapshots: [left] } : {}),
+      })),
+    );
+    expect((await call("POST", "/widget-dev/sessions", { root })).status).toBe(201);
+    expect(readDevSessions(join(dir, "node")).some((stored) => stored.sessionId === "wdev_old_0")).toBe(false);
+    expect(existsSync(folderOf(left))).toBe(true);
+
+    await restart();
+    expect(existsSync(folderOf(left))).toBe(false);
+  });
+
+  it("never removes at boot a snapshot that a session runs or waits on, even one no list names", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    askEveryInstall();
+    writePackage("<!doctype html><p>second</p>\n", ["https://api.example.com"]);
+    const waiting = session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`));
+    expect(waiting.activation).toMatchObject({ state: "awaiting-approval", generation: 2 });
+    const stored = readDevSessions(join(dir, "node"))[0];
+    const running = stored?.running?.generation.digest ?? "";
+    const pending = stored?.pending?.generation.digest ?? "";
+    // Both fell off the session's list, and nothing else uses the third.
+    const unused = madeSnapshot(1);
+    changeSession(started.sessionId, ({ snapshots: _forgotten, ...rest }) => rest);
+    writeOrphanedSnapshots(join(dir, "node"), [running, pending, unused]);
+
+    await restart();
+    expect(existsSync(folderOf(running))).toBe(true);
+    expect(existsSync(folderOf(pending))).toBe(true);
+    expect(existsSync(folderOf(unused))).toBe(false);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([running, pending]);
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`))).toMatchObject({
+      status: "live",
+      activation: { state: "awaiting-approval", generation: 2 },
+    });
+  });
+
+  it("watches no folder while the boot removes snapshots, so a build that makes the same bytes again keeps its snapshot", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    const built = asked.latest?.digest ?? "";
+    expect(existsSync(folderOf(built))).toBe(true);
+    // The session is forgotten, and its build is orphaned with another snapshot; the folder still holds the same files.
+    await services.widgetDev?.close();
+    writeDevSessions(join(dir, "node"), []);
+    const unused = madeSnapshot(1);
+    writeOrphanedSnapshots(join(dir, "node"), [unused, built]);
+
+    let removing = (): void => undefined;
+    const removingStarted = new Promise<void>((done) => {
+      removing = done;
+    });
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => {
+      finish = done;
+    });
+    removal.starting = async (path) => {
+      if (path !== resolve(folderOf(unused))) return;
+      removing();
+      await gate;
+    };
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false, answerPollMs: 20 });
+    const resuming = services.widgetDev.resume();
+    await removingStarted;
+    // A start made while a removal runs waits for the boot's removals to end before it builds.
+    const starting = call("POST", "/widget-dev/sessions", { root });
+    await new Promise((done) => setTimeout(done, 100));
+    expect(services.widgetDev.list()).toEqual([]);
+    finish();
+    await resuming;
+    const again = session(await starting);
+    expect(again.lastBuild?.ok).toBe(true);
+    expect(again.latest?.digest).toBe(built);
+    expect(existsSync(folderOf(built))).toBe(true);
+    expect(readdirSync(folderOf(built))).toContain("clarkcant.json");
+    expect(existsSync(folderOf(unused))).toBe(false);
+  });
+
+  /** Hold the first read of a file inside `folder` until `release` is called; `reading` resolves once it is held. */
+  function holdFirstRead(folder: string): { reading: Promise<void>; release: () => void } {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((done) => (release = done));
+    let started = (): void => undefined;
+    const reading = new Promise<void>((done) => (started = done));
+    opening.starting = async (path) => {
+      if (!path.startsWith(resolve(folder) + sep)) return;
+      opening.starting = undefined;
+      started();
+      await gate;
+    };
+    return { reading, release };
+  }
+
+  it("never removes a superseded snapshot that a build is reusing as the prune after an install runs", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const first = started.latest?.digest ?? "";
+    writePackage("<!doctype html><p>second</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 2 });
+
+    // A folder holds the first build's files again, as a revert would, and its build is held as it checks the snapshot
+    // of those files already in the cache, to reuse it.
+    const again = join(dir, "projects", "timer-again");
+    writePackage("<!doctype html><p>first</p>\n", [], again);
+    const reuse = holdFirstRead(folderOf(first));
+    const reusing = call("POST", "/widget-dev/sessions", { root: again });
+    await reuse.reading;
+
+    // The third build supersedes the second, so the prune after its install would remove the first.
+    writePackage("<!doctype html><p>third</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 3 });
+    reuse.release();
+    const other = session(await reusing);
+    expect(other.lastBuild?.ok).toBe(true);
+    expect(other.latest?.digest).toBe(first);
+    expect(readdirSync(folderOf(first))).toContain("clarkcant.json");
+    // Still on the session's list, so a later prune removes it once nothing uses it.
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)?.snapshots).toContain(first);
+  });
+
+  it("never removes at boot an orphaned snapshot that an install of the same files is reusing", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    const built = asked.latest?.digest ?? "";
+    // The session is forgotten, and its build is orphaned; the folder still holds the same files.
+    await services.widgetDev?.close();
+    writeDevSessions(join(dir, "node"), []);
+    writeOrphanedSnapshots(join(dir, "node"), [built]);
+    usePolicy({});
+
+    // The folder is listed as an ordinary local package, and its install is held as it checks the snapshot it reuses.
+    await withLocalListing(built, async () => {
+      const reuse = holdFirstRead(folderOf(built));
+      const installing = call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION });
+      await reuse.reading;
+
+      // The boot's sweep runs to its end while that install is held.
+      services.widgetDev = createWidgetDevSessions(() => services, { watch: false, answerPollMs: 20 });
+      await services.widgetDev.resume();
+      reuse.release();
+      const installed = await installing;
+      expect(installed.status, JSON.stringify(installed.body)).toBe(200);
+      const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+      expect(running?.snapshotDigest).toBe(built);
+      expect(readdirSync(folderOf(built))).toContain("clarkcant.json");
+    });
+  });
+
+  it("keeps the snapshot an install placed until its generation is recorded, though a removal starts in between", async () => {
+    const digested = digestOfDirectory(root);
+    if (!digested.ok) throw new Error(digested.message);
+    const placed = digested.digest;
+    expect(existsSync(folderOf(placed))).toBe(false);
+    usePolicy({});
+
+    await withLocalListing(placed, async () => {
+      // A removal starts as the install names its generation, after it placed the snapshot and before it records it,
+      // asking what the boot's sweep and a prune ask: whether a generation on this node names the snapshot yet.
+      let removing: Promise<"removed" | "kept"> | undefined;
+      let window: { placed: boolean; recorded: boolean } | undefined;
+      const newId = services.conductor.newId;
+      const spied = vi.spyOn(services.conductor, "newId").mockImplementation((prefix: string) => {
+        if (prefix === "codegen" && removing === undefined) {
+          window = { placed: existsSync(folderOf(placed)), recorded: recordedOnNode(placed) };
+          removing = removeLocalSnapshot(folderOf(placed), { inUse: () => recordedOnNode(placed), options: SNAPSHOT_REMOVAL });
+        }
+        return newId(prefix);
+      });
+      try {
+        const installed = await call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION });
+        expect(installed.status, JSON.stringify(installed.body)).toBe(200);
+      } finally {
+        spied.mockRestore();
+      }
+      expect(window).toEqual({ placed: true, recorded: false });
+      // Only the install's hold kept it: nothing recorded the generation yet when the removal looked.
+      expect(await removing).toBe("kept");
+      const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+      expect(running?.snapshotDigest).toBe(placed);
+      expect(readdirSync(folderOf(placed))).toContain("clarkcant.json");
+    });
+  });
+
+  it("keeps a superseded snapshot that another session starts to run while the prune removes the ones before it", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const first = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    const [held, taken, unused] = [1, 2, 3].map(madeSnapshot);
+    if (held === undefined || taken === undefined || unused === undefined) throw new Error("no snapshot was made");
+    changeSession(started.sessionId, (stored) => ({ ...stored, snapshots: [held, taken, unused, first] }));
+
+    // The prune after the next install reads what it keeps once, then removes the rest one at a time: the first removal
+    // is held until another session runs the second snapshot.
+    let removingStarted = (): void => undefined;
+    const removing = new Promise<void>((done) => (removingStarted = done));
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => (finish = done));
+    removal.starting = async (path) => {
+      if (path !== resolve(folderOf(held))) return;
+      removingStarted();
+      await gate;
+    };
+    writePackage("<!doctype html><p>second</p>\n");
+    const rebuilding = call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    await removing;
+
+    const [stored] = readDevSessions(join(dir, "node"));
+    if (stored?.running === undefined) throw new Error("the session runs nothing");
+    writeDevSessions(join(dir, "node"), [
+      stored,
+      {
+        sessionId: "wdev_other",
+        root: join(dir, "projects", "other"),
+        status: "stopped",
+        startedAt: stored.startedAt,
+        running: { ...stored.running, generation: { ...stored.running.generation, digest: taken } },
+      },
+    ]);
+    finish();
+    expect(session(await rebuilding).activation).toMatchObject({ state: "active", generation: 2 });
+
+    expect(existsSync(folderOf(held))).toBe(false);
+    expect(existsSync(folderOf(taken))).toBe(true);
+    expect(existsSync(folderOf(unused))).toBe(false);
+    // Still on the session's list, so a later prune removes it once nothing uses it.
+    const snapshots = readDevSessions(join(dir, "node")).find((current) => current.sessionId === started.sessionId)?.snapshots;
+    expect(snapshots).toContain(taken);
+    expect(snapshots).not.toContain(held);
+    expect(snapshots).not.toContain(unused);
+  });
+
+  it("never removes at boot an orphaned snapshot that is still installed, though no session is left to name it", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const installed = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    expect(existsSync(folderOf(installed))).toBe(true);
+    // The session is forgotten while what it ran is still installed: only the generation names the snapshot now.
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    writeDevSessions(join(dir, "node"), []);
+    writeOrphanedSnapshots(join(dir, "node"), [installed]);
+    const active = (): string | undefined => {
+      const row = services.runtime.db
+        .prepare("SELECT document FROM package_generations WHERE package_id = ? AND superseded_at IS NULL")
+        .get(PACKAGE) as { document: string } | undefined;
+      return row === undefined ? undefined : (JSON.parse(row.document) as { snapshotDigest?: string }).snapshotDigest;
+    };
+    expect(active()).toBe(installed);
+
+    await restart();
+    expect(active()).toBe(installed);
+    expect(existsSync(folderOf(installed))).toBe(true);
+    expect(readdirSync(folderOf(installed))).toContain("clarkcant.json");
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([installed]);
+  });
+
+  it("never removes at boot the orphaned snapshot a rollback returns to, and keeps serving what runs", async () => {
+    const conversationId = await conversation();
+    const started = session(await call("POST", "/widget-dev/sessions", { root, conversationId }));
+    const instanceId = started.placed?.instanceId ?? "";
+    const first = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    writePackage("<!doctype html><p>second</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 2 });
+    // The generation a rollback returns to fell off the session's list: no session names it, only its generation does.
+    changeSession(started.sessionId, (stored) => ({ ...stored, snapshots: (stored.snapshots ?? []).filter((digest) => digest !== first) }));
+    writeOrphanedSnapshots(join(dir, "node"), [first]);
+
+    await restart();
+    expect(existsSync(folderOf(first))).toBe(true);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([first]);
+    expect(await served((await live(conversationId, instanceId)).frame.url)).toContain("second");
+  });
+
+  it("removes nothing at a boot resumed again while a session is watched", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+    const unused = madeSnapshot(1);
+    writeOrphanedSnapshots(join(dir, "node"), [unused]);
+    // A watched session's engine may be building the same bytes as a snapshot the tidying would remove.
+    await services.widgetDev?.resume();
+    expect(existsSync(folderOf(unused))).toBe(true);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([unused]);
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`)).status).toBe("live");
+  });
+
+  it("removes nothing at a boot the node is already closing", async () => {
+    await services.widgetDev?.close();
+    const unused = madeSnapshot(1);
+    writeOrphanedSnapshots(join(dir, "node"), [unused]);
+    const sessions = createWidgetDevSessions(() => services, { watch: false });
+    services.widgetDev = sessions;
+    await sessions.close();
+    await sessions.resume();
+    expect(existsSync(folderOf(unused))).toBe(true);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([unused]);
   });
 });
 

@@ -27,6 +27,7 @@ export const FACET_KEYWORDS: Readonly<Record<PackageManifest["facets"][number]["
   setup: "clarkcant-setup",
   driver: "clarkcant-driver",
   voice: "clarkcant-voice",
+  instructions: "clarkcant-instructions",
 };
 
 export function keywordsFor(manifest: Pick<PackageManifest, "facets">): string[] {

@@ -40,6 +40,57 @@ contextBridge.exposeInMainWorld("clarkcantDetached", {
   intent(input) {
     return ipcRenderer.invoke("detached:intent", input);
   },
+  /*
+   * The relays a widget in its own frame needs. Each takes only what the frame said — never an instance, a
+   * conversation, a gateway or a token — and the host performs it against the instance it opened this window for.
+   */
+  /** A fresh read of this instance: a new frame URL and the bindings, state and status the node holds now. */
+  frameRead() {
+    return ipcRenderer.invoke("detached:frame.read");
+  },
+  /** Commit a state write the frame made: `{ expectedRevision, patch }`. */
+  saveState(write) {
+    return ipcRenderer.invoke("detached:state.save", write);
+  },
+  /** Tell the node what the frame says it shows: `{ proposal }`. */
+  publishSemantic(input) {
+    return ipcRenderer.invoke("detached:semantic.publish", input);
+  },
+  /** The build status of the widget dev session this frame runs, without the developer's folder path. */
+  devSession() {
+    return ipcRenderer.invoke("detached:dev.session");
+  },
+  /**
+   * The frame's files, jobs and browser tokens, one method per verb. Each takes the frame's own request — an artifact,
+   * a job or its token session, never the instance — and the host performs it against the instance it opened this
+   * window for. A pick and an export open the OS dialog over this window; the bytes and the path stay in the host.
+   */
+  artifacts: {
+    pick: (input) => ipcRenderer.invoke("detached:artifacts.pick", input),
+    describe: (input) => ipcRenderer.invoke("detached:artifacts.describe", input),
+    create: (input) => ipcRenderer.invoke("detached:artifacts.create", input),
+    read: (input) => ipcRenderer.invoke("detached:artifacts.read", input),
+    write: (input) => ipcRenderer.invoke("detached:artifacts.write", input),
+    finalize: (input) => ipcRenderer.invoke("detached:artifacts.finalize", input),
+    export: (input) => ipcRenderer.invoke("detached:artifacts.export", input),
+    attach: (input) => ipcRenderer.invoke("detached:artifacts.attach", input),
+    discard: (input) => ipcRenderer.invoke("detached:artifacts.discard", input),
+  },
+  jobs: {
+    get: (input) => ipcRenderer.invoke("detached:jobs.get", input),
+    list: () => ipcRenderer.invoke("detached:jobs.list"),
+    cancel: (input) => ipcRenderer.invoke("detached:jobs.cancel", input),
+  },
+  tokens: {
+    request: (input) => ipcRenderer.invoke("detached:tokens.request", input),
+    end: (input) => ipcRenderer.invoke("detached:tokens.end", input),
+  },
+  /** Told when the installed packages changed, so the window re-reads its frame. Returns the unsubscribe. */
+  onPackagesChanged(callback) {
+    const listener = () => callback();
+    ipcRenderer.on("detached:packagesChanged", listener);
+    return () => ipcRenderer.removeListener("detached:packagesChanged", listener);
+  },
   /**
    * Hands the instance back to the window that owns the conversation.
    *
