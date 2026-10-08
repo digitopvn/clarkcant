@@ -215,9 +215,10 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.ai.model.status.choose": "Chọn một nhà cung cấp và một model trước đã.",
   "settings.ai.model.status.noSuchModel": "không có model",
   "settings.ai.model.status.saved": "Đã lưu",
-  "settings.ai.model.status.appliesNextSession": "Áp dụng cho hội thoại mới.",
+  "settings.ai.model.status.appliesNextMessage": "Áp dụng cho hội thoại này từ tin nhắn tiếp theo.",
   "settings.ai.model.status.appliesNextRestart": "Node sẽ dùng model này từ lần khởi động sau.",
   "settings.ai.model.status.saveFailed": "Không lưu được lựa chọn.",
+  "settings.ai.model.status.refused": "Không lưu được lựa chọn: {reason}.",
   "settings.key.heading": "Khoá TypeSafe",
   "settings.key.intro":
     "Jev dùng TypeSafe khi nó phải quyết định cách xử lý một việc. Ở đây cùng nhà cung cấp và model, vì cả ba đều là chuyện chọn cái gì để chạy.",
@@ -752,9 +753,10 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.ai.model.status.choose": "Choose a provider and a model first.",
   "settings.ai.model.status.noSuchModel": "has no model",
   "settings.ai.model.status.saved": "Saved",
-  "settings.ai.model.status.appliesNextSession": "Applies to a new conversation.",
+  "settings.ai.model.status.appliesNextMessage": "Applies to this conversation from your next message.",
   "settings.ai.model.status.appliesNextRestart": "The node will use this model from the next startup.",
   "settings.ai.model.status.saveFailed": "Could not save the choice.",
+  "settings.ai.model.status.refused": "Could not save the choice: {reason}.",
   "settings.key.heading": "TypeSafe key",
   "settings.key.intro":
     "Jev uses TypeSafe when it has to decide how to handle something. It lives here with provider and model, since all three are about choosing what to run.",

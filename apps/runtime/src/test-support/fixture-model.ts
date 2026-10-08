@@ -34,6 +34,7 @@ import {
 import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { DEFAULT_FAKE_SKILLS, FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 
+import { readModelChoice } from "../application/model-choice.ts";
 import { providerAuthPort } from "../application/provider-sign-in.ts";
 import {
   getNotification,
@@ -273,6 +274,23 @@ function uiEchoModelTurn(conductor: () => NodeServices["conductor"]): Promise<Mo
     uiContext: (conversationId) => conversationUiContext(conductor(), conversationId),
   });
   return uiEchoTurn;
+}
+
+/**
+ * A model turn that runs the model the person chose, read per turn from the node's stored choice the way the
+ * composition root wires it, built on first use. A fixture node has no provider, so a journey asks this turn which
+ * model answered: the reply names the model its session ran, which is what a choice made in `/model` has to change.
+ */
+let chosenModelTurn: Promise<ModelTurn | undefined> | undefined;
+
+function chosenModelEchoTurn(services: () => Pick<NodeServices, "runtime">): Promise<ModelTurn | undefined> {
+  chosenModelTurn ??= createModelTurn({
+    env: { CC_MODEL_PROVIDER: "fake", CC_MODEL_ID: "fake-model" },
+    cwd: process.cwd(),
+    adapter: new FakePiAdapter(),
+    model: () => readModelChoice(services().runtime.db, services().runtime.identity.ownerPrincipalId),
+  });
+  return chosenModelTurn;
 }
 
 /**
@@ -546,6 +564,25 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * arrived, whether a second question with nothing changed was told nothing, and whether a later change came as a
      * delta.
      */
+    // Which model answered this turn: the session's own, after the turn resolved the person's stored choice.
+    if (/^(?:model nào đang trả lời|which model answers)\??$/iu.test(input.text.trim())) {
+      const turn = await chosenModelEchoTurn(deps.services);
+      if (turn === undefined) return undefined;
+      const reply = await turn.answer({
+        conversationId: input.conversationId as never,
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user",
+          nodeId: deps.services().runtime.identity.nodeId as never,
+        },
+        text: input.text,
+        messageId: input.messageId,
+        onEvent: (event) => input.emit?.(event),
+      });
+      const said = `Fixture: lượt này chạy trên ${reply.provider}/${reply.model}.`;
+      return { text: said, block: { type: "text", format: "plain", content: said, streaming: false } };
+    }
+
     if (/^(?:giao diện đang cho thấy gì|what does the ui show)\??$/iu.test(input.text.trim())) {
       const turn = await uiEchoModelTurn(() => deps.services().conductor);
       if (turn === undefined) return undefined;

@@ -4,11 +4,12 @@ import { type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contr
 
 import { readPersonalInstructions, readThinkingLevel, readTurnTimeLimitMs } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
-import { credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
+import { credentialNames, getNotification, latestMessages } from "@clarkcant/storage";
 import { keyVariableFor } from "@clarkcant/pi-adapter";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
+import { readModelChoice } from "../application/model-choice.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { auditPackageInstructions, enabledPackageInstructionSets, packageInstructionsDepsOf } from "../application/package-instructions.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
@@ -337,13 +338,8 @@ export async function routeOrFallBack(
  * Build the model turn, or `undefined` when this node has no model.
  */
 export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<ModelTurn | undefined> {
-  const chosenModel = (): { provider: string; id: string } | undefined => {
-    const stored = readPreference(deps.runtime.db, deps.runtime.identity.ownerPrincipalId, "model", "node");
-    const [provider, id] = (stored ?? "").split("/");
-    return provider === undefined || provider === "" || id === undefined || id === ""
-      ? undefined
-      : { provider, id };
-  };
+  const chosenModel = (): { provider: string; id: string } | undefined =>
+    readModelChoice(deps.runtime.db, deps.runtime.identity.ownerPrincipalId);
 
   // The references the message being answered carries, read from its stored row: by id when the turn knows it.
   const referenceBlocksOf = (conversationId: string, messageId: string | undefined) =>

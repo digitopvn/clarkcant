@@ -17,11 +17,26 @@ import { instantSchema } from "./primitives.ts";
  * the folders Clark may develop in because the person chose them, to take one back), and `/settings` opens the existing
  * Settings dialog over the conversation (`/settings ai`: on that tab), through the same `settings.open` and `settings.tab`
  * app intents the header's gear and "open settings" reach.
+ * `/model` brings up the model picker: every provider and model this node can run, which one is in use, which providers
+ * are signed in, and a choice that changes nothing until the person confirms it (`/model <words>`: the picker, searching
+ * for those words).
  *
  * The node is the one place that decides what a command means; the composer offers the same list after `/`, so a
  * command is something a person can find rather than something they have to know.
  */
-export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog", "report", "develop", "settings"] as const;
+export const SLASH_COMMANDS = [
+  "new",
+  "sessions",
+  "login",
+  "logout",
+  "thinking",
+  "background",
+  "changelog",
+  "report",
+  "develop",
+  "settings",
+  "model",
+] as const;
 export const slashCommandSchema = z.enum(SLASH_COMMANDS);
 export type SlashCommand = z.infer<typeof slashCommandSchema>;
 
@@ -125,6 +140,13 @@ export const commandCardSchema = z.strictObject({
     .max(60),
   /** Said instead of rows when there is nothing to list, so an empty card still answers the command. */
   empty: z.string().min(1).max(500).optional(),
+  /**
+   * A host-owned control the page draws below the rows from what the node holds when it is drawn, rather than from a
+   * list frozen into the message. `model` is the model picker: the node's catalogue, the model in use, which providers
+   * are signed in, and a choice applied through `POST /model` only once the person confirms it. `query` is what the
+   * picker searches for first (`/model <words>`). A record of the card, without the page's handlers, draws no picker.
+   */
+  picker: z.strictObject({ kind: z.literal("model"), query: z.string().min(1).max(200).optional() }).optional(),
   updatedAt: instantSchema,
 });
 export type CommandCard = z.infer<typeof commandCardSchema>;
