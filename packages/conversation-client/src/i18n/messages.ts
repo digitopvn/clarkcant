@@ -16,6 +16,7 @@ import type { LocaleChoice } from "./locale.ts";
 import { MESSAGES_THEMES_EN, MESSAGES_THEMES_VI } from "./messages-themes.ts";
 import { MESSAGES_CHANGELOG_EN, MESSAGES_CHANGELOG_VI } from "./messages-changelog.ts";
 import { MESSAGES_CREDENTIALS_EN, MESSAGES_CREDENTIALS_VI } from "./messages-credentials.ts";
+import { MESSAGES_DECISION_PROVIDER_EN, MESSAGES_DECISION_PROVIDER_VI } from "./messages-decision-provider.ts";
 import { MESSAGES_INBOX_EN, MESSAGES_INBOX_VI } from "./messages-inbox.ts";
 import { MESSAGES_INTENTS_EN, MESSAGES_INTENTS_VI } from "./messages-intents.ts";
 import { MESSAGES_PROVIDERS_EN, MESSAGES_PROVIDERS_VI } from "./messages-providers.ts";
@@ -28,6 +29,7 @@ export const MESSAGES_VI = {
   ...MESSAGES_THEMES_VI,
   ...MESSAGES_CHANGELOG_VI,
   ...MESSAGES_CREDENTIALS_VI,
+  ...MESSAGES_DECISION_PROVIDER_VI,
   ...MESSAGES_INBOX_VI,
   ...MESSAGES_INTENTS_VI,
   ...MESSAGES_PROVIDERS_VI,
@@ -74,6 +76,7 @@ export const MESSAGES_EN = {
   ...MESSAGES_THEMES_EN,
   ...MESSAGES_CHANGELOG_EN,
   ...MESSAGES_CREDENTIALS_EN,
+  ...MESSAGES_DECISION_PROVIDER_EN,
   ...MESSAGES_INBOX_EN,
   ...MESSAGES_INTENTS_EN,
   ...MESSAGES_PROVIDERS_EN,

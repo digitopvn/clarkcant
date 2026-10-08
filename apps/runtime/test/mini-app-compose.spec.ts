@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type CompositionSlot, type Instant, nowInstant } from "@clarkcant/contracts";
+import { type CompositionSlot, type DecisionProviderSelection, type Instant, nowInstant } from "@clarkcant/contracts";
 import { findCompositionByMessage, upsertTask, type Database } from "@clarkcant/storage";
 
 import { type MiniAppDataDeps, importLocalImage } from "../src/mini-app-data.ts";
@@ -17,6 +17,7 @@ import {
   findTemplate,
 } from "../src/compose-mini-app.ts";
 import type { JevConfig, JevTelemetry, JevTransport } from "../src/jev-selector.ts";
+import { liveDecisionConfig } from "../src/decision-config.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 
@@ -486,6 +487,29 @@ describe("composeMiniApp", () => {
     );
     expect(byCloudflare.ok && byCloudflare.selectorMode).toBe("jev");
     expect(storedSelector("msg_provider_cloudflare")).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+  });
+
+  it("records the provider whose call chose, when the person switches provider during the decision", async () => {
+    const probabilities = { "overview@1": 0.95, "focused@1": 0.02, "agenda@1": 0.02, none: 0.01 };
+    let selection: DecisionProviderSelection | null = { provider: "cloudflare", model: "clef", accountId: "0123456789abcdef0123456789abcdef" };
+    const live = liveDecisionConfig({ TYPESAFE_API_KEY: "ts-key", CLOUDFLARE_API_TOKEN: "cf-key" }, undefined, {}, () => selection);
+    const switching: JevTransport = async (request) => {
+      // The person picks TypeSafe while Cloudflare is answering.
+      selection = { provider: "typesafe" };
+      const key = Object.keys((request.body as { questions: Record<string, unknown> }).questions)[0] ?? "template";
+      const result = { model: "clef", answers: { [key]: { type: "choice", choice: "overview@1", probabilities, confidence: 0.9 } } };
+      return { status: 200, body: { success: true, errors: [], messages: [], result } };
+    };
+    const outcome = await composeMiniApp(
+      { ...compose, jev: { deps: { config: live, transport: switching }, budget: compose.jev!.budget } },
+      { conversationId: CONVERSATION, messageId: "msg_switch_mid_decision", principalId: PRINCIPAL, intent: "cho tôi tổng quan" },
+    );
+    expect(outcome.ok && outcome.selectorMode).toBe("jev");
+    expect(findCompositionByMessage(db(), "msg_switch_mid_decision", PRINCIPAL)?.provenance.selector).toMatchObject({
+      mode: "jev",
+      model: "clef",
+      provider: "cloudflare",
+    });
   });
 
   it("keeps a surface Cloudflare chose readable and truthful after the node switches back to TypeSafe", async () => {

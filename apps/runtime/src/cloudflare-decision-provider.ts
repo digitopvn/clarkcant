@@ -1,7 +1,9 @@
+import { CLOUDFLARE_ACCOUNT_ID_PATTERN, CLOUDFLARE_DECISION_MODELS as MODELS, DECISION_CREDENTIAL_NAMES } from "@clarkcant/contracts";
 import { z } from "zod";
 
 import { validateProviderEndpoint } from "./decision-transport.ts";
 import type { DecisionProvider, DecisionProviderConnection } from "./decision-provider.ts";
+import { CREDENTIAL_VARIABLES, resolveProviderCredential } from "./provider-credential.ts";
 import { systemOneResponseSchema } from "./system-one-wire.ts";
 
 /**
@@ -17,14 +19,14 @@ import { systemOneResponseSchema } from "./system-one-wire.ts";
  *   envelope is unwrapped, and the System One answer inside it is validated by the same schema as Jev's.
  */
 
-export const CLOUDFLARE_DECISION_MODELS = Object.freeze(["clef", "clef-flash"] as const);
+export const CLOUDFLARE_DECISION_MODELS = MODELS;
 export type CloudflareDecisionModel = (typeof CLOUDFLARE_DECISION_MODELS)[number];
 
 const WORKERS_AI_ORIGIN = "https://api.cloudflare.com";
 /** The model namespace on Workers AI; a response may name the model with or without it. */
 const MODEL_NAMESPACE = "@cf/cloudflare/";
 /** A Cloudflare account id is 32 hexadecimal characters. Anything else is refused before it can reach a URL. */
-const ACCOUNT_ID_SHAPE = /^[0-9a-f]{32}$/i;
+const ACCOUNT_ID_SHAPE = CLOUDFLARE_ACCOUNT_ID_PATTERN;
 
 /** Recorded as the model when none usable is configured, so a refusal line still names what was missing. */
 const UNCONFIGURED_MODEL = "unconfigured";
@@ -49,7 +51,8 @@ const envelopeSchema = z.object({
 
 export const cloudflareDecisionProvider: DecisionProvider = {
   id: "cloudflare",
-  connection(env) {
+  models: CLOUDFLARE_DECISION_MODELS,
+  connection(env, stored) {
     const requested = env.CLARKCANT_DECISION_MODEL?.trim() ?? "";
     if (!isCloudflareDecisionModel(requested)) {
       return refused(
@@ -69,9 +72,15 @@ export const cloudflareDecisionProvider: DecisionProvider = {
     const endpointCheck = validateProviderEndpoint(workersAiEndpoint(accountId, requested));
     if (!endpointCheck.ok) return refused(requested, endpointCheck.reason);
 
-    // The environment only. There is no settings card for this token, and a generically named stored secret was
-    // stored for some other consumer: using it here would skip the vault's consumer check entirely.
-    const apiKey = env.CLOUDFLARE_API_TOKEN?.trim() || undefined;
+    // The token saved in this provider's own card wins, then the environment. The card writes a host-owned vault name
+    // (`decision:cloudflare`) the generic store refuses, so a `cloudflare` secret somebody stored for a deploy command
+    // never becomes this bearer.
+    const credentialName = DECISION_CREDENTIAL_NAMES.cloudflare;
+    const apiKey = resolveProviderCredential({
+      stored: stored?.("cloudflare"),
+      env,
+      variables: CREDENTIAL_VARIABLES[credentialName] ?? [],
+    }).value;
     return { apiKey, endpoint: endpointCheck.url, endpointRefusal: undefined, model: requested };
   },
   readResponse(body) {

@@ -31,6 +31,13 @@ export const CREDENTIAL_VARIABLES: Readonly<Record<string, readonly string[]>> =
    * Jev can use, and counting it would skip the first run's key step on a node whose selector then stays disabled.
    */
   typesafe: ["TYPESAFE_API_KEY"],
+  /**
+   * Cloudflare Workers AI, for the decision provider when Clef is selected. Stored under a host-owned name
+   * (`DECISION_CREDENTIAL_NAMES`) that only the decision provider's card writes.
+   */
+  "decision:cloudflare": ["CLOUDFLARE_API_TOKEN"],
+  /** OpenRouter's decisions API, for the decision provider when OpenRouter is selected. Host-owned like Cloudflare's. */
+  "decision:openrouter": ["OPENROUTER_API_KEY"],
 };
 
 /** The key in effect and where it came from. `value` is present exactly when `source` is not `"none"`. */

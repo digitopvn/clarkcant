@@ -21,6 +21,7 @@ import { handleControlRoutes } from "./routes/control.ts";
 import { handleTerminalRoutes } from "./routes/terminals.ts";
 import { handleProviderRoutes } from "./routes/providers.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
+import { handleDecisionProviderRoutes } from "./routes/decision-provider.ts";
 import { handleRecordReadRoutes } from "./routes/record-read.ts";
 import { handleMiniAppDataRoutes } from "./routes/mini-app-data.ts";
 import { handleMemoryRoutes, handleSearchRoutes } from "./routes/search-memory.ts";
@@ -350,6 +351,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const credentialResponse = handleCredentialRoutes({ services, request, segments });
   if (credentialResponse !== undefined) return credentialResponse;
+  // Who answers Clark's typed decisions, and its key. Writes are person-only: see `isPersonOnlyRoute`.
+  const decisionProviderResponse = handleDecisionProviderRoutes({ services, request, segments, at });
+  if (decisionProviderResponse !== undefined) return decisionProviderResponse;
 
   const connectionResponse = await handleConnectionRoutes({ services, request, segments });
   if (connectionResponse !== undefined) return connectionResponse;

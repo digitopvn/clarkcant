@@ -1,3 +1,4 @@
+import { DECISION_PROVIDER_PREFERENCE } from "./decision-provider.ts";
 import { MAP_TILE_POLICY_PREFERENCE } from "./map-view.ts";
 import { PACKAGE_INSTRUCTIONS_PREFERENCE } from "./package-instructions.ts";
 import { COMPOSER_SURFACE_HEADER } from "./surfaces.ts";
@@ -38,12 +39,19 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
   const [first, second, third, fourth, fifth, sixth] = segments;
   // PUT /preferences/maps.tilePolicy and POST /preferences/maps.tilePolicy/undo: which host every map on the node may
   // fetch tiles from, and so tell what it shows. An AI client that could name that host could widen the node's reach.
-  if (first === "preferences" && (second === MAP_TILE_POLICY_PREFERENCE || second === PACKAGE_INSTRUCTIONS_PREFERENCE)) {
+  // PUT /preferences/ai.decisionProvider and its undo: which third party a redacted intent is sent to for a decision.
+  if (
+    first === "preferences" &&
+    (second === MAP_TILE_POLICY_PREFERENCE || second === PACKAGE_INSTRUCTIONS_PREFERENCE || second === DECISION_PROVIDER_PREFERENCE)
+  ) {
     return (verb === "PUT" && segments.length === 2) || (verb === "POST" && segments.length === 3 && third === "undo");
   }
   // PUT and DELETE /map-tiles/key: the tile provider's key, and the origin it is bound to. Reading whether one is saved,
   // and for which origin, stays reachable.
   if (first === "map-tiles" && second === "key" && segments.length === 2) return verb !== "GET";
+  // PUT /decision-provider and PUT or DELETE /decision-provider/credential[/:provider]: choosing the decision provider and
+  // entering or removing its key. Reading the effective provider, its model and where its key comes from stays reachable.
+  if (first === "decision-provider") return verb !== "GET";
   // Signing in to and out of AI providers, and following a sign-in: whose account the node's models run on is the
   // person's to decide, and a sign-in's page and codes are theirs to see. Listing which providers are signed in stays
   // reachable, as the model picker's own catalogue is.
@@ -125,7 +133,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, which decision provider answers Clark's decisions and its key, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
 
 /**

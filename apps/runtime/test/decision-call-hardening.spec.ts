@@ -176,7 +176,7 @@ describe("the secret-shape check on the request body", () => {
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
     expect(bodies).toHaveLength(1);
-    expect(outcome).toEqual({ status: "answered", probability: 0.9, verdict: "on" });
+    expect(outcome).toEqual({ status: "answered", probability: 0.9, verdict: "on", decidedBy: { model: "jev-1.13.0" } });
   });
 });
 
@@ -223,7 +223,7 @@ describe("the shared call path's own byte ceilings", () => {
       { config, transport, onTelemetry: (event) => telemetry.push(event) },
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "unavailable", reason: "the provider answered with HTTP 500" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "the provider answered with HTTP 500", decidedBy: { model: "jev-1.13.0" } });
     expect(JSON.stringify(telemetry)).not.toContain("echo");
   });
 
@@ -238,7 +238,7 @@ describe("the shared call path's own byte ceilings", () => {
       { config, transport },
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape", decidedBy: { model: "jev-1.13.0" } });
   });
 });
 
@@ -323,7 +323,7 @@ describe("the fetch transport", () => {
       { config, transport: createFetchTransport() },
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape", decidedBy: { model: "jev-1.13.0" } });
   });
 
   it("discards an error body unread: cancelled, not consumed, and never returned", async () => {
