@@ -293,6 +293,11 @@ describe("the dev host server", () => {
       expect((await host.rebuild())?.ok).toBe(true);
       expect(host.reloads()).toBe(0);
       expect((await readBuilds(2)).map((build) => build.ok)).toEqual([false, true]);
+
+      // With no failure before it, an unchanged build is sent as well: the shell follows the engine's last build, and
+      // a failure the dev host never reported (one released while watching stopped) still gets taken away.
+      expect((await host.rebuild())?.ok).toBe(true);
+      expect((await readBuilds(3)).map((build) => build.ok)).toEqual([false, true, true]);
     } finally {
       await reader?.cancel();
       await stop();
