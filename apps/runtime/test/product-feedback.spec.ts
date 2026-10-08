@@ -604,12 +604,93 @@ describe("a report checking cannot settle", () => {
   });
 
   it("is the only report Send anyway is accepted for", async () => {
-    github.fail("createIssue", { kind: "no-answer", applied: false });
     const { draft } = await prepared(bug("Popover flickers"));
 
     expect(await press(draft.reportId, "send-anyway")).toMatchObject({ ok: false, status: 409, code: "NOT_INCONCLUSIVE" });
+    expect(github.writes()).toHaveLength(0);
+  });
+});
+
+describe("two presses on one report that overlap", () => {
+  /** Holds every write's "whose token is this" question open until the returned function is called. */
+  function holdingTheLoginLookup(): () => void {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const base = github;
+    services.feedbackGithub = {
+      ...base,
+      withWriter: (use) =>
+        base.withWriter((client) =>
+          use({
+            ...client,
+            viewerLogin: async () => {
+              await held;
+              return client.viewerLogin();
+            },
+          }),
+        ),
+    };
+    return release;
+  }
+
+  it("file it once: the second finds it being sent and only says so", async () => {
+    const { draft } = await prepared(bug("Orb stops animating after the laptop sleeps"));
+    const release = holdingTheLoginLookup();
+
+    const first = press(draft.reportId);
+    const second = press(draft.reportId);
+    release();
+    const [one, two] = await Promise.all([first, second]);
+
+    expect(github.writes()).toHaveLength(1);
+    expect(withMarker(draft.reportId)).toHaveLength(1);
+    expect(one.ok && one.publication.status).toBe("published");
+    expect(two.ok && two.publication.status).toBe("unknown");
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.status).toBe("published");
+  });
+
+  it("file a report beyond checking once more at most, however many Send anyway presses overlap", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const { draft } = await prepared(bug("Window shadow is clipped"));
     await press(draft.reportId);
-    expect(await press(draft.reportId, "send-anyway")).toMatchObject({ ok: false, status: 409, code: "NOT_INCONCLUSIVE" });
+    vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
+    github.overlongLists = true;
+    await press(draft.reportId, "check");
+    github.overlongLists = false;
+    const release = holdingTheLoginLookup();
+
+    const first = press(draft.reportId, "send-anyway");
+    const second = press(draft.reportId, "send-anyway");
+    release();
+    await Promise.all([first, second]);
+
+    expect(github.writes()).toHaveLength(2);
+  });
+
+  it("leave a report whose filing GitHub refused ready to be sent again, not held as being sent", async () => {
+    github.fail("createIssue", { kind: "refused", status: 422 });
+    const { draft } = await prepared(bug("Dock badge never clears"));
+
+    const refused = await press(draft.reportId);
+    const again = await press(draft.reportId);
+
+    expect(refused.ok && refused.publication.status).toBe("failed");
+    expect(again.ok && again.publication.status).toBe("published");
+    expect(withMarker(draft.reportId)).toHaveLength(1);
+  });
+
+  it("let a Send anyway the node already sent only be checked when it is pressed again", async () => {
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const { draft } = await prepared(bug("Popover flickers"));
+    await press(draft.reportId);
+
+    const again = await press(draft.reportId, "send-anyway");
+
+    expect(again.ok && again.publication.status).toBe("unknown");
     expect(github.writes()).toHaveLength(1);
   });
 });

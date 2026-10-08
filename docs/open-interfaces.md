@@ -342,6 +342,9 @@ and checking again won't change that." Instead of Check again it links the issue
 account the report was sent as (`author:<login>` in `searchUrl`, or `author:@me` when no login was recorded) and the
 prefilled new-issue page, warns that filing again may create a duplicate, and offers Send anyway
 (`intent: "send-anyway"`, accepted only for such a report, otherwise `409 NOT_INCONCLUSIVE`), which may file it twice.
+A Send anyway pressed again once its own attempt was sent is only checked, like any report left `publishing` or
+`unknown`. A press takes the report as `publishing` before the node asks GitHub anything, so a second press that
+overlaps a send running on the node answers with where the report stands and sends nothing.
 The node never sends one again on its own. When the node starts, every report
 left `publishing` or `unknown` is checked the same way, and a settled outcome is written into its conversation as a
 result card. The other statuses are `needs-access` (no `github_token`; with `manualUrl`, GitHub's prefilled new-issue
