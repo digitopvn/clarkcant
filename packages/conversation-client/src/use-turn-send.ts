@@ -98,6 +98,8 @@ export interface TurnSendDeps {
   setDatasets: (datasets: Record<string, ResolvedDataset>) => void;
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
+  /** A short remark beside the composer, such as why a command typed during a reply has to wait for it. */
+  onNotice: (text: string) => void;
   /**
    * Empties the composer draft once a send is accepted, and on a restart.
    *
@@ -138,6 +140,7 @@ export function useTurnSend({
   setDatasets,
   setSnapshots,
   setPendingIntent,
+  onNotice,
   clearDraft,
   onSendFailed,
   t,
@@ -227,7 +230,16 @@ export function useTurnSend({
         const decision = await client
           .sendAppIntent({ text: trimmed, source: "chat", conversationId })
           .catch(() => undefined);
-        if (decision === undefined || decision.kind === "none") return;
+        /*
+         * `/settings` and `/new` are app intents and come back as one. Any other slash command is answered in the
+         * conversation, which has to wait for this reply: it stays in the draft, and the person is told why, rather than
+         * Enter seeming to do nothing.
+         */
+        const slash = parseSlashCommand(trimmed);
+        if (decision === undefined || decision.kind === "none") {
+          if (slash !== undefined) onNotice(t(decision === undefined ? "intents.commandLookupFailed" : "intents.commandWaits").replace("{command}", `/${slash.command}`));
+          return;
+        }
         clearDraft();
         setPendingIntent(decision);
         return;
@@ -353,6 +365,7 @@ export function useTurnSend({
       conversationId,
       dispatchChips,
       onConversationReady,
+      onNotice,
       onReferencesSent,
       onSendFailed,
       resetHero,

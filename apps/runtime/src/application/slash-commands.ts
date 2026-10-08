@@ -1,5 +1,4 @@
 import {
-  type AppIntent,
   type AppIntentDecision,
   type ChangelogCard,
   type CommandCard,
@@ -10,16 +9,15 @@ import {
   type Principal,
   type SlashCommand,
   type TypedSlashCommand,
-  SETTINGS_TABS,
   THINKING_LEVELS,
-  describeAppIntent,
+  appIntentNotUnderstood,
 } from "@clarkcant/contracts";
-import { readThinkingLevel, settingsTabNamed, writeRegisteredPreference } from "@clarkcant/core";
+import { readThinkingLevel, writeRegisteredPreference } from "@clarkcant/core";
 import { appendAuditEvent, getConversation, listConversations } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { conversationLabel } from "../composer-suggestions.ts";
-import { startBackgroundWork } from "../routes/conversations.ts";
+import { startBackgroundWork, typedAppIntent } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { CHANGELOG_FALLBACK_URL, changelogCard, readChangelog } from "./changelog.ts";
@@ -93,13 +91,16 @@ export async function answerSlashCommand(
   const { command, argument } = input.typed;
 
   switch (command) {
-    case "new": {
-      const readBack = say(
-        "Đã mở cuộc trò chuyện mới. Cuộc này vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
-        "Started a new conversation. This one is kept; reopen it any time with /sessions.",
+    case "new":
+      return appIntentAnswer(
+        services,
+        input,
+        locale,
+        say(
+          "Đã mở cuộc trò chuyện mới. Cuộc này vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
+          "Started a new conversation. This one is kept; reopen it any time with /sessions.",
+        ),
       );
-      return { text: readBack, appIntent: { kind: "intent", intent: { kind: "nav.home" }, requiresConfirmation: false, readBack } };
-    }
 
     case "sessions":
       return sessionsAnswer(services, input.conversationId, say, card);
@@ -205,33 +206,42 @@ export async function answerSlashCommand(
     case "develop":
       return developAnswer(services, argument, locale, say);
     case "settings":
-      return settingsAnswer(argument, locale, say);
+      return appIntentAnswer(services, input, locale);
     case "model":
       return modelAnswer(services, argument, say, card);
   }
 }
 
 /**
- * `/settings` opens the Settings the header's gear opens, and `/settings <tab>` opens it on that tab.
+ * `/settings`, `/settings <tab>` and `/new`: the commands that are app intents.
  *
- * The answer is the host's own `settings.open` or `settings.tab` decision, the one "open settings" typed or spoken
- * reaches, so the page runs it through the same executor onto the same dialog: no second screen, nothing a model
- * chose, and the conversation and the draft stay where they were. A tab that does not exist opens nothing and is
- * refused by name, listing the ones there are.
+ * `/settings` opens the Settings the header's gear opens, `/settings <tab>` opens it on that tab, and `/new` leaves
+ * for a fresh conversation. The answer is the host's own decision, made by the same `decideAppIntent` that "open
+ * settings" typed or spoken reaches, so it is read the same way, writes the same audit record, and the page runs it
+ * through the same executor onto the same dialog: no second screen, nothing a model chose, and the conversation and
+ * the draft stay where they were. A tab that does not exist opens nothing and is refused by name, listing the tabs by
+ * their labels. `readBack`, when given, is what the command says instead of the decision's own read-back.
  */
-function settingsAnswer(argument: string, locale: Locale, say: (vi: string, en: string) => string): SlashCommandAnswer {
-  const tab = argument === "" ? undefined : settingsTabNamed(argument);
-  if (argument !== "" && tab === undefined) {
-    return {
-      text: say(
-        `Settings không có tab “${argument}”. Các tab: ${SETTINGS_TABS.join(", ")}. Gõ /settings để mở Settings.`,
-        `Settings has no tab "${argument}". Tabs: ${SETTINGS_TABS.join(", ")}. Type /settings to open Settings.`,
-      ),
-    };
+function appIntentAnswer(
+  services: SlashServices,
+  input: { conversationId: string; typed: TypedSlashCommand; at: () => Instant },
+  locale: Locale,
+  readBack?: string,
+): SlashCommandAnswer {
+  const typed = `/${input.typed.command} ${input.typed.argument}`.trim();
+  const decision = typedAppIntent(services, input.conversationId, typed, input.at);
+  switch (decision.kind) {
+    case "refused":
+      return { text: decision.say };
+    case "intent": {
+      const said = readBack ?? decision.readBack;
+      return { text: said, appIntent: { ...decision, readBack: said } };
+    }
+    default:
+      // Neither command asks first, and both are app intents; anything else would be a decision this answer cannot
+      // carry out, so it says so rather than claiming the screen changed.
+      return { text: appIntentNotUnderstood(locale) };
   }
-  const intent: AppIntent = tab === undefined ? { kind: "settings.open" } : { kind: "settings.tab", tab };
-  const readBack = describeAppIntent(intent, locale);
-  return { text: readBack, appIntent: { kind: "intent", intent, requiresConfirmation: false, readBack } };
 }
 
 /**

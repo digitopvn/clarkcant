@@ -16,6 +16,7 @@ export const MESSAGES_INTENTS_VI = {
   "intents.deleteUnconfirmed": "Chưa xác định được kết quả xoá. Hãy tải lại hội thoại trước khi thử lại.",
   "intents.modelSwitchFailed": "Không chuyển được model.",
   "intents.commandLookupFailed": "Không hỏi được node về lệnh đó.",
+  "intents.commandWaits": "Gửi {command} được khi Clark trả lời xong. Lệnh vẫn nằm trong ô soạn tin; bấm Dừng nếu muốn kết thúc câu trả lời ngay.",
 } as const;
 
 export type MessageIntentsKey = keyof typeof MESSAGES_INTENTS_VI;
@@ -29,4 +30,5 @@ export const MESSAGES_INTENTS_EN = {
   "intents.deleteUnconfirmed": "The deletion result is unknown. Reload the conversation before trying again.",
   "intents.modelSwitchFailed": "Could not switch the model.",
   "intents.commandLookupFailed": "Could not ask the node about that command.",
+  "intents.commandWaits": "{command} can be sent once Clark finishes this reply. It stays in the composer; press Stop to end the reply now.",
 } as const satisfies Record<MessageIntentsKey, string>;

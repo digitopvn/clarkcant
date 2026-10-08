@@ -31,12 +31,20 @@ type Deps = Parameters<typeof useTurnSend>[0];
 type Chip = Deps["chips"][number];
 
 /** Each stream waits until the test ends it, so a send can be held in flight across a restart. */
-function harness(chips: readonly Chip[]) {
+function harness(chips: readonly Chip[], appIntent: (request: { text: string }) => Promise<unknown> = async () => ({ kind: "none" })) {
   hooks.states = [];
   hooks.refs = [];
   const dispatched: unknown[] = [];
   const streams: (() => void)[] = [];
+  const asked: unknown[] = [];
+  const pending: unknown[] = [];
+  const notices: string[] = [];
+  const cleared: number[] = [];
   const client = {
+    sendAppIntent: (request: { text: string }) => {
+      asked.push(request);
+      return appIntent(request);
+    },
     createConversation: async () => ({ conversationId: "conv_1" }),
     streamMessage: async (_target: string, _text: string, handlers: { onDone: (result: unknown) => void }) => {
       await new Promise<void>((done) => streams.push(done));
@@ -64,13 +72,14 @@ function harness(chips: readonly Chip[]) {
       resetHero: noop,
       setDatasets: noop,
       setSnapshots: noop,
-      setPendingIntent: noop,
-      clearDraft: noop,
+      setPendingIntent: (decision) => pending.push(decision),
+      onNotice: (text) => notices.push(text),
+      clearDraft: () => cleared.push(1),
       onSendFailed: noop,
       t: (key) => key,
     });
   };
-  return { render, dispatched, streams };
+  return { render, dispatched, streams, asked, pending, notices, cleared };
 }
 
 const READY: Chip = { id: "chip_1", filename: "a.png", mime: "image/png", sizeBytes: 10, state: "ready", attachmentId: "att_1" };
@@ -104,5 +113,63 @@ describe("when a send ends", () => {
     streams[1]?.();
     await newer;
     expect(render().busy).toBe(false);
+  });
+});
+
+describe("a command typed while a reply is being written", () => {
+  it("sends /settings to the node's app-intent decision and runs the Settings it answers", async () => {
+    const decision = { kind: "intent", intent: { kind: "settings.tab", tab: "memory" }, requiresConfirmation: false, readBack: "x" };
+    const { render, streams, asked, pending, cleared, notices } = harness([], async () => decision);
+    const reply = render().send("viết một câu trả lời thật dài");
+    expect(render().busy).toBe(true);
+
+    await render().send("/settings bộ nhớ");
+    expect(asked).toEqual([{ text: "/settings bộ nhớ", source: "chat", conversationId: "conv_1" }]);
+    expect(pending).toEqual([decision]);
+    expect(notices).toEqual([]);
+    // Once for the reply that started, once for the command the node answered.
+    expect(cleared).toHaveLength(2);
+
+    streams[0]?.();
+    await reply;
+  });
+
+  it("keeps any other slash command in the draft and says why it waits, rather than doing nothing", async () => {
+    const { render, streams, pending, cleared, notices } = harness([]);
+    const reply = render().send("viết một câu trả lời thật dài");
+
+    await render().send("/thinking high");
+    expect(pending).toEqual([]);
+    expect(cleared).toHaveLength(1);
+    expect(notices).toEqual(["intents.commandWaits"]);
+
+    streams[0]?.();
+    await reply;
+  });
+
+  it("says the node could not be asked when the lookup fails, and keeps the draft", async () => {
+    const { render, streams, cleared, notices } = harness([], async () => {
+      throw new Error("offline");
+    });
+    const reply = render().send("viết một câu trả lời thật dài");
+
+    await render().send("/settings");
+    expect(cleared).toHaveLength(1);
+    expect(notices).toEqual(["intents.commandLookupFailed"]);
+
+    streams[0]?.();
+    await reply;
+  });
+
+  it("leaves an ordinary sentence in the draft without a remark", async () => {
+    const { render, streams, notices, cleared } = harness([]);
+    const reply = render().send("viết một câu trả lời thật dài");
+
+    await render().send("và thêm một ví dụ nữa");
+    expect(notices).toEqual([]);
+    expect(cleared).toHaveLength(1);
+
+    streams[0]?.();
+    await reply;
   });
 });

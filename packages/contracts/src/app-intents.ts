@@ -308,20 +308,27 @@ export function appIntentNotUnderstood(locale: AppIntentLocale = "vi"): string {
 }
 
 /**
- * What each tab is called, matching the panel rather than translating it.
+ * What each Settings tab is called on screen, in each interface language.
  *
- * A spoken command names a tab the person is looking at, so the words here are the words on screen. Reading back
- * a Vietnamese name for a tab labelled in English would make the read-back a second vocabulary to learn.
+ * The one source of the labels: the panel draws its tab strip from these, a read-back and a refusal name a tab by
+ * them, and the matcher accepts every word in them as that tab's name. A command names a tab the person is looking
+ * at, so the words here are the words on screen; a second list would drift from the panel, and a person typing
+ * the label they see would be told the tab does not exist.
  */
-const TAB_LABELS: Record<SettingsTab, string> = {
-  experience: "Experience",
-  ai: "AI & Routing",
-  control: "Control",
-  extensions: "Extensions",
-  devices: "Devices & Voice",
-  memory: "Memory",
-  developer: "Developer",
-};
+export const SETTINGS_TAB_LABELS = {
+  experience: { vi: "Trải nghiệm", en: "Experience" },
+  ai: { vi: "AI & Định tuyến", en: "AI & Routing" },
+  control: { vi: "Kiểm soát", en: "Control" },
+  extensions: { vi: "Tiện ích", en: "Extensions" },
+  devices: { vi: "Thiết bị & Giọng nói", en: "Devices & Voice" },
+  memory: { vi: "Bộ nhớ", en: "Memory" },
+  developer: { vi: "Nhà phát triển", en: "Developer" },
+} as const satisfies Record<SettingsTab, Record<AppIntentLocale, string>>;
+
+/** Every Settings tab by its label in `locale`, in the panel's order: what a refusal lists. */
+export function settingsTabLabelList(locale: AppIntentLocale): string {
+  return SETTINGS_TABS.map((tab) => SETTINGS_TAB_LABELS[tab][locale]).join(", ");
+}
 
 /**
  * The read-back for a notice action, naming the notice by its title when the caller has it (the node does, once it has
@@ -454,7 +461,7 @@ function describeAppIntentVi(intent: AppIntent): string {
     case "settings.open":
       return "Tôi mở Settings nhé.";
     case "settings.tab":
-      return `Tôi mở Settings ở tab ${TAB_LABELS[intent.tab ?? "experience"]} nhé.`;
+      return `Tôi mở Settings ở tab ${SETTINGS_TAB_LABELS[intent.tab ?? "experience"].vi} nhé.`;
     case "nav.home":
       return "Tôi về màn hình bắt đầu nhé.";
     case "composer.attach":
@@ -532,7 +539,7 @@ function describeAppIntentEn(intent: AppIntent): string {
     case "settings.open":
       return "Opening Settings.";
     case "settings.tab":
-      return `Opening Settings on the ${TAB_LABELS[intent.tab ?? "experience"]} tab.`;
+      return `Opening Settings on the ${SETTINGS_TAB_LABELS[intent.tab ?? "experience"].en} tab.`;
     case "nav.home":
       return "Going back to the start screen.";
     case "composer.attach":
