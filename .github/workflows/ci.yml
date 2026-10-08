@@ -101,6 +101,14 @@ jobs:
           'false'
         run: pnpm install --frozen-lockfile
 
+      # Again with dependencies installed: a check that needs one (the
+      # TypeScript parser) reports itself skipped in the step above.
+      - name: Repository invariants after install
+        if: >-
+          steps.scope.outcome != 'success' || steps.scope.outputs.full !=
+          'false'
+        run: node tools/check-invariants.mjs
+
       # The vector index needs a loadable extension, and whether it loads is a
       # property of the
       # platform rather than of the code: this repository is developed on darwin

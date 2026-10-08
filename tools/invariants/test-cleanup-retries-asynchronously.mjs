@@ -21,8 +21,8 @@
  *   a template literal's `${...}` is.
  * - A call is a call expression, so an options object that wraps across lines is still seen. An optional call
  *   (`fs.rmSync?.(...)`), a call through parentheses (`(await import("node:fs")).rmSync(...)`) and bracket access with
- *   a literal key (`fs["rmSync"](...)`) count as calls. The call asks for retries when `maxRetries` is named among its
- *   arguments.
+ *   a literal key (`fs["rmSync"](...)`) count as calls, as do `fs.rmSync.call(...)` and `fs.rmSync.apply(...)`. The
+ *   call asks for retries when `maxRetries` is named among its arguments.
  * - `rmSync` reached under another name is seen when the name is given in the file: `rmSync as name` in an import,
  *   `{ rmSync: name }` in a destructuring, or `const name = rmSync` or `name = rmSync` (also `fs.rmSync`,
  *   `require("node:fs").rmSync`, `fs["rmSync"]` or another such name). Names are matched by spelling, not by scope.
@@ -30,25 +30,36 @@
  * - A call that is meant to show the failing form carries `invariant-allow: sync-rm-retries` in a comment on its line or
  *   the line above. The marker in a string literal, a template or JSX text does not count.
  *
- * The parser comes from the `typescript` dev dependency. CI runs the invariants before it installs dependencies; there
- * the check says it was skipped, and `tools/test/test-cleanup-retries.spec.ts` runs it over the repository after the
- * install.
+ * The parser comes from the `typescript` dev dependency. CI runs the invariants once before it installs dependencies,
+ * for changes that need no install, and again after it. With no `node_modules` at all the check reports itself
+ * skipped; any other failure to load the parser fails it. A file that does not parse is named in a note, since what
+ * follows the error may not be read as written.
  *
  * It covers test code: specs and the helpers beside them in `test/` and `e2e/` folders, plus the test tooling CI runs on
  * every OS (`TEST_TOOLING`).
  */
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { readFileSync } from "./context.mjs";
 
-/** The TypeScript compiler API, or undefined before dependencies are installed. */
-const ts = await import("typescript").then(
-  (module) => module.default,
-  (error) => {
-    if (error?.code === "ERR_MODULE_NOT_FOUND") return undefined;
-    throw error;
-  },
+/** The TypeScript compiler API, and why it could not be loaded when it could not. */
+const { ts, loadError } = await import("typescript").then(
+  (module) => ({ ts: module.default, loadError: undefined }),
+  (error) => ({ ts: undefined, loadError: error }),
 );
+
+/**
+ * What the check does when the parser could not be loaded from `repoRoot`: skip only when dependencies are not installed
+ * at all, which is when `typescript` itself is missing and there is no `node_modules`; fail on anything else.
+ */
+export function parserUnavailable(error, repoRoot) {
+  const missing = error?.code === "ERR_MODULE_NOT_FOUND" && /'typescript'/.test(String(error.message));
+  if (missing && !existsSync(join(repoRoot, "node_modules"))) {
+    return { skip: "dependencies are not installed, so the TypeScript parser is not there; CI runs this check again after install" };
+  }
+  return { fail: `the TypeScript parser could not be loaded: ${String(error?.message ?? error)}` };
+}
 
 const TEST_ROOTS = ["apps", "packages", "packs", "tools", "examples"];
 const EXTENSION = String.raw`\.(?:[cm]?[jt]s|[jt]sx)$`;
@@ -68,7 +79,7 @@ export function isTestPath(path) {
  * every TypeScript form but the `<Type>value` assertion.
  */
 function parse(source, path = "snippet.tsx") {
-  if (!ts) throw new Error("the typescript package is not installed; run pnpm install");
+  if (!ts) throw new Error(`the TypeScript parser could not be loaded: ${String(loadError?.message ?? loadError)}`);
   const { ScriptKind } = ts;
   const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
   const kind = { ".ts": ScriptKind.TS, ".mts": ScriptKind.TS, ".cts": ScriptKind.TS, ".tsx": ScriptKind.TSX, ".jsx": ScriptKind.JSX }[extension];
@@ -81,69 +92,37 @@ function parse(source, path = "snippet.tsx") {
   );
 }
 
-/** The range of a literal token's own text, its delimiters left out, or undefined for a token that is code. */
-function literalText(token, start, source) {
-  const { SyntaxKind } = ts;
-  switch (token.kind) {
-    case SyntaxKind.StringLiteral:
-    case SyntaxKind.NoSubstitutionTemplateLiteral:
-    case SyntaxKind.TemplateTail:
-      return [start + 1, token.end - 1];
-    case SyntaxKind.TemplateHead:
-    case SyntaxKind.TemplateMiddle:
-      return [start + 1, token.end - 2];
-    case SyntaxKind.RegularExpressionLiteral:
-      return [start + 1, source.lastIndexOf("/", token.end - 1)];
-    default:
-      return undefined;
-  }
-}
-
 /**
- * `source` read two ways, each the same length with newlines kept, so every index and line still points at the same
- * place: `code` has comments and the text of literals (strings, templates, regular expressions and JSX text) replaced by
- * spaces, and `comments` keeps only the comments.
+ * The comments of a parsed file: the same length as its text with newlines kept, so every index and line still points
+ * at the same place, and everything but comment text replaced by spaces. A comment is what is not whitespace in a
+ * token's leading trivia; JSX text has no trivia, so text in JSX that reads like a comment is not one.
  */
-function scan(file) {
+function commentsOfFile(file) {
   const source = file.text;
-  const code = source.split("");
   const comments = source.replace(/[^\n]/g, " ").split("");
-  const blank = (from, to) => {
-    for (let index = from; index < to; index += 1) if (code[index] !== "\n") code[index] = " ";
-  };
   const visit = (node) => {
     const children = node.getChildren(file);
     if (children.length > 0) {
       for (const child of children) visit(child);
       return;
     }
-    if (node.kind === ts.SyntaxKind.JsxText) {
-      // JSX text has no trivia: all of it is text, even where it reads like a comment.
-      blank(node.pos, node.end);
-      return;
-    }
-    // A token's leading trivia is whitespace and comments, so what is not whitespace there is a comment.
+    if (node.kind === ts.SyntaxKind.JsxText) return;
     const start = node.getStart(file);
     for (let index = node.pos; index < start; index += 1) {
       const character = source[index];
-      if (character !== " " && character !== "\n" && character !== "\r" && !/\s/.test(character)) {
-        comments[index] = character;
-        code[index] = " ";
-      }
+      if (character !== " " && character !== "\n" && character !== "\r" && !/\s/.test(character)) comments[index] = character;
     }
-    const literal = literalText(node, start, source);
-    if (literal) blank(...literal);
   };
   visit(file);
-  return { code: code.join(""), comments: comments.join("") };
+  return comments.join("");
 }
 
 /**
- * `source` with comments and the text of literals replaced by spaces, newlines kept. `path` names the language, as in
- * the check; without it the source is read as TSX.
+ * The comments of `source`, as `commentsOfFile` gives them, which is where the check looks for the marker. `path` names
+ * the language, as in the check; without it the source is read as TSX.
  */
-export function blankCommentsAndStrings(source, path) {
-  return scan(parse(source, path)).code;
+export function commentsOf(source, path) {
+  return commentsOfFile(parse(source, path));
 }
 
 /** `node` without the parentheses, non-null assertions and type assertions around it. */
@@ -213,24 +192,45 @@ function namesMaxRetries(node) {
  * the check; without it the source is read as TSX.
  */
 export function retryingRmSyncLines(source, path) {
+  return inspect(source, path).lines;
+}
+
+/** The callee of a call, seen through `.call(...)` and `.apply(...)`. */
+function callee(call) {
+  const target = unwrap(call.expression);
+  if (ts.isPropertyAccessExpression(target) && (target.name.text === "call" || target.name.text === "apply")) return target.expression;
+  return call.expression;
+}
+
+/**
+ * The lines `retryingRmSyncLines` reports, and the first syntax error of a file it had to parse, as
+ * `{ line, message }`: error recovery may read what follows the error differently from how it was written.
+ */
+function inspect(source, path) {
   // Both names are spelled out in any call the check finds, so a file without them needs no parse.
-  if (!source.includes("rmSync") || !source.includes("maxRetries")) return [];
+  if (!source.includes("rmSync") || !source.includes("maxRetries")) return { lines: [] };
   const file = parse(source, path);
+  // Not in the typings, but set on every file the parser returns.
+  const [error] = file.parseDiagnostics ?? [];
+  const parseError = error && {
+    line: file.getLineAndCharacterOfPosition(error.start ?? 0).line + 1,
+    message: ts.flattenDiagnosticMessageText(error.messageText, " "),
+  };
   const names = rmSyncNames(file);
-  const lines = [];
+  const found = [];
   const visit = (node) => {
     if (ts.isCallExpression(node) && node.arguments.some(namesMaxRetries)) {
-      const reference = rmSyncReference(node.expression, names);
-      if (reference) lines.push(file.getLineAndCharacterOfPosition(reference.getStart(file)).line + 1);
+      const reference = rmSyncReference(callee(node), names);
+      if (reference) found.push(file.getLineAndCharacterOfPosition(reference.getStart(file)).line + 1);
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
-  if (lines.length === 0) return lines;
-  const commentLines = source.includes(ALLOW) ? scan(file).comments.split("\n") : [];
-  return lines
+  const commentLines = found.length > 0 && source.includes(ALLOW) ? commentsOfFile(file).split("\n") : [];
+  const lines = found
     .filter((line) => !commentLines[line - 1]?.includes(ALLOW) && !commentLines[line - 2]?.includes(ALLOW))
     .sort((a, b) => a - b);
+  return { lines, parseError };
 }
 
 /** The repo-relative paths of the files the check reads. */
@@ -243,12 +243,22 @@ export function checkedFiles({ repoRoot, walk, relative }) {
 export default function run(ctx) {
   const c = ctx.check("test-cleanup-retries-asynchronously");
   if (!ts) {
-    c.notes.push("skipped: the typescript package is not installed yet; the unit tests run this check after pnpm install");
+    const { skip, fail } = parserUnavailable(loadError, ctx.repoRoot);
+    if (skip) {
+      c.skipped = true;
+      c.notes.push(skip);
+    } else c.failures.push(fail);
     return;
   }
   const files = checkedFiles(ctx);
   for (const path of files) {
-    for (const line of retryingRmSyncLines(readFileSync(join(ctx.repoRoot, path), "utf8"), path)) {
+    const { lines, parseError } = inspect(readFileSync(join(ctx.repoRoot, path), "utf8"), path);
+    if (parseError) {
+      c.notes.push(
+        `warning: ${path}:${String(parseError.line)} does not parse (${parseError.message}), so a call after it may be missed`,
+      );
+    }
+    for (const line of lines) {
       c.failures.push(
         `${path}:${String(line)} calls rmSync with maxRetries, which on Windows fails at once or blocks the event loop while it retries; await removeTestDirectory() from tools/test-cleanup.ts`,
       );
