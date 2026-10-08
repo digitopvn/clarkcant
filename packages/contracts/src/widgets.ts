@@ -404,7 +404,11 @@ export const actionBindingSchema = z.strictObject({
   actionBindingId: z.string().min(1).max(128),
   instanceId: z.string().min(1).max(128),
   definitionId: z.string().min(1).max(160),
-  /** Generation of the providing package. A new generation needs a new binding. */
+  /**
+   * Generation of the providing package. A new generation needs a new binding. For an `invoke` or `workflow` it is
+   * the generation serving the capability; for a `perform` placed from an installed package it is the generation the
+   * widget was read from. Where no generation applies it holds the widget's definition digest, which names none.
+   */
   packageGeneration: z.string().min(1).max(200),
   proposal: actionProposalSchema,
   /** User-visible label. Never treated as a permission. */
