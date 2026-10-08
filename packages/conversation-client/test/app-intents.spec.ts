@@ -4,6 +4,7 @@ import {
   APP_INTENT_KINDS,
   CONFIRMATION_REQUIRED_KINDS,
   SLASH_COMMANDS,
+  SLASH_COMMAND_INTENTS,
   type AppIntentDecision,
   type AppIntentResolution,
   type SettingsTab,
@@ -358,16 +359,35 @@ describe("a click on the page's own controls", () => {
     }
   });
 
-  it("stays home when the node cannot be asked, with nothing to correct on screen but a trace that it went unrecorded", async () => {
+  it("stays home when the node cannot be asked, keeps a trace, and lets the caller say what was kept in place of the read-back", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
+      const unrecorded: number[] = [];
       const node = slowNode(() => new Error("Failed to fetch"));
-      const clicked = clickAppIntent("nav.home", node.deps);
+      const clicked = clickAppIntent("nav.home", { ...node.deps, onUnrecorded: () => unrecorded.push(1) });
       node.release();
       await clicked;
       expect(node.ran).toHaveLength(1);
+      // Not "could not ask the node": the click was carried out, and saying it failed would contradict the screen.
       expect(node.lookupFailures).toEqual([]);
+      expect(unrecorded).toEqual([1]);
       expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("says nothing in place of the read-back when the node did answer, whatever it answered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (const answer of [HOME, { kind: "refused", say: "Không được." } as const]) {
+        const unrecorded: number[] = [];
+        const node = slowNode(() => answer);
+        const going = runAppIntentAtOnce("nav.home", { ...node.deps, onUnrecorded: () => unrecorded.push(1) });
+        node.release();
+        await going;
+        expect(unrecorded, answer.kind).toEqual([]);
+      }
     } finally {
       warn.mockRestore();
     }
@@ -415,5 +435,17 @@ describe("what the page carries out before the node has answered", () => {
     const others = SLASH_COMMANDS.filter((command) => command !== "new");
     for (const command of others) expect(typedCommandRunAtOnce({ command, argument: "" }), command).toBeUndefined();
     expect(typedCommandRunAtOnce(undefined)).toBeUndefined();
+  });
+
+  it("reads a typed command through the node's own copy of what it stands for, whatever follows it", () => {
+    for (const command of SLASH_COMMANDS) {
+      const shared = SLASH_COMMAND_INTENTS[command];
+      for (const argument of ["", "background", "a title"]) {
+        const atOnce = typedCommandRunAtOnce({ command, argument });
+        // Never a command the shared reading does not map, and never to another intent than the one it maps to.
+        if (atOnce !== undefined) expect(atOnce, `/${command} ${argument}`).toBe(shared);
+        if (shared !== undefined && runsAtOnce(shared)) expect(atOnce, `/${command} ${argument}`).toBe(shared);
+      }
+    }
   });
 });

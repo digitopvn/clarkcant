@@ -28,6 +28,7 @@ import { z } from "zod";
 import { capabilityRefSchema } from "./grants.ts";
 import { NOTICE_DISMISS_UNDO_WINDOW_MS, type NoticeOperationId, inboxTargetSchema, noticeOperationIdSchema } from "./inbox.ts";
 import { ORB_PROFILE_LABELS, orbProfileSchema } from "./preferences.ts";
+import type { SlashCommand } from "./slash-commands.ts";
 import { colorSchemeSchema, themeRefSchema, type ColorScheme } from "./themes.ts";
 
 /**
@@ -277,6 +278,16 @@ export const CONFIRMATION_REQUIRED_KINDS: readonly AppIntentKind[] = ["app.quit"
 export function intentRequiresConfirmation(kind: AppIntentKind): boolean {
   return CONFIRMATION_REQUIRED_KINDS.includes(kind);
 }
+
+/**
+ * The typed slash commands that stand for one app intent whatever follows them: `/new` is going home, as the logo is.
+ *
+ * The one copy of that reading. The node resolves a typed command through it (`slashCommandAppIntent` in
+ * `@clarkcant/core`), and the page reads it to go home at once on `/new` typed during a reply, before the node has
+ * answered. Two copies would drift: were `/new` to gain an argument the node reads, a page reading its own copy would
+ * still go home at once and drop it. A command whose meaning depends on its argument (`/settings <tab>`) is not here.
+ */
+export const SLASH_COMMAND_INTENTS: Readonly<Partial<Record<SlashCommand, AppIntentKind>>> = { new: "nav.home" };
 
 /** A single-use token, minted by the node, that turns a confirmed request into permission. */
 export const confirmationTokenSchema = z.uuid();

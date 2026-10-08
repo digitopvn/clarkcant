@@ -36,13 +36,15 @@ function isIntentRequest(url: string): boolean {
  * The app, with a first message whose stream is held so its reply is still running, and every app-intent answer late.
  * Returns the held stream so the test can let it end.
  */
-async function openWithRunningReply(page: Page): Promise<() => Route | undefined> {
+async function openWithRunningReply(page: Page, intents: "late" | "unreachable" = "late"): Promise<() => Route | undefined> {
   await page.route("**/suggestions", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.route("**/app-intents", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, INTENT_DELAY_MS));
-    await route.continue();
+    // The node cannot be reached: the request fails as a dropped connection does.
+    if (intents === "unreachable") await route.abort("connectionrefused");
+    else await route.continue();
   });
   let held: Route | undefined;
   await page.route("**/messages/stream", async (route) => {
@@ -157,3 +159,41 @@ test("a draft typed right after /new during a reply is still there when the node
   await expect(page.locator(".cc-empty")).toBeVisible();
   await held()?.continue();
 });
+
+/** What the page says itself when the node cannot be told: leaving did not stop that reply, which /sessions reopens. */
+const KEPT_WHILE_REPLYING = "Việc rời đi không dừng câu trả lời ở cuộc trước, cuộc đó vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.";
+
+for (const [name, leave] of [
+  [
+    "/new",
+    async (page: Page) => {
+      await page.locator("[data-composer]").fill("/new");
+      await page.locator("[data-composer]").press("Enter");
+    },
+  ],
+  [
+    "the logo",
+    async (page: Page) => {
+      await page.locator('[data-home="true"]').click();
+    },
+  ],
+] as const) {
+  test(`when the node cannot be told about ${name} during a reply, the page says what was kept and keeps the draft`, async ({ page }) => {
+    const held = await openWithRunningReply(page, "unreachable");
+    const composer = page.locator("[data-composer]");
+
+    const failed = page.waitForEvent("requestfailed", (request) => isIntentRequest(request.url()));
+    await leave(page);
+    await expect(page.locator(".cc-empty")).toBeVisible({ timeout: 1_000 });
+    await composer.fill("một câu chưa gửi");
+    await failed;
+
+    // The node's read-back will not come, so the page says what was kept; not "could not ask the node", since the
+    // person is where they asked to be.
+    await expect(page.locator("[data-intent-notice]")).toContainText(KEPT_WHILE_REPLYING);
+    await expect(page.locator("[data-intent-notice]")).not.toContainText("Không hỏi được node");
+    await expect(composer).toHaveValue("một câu chưa gửi");
+    await expect(page.locator(".cc-empty")).toBeVisible();
+    await held()?.continue();
+  });
+}
