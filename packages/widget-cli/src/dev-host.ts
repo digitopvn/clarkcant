@@ -1,10 +1,10 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 
 import type { ViteDevServer } from "vite";
-import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
+import { closeDevModuleServer, createDevModuleServer, widgetModuleAllowList } from "./dev-module-server.ts";
 import { browserRuntime, sendPrebundledRuntime } from "./package-assets.ts";
 
 import type { BrowserTokenDeclaration, ResourceRequest, WidgetDevBuild } from "@clarkcant/contracts";
@@ -14,6 +14,7 @@ import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
 import {
   applyShellAction,
   initialState,
+  parseShellAction,
   renderDetachedShell,
   renderShell,
   type DevShellAction,
@@ -123,13 +124,17 @@ function contentType(path: string): string {
   }
 }
 
-/** Only this host's own sandboxed frame may use the opaque-origin CORS exception. */
-function isPackageFrameRequest(request: IncomingMessage, framePrefix: string): boolean {
-  const host = request.headers.host;
-  return request.headers.origin === "null"
-    && host !== undefined
-    && request.url?.startsWith(`${framePrefix}/`) === true
-    && (host.startsWith("127.0.0.1:") || host.startsWith("localhost:"));
+/**
+ * Only this host's own sandboxed frame may use the opaque-origin CORS exception.
+ *
+ * `Origin: null` cannot tell the frame apart from a website's own sandboxed iframe, which sends the same. What tells
+ * them apart is the path: the frame's files and modules are served only under prefixes carrying this process's
+ * nonce, which reaches no page but the shell this host renders. Called after `refusedRequest`, which has already
+ * held `Host` to this host's loopback names.
+ */
+function isOwnFrameRequest(request: IncomingMessage, prefixes: readonly string[]): boolean {
+  const url = request.url ?? "";
+  return request.headers.origin === "null" && prefixes.some((prefix) => url.startsWith(`${prefix}/`));
 }
 
 /**
@@ -142,10 +147,19 @@ function isPackageFrameRequest(request: IncomingMessage, framePrefix: string): b
  * any other name. A state-changing request that names its `Origin` must come from one of those same addresses: a
  * browser always names it on a cross-site `POST`, and the shell's own requests are same-origin. The sandboxed frame
  * (`Origin: null`) never posts here; the shell relays what it says.
+ *
+ * A browser leaves the scheme's default port out of both headers, so on port 80 the bare loopback names are this
+ * host's too.
  */
-function refusedRequest(request: IncomingMessage): string | undefined {
-  const port = String(request.socket.localPort ?? "");
-  const authorities = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+export function refusedRequest(request: {
+  headers: IncomingHttpHeaders;
+  method?: string | undefined;
+  socket: { localPort?: number | undefined };
+}): string | undefined {
+  const port = request.socket.localPort;
+  const authorities = ["127.0.0.1", "localhost", "[::1]"].flatMap((name) =>
+    port === 80 ? [`${name}:80`, name] : [`${name}:${String(port ?? "")}`],
+  );
   if (!authorities.includes(request.headers.host?.toLowerCase() ?? "")) {
     return "refused: this dev host answers only to its loopback address\n";
   }
@@ -757,6 +771,13 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   let semanticPublishTimes: number[] = [];
   const bridgeNonce = randomBytes(16).toString("hex");
   const framePrefix = `/dev/frame/${bridgeNonce}`;
+  /*
+   * Vite's base: every module the frame imports (`/@fs/`, `/@id/`, `/@vite/`, prebundled dependencies and sources) is
+   * served and rewritten under it, and nothing outside it reaches Vite. Without the nonce a website could name a
+   * module path itself; with it, only a page this host rendered knows where the modules are.
+   */
+  const modulePrefix = `/dev/modules/${bridgeNonce}`;
+  const ownFramePrefixes = [framePrefix, modulePrefix];
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let vitePromise: Promise<ViteDevServer> | undefined;
   // Read on every pick, so switching the shell's picker control changes what the next pick returns.
@@ -797,14 +818,19 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
 
   const getVite = async (): Promise<ViteDevServer> => {
     if (vite !== undefined) return vite;
-    vitePromise ??= createDevModuleServer(true, server, port, {
+    vitePromise ??= createDevModuleServer(server, port, {
       isolatedCache: true,
+      base: `${modulePrefix}/`,
+      allow: widgetModuleAllowList(),
       // This middleware-only catalog server has no HTML entry to scan. Discovering dependencies from the whole
-      // workspace source graph stalls cold-start optimization, so prebundle only React's runtime entry points. An
-      // installed CLI serves self-contained bundles that import nothing, so there is nothing to prebundle.
+      // workspace source graph stalls cold-start optimization, so prebundle only React's runtime entry points and the
+      // CommonJS highlighter the catalog's renderer imports, which a browser cannot load as it is. An installed CLI
+      // serves self-contained bundles that import nothing, so there is nothing to prebundle.
       optimizeDeps: {
         noDiscovery: true,
-        include: browserRuntime("dev-frame-runtime").prebundled ? [] : ["react", "react-dom/client"],
+        include: browserRuntime("dev-frame-runtime").prebundled
+          ? []
+          : ["react", "react-dom/client", "@clarkcant/conversation-client > highlight.js/lib/common"],
       },
     }).then(
       (created) => {
@@ -1080,20 +1106,24 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         if (body.length > 8_192) request.destroy();
       });
       request.on("end", () => {
+        let action: DevShellAction | undefined;
         try {
-          const action = JSON.parse(body) as DevShellAction;
-          state = applyShellAction(state, action, { fixtures, capabilities, serviceCapabilities: source.serviceCapabilities, files });
-          if (action.kind === "service-restart") {
-            if (restartTimer !== undefined) clearTimeout(restartTimer);
-            restartTimer = undefined;
-            restarting = true;
-            if (options.serviceRestart !== "held") restartTimer = setTimeout(finishServiceRestart, 2_000);
-          }
+          action = parseShellAction(JSON.parse(body));
         } catch {
-          // A malformed action leaves the state alone and is reported, rather than resetting the shell.
+          action = undefined;
+        }
+        // A malformed action leaves the state alone and is reported, rather than resetting the shell.
+        if (action === undefined) {
           response.writeHead(400, { "content-type": "application/json" });
-          response.end(JSON.stringify({ error: "action must be JSON" }));
+          response.end(JSON.stringify({ error: "action must be JSON naming a shell control: { kind, value }" }));
           return;
+        }
+        state = applyShellAction(state, action, { fixtures, capabilities, serviceCapabilities: source.serviceCapabilities, files });
+        if (action.kind === "service-restart") {
+          if (restartTimer !== undefined) clearTimeout(restartTimer);
+          restartTimer = undefined;
+          restarting = true;
+          if (options.serviceRestart !== "held") restartTimer = setTimeout(finishServiceRestart, 2_000);
         }
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(state));
@@ -1178,19 +1208,33 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       return;
     }
 
+    // The frame's module scripts are CORS requests from an opaque origin; answer that origin for this frame alone.
+    if (isOwnFrameRequest(request, ownFramePrefixes)) {
+      response.setHeader("access-control-allow-origin", "null");
+      response.setHeader("vary", "Origin");
+    }
+
     if (framePath === "/widget-runtime.js") {
-      if (isPackageFrameRequest(request, framePrefix)) {
-        response.setHeader("access-control-allow-origin", "null");
-        response.setHeader("vary", "Origin");
-      }
       const runtime = browserRuntime("dev-frame-runtime");
       if (sendPrebundledRuntime(response, runtime.url)) return;
       const moduleServer = await getVite();
-      request.url = runtime.url;
+      request.url = `${modulePrefix}${runtime.url}`;
       moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("widget runtime module not found\n");
       });
+      return;
+    }
+
+    /*
+     * An installed CLI's catalog runtime, under the nonce like the package frame's runtime above: the frame's opaque
+     * origin is answered only under the nonce, and a bare `/runtime/` path is one any website can name. A checkout's
+     * catalog frame loads its runtime from Vite instead, so there this path names nothing.
+     */
+    if (framePath === "/catalog-runtime.js" && root === undefined) {
+      if (sendPrebundledRuntime(response, browserRuntime("catalog-runtime").url)) return;
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("catalog runtime module not found\n");
       return;
     }
 
@@ -1265,7 +1309,13 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
      */
     if (path === "/catalog-runtime.html" && root === undefined) {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      response.end(catalogFrameHtml({ definitionId: source.definitionId, fixtureId: state.fixture }, browserRuntime("catalog-runtime").url));
+      const runtime = browserRuntime("catalog-runtime");
+      response.end(
+        catalogFrameHtml(
+          { definitionId: source.definitionId, fixtureId: state.fixture },
+          runtime.prebundled ? `${framePrefix}/catalog-runtime.js` : `${modulePrefix}${runtime.url}`,
+        ),
+      );
       return;
     }
 
@@ -1294,32 +1344,25 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       return;
     }
 
-    if (root === undefined) {
-      /*
-       * A catalog widget has no package files to serve: its module graph belongs to Vite, which resolves the
-       * workspace's sources the way the app's own build does. Handing the request over rather than answering it is
-       * what keeps the preview the production renderer instead of a second implementation of it. An installed CLI's
-       * catalog runtime is already that graph, bundled, and is served as it is.
-       */
-      if (sendPrebundledRuntime(response, path)) return;
-      const moduleServer = await getVite();
-      moduleServer.middlewares(request, response, () => {
-        response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-        response.end("not found\n");
-      });
-      return;
-    }
-
-    if (path.startsWith("/@fs/") || path.startsWith("/@id/") || path.startsWith("/node_modules/.vite/")) {
-      if (isPackageFrameRequest(request, framePrefix)) {
-        response.setHeader("access-control-allow-origin", "null");
-        response.setHeader("vary", "Origin");
-      }
+    /*
+     * The frame's module graph belongs to Vite, which resolves the workspace's sources the way the app's own build
+     * does. Handing the request over rather than answering it is what keeps a catalog preview the production renderer
+     * instead of a second implementation of it. Only requests under the nonce prefix are handed over: Vite in
+     * middleware mode would serve a bare `/@fs/` path too, and that path is one any website can name.
+     */
+    if (path.startsWith(`${modulePrefix}/`)) {
       const moduleServer = await getVite();
       moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("module not found\n");
       });
+      return;
+    }
+
+    if (root === undefined) {
+      // A catalog widget has no package files to serve; its runtime is served under the nonce, above.
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("not found\n");
       return;
     }
 
@@ -1343,12 +1386,6 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     }
     try {
       if (!statSync(candidate).isFile()) throw new Error("not a file");
-      // Sandboxed package frames have an opaque (`null`) origin and module scripts use CORS fetches. Permit that
-      // exact origin for files already confined under this package root; never reflect a website's arbitrary origin.
-      if (isPackageFrameRequest(request, framePrefix)) {
-        response.setHeader("access-control-allow-origin", "null");
-        response.setHeader("vary", "Origin");
-      }
       response.writeHead(200, { "content-type": contentType(candidate) });
       const contents = readFileSync(candidate);
       if (candidate === resolve(root, source.entryUrl.slice(1)) && extname(candidate) === ".html") {

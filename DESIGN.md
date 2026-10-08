@@ -36,7 +36,7 @@ AI should make ClarkCant simpler over time, not more complex: simple enough that
 - Do not turn widgets into a parallel dashboard.
 - Hidden is not the goal; summonable is. Everything the user may need — sessions, provider sign-in/out, model and thinking, settings, diagnostics — can be called up in chat, by voice or with a slash command, and appears as an agent message with widget UIs (a mini app). Slash commands, words and voice converge on the same typed action.
 - Answers that benefit from structure are composed as a mini app: asked to compare two models' benchmarks, Clark researches and replies with tables, charts and diagrams wired into one coherent surface, not a wall of text.
-- Settings is a secondary surface, opened over the conversation and closed back to where it was.
+- Settings is a secondary surface, opened over the conversation and closed back to where it was. The gear, "open settings" typed or spoken, and `/settings` (`/settings <tab>` for one tab) all open that one dialog.
 - The marketplace may have a browser surface, but it must open from chat/settings and must not become a second home screen.
 - Every important action must have an equivalent chat and voice path.
 
@@ -835,6 +835,39 @@ Every widget must define:
 - read-only snapshot;
 - disabled action reason.
 
+Built-in miniapps read their own state machines through one shared status
+contract (`packages/contracts/src/surface-status.ts`). Each domain keeps its
+machine; the contract only decides how a state looks, whether it is said aloud,
+whether it can be retried, and whether it is still current.
+
+- **Phases.** `loading`, `empty`, `pending`, `needs-action`, `success`,
+  `partial`, `error`, `unavailable`, `cancelled`. One tone and one text mark per
+  phase, so `partial` is never green on one card and amber on the next, and no
+  state is told by colour alone. The mark is drawn by the stylesheet with an
+  empty alternative text; the badge's text is only the domain's own words.
+- **Never a failure as a success.** A task that reports success against
+  contradicting evidence is `error`; success without verified evidence is
+  `partial`. A state this build does not know is drawn plain, never guessed.
+- **Missing is not zero.** A value is `reported` (with its source, `official` or
+  `inferred`, and an as-of time), `unknown`, `unavailable` (with a reason) or
+  `unsupported`. A missing duration or metric is left out or said as unknown.
+- **Snapshot or live.** A host card is a snapshot and is never stale. A live
+  view carries `observedAt` and a stale window, and past it keeps what it showed
+  and says how old it is.
+- **Announcements.** What a press answered goes in a live region that exists
+  before the answer arrives: `error` is assertive, any other change of phase is
+  polite, and the same phase again, `loading`, or anything already on screen at
+  mount (a reload, a scroll back) is not announced.
+- **Late answers and retry (contract helpers, adopted surface by surface).**
+  The contract's `settleSurfaceStatus` drops an answer for an earlier attempt
+  and keeps the first outcome of an attempt, so neither a late "still working"
+  nor a later outcome replaces it; its `canRetry` offers a retry only for
+  `error` or `partial` when the domain names `retry` or `check-again`. No
+  built-in miniapp calls them yet: today's retries (press again on a task stop,
+  try again on a credential) and late answers on command-card rows still follow
+  each surface's own rules, and move onto these helpers as those surfaces are
+  reworked.
+
 ### 8.4 Local vs effect actions
 
 Local view actions don't need to ask:
@@ -1302,6 +1335,16 @@ Don't show contrast debugging to consumers; put it in the Developer section.
 ### 11.2 AI & Routing
 
 - Current model as a searchable picker.
+- Provider sign-in (shipped): under the provider and model picker, every provider pi can answer with, signed in or
+  not, with only the ways in pi advertises for it — an account sign-in (OAuth) when pi offers one, an API key when pi
+  takes one. A signed-in provider says where its credential comes from: stored by pi, the node's environment (.env
+  or the shell), handed over at startup, pi's models.json, or pi's own fallback. Only a credential pi stored offers
+  Sign out (and Replace API key / Sign in again); the others say they cannot be signed out here and where to remove
+  them. It is the same capability `/login` and `/logout` answer with in the conversation — the same node routes,
+  sign-in registry and client path — so the sign-in is followed in the row (the provider's page to open, a code, a
+  password field for a key) with loading, failure and done states, and what is typed goes straight to pi and is
+  never shown back. A finished sign-in or sign-out reads the provider list and the model catalogue again. A node
+  without pi says there is nothing to sign in to here; a list pi could not read says why and offers Try again.
 - Favorites/recent models.
 - Shortcut order for model cycling.
 - Automatic routing by Jev toggle.

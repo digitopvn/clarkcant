@@ -483,6 +483,27 @@ Không dùng blank frame làm loading hoặc error.
 
 Không giữ stale rows dưới nhãn live khi refresh fail.
 
+Các thẻ dựng sẵn của Clark đọc những trạng thái này qua hợp đồng trạng thái
+dùng chung được mô tả ở [DESIGN.vi.md §8.3](../DESIGN.vi.md#83-interaction-states).
+Hiện hợp đồng này là nội bộ của host và chưa được xuất qua widget SDK, nhưng một
+widget cô lập nên theo cùng các quy tắc để đọc giống các thẻ xung quanh:
+
+- con số không ai báo thì hiện là chưa rõ, không khả dụng hoặc không được hỗ
+  trợ, không bao giờ là `0`; con số đã được báo thì nêu nguồn và thời điểm;
+- không bao giờ vẽ một kết quả bị mâu thuẫn hoặc chưa được xác minh thành thành
+  công;
+- nói một thay đổi trạng thái một lần, trong một live region có sẵn trước thay
+  đổi đó: assertive cho lỗi, polite cho phần còn lại, và không nói gì với nội
+  dung đã có sẵn lúc widget được mount;
+- bỏ qua câu trả lời cho một lần thử cũ khi một lần thử mới hơn đang hiện trên
+  màn hình.
+
+Quy tắc cuối cùng, và quy tắc chỉ đề nghị thử lại sau một lỗi hoặc một kết quả
+không đầy đủ, là các helper trong hợp đồng (`settleSurfaceStatus` và
+`canRetry`) mà các thẻ dựng sẵn áp dụng dần từng bề mặt. Hiện chưa thẻ dựng sẵn
+nào gọi chúng, nên đừng lấy các thẻ hôm nay làm mẫu cho câu trả lời đến muộn hay
+việc thử lại.
+
 ---
 
 ## 8. Hành động, nhập liệu và thẻ chỉ đọc
@@ -2950,9 +2971,21 @@ Local isolated host có:
 
 Dev host chỉ lắng nghe trên `127.0.0.1` và không có cờ nào để mở nó ra mạng. Nó chỉ trả lời các yêu cầu gửi tới
 `127.0.0.1:<port>`, `localhost:<port>` hoặc `[::1]:<port>`, và từ chối mọi `Host` khác bằng `403`. Nhờ vậy, một trang
-web trỏ tên miền của chính nó về máy bạn (DNS rebinding) không thể đọc trạng thái của shell hay điều khiển nó. Một yêu
-cầu `POST` hoặc `DELETE` có ghi `Origin` cũng phải đến từ một trong các địa chỉ đó. Hãy mở URL mà dev host in ra. Một
-tên máy tự đặt, một tunnel hay một proxy chuyển tiếp `Host` của riêng nó sẽ bị từ chối.
+web trỏ tên miền của chính nó về máy bạn (DNS rebinding) không thể đọc trạng thái của shell hay điều khiển nó. Mọi yêu
+cầu không phải `GET`, `HEAD` hay `OPTIONS` mà có ghi `Origin` cũng phải đến từ một trong các địa chỉ đó. Với
+`--port 80`, trình duyệt bỏ số cổng đi, nên trên cổng đó các tên trần `127.0.0.1`, `localhost` và `[::1]` cũng được
+chấp nhận. Hãy mở URL mà dev host in ra. Một tên máy tự đặt, một tunnel hay một proxy chuyển tiếp `Host` của riêng nó
+sẽ bị từ chối.
+
+Các module của frame chỉ được phục vụ dưới một đường dẫn mang nonce riêng của tiến trình dev host
+(`/dev/modules/<nonce>/`), và origin mờ `null` của frame chỉ được trả lời ở đó và dưới đường dẫn
+`/dev/frame/<nonce>/` của chính frame. Các đường dẫn trần `/@fs/`, `/@id/`, `/@vite/` và `/src/` của Vite trả về `404`,
+và không module nào mang `Access-Control-Allow-Origin: *`. CLI đã cài phục vụ các runtime frame đã đóng gói của bản
+phát hành dưới cùng nonce đó, `/dev/frame/<nonce>/widget-runtime.js` cho một package và
+`/dev/frame/<nonce>/catalog-runtime.js` cho một widget catalog; các đường dẫn trần `/runtime/` trả về `404`. Vì vậy một trang web, kể cả khi nằm trong iframe sandbox của
+chính nó, không thể đọc workspace của bạn qua dev host. Trong một bản checkout, Vite chỉ đọc
+`packages/` và `node_modules/` của workspace, không đọc phần còn lại của repository; CLI đã cài chỉ đọc thư mục của chính nó. Một thay đổi điều khiển gửi tới `/dev/api/action` mà không phải `{ kind, value }` với
+một `kind` đã biết sẽ bị từ chối bằng `400`, và shell giữ nguyên trạng thái.
 
 Với một package, dev host thực hiện bắt tay `init` thật của bridge. Nó gửi props của fixture đang chọn và đưa ra
 `artifacts@1` (§10.1). Control **File picker** của nó giả lập lựa chọn của người dùng. Control này liệt kê các tệp

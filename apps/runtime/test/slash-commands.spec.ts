@@ -130,6 +130,27 @@ describe("slash commands in a conversation", () => {
     expect(high?.actions).toEqual([]);
   });
 
+  it("names the unset level auto, in the same words as the statusline, without making it a level of its own", async () => {
+    const id = await createConversation("suy nghĩ");
+    const vi = await command(id, "/thinking");
+    expect(vi.text).toContain("tự động");
+    expect(vi.card?.rows.find((row) => row.rowId === "default")?.label).toBe("Tự động (mặc định của model)");
+
+    expect((await call("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    const en = await command(id, "/thinking");
+    expect(en.text).toContain("Thinking level now: auto");
+    const auto = en.card?.rows.find((row) => row.rowId === "default");
+    expect(auto?.label).toBe("Auto (model default)");
+    expect(auto?.current).toBe(true);
+    // The explicit efforts keep their own names, and choosing auto still clears the level rather than sending "auto".
+    expect(en.card?.rows.map((row) => row.rowId)).toEqual(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+    await command(id, "/thinking high");
+    const cleared = await command(id, "/thinking auto");
+    expect(cleared.text).toBe("Thinking is back to auto: from the next turn, the model uses its own default.");
+    expect((await command(id, "/thinking")).card?.rows.find((row) => row.current === true)?.rowId).toBe("default");
+  });
+
   it("refuses an unknown thinking level by naming the ones there are", async () => {
     const id = await createConversation("suy nghĩ");
     const { text, card } = await command(id, "/thinking turbo");
@@ -137,6 +158,44 @@ describe("slash commands in a conversation", () => {
     expect(card).toBeUndefined();
     expect(text).toContain("turbo");
     expect(text).toContain("high");
+  });
+
+  it("answers /settings with the host's own decision to open Settings, on a tab when one is named", async () => {
+    const id = await createConversation("cài đặt");
+    const plain = await command(id, "/settings");
+    expect(plain.body["appIntent"]).toEqual({ kind: "intent", intent: { kind: "settings.open" }, requiresConfirmation: false, readBack: "Tôi mở Settings nhé." });
+    expect(plain.text).toBe("Tôi mở Settings nhé.");
+    expect(plain.card).toBeUndefined();
+
+    // A tab by its id, by its Vietnamese words with or without marks, and after the word "tab".
+    for (const [argument, tab] of [["ai", "ai"], ["thiết bị", "devices"], ["Kiem Soat", "control"], ["tab memory", "memory"]] as const) {
+      const named = await command(id, `/settings ${argument}`);
+      expect(named.body["appIntent"]).toMatchObject({ kind: "intent", intent: { kind: "settings.tab", tab }, requiresConfirmation: false });
+    }
+
+    // The command is not stored as the person's message, and the conversation keeps everything it had.
+    expect(messagesSince(services.runtime.db, id, 0, 40).filter((message) => message.role === "user")).toHaveLength(0);
+  });
+
+  it("refuses a Settings tab that does not exist by naming the ones there are, and opens nothing", async () => {
+    const id = await createConversation("cài đặt");
+    const { body, text } = await command(id, "/settings billing");
+
+    expect(body["appIntent"]).toBeUndefined();
+    expect(text).toContain("billing");
+    expect(text).toContain("experience, ai, control, extensions, devices, memory, developer");
+  });
+
+  it("reads /settings back in English when the person's language is English", async () => {
+    const id = await createConversation("settings");
+    expect((await call("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+
+    const { body, text } = await command(id, "/settings devices");
+    expect(text).toBe("Opening Settings on the Devices & Voice tab.");
+    expect(body["appIntent"]).toMatchObject({ intent: { kind: "settings.tab", tab: "devices" }, readBack: text });
+    expect((await command(id, "/settings nowhere")).text).toBe(
+      'Settings has no tab "nowhere". Tabs: experience, ai, control, extensions, devices, memory, developer. Type /settings to open Settings.',
+    );
   });
 
   it("asks for the request when /background has none", async () => {

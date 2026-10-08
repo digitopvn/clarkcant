@@ -16,7 +16,7 @@ import type { BlockActions, SurfaceBlockRef } from "./blocks.tsx";
 import {
   distanceFromBottom,
   followScrollBehavior,
-  followsBottom,
+  followsAfterScroll,
   noteLayoutScroll,
   reportScroll,
   scrollAsTranscript,
@@ -541,11 +541,12 @@ export function JumpToLatest({ scroller, newest }: { scroller: RefObject<HTMLDiv
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
+      atBottom.current = followsAfterScroll(atBottom.current, reported.current, node);
       reported.current = reportScroll(node);
-      atBottom.current = followsBottom(node);
       setFar(distanceFromBottom(node) > node.clientHeight);
       if (atBottom.current) setUnseen(false);
     };
+    reported.current = reportScroll(node);
     node.addEventListener("scroll", onScroll, { passive: true });
     return () => node.removeEventListener("scroll", onScroll);
   }, [scroller]);

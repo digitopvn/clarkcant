@@ -477,6 +477,26 @@ Do not use a blank frame as loading or error.
 
 Do not keep stale rows under a live label when a refresh fails.
 
+Clark's built-in cards read these states through the shared status contract
+described in [DESIGN.md §8.3](../DESIGN.md#83-interaction-states). The contract
+is internal to the host today and is not exported through the widget SDK, but an
+isolated widget should follow the same rules so it reads like the cards around
+it:
+
+- show a figure nobody reported as unknown, unavailable or unsupported, never
+  as `0`, and name the source and as-of time of a figure that was reported;
+- never draw a result that is contradicted or unverified as a success;
+- say a change of state once, in a live region that exists before the change:
+  assertive for an error, polite otherwise, and nothing for content that was
+  already there when the widget mounted;
+- drop an answer for an earlier attempt when a newer one is on screen.
+
+The last rule, and the rule that a retry is offered only after a failure or a
+partial result, are helpers in the contract (`settleSurfaceStatus` and
+`canRetry`) that built-in cards adopt one surface at a time. No built-in card
+calls them yet, so do not read today's cards as the reference for late answers
+or retries.
+
 ---
 
 ## 8. Actions, input and read-only cards
@@ -2964,8 +2984,20 @@ A local isolated host with:
 The dev host listens only on `127.0.0.1` and has no flag to expose it on the network. It answers only requests
 addressed to `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, and refuses any other `Host` with `403`. That
 blocks a website that points its own name at your machine (DNS rebinding) from reading the shell's state or driving
-it. A `POST` or `DELETE` that names an `Origin` must come from one of those addresses too. Open the URL the dev host
-prints. A custom hostname, a tunnel or a proxy that forwards its own `Host` is refused.
+it. Any request other than `GET`, `HEAD` or `OPTIONS` that names an `Origin` must come from one of those addresses
+too. With `--port 80` a browser leaves the port out, so the bare names `127.0.0.1`, `localhost` and `[::1]` are
+accepted on that port. Open the URL the dev host prints. A custom hostname, a tunnel or a proxy that forwards its own
+`Host` is refused.
+
+The frame's modules are served only under a path that carries the dev host's per-process nonce
+(`/dev/modules/<nonce>/`), and the frame's opaque `null` origin is answered only there and under the frame's own
+`/dev/frame/<nonce>/` path. Vite's bare `/@fs/`, `/@id/`, `/@vite/` and `/src/` paths answer `404`, and no module
+carries `Access-Control-Allow-Origin: *`. An installed CLI serves the release build's bundled frame runtimes under
+the same nonce, `/dev/frame/<nonce>/widget-runtime.js` for a package and `/dev/frame/<nonce>/catalog-runtime.js` for
+a catalog widget; the bare `/runtime/` paths answer `404`. A website, including one in its own sandboxed iframe,
+therefore cannot read your workspace through the dev host. In a checkout, Vite reads only the workspace's `packages/` and `node_modules/`,
+not the rest of the repository; an installed CLI reads only its own folder. A control change sent to `/dev/api/action` that is not `{ kind, value }` with a known `kind` is refused
+with `400`, and the shell keeps its state.
 
 For a package, the dev host performs the bridge's real `init` handshake. It sends the selected fixture's props and
 offers `artifacts@1` (§10.1). Its **File picker** control simulates the person's choice. It lists the files in the

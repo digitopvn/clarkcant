@@ -95,7 +95,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
   // An installed CLI's runtime is a self-contained bundle served from disk, so it needs no module server at all.
   if (!runtime.prebundled) {
     try {
-      vite = await createDevModuleServer(false, server, bound.port, {
+      vite = await createDevModuleServer(server, bound.port, {
         isolatedCache: true,
         // This custom preview has no workspace HTML entry to scan. Keep Vite's cold-start optimizer
         // bounded to the runtime's React and CommonJS highlighting entries instead of scanning the workspace.
