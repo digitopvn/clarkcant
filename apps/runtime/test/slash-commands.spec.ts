@@ -482,6 +482,20 @@ describe("provider sign-in routes", () => {
     expect(listed.providers.find((entry) => entry.providerId === "fake-other")?.configured).toBe(false);
   });
 
+  it("lists the sign-ins still running, so a surface opened again shows the one it left, and drops one once it ends", async () => {
+    const started = await call("POST", "/providers/fake-other/sign-in", { method: "oauth" });
+    const { signInId } = started.body as ProviderSignInView;
+    await waitFor(signInId, "waiting");
+
+    const listed = await call("GET", "/providers/sign-ins");
+    expect(listed.status).toBe(200);
+    const running = (listed.body as { signIns: ProviderSignInView[] }).signIns;
+    expect(running).toEqual([expect.objectContaining({ signInId, providerId: "fake-other", method: "oauth", state: "waiting" })]);
+
+    await call("POST", `/providers/sign-ins/${signInId}/cancel`, {});
+    expect(((await call("GET", "/providers/sign-ins")).body as { signIns: ProviderSignInView[] }).signIns).toEqual([]);
+  });
+
   it("refuses to sign out of a key that comes from the environment, saying where it lives", async () => {
     const response = await call("POST", "/providers/fake/sign-out", {});
     expect(response.status).toBe(409);
@@ -497,6 +511,7 @@ describe("provider sign-in routes", () => {
     expect(isPersonOnlyRoute("GET", "/providers/auth")).toBe(false);
     expect(isPersonOnlyRoute("POST", "/providers/fake/sign-in")).toBe(true);
     expect(isPersonOnlyRoute("POST", "/providers/fake/sign-out")).toBe(true);
+    expect(isPersonOnlyRoute("GET", "/providers/sign-ins")).toBe(true);
     expect(isPersonOnlyRoute("GET", "/providers/sign-ins/x")).toBe(true);
     expect(isPersonOnlyRoute("POST", "/providers/sign-ins/x/answer")).toBe(true);
   });

@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type FormEvent, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
 import type { CommandCard } from "@clarkcant/contracts";
 
@@ -80,8 +80,16 @@ function CommandRow({
   const pending = states.some((state) => state?.status === "pending");
   const settled = states.find((state): state is Exclude<CommandActionState, { status: "pending" }> => state !== undefined && state.status !== "pending");
   const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
+  const busy = pending || signingIn;
   /** The row's buttons, so focus returns to the one that opened a folder path field once that field closes. */
   const buttons = useRef(new Map<string, HTMLButtonElement>());
+  // A `/login` row drawn again shows the sign-in the node still runs for its provider, rather than nothing.
+  const signInProvider = row.actions.find((entry) => entry.action.kind === "provider-sign-in")?.action;
+  const providerId = signInProvider?.kind === "provider-sign-in" ? signInProvider.providerId : undefined;
+  const reattach = live ? actions?.onSignInReattach : undefined;
+  useEffect(() => {
+    if (providerId !== undefined) reattach?.({ key: rowKey, providerId });
+  }, [reattach, rowKey, providerId]);
   // A `/develop` row's badge is what was true when the card was drawn; once a press on the row has settled, the status
   // line beside it says what is true now (a session started, a folder forgotten), so the old badge is not shown with it.
   const superseded = settled?.status === "done" && row.actions.some((entry) => entry.action.kind === "develop-folder" || entry.action.kind === "develop-folder-forget");
@@ -115,8 +123,12 @@ function CommandRow({
               className="cc-action"
               data-emphasis={entry.tone === "primary" ? "primary" : undefined}
               data-tone={entry.tone === "danger" ? "danger" : undefined}
-              disabled={pending || signingIn}
-              onClick={() => actions?.onCommandAction?.({ cardId, rowId: row.rowId, actionId: entry.actionId, action: entry.action })}
+              // aria-disabled, not disabled: a disabled button drops the focus that pressed it to the page.
+              aria-disabled={busy ? "true" : undefined}
+              onClick={() => {
+                if (busy) return;
+                actions?.onCommandAction?.({ cardId, rowId: row.rowId, actionId: entry.actionId, action: entry.action });
+              }}
             >
               {entry.label}
             </button>

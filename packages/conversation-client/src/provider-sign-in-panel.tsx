@@ -1,9 +1,12 @@
-import { useState, type FormEvent, type ReactElement, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
 
 import type { ProviderSignInView } from "@clarkcant/contracts";
 
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+
+/** What can take the focus a sign-in hands on: a control that can be pressed or typed in now. */
+const FOCUSABLE = 'button:not(:disabled):not([aria-disabled="true"]), a[href], input:not(:disabled), select:not(:disabled)';
 
 /**
  * A provider sign-in in progress, drawn where it was started: a `/login` card row or a Settings provider row.
@@ -12,6 +15,10 @@ import type { MessageKey } from "./i18n/messages.ts";
  * `onAnswer` and is cleared from the field at once; the view this draws never holds it, so nothing typed is shown back.
  * A finished sign-in names the provider, and draws `after` beneath it: the next step its surface offers (the model
  * picker's `AfterSignIn`), the same in a card and in Settings.
+ *
+ * The focus follows the sign-in for the person who pressed: to the field when the provider asks something, to Cancel
+ * while it waits on a page, and on to what comes next once a control holding it goes away. A sign-in shown again on a
+ * page that just opened never takes it.
  */
 export function SignInPanel({
   signIn,
@@ -33,6 +40,30 @@ export function SignInPanel({
   const [value, setValue] = useState("");
   const open = signIn.state === "running" || signIn.state === "waiting";
   const prompt = signIn.prompt;
+  const panel = useRef<HTMLDivElement>(null);
+  const field = useRef<HTMLInputElement & HTMLSelectElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  /** Whether the person's focus was last in this panel, so a control that leaves under it hands the focus on. */
+  const focusWithin = useRef(false);
+  // What the panel asks for now: the focus moves when this changes, and only then.
+  const step = open ? (prompt === undefined ? "running" : `${prompt.type}:${prompt.message}`) : signIn.state;
+  useEffect(() => {
+    const root = panel.current;
+    if (root === null) return;
+    const row = root.closest("li") ?? root;
+    const active = root.ownerDocument.activeElement;
+    // Dropped to the page because the control holding it went away (a field answered, Cancel pressed).
+    const dropped = (active === null || active === root.ownerDocument.body) && focusWithin.current;
+    if (open) {
+      // Taken only from the row the person pressed in, or from a control of this panel that went away: a sign-in
+      // shown again on a page that just opened, or one moving on while the person is elsewhere, never pulls the focus.
+      if (dropped || (active !== null && row.contains(active))) (field.current ?? cancel.current)?.focus();
+      return;
+    }
+    if (!dropped) return;
+    // What comes next instead: the step after a sign-in, or the row's buttons again.
+    (root.querySelector<HTMLElement>(FOCUSABLE) ?? row.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+  }, [step, open]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (value.trim() === "") return;
@@ -40,7 +71,19 @@ export function SignInPanel({
     setValue("");
   };
   return (
-    <div className="cc-card-stack cc-sign-in" data-state={signIn.state}>
+    <div
+      ref={panel}
+      className="cc-card-stack cc-sign-in"
+      data-state={signIn.state}
+      onFocus={() => {
+        focusWithin.current = true;
+      }}
+      onBlur={(event) => {
+        // Only a move somewhere else says the person left; a control removed under the focus moves it nowhere.
+        const next = event.relatedTarget;
+        if (next instanceof Node && !event.currentTarget.contains(next)) focusWithin.current = false;
+      }}
+    >
       {signIn.events.map((event, index) => {
         if (event.type === "auth_url") {
           return (
@@ -73,6 +116,7 @@ export function SignInPanel({
         <form className="cc-search-row" onSubmit={submit}>
           {prompt.type === "select" ? (
             <select
+              ref={field}
               className="cc-field-input"
               aria-label={prompt.message}
               value={value}
@@ -87,6 +131,7 @@ export function SignInPanel({
             </select>
           ) : (
             <input
+              ref={field}
               className="cc-field-input"
               type={prompt.type === "secret" ? "password" : "text"}
               autoComplete="off"
@@ -107,7 +152,7 @@ export function SignInPanel({
           <p className="cc-list-subtitle" role="status">
             {prompt === undefined ? t("commandCard.signIn.waiting") : t("commandCard.signIn.answer")}
           </p>
-          <button type="button" className="cc-action" onClick={onCancel}>
+          <button ref={cancel} type="button" className="cc-action" onClick={onCancel}>
             {t("commandCard.signIn.cancel")}
           </button>
         </div>

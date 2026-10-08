@@ -700,6 +700,11 @@ export interface BlockActions extends ModelPickerPort {
   onSignInAnswer?: (input: { key: string; signInId: string; value: string }) => void;
   onSignInCancel?: (input: { key: string; signInId: string }) => void;
   /**
+   * A `/login` row drawn again — the page reloaded, the row scrolled back — asks for a sign-in the node still runs for
+   * its provider, so the row shows it rather than nothing. Each running sign-in is shown in one row only.
+   */
+  onSignInReattach?: (input: { key: string; providerId: string }) => void;
+  /**
    * Rows of a `/develop` card that ask for a folder's path in words, keyed `cardId/rowId/actionId`: in a browser, for a
    * node on another machine, or when the folder dialog did not open. The value says why, so the card can say it.
    */

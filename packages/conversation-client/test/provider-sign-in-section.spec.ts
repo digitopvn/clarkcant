@@ -7,6 +7,8 @@ import type { ProviderAuthEntryView, ProviderSignInView } from "@clarkcant/contr
 import { GatewayError } from "../src/api.ts";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
+  type ProviderListing,
+  ProviderListingReads,
   ProviderSignInList,
   type ProviderSignInListProps,
   providerListingRefused,
@@ -124,7 +126,9 @@ describe("the provider sign-in section", () => {
     };
     const keyOnly = row(draw({ signIns: { keyonly: signIn } }), "keyonly");
     expect(keyOnly).toContain('type="password"');
-    expect(keyOnly).toMatch(/data-provider-method="api_key"[^>]*disabled=""|disabled=""[^>]*data-provider-method="api_key"/u);
+    // Held with aria-disabled rather than disabled, so the button keeps the focus that pressed it.
+    expect(keyOnly).toMatch(/<button[^>]*data-provider-method="api_key"[^>]*aria-disabled="true"/u);
+    expect(keyOnly).not.toMatch(/<button[^>]*data-provider-method="api_key"[^>]*\sdisabled=""/u);
   });
 
   it("shows how a sign-in ended, and a row's failure in the node's words", () => {
@@ -135,6 +139,39 @@ describe("the provider sign-in section", () => {
     });
     expect(row(html, "acct")).toContain(en("commandCard.signIn.done").replace("{provider}", "Account Co"));
     expect(row(html, "stored")).toContain("pi said no");
+  });
+
+  it("draws only the latest read of the list when reads overlap, and none once the section is gone", async () => {
+    const answers: { resolve: (value: { providers: ProviderAuthEntryView[] }) => void }[] = [];
+    const drawn: ProviderListing[] = [];
+    const reads = new ProviderListingReads(
+      () => new Promise((resolve) => answers.push({ resolve })),
+      (listing) => drawn.push(listing),
+    );
+    reads.load();
+    reads.load();
+    // The newer read answers first; the older one, arriving last, must not replace it.
+    answers[1]?.resolve({ providers: [OAUTH] });
+    answers[0]?.resolve({ providers: [API_KEY_ONLY] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(drawn).toEqual([{ status: "ready", providers: [OAUTH] }]);
+
+    reads.load();
+    reads.close();
+    answers[2]?.resolve({ providers: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(drawn).toHaveLength(1);
+  });
+
+  it("says it is reading again when the person presses Try again, and keeps the list on a refresh behind it", () => {
+    const drawn: ProviderListing[] = [];
+    const reads = new ProviderListingReads(() => new Promise(() => undefined), (listing) => drawn.push(listing));
+    reads.load();
+    expect(drawn).toEqual([]);
+    reads.load({ showLoading: true });
+    expect(drawn).toEqual([{ status: "loading" }]);
   });
 
   it("decides sign-out and the source note from the node's view alone", () => {

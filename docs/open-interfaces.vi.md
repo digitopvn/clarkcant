@@ -566,6 +566,17 @@ rồi đề nghị chọn model của provider đó ngay trong cùng bộ chọn
 nhập, hoặc không có model nào, được nói rõ kèm cách kiểm tra lại. Bản ghi của thẻ — trong bản ghi hội thoại, trong kết
 quả tìm kiếm — không vẽ bộ chọn.
 
+Bản thân việc đăng nhập — từ thẻ `/login` hay Cài đặt → AI & Định tuyến — đi qua các route chỉ dành cho người dùng, không
+có trong `/openapi.json`: `POST /providers/:id/sign-in { method }` (`oauth` hoặc `api_key`) bắt đầu lần đăng nhập của
+chính provider, hoặc trả về lần đang chạy cho provider đó; `GET /providers/sign-ins/:id` cho biết nó đang ở đâu (một
+trang cần mở, một mã, một câu hỏi, hoặc nó kết thúc ra sao); `POST /providers/sign-ins/:id/answer { value }` chuyển câu
+trả lời của người dùng tới provider mà không giữ lại; `POST /providers/sign-ins/:id/cancel` kết thúc nó; và
+`POST /providers/:id/sign-out` xoá thông tin đăng nhập pi đã lưu. `GET /providers/sign-ins` trả về `{ "signIns": [...] }`,
+các lần đăng nhập vẫn đang chạy hoặc đang chờ (tối đa một cho mỗi provider), để một bề mặt được mở lại — một tab Cài đặt
+được chuyển về, một trang được tải lại — hiện lần đăng nhập đúng chỗ người dùng để lại, thay vì đưa ra các nút sẽ âm thầm
+tiếp tục nó; thẻ `/login` chỉ hiện mỗi lần đăng nhập ở hàng mới nhất. Lần đăng nhập nằm trong bộ nhớ và bị bỏ sau mười
+phút không có câu trả lời.
+
 Các route hộp thư gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi: `GET /inbox`
 (những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn, các loại đang tắt báo và các phiên bản đã bỏ
 qua), `GET /inbox/summary`,

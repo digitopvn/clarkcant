@@ -559,6 +559,16 @@ available, and offers that provider's models in the same picker or keeping the m
 listed as signed in yet, or has no models, is said so with a way to check again. A record of the card — a transcript, a
 search result — draws no picker.
 
+A sign-in itself — from a `/login` card or Settings → AI & Routing — goes through person-only routes, which are not in
+`/openapi.json`: `POST /providers/:id/sign-in { method }` (`oauth` or `api_key`) starts the provider's own sign-in, or
+answers with the one already running for that provider; `GET /providers/sign-ins/:id` is where it is (a page to open, a
+code, a question, or how it ended); `POST /providers/sign-ins/:id/answer { value }` hands the person's answer to the
+provider without keeping it; `POST /providers/sign-ins/:id/cancel` ends it; and `POST /providers/:id/sign-out` removes a
+credential pi stored. `GET /providers/sign-ins` answers `{ "signIns": [...] }`, the sign-ins still running or waiting
+(at most one per provider), so a surface opened again — a Settings tab switched back to, a reloaded page — shows the
+sign-in where the person left it instead of offering buttons that would resume it unseen; a `/login` card shows each
+one in its newest row only. A sign-in is in memory and is given up after ten minutes without an answer.
+
 The inbox routes are reachable with the same token but are **not** in `/openapi.json` yet and may change: `GET /inbox`
 (what waits on the person, the notices, the notices snoozed for later, the kinds quieted and the versions skipped),
 `GET /inbox/summary`,
