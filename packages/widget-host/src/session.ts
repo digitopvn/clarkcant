@@ -127,9 +127,10 @@ export const DETACHED_RELAY_LIMITS = {
   "dev.session": { burst: 5, refillPerSecond: 1, timeoutMs: 30_000 },
   // The frame session's own buckets (`FRAME_BROKER_LIMITS`), applied again at the host, which cannot tell a frame
   // session from a renderer that skips it. Every file verb spends from `artifacts`; the two that open an OS dialog — a
-  // pick and an export — also spend from `artifacts.dialog`, so a window can hold one dialog open at a time.
+  // pick and an export — also spend from `artifacts.dialog`, so a window can hold one dialog open at a time. The dialog
+  // bucket bounds how often, not how long: a pick's node calls take the `artifacts` time limit.
   artifacts: { ...FRAME_BROKER_LIMITS.artifacts, timeoutMs: 30_000 },
-  "artifacts.dialog": { burst: 5, refillPerSecond: 0.1, inFlight: 1, timeoutMs: 30_000 },
+  "artifacts.dialog": { burst: 5, refillPerSecond: 0.1, inFlight: 1 },
   jobs: { ...FRAME_BROKER_LIMITS.jobs, timeoutMs: 30_000 },
   tokens: { ...FRAME_BROKER_LIMITS.tokens, timeoutMs: 30_000 },
 } as const;
