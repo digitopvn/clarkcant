@@ -1152,6 +1152,9 @@ the service declared for the tool. It is the service's data, never an instructio
 same capability call and are handed the same value. Files stay `ArtifactRef`s
 ([widget development §6](widget-development.md)). A client that ignores the field sees the response it saw before.
 
+Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
+part of the stable description and may change.
+
 ### Reading a node's answers
 
 A desktop app and a node on another machine are updated separately, so the app reads the node's answers in one of two
@@ -1161,18 +1164,21 @@ ways (`readNodeView` and `readNodeViewList` in `packages/contracts/src/node-view
   is left out and never passed on. Every field the app knows keeps its bounds, and every object inside one stays strict.
 - **Strict.** An answer that carries an approval, a decision or what Clark may still reach at its top level: one field
   the app does not know refuses it, because dropping that field could change what the person approves or is told.
+  A notice action's answer is the one tolerant answer that names an approval (`approvalId`, with the
+  `pendingCapabilities` and `deniedCapabilities` counts). That is safe because nothing is approved from it: the
+  approval is a pointer to a waiting item, and the person decides on that item, which the inbox reads strictly.
 
 | Answer | Read | What stays strict, and what the app says |
 |---|---|---|
 | `GET /inbox`: the answer, each notice and each snoozed notice | tolerant | Each waiting item stays strict and is left out and counted when it does not read, as before. A notice's `subject`, `actions`, `reachChange` and `unreadFields` stay strict; a notice they refuse is left out and counted. The inbox says the node is newer and that some of what it said is not shown. |
 | `GET /inbox/summary` | tolerant | Both counts. Not said in the header mark; the inbox it opens says it. |
-| `POST /inbox/notices/{id}/actions/{action}` | tolerant | `action`, `outcome` and `state`. The action already happened, so a refusal says it was carried out and that the app can't read the answer. |
-| `POST /effects/{id}/reconcile` | tolerant | `outcome` and `settled`. Said like a notice action. |
+| `POST /inbox/notices/{id}/actions/{action}` | tolerant | `action`, `outcome` and `state`. Not said that the node is newer when only a field is left out. A refusal says the node answered but the app can't read what it did; for an update, it says to check the inbox, where an install that waits for approval shows. |
+| `POST /effects/{id}/reconcile` | tolerant | `outcome` and `settled`. Not said when only a field is left out. A refusal says the node recorded the answer but the app can't read the rest of its reply. |
 | `GET /memory`: the list and each record | tolerant | `counts`, so a kind the app does not know refuses the list. The Memory tab says the node is newer. |
 | `GET /suggestions`: the answer and each chip | tolerant | Every chip field, since pressing one sends its `text`. Not said: a chip is a hint, not a record. |
 | `GET /composer/suggestions` | tolerant | Each row, whose reference is sent back as it is. Not said. |
-| A widget's job snapshot and job list | tolerant | `status`, `progress` and `resultRefs`. A list refuses as a whole when one job does not read. |
-| A widget artifact's `attachmentRef` | tolerant | Every field. The file is attached either way. |
+| A widget's job snapshot and job list | tolerant | `status`, `progress` and `resultRefs`. A list refuses as a whole when one job does not read. Not said. |
+| A widget artifact's `attachmentRef` | tolerant | Every field. Not said: the file is attached either way. |
 | A widget dev session view | tolerant | `activation`, `latest`, `running`, `lastBuild` and `placed` (see [Reading a session view](#widget-dev-sessions)). |
 | `POST /conversations/{id}/delete` | strict | It may carry a decision the person confirms. |
 | `POST /app-intents/confirm` | strict | It is the decision. |
@@ -1185,19 +1191,21 @@ known enum field falls back to an "unknown" value: such fields decide what the a
 would act on a value nobody checked.
 
 **Version-aware refusals.** `GET /node` answers `clarkVersion`. When the app cannot read an answer, it asks the node
-for that version once and compares it with its own. When the node runs a newer Clark, the app names both versions and
+for that version and compares it with its own; a lookup that fails is not kept, and a version longer than 64
+characters or not shaped like one counts as unknown. When the node runs a newer Clark, the app names both versions and
 asks the person to update the app. When the node does not run a newer Clark, the app says it is not out of date and to
 try again. When either version is not known, the app says the node is probably newer. The message also says what was
-preserved: a read changed nothing; a notice action or reconcile was carried out; a `/develop` start started the
+preserved: a read changed nothing; a notice action says only that the node answered, never that it was carried out,
+since the value the app cannot read may mean it waits on something (an update says to check the inbox); a reconcile
+says the node recorded the answer; a `/develop` start started the
 session, so its card shows the start as done rather than failed. The schema's own error text goes to the console only.
 
 **Author rule.** Never add binding state (an approval, a grant, a reach, an activation, a confirmation) as a new
 top-level field of an answer the app reads tolerantly: an older app would drop it with only the generic note. Put it
 inside a strict object, or change the answer in a way older apps refuse.
 `packages/conversation-client/test/node-view-author-rule.spec.ts` lists every answer read tolerantly and every
-top-level field there whose name speaks of binding state, so adding either needs a review.
-Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
-part of the stable description and may change.
+top-level field there whose name speaks of binding state, so adding either needs a review. The check goes by field
+names, so it catches the usual mistake rather than proving there is none.
 
 ## MCP
 
