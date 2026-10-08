@@ -14,12 +14,14 @@ import { instantSchema } from "./primitives.ts";
  * (`/changelog 1.4`: what changed after 1.4), `/report` files a bug report or a feature request on ClarkCant itself
  * (`/report bug …`, `/report feature …`; alone, it brings up the Feedback Composer), and `/develop` lets the person
  * choose a folder to develop a widget from live in the conversation (`/develop <folder>`: that folder; `/develop forget`:
- * the folders Clark may develop in because the person chose them, to take one back).
+ * the folders Clark may develop in because the person chose them, to take one back), and `/settings` opens the existing
+ * Settings dialog over the conversation (`/settings ai`: on that tab), through the same `settings.open` and `settings.tab`
+ * app intents the header's gear and "open settings" reach.
  *
  * The node is the one place that decides what a command means; the composer offers the same list after `/`, so a
  * command is something a person can find rather than something they have to know.
  */
-export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog", "report", "develop"] as const;
+export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog", "report", "develop", "settings"] as const;
 export const slashCommandSchema = z.enum(SLASH_COMMANDS);
 export type SlashCommand = z.infer<typeof slashCommandSchema>;
 

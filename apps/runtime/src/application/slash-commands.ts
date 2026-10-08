@@ -1,4 +1,5 @@
 import {
+  type AppIntent,
   type AppIntentDecision,
   type ChangelogCard,
   type CommandCard,
@@ -9,9 +10,11 @@ import {
   type Principal,
   type SlashCommand,
   type TypedSlashCommand,
+  SETTINGS_TABS,
   THINKING_LEVELS,
+  describeAppIntent,
 } from "@clarkcant/contracts";
-import { readThinkingLevel, writeRegisteredPreference } from "@clarkcant/core";
+import { readThinkingLevel, settingsTabNamed, writeRegisteredPreference } from "@clarkcant/core";
 import { appendAuditEvent, getConversation, listConversations } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
@@ -53,6 +56,7 @@ const NOTES: Record<SlashCommand, Record<Locale, string>> = {
   changelog: { vi: "Phiên bản này của Clark có gì mới", en: "What this version of Clark changed" },
   report: { vi: "Báo lỗi hoặc đề xuất tính năng cho ClarkCant", en: "Report a bug or request a feature for ClarkCant" },
   develop: { vi: "Phát triển widget từ một thư mục bạn chọn", en: "Develop a widget from a folder you choose" },
+  settings: { vi: "Mở Settings, hoặc mở ở một tab: /settings ai", en: "Open Settings, or open it on a tab: /settings ai" },
 };
 
 /** What the composer's picker says beside a command, in the person's language. */
@@ -195,7 +199,32 @@ export async function answerSlashCommand(
       return reportAnswer(services, input.conversationId, argument, input.at, say);
     case "develop":
       return developAnswer(services, argument, locale, say);
+    case "settings":
+      return settingsAnswer(argument, locale, say);
   }
+}
+
+/**
+ * `/settings` opens the Settings the header's gear opens, and `/settings <tab>` opens it on that tab.
+ *
+ * The answer is the host's own `settings.open` or `settings.tab` decision, the one "open settings" typed or spoken
+ * reaches, so the page runs it through the same executor onto the same dialog: no second screen, nothing a model
+ * chose, and the conversation and the draft stay where they were. A tab that does not exist opens nothing and is
+ * refused by name, listing the ones there are.
+ */
+function settingsAnswer(argument: string, locale: Locale, say: (vi: string, en: string) => string): SlashCommandAnswer {
+  const tab = argument === "" ? undefined : settingsTabNamed(argument);
+  if (argument !== "" && tab === undefined) {
+    return {
+      text: say(
+        `Settings không có tab “${argument}”. Các tab: ${SETTINGS_TABS.join(", ")}. Gõ /settings để mở Settings.`,
+        `Settings has no tab "${argument}". Tabs: ${SETTINGS_TABS.join(", ")}. Type /settings to open Settings.`,
+      ),
+    };
+  }
+  const intent: AppIntent = tab === undefined ? { kind: "settings.open" } : { kind: "settings.tab", tab };
+  const readBack = describeAppIntent(intent, locale);
+  return { text: readBack, appIntent: { kind: "intent", intent, requiresConfirmation: false, readBack } };
 }
 
 /**
