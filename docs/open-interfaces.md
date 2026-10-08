@@ -909,10 +909,13 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   nothing. The choice covers the folder and every folder inside it. Starting it again keeps the mark, and so
   does Clark picking the session up later. A whole drive (a filesystem or drive root) or the home folder itself is
   never marked: a session may still run there, but Clark gets no lasting access to it.
-- A chosen folder is kept as the real path it had when the person started it. If that path later leads somewhere else
-  (the folder was replaced by a link or junction, moved or removed), the choice no longer counts, so a swapped link
-  cannot widen it. It is still listed, as not found, so the person can forget it; if the folder comes back at that
-  path, the choice counts again.
+- A chosen folder is kept as the real path it had when the person started it, together with that folder's device and
+  file id (`chosenFolderId` in the session store). If that path later leads somewhere else (the folder was replaced by
+  a link or junction, moved or removed), or holds another folder (one made there after the chosen one went), the choice
+  no longer counts, so neither a swapped link nor a folder made in its place can widen it. It is still listed, as not
+  found, so the person can forget it; if that same folder comes back at that path (moved back), the choice counts
+  again. A choice stored before folder ids were kept has none: it takes the id of the folder found at its path the
+  first time one is, and from then on is held to that folder.
 - The person takes a choice back with `POST /widget-dev/chosen-folders/forget`, the **Forget** button on the card
   `/develop forget` answers with, or the same card Clark shows when asked in words (`develop_widget` action
   `folders`). Forgetting does not stop a running session. A folder inside another chosen folder, or inside a

@@ -915,10 +915,14 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   không cấp quyền gì. Lựa chọn này gồm thư mục đó và mọi thư mục bên trong nó. Bắt đầu lại phiên đó vẫn giữ dấu này, và
   Clark tiếp tục phiên đó về sau cũng vậy. Cả một ổ đĩa (gốc của hệ thống tệp hoặc của ổ đĩa) hay chính thư mục home
   không bao giờ được đánh dấu: một phiên vẫn có thể chạy ở đó, nhưng Clark không giữ quyền lâu dài với nó.
-- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu. Nếu về sau đường dẫn đó dẫn tới nơi khác
-  (thư mục bị thay bằng một liên kết hoặc junction, bị chuyển đi hoặc bị xoá), lựa chọn không còn được tính, nên một
-  liên kết bị tráo không mở rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu
-  thư mục trở lại đúng đường dẫn đó, lựa chọn lại được tính.
+- Một thư mục đã chọn được giữ dưới đường dẫn thật nó có lúc người dùng bắt đầu, cùng với mã thiết bị và mã tệp của chính
+  thư mục đó (`chosenFolderId` trong kho phiên). Nếu về sau đường dẫn đó dẫn tới nơi khác (thư mục bị thay bằng một
+  liên kết hoặc junction, bị chuyển đi hoặc bị xoá), hoặc chứa một thư mục khác (được tạo ở đó sau khi thư mục đã chọn
+  không còn), lựa chọn không còn được tính, nên cả một liên kết bị tráo lẫn một thư mục được tạo vào chỗ đó đều không mở
+  rộng được nó. Nó vẫn được liệt kê, với trạng thái không tìm thấy, để người dùng thu hồi; nếu chính thư mục đó trở lại
+  đúng đường dẫn đó (được chuyển về), lựa chọn lại được tính. Một lựa chọn được lưu từ trước khi mã thư mục được giữ thì
+  không có mã: nó nhận mã của thư mục được tìm thấy ở đường dẫn đó vào lần đầu tiên có thư mục ở đó, và từ đó chỉ gắn
+  với thư mục ấy.
 - Người dùng thu hồi một lựa chọn bằng `POST /widget-dev/chosen-folders/forget`, nút **Thu hồi** trên thẻ mà
   `/develop forget` trả về, hoặc cùng thẻ đó do Clark hiện khi được hỏi bằng lời (thao tác `folders` của
   `develop_widget`). Thu hồi không dừng phiên đang chạy. Một thư mục nằm trong một thư mục đã chọn khác, hoặc trong một
