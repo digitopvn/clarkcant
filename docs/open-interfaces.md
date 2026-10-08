@@ -539,7 +539,7 @@ search, a provider filter and a marker on the model in use. Opening it changes n
 the person confirms it, through `POST /model` — the same catalogue-checked path Settings uses — and it answers from the
 next message (`applies: "next-session"`), or from the next node start on a node that runs no model yet
 (`"next-start"`). A signed-out provider's models are shown but cannot be applied until it signs in: `POST /model`
-itself refuses one with `409 CAPABILITY_NOT_AUTHENTICATED`, so the API, the CLI and MCP meet the same rule as the picker
+itself refuses one with `409 CAPABILITY_NOT_AUTHENTICATED`, so the API and `clarkcant api` meet the same rule as the picker
 (a provider the sign-in list does not name needs no sign-in, and an unreadable list leaves the catalogue check alone).
 After a sign-in on a
 `/login` card (or in Settings → AI & Routing) finishes, the card names the provider, re-reads both lists rather than assuming the sign-in made models

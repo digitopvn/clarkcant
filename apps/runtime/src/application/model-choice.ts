@@ -65,7 +65,7 @@ export function readModelChoice(db: Database, ownerPrincipalId: string): ModelCh
  *
  * The checks happen first: a stored model this installation cannot run would fail every later turn with a message
  * about a provider rather than about the choice that caused it. This is the one place a choice is checked, so the
- * picker, Settings, the API, the CLI and MCP all meet the same refusal.
+ * picker, Settings, the API and `clarkcant api` all meet the same refusal.
  */
 export function storeModelChoice(deps: ModelChoiceDeps, choice: ModelChoice): ModelChoiceOutcome {
   const offered = deps.catalogue.find((entry) => entry.id === choice.provider);
