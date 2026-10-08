@@ -312,7 +312,8 @@ export function useTurnSend({
          * so the intent runs now and the draft is put back after it, rather than the restart emptying it without a word.
          * Files attached since Enter are the next message's too: a restart that left the conversation they were stored in
          * has them stored again in the new one (`carryChips`), so "xem file này" does not point at a file that is gone.
-         * Only ready ones travel; one still uploading into the conversation left behind is cleared with it.
+         * One still uploading into the conversation left behind travels too, stored again from the bytes it was uploading.
+         * This holds whether or not the text was edited.
          */
         const typedSince = readDraft();
         const edited = typedSince.trim() !== trimmed;

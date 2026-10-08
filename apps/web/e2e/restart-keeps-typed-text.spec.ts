@@ -324,3 +324,43 @@ test("a file attached after Enter on a sentence asking to go home goes with the 
   await expect(page.locator("[data-attachment-block]")).toHaveCount(1);
   await held()?.continue();
 });
+
+test("a file still uploading when the node's answer lands goes with the kept text into the new conversation", async ({ page }) => {
+  const held = await openWithRunningReply(page);
+  const composer = page.locator("[data-composer]");
+  const chips = page.locator("[data-attachment-chip]");
+  // The first upload, into the conversation about to be left, is held until the restart has landed.
+  let heldUpload: Route | undefined;
+  await page.route("**/attachments", async (route) => {
+    if (route.request().method() === "POST" && heldUpload === undefined) {
+      heldUpload = route;
+      return;
+    }
+    await route.continue();
+  });
+
+  const answered = page.waitForResponse((response) => isIntentRequest(response.url()));
+  await composer.fill("về trang chủ");
+  await composer.press("Enter");
+  await page.locator("[data-attachment-input]").setInputFiles([
+    { name: "ghi-chu.md", mimeType: "text/markdown", buffer: Buffer.from("# Ghi chú\nnội dung thử.\n") },
+  ]);
+  await expect.poll(() => heldUpload !== undefined, { timeout: 10_000 }).toBe(true);
+  await expect(chips).toHaveAttribute("data-attachment-state", "checking");
+  await composer.fill("đọc giúp tui tệp này");
+  await answered;
+
+  // Home, and the file still with the text: stored in the new conversation from the bytes it was uploading.
+  await expect(page.locator(".cc-empty")).toBeVisible();
+  await expect(composer).toHaveValue("đọc giúp tui tệp này");
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toHaveAttribute("data-attachment-state", "ready", { timeout: 10_000 });
+  // The upload left behind finishes where it was going and does not disturb the carried file.
+  await heldUpload?.continue();
+  await expect(chips).toHaveCount(1);
+
+  await composer.press("Enter");
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("nội dung thử", { timeout: 20_000 });
+  await expect(page.locator("[data-attachment-block]")).toHaveCount(1);
+  await held()?.continue();
+});
