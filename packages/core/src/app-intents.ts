@@ -501,9 +501,14 @@ export function isAppCommandShaped(text: string): boolean {
   return CONTROL_VERBS.includes(first) && APP_NOUNS.some((noun) => containsPhrase(bare.split(" "), noun));
 }
 
+/**
+ * What a sentence asks of the application. `unplaced` marks the refusal of a sentence shaped like a command that names
+ * none, as opposed to one that named a command it could not finish (a tab that does not exist). It stays on the match:
+ * a resolution and the wire carry only the sentence.
+ */
 export type AppIntentMatch =
   | { kind: "intent"; intent: AppIntent }
-  | { kind: "refused"; say: string };
+  | { kind: "refused"; say: string; unplaced?: true };
 
 function findTab(normalised: string): SettingsTab | undefined {
   // Only look after the word "tab" when it is there, so "mo settings cua model nay" is not read as a
@@ -778,7 +783,7 @@ export function matchAppIntent(
     .filter((entry) => entry.wholeSentence !== true)
     .sort((a, b) => b.phrase.length - a.phrase.length)
     .find((entry) => normalised.includes(entry.phrase));
-  if (matched === undefined) return { kind: "refused", say: appIntentNotUnderstood(locale) };
+  if (matched === undefined) return { kind: "refused", say: appIntentNotUnderstood(locale), unplaced: true };
   return { kind: "intent", intent: { kind: matched.kind } };
 }
 

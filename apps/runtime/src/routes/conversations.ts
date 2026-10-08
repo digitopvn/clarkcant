@@ -51,6 +51,7 @@ import {
   invocationPreflight,
   liveOwnerOf,
   liveStateOf,
+  matchAppIntent,
   applyWidgetStatePatch,
   FRAME_GRANT_LIFETIME_MS,
   mintFrameGrant,
@@ -88,6 +89,7 @@ import {
 import { type AppIntentDeps, decideAppIntent, mintConfirmation, preferredAppIntentLocale } from "../app-intents.ts";
 import { deleteConversation } from "../application/conversation-delete.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
+import { themeTargets } from "../application/appearance-intents.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
@@ -137,7 +139,7 @@ import {
   runApprovedWidgetArtifactWrite,
 } from "../application/machine-artifact-writes.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
-import { answerSlashCommand, slashCommandBlocks } from "../application/slash-commands.ts";
+import { answerSlashCommand, slashCommandBlocks, type SlashCommandAnswer } from "../application/slash-commands.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 import { exportTableCsv } from "./table-export.ts";
@@ -1095,6 +1097,84 @@ function answerTypedIntent(
   return asked.readBack;
 }
 
+/**
+ * Whether a refused sentence named no command at all, as opposed to one the host recognised and turned down.
+ *
+ * Read again from the core matcher, which writes nothing, with the same themes the decision saw, so the wire answer
+ * stays a plain refusal and no sentence is compared across languages.
+ */
+function namesNoCommand(services: Pick<NodeServices, "runtime" | "conductor">, text: string): boolean {
+  const match = matchAppIntent(text, {
+    themeTargets: () => {
+      try {
+        return themeTargets(readThemeRegistry(themeRegistryDeps(services)));
+      } catch {
+        // The decision already said so and read no themes either; the same empty list gives the same match.
+        return [];
+      }
+    },
+  });
+  return match?.kind === "refused" && match.unplaced === true;
+}
+
+/**
+ * What a sent message is, before any turn machinery sees it: refused for a file it cannot carry, a command the host
+ * answers, or a message for a turn with the files it carries.
+ *
+ * Shared by both message routes, which differ only in how they say the answer. The files are read first, so a file
+ * that is not available refuses the message on every path.
+ *
+ * A host command, slash or typed, stays the host's whatever the composer still holds: `/new`, "mở settings" or
+ * "dừng lại" is about the app, never about a file, and Stop above all must not wait behind a turn. The one exception is
+ * `/background` with files: its request may be about them, and the background run carries only words, so the message
+ * is stored with its files and answered as a turn instead.
+ *
+ * A sentence shaped like a command that names none is not about the app. Without files it is answered "not
+ * understood"; with files it is about them, so it is stored with them and answered as a turn too. A command the host
+ * recognised and turned down (delete while a reply is running, a theme that is not installed, nothing waiting) stays
+ * the host's refusal: it was about the app, and it must not reach the turn decision that could interrupt a reply.
+ */
+async function readSentMessage(
+  services: ConversationServices,
+  principal: Principal,
+  input: { conversationId: string; text: string; attachmentIds: unknown; at: () => string },
+): Promise<
+  | { kind: "refused"; message: string }
+  | { kind: "slash"; answer: SlashCommandAnswer; messageId: string }
+  | { kind: "intent"; asked: Exclude<AppIntentResolution, { kind: "none" }>; said: string; messageId: string }
+  | { kind: "message"; attachmentRefs: AttachmentRef[] }
+> {
+  const { conversationId, text, at } = input;
+  const attachments = resolveAttachmentRefs({
+    db: services.runtime.db,
+    principalId: services.runtime.identity.ownerPrincipalId,
+    conversationId,
+    ids: input.attachmentIds,
+  });
+  if (!attachments.ok) return { kind: "refused", message: attachments.message };
+  const attachedFiles = attachments.refs.length > 0;
+
+  // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
+  const slash = parseSlashCommand(text);
+  // A bare `/background` has no request to be about the files, so it gets its usage hint like any other command.
+  if (slash !== undefined && slash.command === "background" && slash.argument !== "" && attachedFiles) {
+    return { kind: "message", attachmentRefs: attachments.refs };
+  }
+  if (slash !== undefined) {
+    const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
+    const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
+    return { kind: "slash", answer, messageId: appended.messageId };
+  }
+
+  const asked = typedAppIntent(services, conversationId, text, at);
+  if (asked.kind !== "none" && !(asked.kind === "refused" && attachedFiles && namesNoCommand(services, text))) {
+    const said = answerTypedIntent(services, conversationId, asked);
+    const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
+    return { kind: "intent", asked, said, messageId: appended.messageId };
+  }
+  return { kind: "message", attachmentRefs: attachments.refs };
+}
+
 export async function handleConversationRoutes(deps: ConversationRouteDeps): Promise<GatewayResponse> {
   const { request, segments, at } = deps;
   const { services } = deps;
@@ -1199,27 +1279,29 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     }
 
     /*
-     * A typed command to the application.
+     * A typed command to the application, and the files the message carries (`readSentMessage`).
      *
      * Checked before the turn machinery, because "mở settings" is not something to steer into a running answer. An
-     * intent is answered by the host and recorded with source "chat"; a command-shaped sentence that maps to nothing
-     * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
-     * anything else falls through untouched and reaches the agent exactly as before.
+     * intent is answered by the host and recorded with source "chat", a recognised command the host turns down is answered by it too; a command-shaped sentence
+     * that maps to nothing gets an honest "I did not understand" and no model turn when it carries no files, and with
+     * files is about them, so it becomes a turn like anything else, which reaches the agent exactly as before
+     * (`/background` with a request and files too). The files are read first, so one
+     * that is not available refuses the message before anything is joined, stopped or started for it.
      */
-    // A slash command is the host's to answer, before any sentence matching: `/new` is a command, never a sentence.
-    const slash = parseSlashCommand(text);
-    if (slash !== undefined) {
-      const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
-      const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
-      return json(200, { accepted: true, messageId: appended.messageId, ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }) });
+    const sent = await readSentMessage(services, principal, {
+      conversationId,
+      text,
+      attachmentIds: parsed.value.attachmentIds,
+      at,
+    });
+    if (sent.kind === "refused") return fail(400, "ATTACHMENT_NOT_AVAILABLE", sent.message);
+    if (sent.kind === "slash") {
+      const { answer } = sent;
+      return json(200, { accepted: true, messageId: sent.messageId, ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }) });
     }
-
-    const asked = typedAppIntent(services, conversationId, text, at);
-    if (asked.kind !== "none") {
-      const said = answerTypedIntent(services, conversationId, asked);
-      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
-      return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
-    }
+    if (sent.kind === "intent") return json(200, { accepted: true, messageId: sent.messageId, appIntent: sent.asked });
+    const attachmentRefs = sent.attachmentRefs;
+    const attachedFiles = attachmentRefs.length > 0;
 
     // Checked before anything acts on the message, so a reference that no longer holds refuses the whole message by
     // name instead of a turn starting without the thing it was asked about.
@@ -1264,12 +1346,11 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
        * Stop still cancels it while it waits. It does not cut the running turn off: joining was what the decider chose,
        * and taking the running turn's place was not.
        *
-       * A message with attachments is not joined at all: a steer carries only its words, so it waits the same way, and
-       * is stored with its files and answered in a turn of its own that reads them.
+       * A message with attachments is neither joined nor sent to the background: a steer and a background request both
+       * carry only its words, so it waits the same way, and is stored with its files and answered in a turn of its own
+       * that reads them.
        */
-      if (action === "steer") {
-        const ids: unknown = parsed.value.attachmentIds;
-        const attachedFiles = Array.isArray(ids) && ids.length > 0;
+      if (action === "steer" || (action === "background" && attachedFiles)) {
         if (!attachedFiles && (await control.steer(conversationId, text, composerSurface(request).origin))) {
           return json(202, {
             accepted: true,
@@ -1317,13 +1398,6 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     }
 
     const at_ = at() as never;
-    const attachments = resolveAttachmentRefs({
-      db: services.runtime.db,
-      principalId: runtime.identity.ownerPrincipalId,
-      conversationId,
-      ids: parsed.value.attachmentIds,
-    });
-    if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
 
     // A `control_app` call this turn makes is otherwise silent on this route: there is no stream to carry
     // it, so it is collected here and reported in the response instead, for a caller of the plain HTTP
@@ -1336,7 +1410,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       principal,
       text: text.slice(0, 20_000),
       at: at_,
-      attachmentRefs: attachments.refs,
+      attachmentRefs,
       referenceBlocks: references.blocks,
       // Only the demo path asks for a scripted sample; a real message never gets one.
       ...(parsed.value.demo === true ? { demo: true } : {}),
@@ -1384,61 +1458,39 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     }
 
     /*
-     * A typed command to the application, on the route the composer actually uses.
+     * A typed command to the application, on the route the composer actually uses, and the files the message carries.
      *
-     * The same registry and the same host answer as the non-streaming route; the difference is only where the
-     * decision travels, because this answer is a stream. A command is not a turn, so nothing is sent to the model
-     * and the frame carries the decision the page acts on.
+     * The same reading as the non-streaming route (`readSentMessage`): the files first, then a slash command or a typed
+     * intent the host answers, whatever files are attached, except `/background` with a request and files and a
+     * sentence that names no command and carries files, which both become a turn. The difference is only where the decision travels, because
+     * this answer is a stream. A command is not a turn, so nothing is sent to the model: its sentence is a delta so a
+     * client that renders replies renders this one too, and the `done` frame carries the record and the timeline the
+     * other routes would have returned, plus the decision when the page has something to do.
      */
-    /*
-     * A slash command, answered by the host as a message with a card (`slash-commands.ts`). The same frames as a typed
-     * intent: its sentence as a delta, then the record, plus the decision when the page has something to do.
-     */
-    const slash = parseSlashCommand(text);
-    if (slash !== undefined) {
-      const answer = await answerSlashCommand(services, principal, { conversationId, typed: slash, at: () => at() as never });
-      const appended = appendHostReply(services, { conversationId, blocks: slashCommandBlocks(answer), at: at() as never });
+    const sent = await readSentMessage(services, principal, {
+      conversationId,
+      text,
+      attachmentIds: parsed.value.attachmentIds,
+      at,
+    });
+    if (sent.kind === "refused") return fail(400, "ATTACHMENT_NOT_AVAILABLE", sent.message);
+    if (sent.kind === "slash" || sent.kind === "intent") {
+      const said = sent.kind === "slash" ? sent.answer.text : sent.said;
+      const appIntent = sent.kind === "slash" ? sent.answer.appIntent : sent.asked;
       return {
         status: 200,
         body: null,
         stream: {
           contentType: "text/event-stream",
           run: async (send) => {
-            send(sse("delta", { text: answer.text }));
-            send(
-              sse("done", {
-                resolution: "app-intent",
-                taskId: null,
-                messageIds: [appended.messageId],
-                timeline: buildTimeline(services, { conversationId }),
-                ...(answer.appIntent === undefined ? {} : { appIntent: answer.appIntent }),
-              }),
-            );
-          },
-        },
-      };
-    }
-
-    const askedIntent = typedAppIntent(services, conversationId, text, at);
-    if (askedIntent.kind !== "none") {
-      const said = answerTypedIntent(services, conversationId, askedIntent);
-      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
-      return {
-        status: 200,
-        body: null,
-        stream: {
-          contentType: "text/event-stream",
-          run: async (send) => {
-            // The sentence is a delta so a client that renders replies renders this one too, and the `done` frame
-            // carries the decision plus the timeline the other routes would have returned.
             send(sse("delta", { text: said }));
             send(
               sse("done", {
                 resolution: "app-intent",
                 taskId: null,
-                messageIds: [appended.messageId],
+                messageIds: [sent.messageId],
                 timeline: buildTimeline(services, { conversationId }),
-                appIntent: askedIntent,
+                ...(appIntent === undefined ? {} : { appIntent }),
               }),
             );
           },
@@ -1447,13 +1499,6 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     }
 
     const at_ = at() as never;
-    const attachments = resolveAttachmentRefs({
-      db: services.runtime.db,
-      principalId: runtime.identity.ownerPrincipalId,
-      conversationId,
-      ids: parsed.value.attachmentIds,
-    });
-    if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
     const references = await resolveComposerReferences(services, { value: parsed.value.references });
     if (!references.ok) return fail(400, "REFERENCE_NOT_AVAILABLE", references.message);
     return {
@@ -1469,7 +1514,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
               principal,
               text: text.slice(0, 20_000),
               at: at_,
-              attachmentRefs: attachments.refs,
+              attachmentRefs: sent.attachmentRefs,
               referenceBlocks: references.blocks,
               ...(parsed.value.demo === true ? { demo: true } : {}),
               ...composerSurface(request),
