@@ -20,6 +20,8 @@ export interface ConversationComposerBarProps {
   setDragging: (dragging: boolean) => void;
   addFiles: (files: readonly File[]) => Promise<void>;
   chips: readonly AttachmentChip[];
+  /** The files are still here because a command answered the last message, and commands carry no files. */
+  chipsKept?: boolean;
   onRemoveChip: (id: string) => void;
   /** The `/` and `@` picker, and the references chosen with it. */
   references?: ComposerReferencesState;
@@ -54,6 +56,7 @@ export function ConversationComposerBar({
   setDragging,
   addFiles,
   chips,
+  chipsKept = false,
   onRemoveChip,
   references,
   draft,
@@ -142,7 +145,7 @@ export function ConversationComposerBar({
               <button
                 type="button"
                 className="cc-chip-remove"
-                aria-label={`Bỏ ${chip.filename}`}
+                aria-label={t("composer.attachments.remove").replace("{name}", chip.filename)}
                 data-attachment-remove={chip.id}
                 onClick={() => onRemoveChip(chip.id)}
               >
@@ -152,6 +155,12 @@ export function ConversationComposerBar({
           ))}
         </ul>
       )}
+      {/* Beside the files it is about, so they are not mistaken for ones the last message carried. */}
+      {chipsKept && chips.length > 0 ? (
+        <p className="cc-tray-note" role="status" data-attachments-kept="true">
+          {t("composer.attachments.keptForCommand")}
+        </p>
+      ) : null}
       {/* The ring, drawn under the composer so the light travels around its edge rather than across it. */}
       <div className="cc-composer-shell">
         <span className="cc-composer-glow" aria-hidden="true" />

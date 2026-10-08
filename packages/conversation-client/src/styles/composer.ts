@@ -62,6 +62,11 @@ export const COMPOSER_CSS = `
 }
 .cc-chip-remove:hover { color: var(--cc-text); }
 .cc-tray-chip[data-reference-chip] { border-color: color-mix(in oklab, var(--cc-accent) 45%, var(--cc-border)); }
+/* Why the files are still here after a command answered: quiet, under the files it is about. */
+.cc-tray-note {
+  margin: 0 auto var(--cc-space-xs); padding: 0 var(--cc-space-md); max-width: var(--cc-composer-max-width);
+  font-size: var(--cc-text-label); color: var(--cc-text-muted);
+}
 
 /*
  * The / and @ picker.
