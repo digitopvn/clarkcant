@@ -38,7 +38,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/node` | – |
+| GET | `/node` | – — danh tính của node, `model` đã cấu hình, và `clarkVersion`: phiên bản Clark node đang chạy, hoặc `"unknown"` khi bản build không đọc được hồ sơ của chính nó (xem [Đọc câu trả lời của node](#đọc-câu-trả-lời-của-node)) |
 | GET | `/changelog?since=` | – — phiên bản Clark này thay đổi gì, đọc từ ghi chú phát hành đi kèm bản build (không cần mạng, chỉ đọc); `since` chỉ giữ các phiên bản sau một phiên bản như `1.4`; bản chạy từ mã nguồn có thêm `notesCover`, commit và ngày mà ghi chú dừng lại; `400` khi giá trị không phải phiên bản, `503 CHANGELOG_UNAVAILABLE` khi bản build không có ghi chú đọc được ([phát hành](releases.vi.md)) |
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
@@ -1057,8 +1057,10 @@ vẫn hiện là đang chạy:
   bị bỏ qua và ứng dụng nói rằng node mới hơn (xem **Đọc view của phiên** ở trên). Một ứng dụng dựng trước cách đọc
   khoan dung đó, bao gồm mọi ứng dụng cũ hơn `stopCode`, thì từ chối cả view. Mọi ứng dụng cũng từ chối một view có
   trường mới hơn nằm trong `activation`, `latest`, `running`, `lastBuild` hoặc `placed`, hoặc có một giá trị ứng dụng
-  không biết trong một trường nó biết, chẳng hạn một `stopReason`, `status` hay trạng thái activation mới. Trong những
-  trường hợp đó, hãy giữ ứng dụng desktop ở cùng bản dựng với node mà nó kết nối tới, kể cả một node trên máy khác.
+  không biết trong một trường nó biết, chẳng hạn một `stopReason`, `status` hay trạng thái kích hoạt mới. Trong những
+  trường hợp đó, ứng dụng nói mỗi bên đang chạy Clark phiên bản nào và, khi node mới hơn, đề nghị cập nhật ứng dụng
+  (xem [Đọc câu trả lời của node](#đọc-câu-trả-lời-của-node)); hãy giữ ứng dụng desktop ở cùng bản dựng với node mà nó
+  kết nối tới, kể cả một node trên máy khác.
   Mã này là điều bước kiểm tìm thấy ở lần khởi động lại đó và không được kiểm lại khi phiên vẫn dừng; một lần bắt đầu
   kiểm thư mục như nó đang có lúc ấy.
 
@@ -1165,6 +1167,61 @@ trường này thấy đúng phản hồi như trước.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
+
+### Đọc câu trả lời của node
+
+Ứng dụng desktop và một node trên máy khác được cập nhật riêng, nên ứng dụng đọc câu trả lời của node theo một trong hai
+cách (`readNodeView` và `readNodeViewList` trong `packages/contracts/src/node-view-read.ts`):
+
+- **Khoan dung.** Câu trả lời mà cấp trên cùng không ràng buộc điều gì: một trường ở cấp trên cùng mà ứng dụng không
+  biết, do một node mới hơn gửi, bị bỏ qua và không bao giờ được chuyển tiếp. Mọi trường ứng dụng biết vẫn giữ nguyên
+  các giới hạn của nó, và mọi đối tượng nằm trong một trường như vậy vẫn được đọc chặt.
+- **Chặt.** Câu trả lời mang một phê duyệt, một quyết định hay điều Clark còn truy cập được ngay ở cấp trên cùng: chỉ
+  một trường ứng dụng không biết cũng làm nó bị từ chối, vì bỏ trường đó có thể đổi điều người dùng phê duyệt hay điều
+  họ được cho biết. Câu trả lời của một hành động trên thông báo là câu trả lời khoan dung duy nhất có nêu một phê
+  duyệt (`approvalId`, cùng hai con số `pendingCapabilities` và `deniedCapabilities`). Điều đó an toàn vì không có gì
+  được phê duyệt từ câu trả lời này: phê duyệt chỉ là con trỏ tới một mục đang chờ, và người dùng quyết định trên mục
+  đó, mục mà hộp thư đọc chặt.
+
+| Câu trả lời | Cách đọc | Phần vẫn chặt, và điều ứng dụng nói |
+|---|---|---|
+| `GET /inbox`: câu trả lời, từng thông báo và từng thông báo đang tạm ẩn | khoan dung | Từng mục đang chờ vẫn chặt, và bị bỏ ra rồi được đếm khi không đọc được, như trước. `subject`, `actions`, `reachChange` và `unreadFields` của một thông báo vẫn chặt; thông báo bị chúng từ chối thì bị bỏ ra và được đếm. Hộp thư nói rằng node mới hơn và một số điều node gửi không được hiển thị. |
+| `GET /inbox/summary` | khoan dung | Cả hai con số. Dấu đếm trên thanh đầu không nói; hộp thư mà nó mở thì nói. |
+| `POST /inbox/notices/{id}/actions/{action}` | khoan dung | `action`, `outcome` và `state`. Không nói rằng node mới hơn khi chỉ có một trường bị bỏ qua. Một lần từ chối nói rằng node đã trả lời nhưng ứng dụng không đọc được node đã làm gì; với một bản cập nhật, nó đề nghị xem hộp thư, nơi hiện bản cài đang chờ phê duyệt. |
+| `POST /effects/{id}/reconcile` | khoan dung | `outcome` và `settled`. Không nói khi chỉ có một trường bị bỏ qua. Một lần từ chối nói rằng node đã ghi nhận câu trả lời nhưng ứng dụng không đọc được phần node trả lời thêm. |
+| `GET /memory`: danh sách và từng mục | khoan dung | `counts`, nên một loại ứng dụng không biết làm danh sách bị từ chối. Thẻ Bộ nhớ nói rằng node mới hơn. |
+| `GET /suggestions`: câu trả lời và từng gợi ý | khoan dung | Mọi trường của gợi ý, vì bấm vào sẽ gửi `text` của nó. Không nói: gợi ý chỉ là lời mách, không phải hồ sơ. |
+| `GET /composer/suggestions` | khoan dung | Từng dòng, vì tham chiếu của dòng được gửi lại nguyên vẹn. Không nói. |
+| Ảnh chụp và danh sách job của một widget | khoan dung | `status`, `progress` và `resultRefs`. Cả danh sách bị từ chối khi một job không đọc được. Không nói. |
+| `attachmentRef` của một artifact widget | khoan dung | Mọi trường. Không nói: tệp vẫn được đính kèm. |
+| View của một phiên phát triển widget | khoan dung | `activation`, `latest`, `running`, `lastBuild` và `placed` (xem [Đọc view của phiên](#phiên-phát-triển-widget)). |
+| `POST /conversations/{id}/delete` | chặt | Câu trả lời có thể mang một quyết định người dùng xác nhận. |
+| `POST /app-intents/confirm` | chặt | Câu trả lời chính là quyết định. |
+| `POST /widget-dev/chosen-folders/forget` | chặt | `stillCoveredBy` nói Clark còn truy cập được ở đâu. |
+| Token trình duyệt cho khung widget | chỉ lấy bốn trường | Token trao cho khung vẫn giữ schema chặt. |
+
+Các yêu cầu ứng dụng gửi, và những gì node ghi và lưu, vẫn chặt. Một trường mới hơn ứng dụng nằm trong một đối tượng
+đọc chặt, hoặc một giá trị ứng dụng không biết trong một trường nó biết (một trạng thái, kết quả hay loại mới), làm câu
+trả lời bị từ chối. Không trường enum đã biết nào chuyển sang giá trị "không rõ": những trường đó quyết định điều
+ứng dụng hiển thị hay làm, và đoán một giá trị là hành động dựa trên điều chưa ai kiểm.
+
+**Từ chối có nêu phiên bản.** `GET /node` trả về `clarkVersion`. Khi ứng dụng không đọc được một câu trả lời, nó hỏi node
+phiên bản đó và so với phiên bản của chính nó; một lần hỏi thất bại không được giữ lại, và một phiên bản dài hơn 64 ký
+tự hay không có dạng phiên bản được coi là không rõ. Khi node chạy Clark mới hơn, ứng dụng nêu cả hai phiên bản và đề
+nghị người dùng cập nhật ứng dụng. Khi node không chạy Clark mới hơn, ứng dụng nói rằng nó không bị cũ và đề nghị thử
+lại. Khi không biết một trong hai phiên bản, ứng dụng nói rằng có lẽ node mới hơn. Lời báo cũng nói điều gì được giữ
+nguyên: một lần đọc không thay đổi gì; một hành động trên thông báo chỉ nói rằng node đã trả lời, không bao giờ nói rằng
+nó đã được thực hiện, vì giá trị ứng dụng không đọc được có thể nghĩa là nó đang chờ điều gì đó (một bản cập nhật đề
+nghị xem hộp thư); một lần đối chiếu nói rằng node đã ghi nhận câu trả lời; một lần bắt đầu `/develop` đã bắt đầu phiên, nên thẻ của nó hiện lần bắt đầu là đã xong chứ không phải thất bại. Nội dung lỗi của
+schema chỉ được ghi ra console.
+
+**Quy tắc cho người viết.** Không bao giờ thêm trạng thái ràng buộc (một phê duyệt, một quyền được cấp, một phạm vi truy
+cập, một lần kích hoạt, một xác nhận) thành một trường mới ở cấp trên cùng của câu trả lời mà ứng dụng đọc khoan dung:
+một ứng dụng cũ hơn sẽ bỏ nó và chỉ kèm lời báo chung. Hãy đặt nó trong một đối tượng đọc chặt, hoặc đổi câu trả lời
+theo cách mà ứng dụng cũ hơn từ chối. `packages/conversation-client/test/node-view-author-rule.spec.ts` liệt kê mọi câu
+trả lời được đọc khoan dung và mọi trường ở cấp trên cùng của chúng có tên nói về trạng thái ràng buộc, nên thêm một
+trong hai đều cần được xem xét. Phép kiểm dựa vào tên trường, nên nó bắt được lỗi thường gặp chứ không chứng minh
+rằng không còn lỗi nào.
 
 ## MCP
 

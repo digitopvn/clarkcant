@@ -513,6 +513,7 @@ export const MESSAGES_SETTINGS_VI = {
   // MemorySettings
   "settings.memory.loading": "Đang đọc những gì đã ghi nhớ…",
   "settings.memory.retry": "Thử lại",
+  "settings.memory.nodeNewer": "Node này mới hơn ứng dụng này, nên một số thông tin về những điều được ghi nhớ không được hiển thị. Hãy cập nhật ứng dụng để thấy đầy đủ.",
   "settings.memory.empty": "Chưa có gì được ghi nhớ",
   "settings.memory.emptyNote": "Những gì Clark ghi nhớ sẽ hiện ở đây, và bạn có thể xoá từng mục.",
   "settings.memory.deleteAria": "Xoá mục đã ghi nhớ",
@@ -1043,6 +1044,7 @@ export const MESSAGES_SETTINGS_EN = {
 
   "settings.memory.loading": "Reading what has been remembered…",
   "settings.memory.retry": "Retry",
+  "settings.memory.nodeNewer": "This node is newer than this app, so some of what it says about these memories is not shown. Update the app to see everything.",
   "settings.memory.empty": "Nothing has been remembered yet",
   "settings.memory.emptyNote": "What Clark remembers shows up here, and you can delete any of it.",
   "settings.memory.deleteAria": "Delete remembered item",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readNodeView, widgetDevSessionCreateSchema, widgetDevSessionViewSchema } from "../src/index.ts";
+import { readNodeView, readNodeViewList, unreadFieldsAcross, widgetDevSessionCreateSchema, widgetDevSessionViewSchema } from "../src/index.ts";
 
 /**
  * A client reads a node's view tolerantly: an older desktop app talking to a newer node on another machine keeps the
@@ -73,5 +73,33 @@ describe("reading a node's widget dev session view", () => {
   it("leaves what the node writes, and a request to it, strict", () => {
     expect(widgetDevSessionViewSchema.safeParse({ ...view, fooCode: "FOO_NEW" }).success).toBe(false);
     expect(widgetDevSessionCreateSchema.safeParse({ root: "/home/me/timer", fooCode: "FOO_NEW" }).success).toBe(false);
+  });
+});
+
+describe("reading a list a node answered with", () => {
+  it("keeps every item and says once what the items left out", () => {
+    const read = readNodeViewList(widgetDevSessionViewSchema, [
+      { ...view, later: 1 },
+      { ...view, sessionId: "wdev_2", later: 2, "x.y": 3 },
+    ]);
+    expect(read.success).toBe(true);
+    if (!read.success) return;
+    expect(read.data.map((item) => item.sessionId)).toEqual(["wdev_1", "wdev_2"]);
+    expect(read.data[0]).not.toHaveProperty("later");
+    expect(read.unreadFields).toEqual({ count: 2, names: ["later"] });
+  });
+
+  it("refuses the list when one item does not read, rather than leaving a row out", () => {
+    expect(readNodeViewList(widgetDevSessionViewSchema, [view, { ...view, status: "paused" }]).success).toBe(false);
+    expect(readNodeViewList(widgetDevSessionViewSchema, { items: [view] }).success).toBe(false);
+    expect(readNodeViewList(widgetDevSessionViewSchema, [])).toEqual({ success: true, data: [], unreadFields: undefined });
+  });
+
+  it("merges what several reads left out", () => {
+    expect(unreadFieldsAcross([undefined, undefined])).toBeUndefined();
+    expect(unreadFieldsAcross([{ count: 2, names: ["a"] }, undefined, { count: 1, names: ["a"] }, { count: 1, names: ["b"] }])).toEqual({
+      count: 3,
+      names: ["a", "b"],
+    });
   });
 });

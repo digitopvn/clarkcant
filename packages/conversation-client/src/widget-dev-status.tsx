@@ -5,6 +5,7 @@ import { WIDGET_DEV_DIAGNOSTIC_CODES, widgetDevRootRefusedCode, type WidgetDevSe
 import type { GatewayClient, WidgetDevSessionRead } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
+import { nodeViewRefusalText } from "./node-view-refusal.ts";
 
 /**
  * Host chrome beside a widget frame that runs a widget dev session's build: which build is on screen, and, when it is
@@ -93,12 +94,24 @@ export interface WidgetDevStatusProps {
   onRunningChange: () => void;
 }
 
+/**
+ * What the line says when the session's status could not be read. A view this app does not read names which Clark each
+ * side runs; anything else is the node not answering. The widget keeps running what it shows either way.
+ */
+export function widgetDevUnreachableText(cause: unknown, t: Translate): string {
+  return nodeViewRefusalText(cause, t, "shell.dev.viewUnreadable") ?? t("shell.dev.unreachable");
+}
+
 export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDevStatusProps): ReactElement | null {
   const t = useT();
   const [view, setView] = useState<WidgetDevSessionRead | undefined>(undefined);
-  const [unreachable, setUnreachable] = useState(false);
+  // Why the status is not known, as the sentence the line shows; undefined while it is.
+  const [unreachable, setUnreachable] = useState<string | undefined>(undefined);
   const seenRunning = useRef<string | undefined>(undefined);
   const changed = useRef(onRunningChange);
+  // Read when a poll fails, in the language the person has then, without restarting the polling when it changes.
+  const words = useRef(t);
+  words.current = t;
   changed.current = onRunningChange;
 
   useEffect(() => {
@@ -109,15 +122,16 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
         const next = await client.widgetDevSession(sessionId);
         if (cancelled) return;
         setView(next);
-        setUnreachable(false);
+        setUnreachable(undefined);
         const running = next.running?.digest;
         if (running !== undefined && seenRunning.current !== undefined && running !== seenRunning.current) changed.current();
         if (running !== undefined) seenRunning.current = running;
         timer = setTimeout(() => void read(), next.status === "live" ? WIDGET_DEV_POLL_MS : STOPPED_POLL_MS);
-      } catch {
+      } catch (cause) {
         if (cancelled) return;
-        // The widget keeps running what it shows; only the status is unknown, and said so.
-        setUnreachable(true);
+        // The widget keeps running what it shows; only the status is unknown, and said so. A view this app does not read
+        // says which version is newer instead of only that it could not be read.
+        setUnreachable(widgetDevUnreachableText(cause, words.current));
         timer = setTimeout(() => void read(), RETRY_MS);
       }
     };
@@ -128,10 +142,10 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
     };
   }, [client, sessionId]);
 
-  if (unreachable) {
+  if (unreachable !== undefined) {
     return (
       <p className="cc-freshness" role="status" data-widget-dev-status="unreachable" style={{ margin: 0 }}>
-        {t("shell.dev.unreachable")}
+        {unreachable}
       </p>
     );
   }

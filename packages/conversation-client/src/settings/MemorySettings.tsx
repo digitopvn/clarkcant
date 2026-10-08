@@ -1,9 +1,10 @@
-import { type ReactElement, useCallback, useEffect, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
 import type { MemoryRecord } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import { useT } from "../i18n/locale-context.tsx";
+import { nodeViewRefusalText } from "../node-view-refusal.ts";
 import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
 
 /**
@@ -23,7 +24,7 @@ import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
 type PanelState =
   | { state: "loading" }
   | { state: "empty" }
-  | { state: "ready"; records: MemoryRecord[] }
+  | { state: "ready"; records: MemoryRecord[]; nodeNewer?: true }
   | { state: "failed"; reason: string };
 
 export interface MemorySettingsProps {
@@ -34,15 +35,22 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
   const t = useT();
   const [panel, setPanel] = useState<PanelState>({ state: "loading" });
   const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
+  // Read when a load fails, without reloading the list each time the language changes.
+  const words = useRef(t);
+  words.current = t;
 
   const load = useCallback(async (): Promise<void> => {
     setPanel({ state: "loading" });
     const answer = await client.listMemories();
     if (!answer.ok) {
-      setPanel({ state: "failed", reason: answer.reason });
+      setPanel({ state: "failed", reason: nodeViewRefusalText(answer.cause, words.current, "shell.nodeView.read") ?? answer.reason });
       return;
     }
-    setPanel(answer.items.length === 0 ? { state: "empty" } : { state: "ready", records: answer.items });
+    setPanel(
+      answer.items.length === 0
+        ? { state: "empty" }
+        : { state: "ready", records: answer.items, ...(answer.unreadFields === undefined ? {} : { nodeNewer: true as const }) },
+    );
   }, [client]);
 
   useEffect(() => {
@@ -108,6 +116,12 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
       data-memory-count={view.count}
       data-out-of-scope-i18n="memory-groups"
     >
+      {panel.nodeNewer === true && (
+        // A newer node sent fields this app does not know; they were left out, and the list says so.
+        <p className="cc-panel-note" role="status" data-memory-node-newer="true">
+          {t("settings.memory.nodeNewer")}
+        </p>
+      )}
       {view.groups.map((group) => (
         <MemoryGroup key={group.kind} group={group} deletingId={deletingId} onDelete={remove} />
       ))}

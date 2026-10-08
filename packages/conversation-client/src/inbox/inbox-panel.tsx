@@ -18,6 +18,7 @@ import { PackageReach } from "../package-reach.tsx";
 import { PackageReachChange } from "../package-reach-change.tsx";
 import { UnreadListingFieldsNote } from "../unread-listing-fields.tsx";
 import { useLocaleState, useT } from "../i18n/locale-context.tsx";
+import { nodeViewRefusalText } from "../node-view-refusal.ts";
 import {
   UNAVAILABLE_KEYS,
   canOpenOtherConversation,
@@ -116,7 +117,8 @@ type Load = { state: "loading" } | { state: "failed"; reason: string } | { state
  * back, bringing it back from its snooze, notifying about its kind again, or being told about a skipped version again.
  */
 type Undo = { kind: "restore" | "unsnooze" | "unsuppress" | "unskip"; noticeId: string };
-type Status = { tone: "done" | "failed"; text: string; undo?: Undo };
+/** `unknown`: the node answered, but this app cannot read what it did, so the line claims neither success nor failure. */
+type Status = { tone: "done" | "failed" | "unknown"; text: string; undo?: Undo };
 
 /** How long "Copy details" shows what its press did before it reads "Copy details" again. */
 const COPY_OUTCOME_MS = 2000;
@@ -199,7 +201,10 @@ export function InboxPanel({
         // A schema failure has no sentence fit for a person to read; the full issue list goes to the console.
         console.error("inbox: could not parse the gateway's response", cause);
       }
-      setLoad({ state: "failed", reason: sanitizeReason(cause) ?? t("inbox.reason.unavailable") });
+      setLoad({
+        state: "failed",
+        reason: nodeViewRefusalText(cause, t, "shell.nodeView.read") ?? sanitizeReason(cause) ?? t("inbox.reason.unavailable"),
+      });
       return undefined;
     }
   }, [client, t]);
@@ -609,14 +614,18 @@ export function InboxPanel({
           nextId === undefined ? { kind: "heading" } : { kind: "notice", noticeId: nextId },
         );
       })
-      .catch((cause: unknown) =>
+      .catch((cause: unknown) => {
+        // A 2xx reconcile means the node recorded the answer; only the rest of its reply is one this app does not read.
+        const unread = nodeViewRefusalText(cause, t, "shell.nodeView.recorded");
         finish(
           reconcileAlreadyRecorded(cause)
             ? { tone: "done", text: t("inbox.reconcileFailed.already") }
-            : { tone: "failed", text: t("inbox.reconcileFailed").replace("{reason}", failedReason(cause)) },
+            : unread !== undefined
+              ? { tone: "done", text: unread }
+              : { tone: "failed", text: t("inbox.reconcileFailed").replace("{reason}", failedReason(cause)) },
           { kind: "status" },
-        ),
-      );
+        );
+      });
   };
 
   /** The notices on screen now, in order, so an action that takes one out of the list can move focus to its neighbour. */
@@ -683,7 +692,15 @@ export function InboxPanel({
           afterLeaving(before, notice.noticeId),
         );
       })
-      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.updateFailed").replace("{reason}", updateFailureReason(cause, version, t)) }, { kind: "status" }));
+      .catch((cause: unknown) => {
+        // The node answered, but what it did does not read here: the update may have gone ahead, may wait for an approval,
+        // or may be something newer. Neither success nor failure is claimed; the inbox shows which.
+        const unread = nodeViewRefusalText(cause, t, "shell.nodeView.answered");
+        finish(
+          unread !== undefined ? { tone: "unknown", text: `${unread} ${t("shell.nodeView.checkInbox")}` } : { tone: "failed", text: t("inbox.updateFailed").replace("{reason}", updateFailureReason(cause, version, t)) },
+          { kind: "status" },
+        );
+      });
   };
 
   /** "Skip this version": the node stops reporting it (and anything older), and the notice leaves the list, undoably. */
@@ -760,7 +777,7 @@ export function InboxPanel({
     clearTimeout(copyOutcomeTimer.current);
     setCopyOutcome(undefined);
     // Only the latest press speaks: an earlier write that settles late does not overwrite what the last one said.
-    const say = (next: Status) => {
+    const say = (next: Status & { tone: "done" | "failed" }) => {
       if (attempt !== copyAttempt.current) return;
       setStatus(next);
       // The button says it too, for about two seconds, without being a second live region: its accessible name is its
@@ -1154,6 +1171,12 @@ export function InboxPanel({
             <p className="cc-freshness" data-inbox-read-at={load.inbox.readAt} style={{ margin: 0 }}>
               {t("inbox.readAt").replace("{time}", readAt ?? "")}
             </p>
+            {load.inbox.unreadFields !== undefined && (
+              // A newer node sent fields on the inbox or its notices that this app does not know; they were left out.
+              <p className="cc-panel-note" role="status" data-inbox-node-newer={load.inbox.unreadFields.count} style={{ margin: 0 }}>
+                {t("inbox.nodeNewer")}
+              </p>
+            )}
             {load.inbox.unreadable !== undefined && (
               // Items the node sent that this surface could not read; the rest are shown as they are.
               <p className="cc-panel-note" role="status" data-inbox-unreadable={load.inbox.unreadable} style={{ margin: 0 }}>

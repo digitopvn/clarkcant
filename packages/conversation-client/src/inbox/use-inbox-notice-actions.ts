@@ -11,6 +11,7 @@ import type {
 
 import type { GatewayClient } from "../api.ts";
 import type { MessageKey } from "../i18n/messages.ts";
+import { nodeViewRefusalText } from "../node-view-refusal.ts";
 import type { SendOptions } from "../use-turn-send.ts";
 import { capabilitiesSay, noticeRefusalReason, noticeReference, snoozeUntil } from "./inbox-model.ts";
 
@@ -139,6 +140,10 @@ export function useInboxNoticeActions({
       try {
         answer = await client.actOnNotice(noticeId, action, { ...(until === undefined ? {} : { until }), source });
       } catch (cause) {
+        // The node answered, but this app cannot read what it did, so the sentence claims neither: an outcome newer than
+        // the app may mean the action waits on something. An update points at the inbox, where a waiting install shows.
+        const unread = nodeViewRefusalText(cause, t, "shell.nodeView.answered");
+        if (unread !== undefined) return action === "update" ? `${unread} ${t("shell.nodeView.checkInbox")}` : unread;
         // Worded from the node's code in the reader's language; a restore that fails leaves the notice dismissed.
         const reason = noticeRefusalReason(cause, t);
         throw new Error(t(action === "restore" ? "inbox.act.undoFailed" : "inbox.act.failed").replace("{reason}", reason), { cause });
