@@ -1,5 +1,4 @@
 import { mkdirSync, realpathSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -26,6 +25,7 @@ import {
   pinInstance,
   readDirectory,
   readPackage,
+  removeLocalSnapshot,
   startDevEngine,
   type DevEngine,
   type DevGenerationRecord,
@@ -301,15 +301,16 @@ export function createWidgetDevSessions(
   };
 
   /**
-   * Whether the install a grant in the inbox runs is still going: the approval is granted, no outcome of that install is
-   * recorded yet (`INSTALL_APPROVAL_STREAM` holds the question and, once the install ends, how it ended), and the grant
-   * is recent (`ANSWER_INSTALL_WAIT_MS`). That install copies the generation it was asked about from the session's
-   * snapshot, so installing a newer build meanwhile would race it, and the prune after would remove what it copies.
+   * Whether the install a grant in the inbox runs is still going (`installing`): the approval is granted, no outcome of
+   * that install is recorded yet (`INSTALL_APPROVAL_STREAM` holds the question and, once the install ends, how it ended),
+   * and the grant is recent (`ANSWER_INSTALL_WAIT_MS`). That install copies the generation it was asked about from the
+   * session's snapshot, so installing a newer build meanwhile would race it. `over` once its outcome is recorded, and
+   * `given-up` when none was recorded within the wait.
    */
-  const answerInstalling = (approvalId: string): boolean => {
+  const answerInstalling = (approvalId: string): "installing" | "over" | "given-up" => {
     const node = services();
     const decided = oneRow<{ decided_at: string | null }>(node.runtime.db, "SELECT decided_at FROM approvals WHERE approval_id = ?", approvalId)?.decided_at;
-    if (decided === undefined || decided === null || Date.now() - Date.parse(decided) > ANSWER_INSTALL_WAIT_MS) return false;
+    if (decided === undefined || decided === null) return "over";
     const ended = oneRow<{ found: number }>(
       node.runtime.db,
       `SELECT 1 AS found FROM events
@@ -320,7 +321,8 @@ export function createWidgetDevSessions(
       INSTALL_APPROVAL_STREAM,
       approvalId,
     );
-    return ended === undefined;
+    if (ended !== undefined) return "over";
+    return Date.now() - Date.parse(decided) > ANSWER_INSTALL_WAIT_MS ? "given-up" : "installing";
   };
 
   const installDeps = () => {
@@ -583,9 +585,17 @@ export function createWidgetDevSessions(
       const scope = devConsentScopeOf(asked.listing);
       if (approval?.decision === "granted" && approval.operationDigest === scope) {
         const active = activeGeneration(installDeps(), asked.listing.packageId, services().runtime.identity.nodeId);
-        // The inbox is still installing what the person granted: the session looks again on its next poll, still asking.
-        if (active?.snapshotDigest !== asked.generation.digest && answerInstalling(asked.approvalId)) return;
         const approvalId = asked.approvalId;
+        if (active?.snapshotDigest !== asked.generation.digest) {
+          const install = answerInstalling(approvalId);
+          // The inbox is still installing what the person granted: the session looks again on its next poll, still asking.
+          if (install === "installing") return;
+          if (install === "given-up") {
+            process.stderr.write(
+              `widget dev: ${sessionId} stopped waiting for the install that approval ${approvalId} runs, as none was recorded within ${String(ANSWER_INSTALL_WAIT_MS / 1000)} s; it goes on to install its newest build\n`,
+            );
+          }
+        }
         stored = update(sessionId, (current) => {
           const { pending: _answered, ...rest } = current;
           // Installed by the inbox's decision: what runs is the generation that was asked about.
@@ -792,6 +802,11 @@ export function createWidgetDevSessions(
     update(sessionId, (current) => ({ ...current, snapshots: snapshots.slice(-WIDGET_DEV_SNAPSHOTS_MAX) }));
   };
 
+  /** Whether a session runs or waits on the snapshot, or a watched session's engine built it last. */
+  const usedBySession = (digest: string): boolean =>
+    readDevSessions(dataDir()).some((stored) => stored.running?.generation.digest === digest || stored.pending?.generation.digest === digest) ||
+    [...live.values()].some((session) => session.engine.latest()?.generation.digest === digest);
+
   /** Whether a generation on this node still names the snapshot, as what runs, or as one a rollback returns to. */
   const recorded = (digest: string): boolean =>
     oneRow<{ found: number }>(
@@ -805,8 +820,10 @@ export function createWidgetDevSessions(
    * Remove what superseded generations of a session left behind: their generation records, except the newest superseded
    * one (the generation a rollback returns to), and their snapshots in the package cache, except the ones something
    * still runs, waits on or can roll back to. Only what this session made is touched. A snapshot that cannot be removed
-   * now (a file still open on Windows past the retries) is kept on the list and tried again after the next install, or
-   * at the next boot (`tidy`). It runs on the session's chain, so nothing else of the session interleaves with it.
+   * now (a file still open on Windows past the retries), or that a build or an install is placing or reusing meanwhile
+   * (`removeLocalSnapshot`, which asks again as each removal starts), is kept on the list and tried again after the next
+   * install, or at the next boot (`tidy`). It runs on the session's chain, so nothing else of the session interleaves
+   * with it.
    * `halt` says when to start no further removal: once the node closes, and for the boot's tidying, once a folder is
    * watched again.
    */
@@ -869,10 +886,9 @@ export function createWidgetDevSessions(
           continue;
         }
         try {
-          // The promise form on purpose: on Windows `rmSync` reports a held file as `EBUSY` or `EPERM` at once and never
-          // runs its retries. These wait up to about 1.5 s on this session's chain, never on the event loop.
-          await rm(path, SNAPSHOT_REMOVAL);
-          removed.push(digest);
+          // Asked again as the removal starts: a build or an install may have taken the same bytes since `keep` was read.
+          const outcome = await removeLocalSnapshot(path, { inUse: () => usedBySession(digest) || recorded(digest), options: SNAPSHOT_REMOVAL });
+          if (outcome === "removed") removed.push(digest);
         } catch (cause) {
           process.stderr.write(`widget dev: could not remove the superseded snapshot ${digest} yet: ${messageOf(cause)}\n`);
         }
@@ -922,8 +938,10 @@ export function createWidgetDevSessions(
   /**
    * Remove orphaned snapshots (`readOrphanedSnapshots`) that nothing uses, at most `WIDGET_DEV_SWEEP_MAX` of them. One a
    * session lists again (its build made the same bytes once more) is that session's to prune, and leaves the orphaned
-   * list. One a session runs or waits on, or a generation still names, stays there, to be looked at again next boot. One
-   * whose removal fails (a file held open on Windows past the retries) stays to be tried again next boot.
+   * list. One a session runs or waits on, or a generation still names, stays there, to be looked at again next boot, and
+   * so does one an install is placing or reusing as its removal starts (`removeLocalSnapshot`): installs are served while
+   * the boot tidies. One whose removal fails (a file held open on Windows past the retries) stays to be tried again next
+   * boot.
    */
   const sweep = async (halt: () => boolean): Promise<void> => {
     try {
@@ -945,7 +963,9 @@ export function createWidgetDevSessions(
         if (path !== undefined) {
           removals += 1;
           try {
-            await rm(path, SNAPSHOT_REMOVAL);
+            // Asked again as the removal starts: an install of the same bytes may be placing or recording them now.
+            const outcome = await removeLocalSnapshot(path, { inUse: () => usedBySession(digest) || recorded(digest), options: SNAPSHOT_REMOVAL });
+            if (outcome === "kept") continue;
           } catch (cause) {
             process.stderr.write(`widget dev: could not remove the orphaned snapshot ${digest} yet: ${messageOf(cause)}\n`);
             continue;
@@ -973,6 +993,8 @@ export function createWidgetDevSessions(
    * before it watches one (and nothing is awaited between the two), and each removal starts only while nothing is
    * watched (`halt`), which ends the tidying early if a session is watched anyway (a `resume` called again while
    * sessions are live). What it leaves is looked at again next boot. Once `close` is called it starts no removal either.
+   * An install, which the node serves meanwhile, holds the snapshot it places or reuses until its generation is recorded,
+   * and each removal asks about both as it starts (`removeLocalSnapshot`), so an install of the same bytes keeps them.
    */
   const tidy = async (): Promise<void> => {
     const halt = (): boolean => closed || live.size > 0;

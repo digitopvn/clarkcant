@@ -1304,6 +1304,37 @@ describe("a widget dev session", () => {
     expect(existsSync(granted)).toBe(true);
   });
 
+  it("stops waiting for the inbox's install of a grant once its wait runs out, says so, and installs the newest build", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(asked.activation.state).toBe("awaiting-approval");
+    const approvalId = asked.activation.state === "awaiting-approval" ? asked.activation.approvalId : "";
+    writePackage("<!doctype html><p>second</p>\n");
+    const newer = session(await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`));
+    expect(newer.lastBuild).toMatchObject({ ok: true, generation: 2 });
+
+    // Granted a minute and more ago, and no ending of the install that grant runs was ever recorded.
+    const said: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array, ...rest: unknown[]) => {
+      said.push(String(chunk));
+      return (write as (chunk: string | Uint8Array, ...rest: unknown[]) => boolean)(chunk, ...rest);
+    });
+    try {
+      services.runtime.db
+        .prepare("UPDATE approvals SET decision = 'granted', decided_at = ? WHERE approval_id = ?")
+        .run(new Date(Date.now() - 61_000).toISOString(), approvalId);
+
+      const view = await eventually(asked.sessionId, (current) => current.activation.state === "active");
+      expect(view.activation).toMatchObject({ state: "active", generation: 2 });
+      const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+      expect(running?.snapshotDigest).toBe(newer.latest?.digest);
+      expect(said.filter((line) => line.includes(`stopped waiting for the install that approval ${approvalId} runs`))).toHaveLength(1);
+    } finally {
+      vi.mocked(process.stderr.write).mockRestore();
+    }
+  });
+
   it("ends every session, and resolves, on a close where a watcher fails to let go", async () => {
     const other = join(dir, "projects", "clock");
     writePackage("<!doctype html><p>clock</p>\n", [], other);
@@ -1733,6 +1764,106 @@ describe("what widget dev sessions leave in the package cache", () => {
     expect(existsSync(folderOf(built))).toBe(true);
     expect(readdirSync(folderOf(built))).toContain("clarkcant.json");
     expect(existsSync(folderOf(unused))).toBe(false);
+  });
+
+  /** Hold the first read of a file inside `folder` until `release` is called; `reading` resolves once it is held. */
+  function holdFirstRead(folder: string): { reading: Promise<void>; release: () => void } {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((done) => (release = done));
+    let started = (): void => undefined;
+    const reading = new Promise<void>((done) => (started = done));
+    opening.starting = async (path) => {
+      if (!path.startsWith(resolve(folder) + sep)) return;
+      opening.starting = undefined;
+      started();
+      await gate;
+    };
+    return { reading, release };
+  }
+
+  it("never removes a superseded snapshot that a build is reusing as the prune after an install runs", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const first = started.latest?.digest ?? "";
+    writePackage("<!doctype html><p>second</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 2 });
+
+    // A folder holds the first build's files again, as a revert would, and its build is held as it checks the snapshot
+    // of those files already in the cache, to reuse it.
+    const again = join(dir, "projects", "timer-again");
+    writePackage("<!doctype html><p>first</p>\n", [], again);
+    const reuse = holdFirstRead(folderOf(first));
+    const reusing = call("POST", "/widget-dev/sessions", { root: again });
+    await reuse.reading;
+
+    // The third build supersedes the second, so the prune after its install would remove the first.
+    writePackage("<!doctype html><p>third</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 3 });
+    reuse.release();
+    const other = session(await reusing);
+    expect(other.lastBuild?.ok).toBe(true);
+    expect(other.latest?.digest).toBe(first);
+    expect(readdirSync(folderOf(first))).toContain("clarkcant.json");
+    // Still on the session's list, so a later prune removes it once nothing uses it.
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)?.snapshots).toContain(first);
+  });
+
+  it("never removes at boot an orphaned snapshot that an install of the same files is reusing", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    const built = asked.latest?.digest ?? "";
+    // The session is forgotten, and its build is orphaned; the folder still holds the same files.
+    await services.widgetDev?.close();
+    writeDevSessions(join(dir, "node"), []);
+    writeOrphanedSnapshots(join(dir, "node"), [built]);
+    usePolicy({});
+
+    // The folder is listed as an ordinary local package, and its install is held as it checks the snapshot it reuses.
+    const indexPath = join(dir, "index.json");
+    writeFileSync(
+      indexPath,
+      JSON.stringify([
+        {
+          packageId: PACKAGE,
+          version: VERSION,
+          displayName: "Timer",
+          description: "A timer.",
+          source: { kind: "local", path: root },
+          publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+          preview: {},
+          facets: ["ui"],
+          isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
+          platforms: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64", "web"],
+          hostApi: { min: 1, max: 1 },
+          permissionsSummary: [],
+          riskTier: "isolated-ui",
+          sizeBytes: 1024,
+          digest: built,
+        },
+      ]),
+    );
+    const previous = { index: process.env["CC_DIRECTORY_INDEX"], official: process.env["CC_OFFICIAL_MARKETPLACE"] };
+    process.env["CC_DIRECTORY_INDEX"] = indexPath;
+    process.env["CC_OFFICIAL_MARKETPLACE"] = "off";
+    try {
+      const reuse = holdFirstRead(folderOf(built));
+      const installing = call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION });
+      await reuse.reading;
+
+      // The boot's sweep runs to its end while that install is held.
+      services.widgetDev = createWidgetDevSessions(() => services, { watch: false, answerPollMs: 20 });
+      await services.widgetDev.resume();
+      reuse.release();
+      const installed = await installing;
+      expect(installed.status, JSON.stringify(installed.body)).toBe(200);
+      const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+      expect(running?.snapshotDigest).toBe(built);
+      expect(readdirSync(folderOf(built))).toContain("clarkcant.json");
+    } finally {
+      if (previous.index === undefined) delete process.env["CC_DIRECTORY_INDEX"];
+      else process.env["CC_DIRECTORY_INDEX"] = previous.index;
+      if (previous.official === undefined) delete process.env["CC_OFFICIAL_MARKETPLACE"];
+      else process.env["CC_OFFICIAL_MARKETPLACE"] = previous.official;
+    }
   });
 
   it("never removes at boot an orphaned snapshot that is still installed, though no session is left to name it", async () => {

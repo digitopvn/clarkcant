@@ -538,26 +538,48 @@ export function sourceRefusal(input: {
   return undefined;
 }
 
+/** Options of `installPackage`. */
+interface InstallOptions {
+  approved?: ApprovedInstall;
+  /**
+   * A widget dev session's consent scope (`devConsentScopeOf`), when the listing is one of its generations. The policy
+   * decides, asks about and approves the scope rather than this one artifact: the package and everything it may reach.
+   * A generation that reaches exactly what an approved one did is the same question, already answered; any change to
+   * that reach is a new question. Each install still records the exact files it ran. Refused unless it is the scope of
+   * the listing being installed, so a caller cannot name a scope it was not given.
+   */
+  consentScope?: string;
+  /**
+   * Whose intent the install carries out. Absent is the person asking for this named package on their own surface.
+   * A widget dev session Clark started passes `proposed` (with the turn's origin): Clark chose to install, so the
+   * policy decides it as Clark's own proposal rather than as the person's request.
+   */
+  intent?: ExecutionIntent;
+}
+
+/**
+ * Install a package from the directory. A local package's snapshot is held for the whole install (`SnapshotOutcome`),
+ * so nothing removes it between the moment it is placed or reused and the moment a generation names it, or the install
+ * ends without one.
+ */
 export async function installPackage(
   deps: PackageInstallDeps,
   request: PackageInstallRequest,
-  options: {
-    approved?: ApprovedInstall;
-    /**
-     * A widget dev session's consent scope (`devConsentScopeOf`), when the listing is one of its generations. The policy
-     * decides, asks about and approves the scope rather than this one artifact: the package and everything it may reach.
-     * A generation that reaches exactly what an approved one did is the same question, already answered; any change to
-     * that reach is a new question. Each install still records the exact files it ran. Refused unless it is the scope of
-     * the listing being installed, so a caller cannot name a scope it was not given.
-     */
-    consentScope?: string;
-    /**
-     * Whose intent the install carries out. Absent is the person asking for this named package on their own surface.
-     * A widget dev session Clark started passes `proposed` (with the turn's origin): Clark chose to install, so the
-     * policy decides it as Clark's own proposal rather than as the person's request.
-     */
-    intent?: ExecutionIntent;
-  } = {},
+  options: InstallOptions = {},
+): Promise<PackageInstallOutcome> {
+  const holds: (() => void)[] = [];
+  try {
+    return await installHolding(deps, request, options, holds);
+  } finally {
+    for (const release of holds) release();
+  }
+}
+
+async function installHolding(
+  deps: PackageInstallDeps,
+  request: PackageInstallRequest,
+  options: InstallOptions,
+  holds: (() => void)[],
 ): Promise<PackageInstallOutcome> {
   const { runtime, conductor } = deps;
   const { packageId, version } = request;
@@ -754,6 +776,7 @@ export async function installPackage(
     if (!taken.ok) {
       return localSourceUnreadable(packageId, version, { tooLarge: taken.code === "ARTIFACT_TOO_LARGE", message: taken.message });
     }
+    holds.push(taken.release);
     snapshot = taken.artifact;
   }
 
