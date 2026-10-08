@@ -74,14 +74,24 @@ describe("following the bottom of the transcript", () => {
     // Something arrived below: the view is further from the bottom, but it did not move.
     node.scrollHeight = 2600;
     expect(stillFollowsBottom(true, report, node)).toBe(true);
-    // A small nudge stays within the slack, the same as a position just short of the bottom.
-    node.scrollTop = 1400 - BOTTOM_FOLLOW_SLACK_PX;
-    expect(stillFollowsBottom(true, report, node)).toBe(true);
     // Following a growing transcript moves the view down.
     node.scrollTop = 1900;
     expect(stillFollowsBottom(true, report, node)).toBe(true);
     // A reader who was not following is not made to by anything here.
     expect(stillFollowsBottom(false, report, node)).toBe(false);
+  });
+
+  it("sees a reader's scroll up within the slack, not yet reported, once more of the reply holds the view above the bottom", () => {
+    const node = view(1400);
+    const report = reportScroll(node);
+    node.scrollHeight = 2600;
+    node.scrollTop = 1400 - 30;
+    expect(stillFollowsBottom(true, report, node)).toBe(false);
+    // At the bottom the slack still stands: a reader who stops just short of it follows it.
+    const atBottom = view(1400);
+    const reportedAtBottom = reportScroll(atBottom);
+    atBottom.scrollTop = 1400 - BOTTOM_FOLLOW_SLACK_PX;
+    expect(stillFollowsBottom(true, reportedAtBottom, atBottom)).toBe(true);
   });
 
   it("does not take a move the layout made for the reader leaving the bottom", () => {
@@ -208,6 +218,54 @@ describe("following the bottom of the transcript", () => {
     expect(followsAfterScroll(true, report, node)).toBe(true);
     // A reader who was not following is not made to.
     expect(followsAfterScroll(false, report, node)).toBe(false);
+  });
+
+  it("sees a reader's scroll up within the slack, not yet reported, while its glide holds the view far from the bottom", () => {
+    // A step of the glide is reported after more of the reply landed below: the view is far above the bottom, and still
+    // following. The reader then scrolls up by 30px, ending the glide, before the browser reports it.
+    const node = scrollable(1400, false);
+    const first = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    node.scrollTop = 1500;
+    node.scrollHeight = 2800;
+    expect(followsAfterScroll(true, first, node)).toBe(true);
+    const report = reportScroll(node);
+    node.scrollTop = 1470;
+    expect(stillFollowsBottom(true, report, node)).toBe(false);
+  });
+
+  it("ends a glide whose target the view can no longer reach, and still sees a reader's scroll up after it", () => {
+    // The glide is on its way to 1800 when the transcript below gets shorter: the view stops at the new bottom, 1500.
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    node.scrollHeight = 2100;
+    node.scrollTop = 1500;
+    expect(followsAfterScroll(true, report, node)).toBe(true);
+    const atEnd = reportScroll(node);
+    // The glide is over: a later move down, the reader's or a focus's, is not counted as the transcript's.
+    node.scrollHeight = 2800;
+    node.scrollTop = 1540;
+    expect(reportScroll(node).layout).toBe(atEnd.layout);
+    // And a reader's scroll up from there, not yet reported, is seen.
+    const moved = reportScroll(node);
+    node.scrollTop = 1510;
+    expect(stillFollowsBottom(true, moved, node)).toBe(false);
+  });
+
+  it("does not count a move the layout made during a glide again as a step of the glide", () => {
+    // A 200px step of the glide lands, then the layout moves the view down by 50px, before either is read.
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    node.scrollTop = 1600;
+    node.scrollHeight = 2450;
+    node.scrollTop = 1650;
+    noteLayoutScroll(node, 50);
+    expect(reportScroll(node).layout - report.layout).toBe(250);
   });
 
   it("keeps following when the transcript held the row being read in place, and the reply grew below", () => {

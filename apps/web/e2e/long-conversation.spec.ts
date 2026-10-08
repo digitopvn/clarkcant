@@ -749,6 +749,80 @@ test("more of the reply arriving while the transcript glides down to it is follo
   await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
 });
 
+test("a reader's small scroll up while the transcript glides down to the reply is not taken back down", async ({ page }) => {
+  const { conversationId } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  await startReply(page);
+  await holdScrollReports(page);
+  await page.evaluate(() => {
+    (window as unknown as { __holdScrollReports?: boolean }).__holdScrollReports = false;
+  });
+
+  // The reply grows and the transcript glides down to it. A step of the glide is reported while the view is still more
+  // than the slack from the bottom; then the reader scrolls up by less than the slack, and more of the reply is drawn
+  // before the browser reports that scroll. The reader left the bottom, however little.
+  const reading = await page.evaluate(async (texts) => {
+    // SAFETY: the seam installed by `scriptReply`.
+    const seam = (window as unknown as { __scriptedReply: { push: (frame: string) => void } }).__scriptedReply;
+    const holder = window as unknown as { __holdScrollReports?: boolean };
+    const node = document.querySelector<HTMLElement>(".cc-scroll");
+    if (node === null) throw new Error("no transcript");
+    const distance = (): number => node.scrollHeight - node.scrollTop - node.clientHeight;
+    const start = node.scrollTop;
+    // Listened to after the transcript's own listeners, so a step heard here has been reported to them.
+    const stepped = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no step of the glide was reported far from the bottom")), 5_000);
+      const onScroll = (): void => {
+        if (node.scrollTop <= start || distance() <= 48) return;
+        node.removeEventListener("scroll", onScroll);
+        clearTimeout(timer);
+        resolve();
+      };
+      node.addEventListener("scroll", onScroll);
+    });
+    seam.push(`event: delta\ndata: ${JSON.stringify({ text: texts[0] })}\n\n`);
+    await stepped;
+    holder.__holdScrollReports = true;
+    node.scrollTo({ top: node.scrollTop - 30, behavior: "instant" });
+    const top = node.getBoundingClientRect().top;
+    let read: { id: string; top: number } | undefined;
+    for (const slot of node.querySelectorAll<HTMLElement>("[data-row-id]")) {
+      const rect = slot.getBoundingClientRect();
+      if (rect.bottom > top + 1) {
+        read = { id: slot.dataset.rowId ?? "", top: rect.top - top };
+        break;
+      }
+    }
+    if (read === undefined) throw new Error("no row is on screen");
+    seam.push(`event: delta\ndata: ${JSON.stringify({ text: texts[1] })}\n\n`);
+    return read;
+  }, [paragraph("đoạn một"), paragraph("đoạn hai")]);
+  await expect(page.locator("[data-live]")).toContainText("đoạn hai");
+  // A follow would glide, so the view is read once it has stopped moving.
+  await scroller(page).evaluate(
+    (node) =>
+      new Promise<void>((resolve) => {
+        let last = node.scrollTop;
+        let still = 0;
+        const check = (): void => {
+          still = node.scrollTop === last ? still + 1 : 0;
+          last = node.scrollTop;
+          if (still >= 10) resolve();
+          else requestAnimationFrame(check);
+        };
+        requestAnimationFrame(check);
+      }),
+  );
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+
+  // Reported, the scroll up still stands: more of the reply does not take the reader down either.
+  await releaseScrollReports(page);
+  await growReply(page, "đoạn ba");
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+});
+
 test("a reader who scrolls up while rows above collapse is not taken back down", async ({ page }) => {
   const { conversationId } = await seedConversation();
   await scriptReply(page);
