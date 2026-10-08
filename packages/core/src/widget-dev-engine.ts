@@ -644,6 +644,9 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     const before = last;
     const seen = disturbances;
     const event = await build(held?.trigger ?? trigger);
+    // The counter first: a folder that went and came back while the files were read, and was watched anew meanwhile,
+    // looks present now, so only the counter says this failure was the absence. A look now is still needed for an
+    // absence no look has seen yet, and it is taken only after the build has failed, since it may watch the folder anew.
     if (event.kind === "failed" && (disturbances !== seen || recreating())) {
       last = before;
       return hold(trigger, event);
@@ -704,6 +707,32 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     releaseHeld();
   };
   const watchFailed = (cause: unknown): void => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));
+  /**
+   * The moments after the folder is watched anew. A new watcher reports more than the saves made after it: FSEvents on
+   * macOS can deliver the writes that made the folder, from just before the stream started, and Windows reports folders the
+   * first build lists. Until `until`, once the build the re-arm asked for has been reported, a change build is reported
+   * only when it is news, as the catch-up build is; a save made meanwhile changes the files, which is news.
+   */
+  let settling: { until: number; reported: boolean } | undefined;
+  /** Whether a change build starting now is past the first report after a re-arm and inside its settling window. */
+  const settlingNow = (): boolean => {
+    if (settling === undefined) return false;
+    if (performance.now() >= settling.until) {
+      settling = undefined;
+      return false;
+    }
+    return settling.reported;
+  };
+  const reportBuild = (event: DevEngineEvent): void => {
+    if (settling !== undefined) settling.reported = true;
+    options.onBuild?.(event);
+  };
+  /** Whether a build says anything the last one did not: new files, a new failure, or the end of a failure. */
+  const isNews = (before: WidgetDevBuild | undefined, event: DevEngineEvent): boolean =>
+    event.kind === "generation" ||
+    (event.kind === "failed" && !sameFailure(before, event.build)) ||
+    // Files back to the newest generation after a failed build: the failure is over, which is news.
+    (event.kind === "unchanged" && before?.ok === false);
   /** Build after the last change of a burst, and report what it built. */
   const scheduleBuild = (): void => {
     if (timer !== undefined) clearTimeout(timer);
@@ -711,9 +740,17 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       timer = undefined;
       // A folder watched anew by this look has its own build scheduled; building here as well would build it twice.
       if (closed || !rootStillThere() || timer !== undefined) return;
-      void enqueue(() => attempt("change")).then((outcome) => {
+      void enqueue(async (): Promise<{ outcome: Attempt; report: boolean }> => {
+        const quiet = settlingNow();
+        const before = last;
+        const outcome = await attempt("change");
+        if (!("event" in outcome)) return { outcome, report: false };
+        const report = !quiet || outcome.ends !== undefined || isNews(before, outcome.event);
+        if (!report && before !== undefined) last = before;
+        return { outcome, report };
+      }).then(({ outcome, report }) => {
         try {
-          if (!closed && "event" in outcome) options.onBuild?.(outcome.event);
+          if (!closed && report && "event" in outcome) reportBuild(outcome.event);
         } finally {
           done(outcome);
         }
@@ -820,6 +857,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         watchFailed(cause);
         return false;
       }
+      settling = { until: performance.now() + 2 * DEV_ENGINE_WATCH_CATCH_UP_MS + debounceMs, reported: false };
       scheduleBuild();
       // As at the start: a save the new watcher could not see yet (FSEvents starts asynchronously) is built then.
       scheduleCatchUp();
@@ -848,20 +886,14 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         const outcome = await attempt("change");
         // Held while the folder is made again: the build once it is back is reported by whoever runs it.
         if (!("event" in outcome)) return { outcome, news: false };
-        const event = outcome.event;
-        const news =
-          // The build a rebuild was held for is reported, whatever it found.
-          outcome.ends !== undefined ||
-          event.kind === "generation" ||
-          (event.kind === "failed" && !sameFailure(before, event.build)) ||
-          // Files back to the newest generation after a failed build: the failure is over, which is news.
-          (event.kind === "unchanged" && before?.ok === false);
+        // The build a rebuild was held for is reported, whatever it found.
+        const news = outcome.ends !== undefined || isNews(before, outcome.event);
         if (!news && before !== undefined) last = before;
         return { outcome, news };
       }).then(
         ({ outcome, news }) => {
           try {
-            if (!closed && news && "event" in outcome) options.onBuild?.(outcome.event);
+            if (!closed && news && "event" in outcome) reportBuild(outcome.event);
           } finally {
             done(outcome);
           }
@@ -909,7 +941,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       // Held while the folder is made again: the build that runs once it is back reports itself, and this settles with it.
       if (!("event" in outcome)) return outcome.held;
       try {
-        if (!closed) options.onBuild?.(outcome.event);
+        if (!closed) reportBuild(outcome.event);
       } finally {
         done(outcome);
       }

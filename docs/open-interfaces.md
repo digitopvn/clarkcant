@@ -1002,7 +1002,9 @@ again stops the session as `folder-gone`, and a rebuild that was waiting answers
 
 A change the platform reports for a folder inside the package, rather than for a file, does not start a build. Windows
 reports one the first time a build lists a folder made a moment ago, and a file added, removed or saved is reported
-under its own name.
+under its own name. For about a second after a folder made again is watched anew, a build that finds the same files as
+the build before it is not reported: macOS can report the writes that made the folder after the watch began. A save
+made in that time changes the files, so it is built and reported.
 
 A folder chosen through a link or junction is watched at the real path it led to when the session started. A folder
 made again counts only while its path still resolves to that real path. Paths that differ only in case count as the

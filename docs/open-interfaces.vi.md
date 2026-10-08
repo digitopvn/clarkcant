@@ -1009,7 +1009,9 @@ thư mục sẽ làm phiên dừng với lý do `folder-gone`, và một lần d
 
 Một thay đổi mà nền tảng báo cho một thư mục bên trong gói, thay vì cho một tệp, không khởi động lần dựng nào. Windows
 báo một thay đổi như vậy vào lần đầu một lần dựng liệt kê một thư mục vừa được tạo, còn một tệp được thêm, xoá hay lưu
-thì được báo bằng chính tên của nó.
+thì được báo bằng chính tên của nó. Trong khoảng một giây sau khi một thư mục được tạo lại bắt đầu được theo dõi lại,
+một lần dựng thấy các tệp giống hệt lần dựng trước sẽ không được báo: macOS có thể báo những lần ghi đã tạo ra thư mục
+sau khi việc theo dõi bắt đầu. Một lần lưu trong khoảng đó làm thay đổi tệp, nên vẫn được dựng và được báo.
 
 Một thư mục được chọn qua một liên kết hay junction được theo dõi ở đường dẫn thật mà nó dẫn tới lúc phiên bắt đầu. Một
 thư mục được tạo lại chỉ được tính khi đường dẫn của nó vẫn phân giải về đúng đường dẫn thật đó. Trên Windows và macOS,

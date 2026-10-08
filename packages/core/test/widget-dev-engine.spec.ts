@@ -414,6 +414,45 @@ describe("the dev engine", () => {
     expect(engine.latest()?.generation.generation).toBe(2);
   });
 
+  it("reports no unchanged build for writes a new watcher reports late, and still builds a save made right after", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    const engine = startDevEngine({
+      root,
+      watch: true,
+      debounceMs: 30,
+      rootCheckMs: 20,
+      onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`),
+    });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 200));
+    built.length = 0;
+
+    // Watched anew under a new id: the build the re-arm asks for is reported.
+    statNewId.path = engine.root;
+    const deadline = Date.now() + 5_000;
+    while (built.length === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 10));
+    expect(built).toEqual(["change:unchanged"]);
+    const reported = engine.lastBuild();
+
+    // The same bytes written again, as FSEvents reports the writes that made a folder from just before its stream began:
+    // the build it causes finds nothing new, and says nothing.
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>one</p>");
+    await new Promise((done) => setTimeout(done, 200));
+    expect(built).toEqual(["change:unchanged"]);
+    expect(engine.lastBuild()).toBe(reported);
+
+    // A real save in the same moments is news, and builds.
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>saved right after</p>");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < saved) await new Promise((done) => setTimeout(done, 10));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    await new Promise((done) => setTimeout(done, 100));
+    expect(built).toEqual(["change:unchanged", "change:generation"]);
+  });
+
   /** A link to a folder: a junction on Windows, which needs no privilege, and a symbolic link elsewhere. */
   const linkFolder = (target: string, path: string): void => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
 
@@ -742,14 +781,19 @@ describe("the dev engine", () => {
     await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
     built.length = 0;
 
-    // As a build tool in its own process: delete the output folder, work for a moment, then write it again.
+    // As a build tool in its own process: delete the output folder, work for a moment, then write it again. It writes the
+    // folder again once the rebuilds below have been asked for (or after 1.5 s, inside the grace), so a slow runner cannot
+    // let the folder come back before they are.
+    const go = join(base, "go");
     const script = [
       "const fs = require('node:fs');",
-      "const [out, source] = process.argv.slice(1);",
+      "const [out, source, go] = process.argv.slice(1);",
       "fs.rmSync(out, { recursive: true, force: true });",
-      "setTimeout(() => fs.cpSync(source, out, { recursive: true }), 500);",
+      "const until = Date.now() + 1500;",
+      "const wait = () => (fs.existsSync(go) || Date.now() > until ? fs.cpSync(source, out, { recursive: true }) : setTimeout(wait, 10));",
+      "wait();",
     ].join("\n");
-    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    const child = spawn(process.execPath, ["-e", script, root, source, go], { stdio: "ignore" });
     const exited = new Promise((done) => child.on("exit", done));
     const missing = Date.now() + 5_000;
     while (existsSync(root) && Date.now() < missing) await new Promise((done) => setTimeout(done, 5));
@@ -759,6 +803,8 @@ describe("the dev engine", () => {
       rebuilds.push(engine.rebuild());
       await new Promise((done) => setTimeout(done, 60));
     }
+    expect(existsSync(root)).toBe(false);
+    writeFileSync(go, "");
     expect(await exited).toBe(0);
 
     const events = await Promise.all(rebuilds);
