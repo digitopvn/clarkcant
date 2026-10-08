@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView, WidgetDevFolderForgetResult, WidgetDevSessionView } from "@clarkcant/contracts";
 
-import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
+import { type GatewayClient, GatewayError, type Timeline, type WidgetDevSessionRead } from "./api.ts";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -81,8 +81,9 @@ export function feedbackReportToReuse(previous: FeedbackCardState | undefined, r
  * use: the node keeps a choice only for the folder itself (`pressed` was its own path, not a link to it) and never for a
  * whole drive or the home folder (`chosenByPerson`).
  */
-export function developOutcomeMessage(view: WidgetDevSessionView, t: (key: MessageKey) => string, pressed?: string): string {
-  const outcome = sessionOutcome(view, t);
+export function developOutcomeMessage(view: WidgetDevSessionRead, t: (key: MessageKey) => string, pressed?: string): string {
+  // A newer node sent more than this app reads: said, so the outcome is never taken for all the node answered.
+  const outcome = view.unreadFields === undefined ? sessionOutcome(view, t) : `${sessionOutcome(view, t)} ${t("shell.dev.nodeNewer")}`;
   if (pressed === undefined || view.chosenByPerson === true) return outcome;
   const leadsElsewhere = pressed.trim().replace(/[\\/]+$/u, "").toLowerCase() !== view.root.replace(/[\\/]+$/u, "").toLowerCase();
   const kept = fillMessage(t(leadsElsewhere ? "commandCard.develop.notKeptLink" : "commandCard.develop.notKeptBroad"), { folder: view.root });

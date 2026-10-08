@@ -26,6 +26,7 @@ export * from "./tasks.ts";
 export * from "./effects.ts";
 export * from "./install.ts";
 export * from "./directory.ts";
+export * from "./node-view-read.ts";
 export * from "./widgets.ts";
 export * from "./widget-state.ts";
 export * from "./widget-perform.ts";

@@ -897,6 +897,18 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
 | `POST /widget-dev/chosen-folders/forget` `{ "root" }` | Take back the person's choice of a folder (`widgetDevFolderForgetSchema`): it no longer lets Clark start sessions in it, or in the folders inside it. Answers `{ root, forgotten, stillCoveredBy? }`; `forgotten: false` when the folder was not chosen, so pressing twice is harmless. `stillCoveredBy` names a folder Clark may still develop in that holds this one (another chosen folder, or a `workspace.roots` value the person recorded), so Clark keeps access there until that one goes too. Sessions and what they run stay as they are. Person-only. |
 
+**Reading a session view.** A desktop app and a node on another machine are updated separately, so the app reads a
+session view (`readNodeView` in `packages/contracts/src/node-view-read.ts`) tolerantly: a top-level field it does not
+know, sent by a node newer than the app, is left out and never passed on, and the status line beside the widget and
+the `develop` card say the node is newer and that some of what it said is not shown. Every field the app knows keeps
+its bounds, so a value it does not know in such a field (a new `stopReason`, `status`, activation `state`, `verdict`
+or `trigger`) still refuses the view. A field it does not know inside `activation`, `latest`, `running`, `lastBuild`
+or `placed` still refuses the view too: `activation`, `latest` and `running` carry activation, approval and reach
+state the app must not act on in part, and `lastBuild` and `placed` carry build and placement state. Requests to the
+node, and the sessions the node writes and stores, stay strict. Because an older app drops a new top-level field with
+only the generic note, approval or reach state is never added to the view as a new top-level field; it goes inside a
+strict nested object, or the view's shape changes in a way older apps refuse.
+
 Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`, `403 ROOT_UNREADABLE`,
 `404 CONVERSATION_NOT_FOUND`, `404 SESSION_NOT_FOUND`, `409 TOO_MANY_SESSIONS`, `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET`,
 `409 NOT_PLACED` and `503 WIDGET_DEV_UNAVAILABLE`:
@@ -1031,11 +1043,13 @@ reading as live:
     folder and develops it from there.
 
   `stopCode` is optional. A session stopped before nodes kept it has none, and a code the client does not know gets
-  the reason alone, with advice that holds for every case. The client parses the session view with a strict schema, so
-  it refuses a view with a field it does not know, such as `stopCode` sent to a client older than the field. Keep a
-  desktop app on the same build as the node it connects to, including a node on another machine; letting the client
-  read such views while leaving unknown fields out is tracked in issue #673. The code is what the check found at that
-  restart and is not checked again while the session stays stopped; a start checks the folder as it is then.
+  the reason alone, with advice that holds for every case. A top-level field newer than the app is left out and the
+  app says the node is newer (see **Reading a session view** above). An app built before that tolerant read, which
+  includes every app older than `stopCode`, refuses the whole view instead. Any app also refuses a view with a newer
+  field inside `activation`, `latest`, `running`, `lastBuild` or `placed`, or with a value it does not know in a field
+  it knows, such as a new `stopReason`, `status` or activation state. For those cases, keep the desktop app on the
+  same build as the node it connects to, including a node on another machine. The code is what the check found at
+  that restart and is not checked again while the session stays stopped; a start checks the folder as it is then.
 
   **Downgrade.** `sessions.json` is read with a strict schema too. A build older than a field the store holds, such as
   `stopCode` or `chosenFolderId`, finds the whole file does not match, moves it aside as

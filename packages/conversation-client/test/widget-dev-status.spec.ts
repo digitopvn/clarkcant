@@ -1,9 +1,12 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { WidgetDevGeneration, WidgetDevSessionView } from "@clarkcant/contracts";
 
+import { readStoredLocale } from "../src/i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
-import { widgetDevDiagnosticText, widgetDevRefusalReason, widgetDevStatusLine } from "../src/widget-dev-status.tsx";
+import { WidgetDevStatusReport, widgetDevDiagnosticText, widgetDevRefusalReason, widgetDevStatusLine } from "../src/widget-dev-status.tsx";
 
 /**
  * What the host says beside a widget dev session's frame. "Last successful build" is said exactly when the node says the
@@ -169,5 +172,21 @@ describe("the widget dev status line", () => {
     expect(widgetDevDiagnosticText({ code: "FILES_LINK_REFUSED", message: "ARTIFACT_SYMLINK_ESCAPE" }, en)).toContain("remove the link");
     expect(widgetDevDiagnosticText({ code: "FILES_LINK_REFUSED", message: "x" }, vi)).toContain("hãy xoá liên kết");
     expect(widgetDevDiagnosticText({ message: "widget.json: not JSON" }, vi)).toBe("widget.json: not JSON");
+  });
+  it("says beside the frame when a newer node sent fields this app left out, and only then", () => {
+    const report = (unreadFields?: { count: number; names: string[] }) =>
+      renderToStaticMarkup(createElement(WidgetDevStatusReport, { view: { ...view({}), ...(unreadFields === undefined ? {} : { unreadFields }) } }));
+    // Rendered outside a locale provider, so in the stored (default) locale.
+    const said = CATALOGS[readStoredLocale()]["shell.dev.nodeNewer"];
+    const partial = report({ count: 1, names: ["fooCode"] });
+    expect(partial).toContain('data-widget-dev-node-newer="1"');
+    expect(partial).toContain(said);
+    expect(partial).toContain('data-live-notice="true"');
+    // Names are the node's text and stay out of the sentence.
+    expect(partial).not.toContain("fooCode");
+    const complete = report();
+    expect(complete).not.toContain("data-widget-dev-node-newer");
+    expect(complete).not.toContain(said);
+    expect(complete).not.toContain("data-live-notice");
   });
 });
