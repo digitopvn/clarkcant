@@ -249,8 +249,16 @@ export function readPreference(
   return row?.value;
 }
 
-/** Forgets a name. Returns whether there was one to forget. */
+/**
+ * Forgets a name: its value and the description row written beside it (`secrets`), together. The two are written as one
+ * (`storeCredentialFields`), so a removed value must not leave a description promising a secret this node no longer
+ * holds. Returns whether there was either to forget.
+ */
 export function deleteCredential(db: Database, principalId: string, name: string): boolean {
-  const result = db.prepare("DELETE FROM credentials WHERE principal_id = ? AND name = ?").run(principalId, name);
-  return Number(result.changes) > 0;
+  const forget = (): boolean => {
+    const value = db.prepare("DELETE FROM credentials WHERE principal_id = ? AND name = ?").run(principalId, name);
+    const description = db.prepare("DELETE FROM secrets WHERE principal_id = ? AND name = ?").run(principalId, name);
+    return Number(value.changes) + Number(description.changes) > 0;
+  };
+  return inTransaction(db) ? forget() : transaction(db, forget);
 }

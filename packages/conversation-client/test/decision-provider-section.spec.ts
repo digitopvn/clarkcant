@@ -2,13 +2,17 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { DecisionProviderView } from "@clarkcant/contracts";
+import { DECISION_REASON_CODES, type DecisionProviderView } from "@clarkcant/contracts";
+
+import { GatewayError } from "../src/api.ts";
 
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
   DecisionProviderCard,
   type DecisionProviderCardProps,
   decisionHint,
+  decisionReasonText,
+  decisionWriteFailure,
   isPinnedOpenrouterSlug,
   lastCallLine,
   selectionFor,
@@ -55,6 +59,7 @@ const DEFAULT_NO_KEY: DecisionProviderView = {
   endpointHost: "api.typesafe.ai",
   status: "no-credential",
   reason: "no provider credential is configured on this node",
+  reasonCode: "no-credential",
   localOnly: false,
   credential: { name: "typesafe", source: "none" },
   applies: "next-decision",
@@ -114,9 +119,19 @@ describe("the decision provider section", () => {
     expect(draw({ listing: { status: "ready", view: DEFAULT_NO_KEY } })).toContain(MESSAGES_EN["settings.decision.lastCall.none"]);
     const failed: DecisionProviderView = {
       ...READY,
-      lastCall: { event: "error", status: "unavailable", model: "clef-flash", durationMs: 4000, reason: "the provider timed out" },
+      lastCall: {
+        event: "error",
+        status: "unavailable",
+        model: "clef-flash",
+        durationMs: 4000,
+        reason: "the call exceeded its 1500 ms deadline",
+        reasonCode: "deadline",
+      },
     };
-    expect(lastCallLine(failed, english)).toBe("Last call got no answer (clef-flash): the provider timed out");
+    expect(lastCallLine(failed, english)).toBe("Last call got no answer (clef-flash): the call took longer than this decision's deadline.");
+    // The node's English sentence never reaches the line, in either language.
+    expect(lastCallLine(failed, vietnamese)).toBe("Lần gọi gần nhất không có câu trả lời (clef-flash): lần gọi kéo dài quá thời hạn của quyết định này.");
+    expect(lastCallLine(failed, vietnamese)).not.toContain("deadline");
   });
 
   it("names where each provider's key comes from, offers Remove only for a key saved here, and never echoes a key", () => {
@@ -140,14 +155,15 @@ describe("the decision provider section", () => {
   it("draws every state with its reason and what to do about it", () => {
     const states: DecisionProviderView[] = [
       DEFAULT_NO_KEY,
-      { ...READY, status: "local-only", localOnly: true, reason: "this node is configured local-only, so no intent is sent to a provider" },
-      { ...READY, status: "disabled", reason: "the selector is disabled on this node" },
+      { ...READY, status: "local-only", localOnly: true, reason: "this node is configured local-only, so no intent is sent to a provider", reasonCode: "local-only" },
+      { ...READY, status: "disabled", reason: "the selector is disabled on this node", reasonCode: "disabled" },
       {
         ...READY,
         selection: { provider: "cloudflare", model: "clef" },
         account: { source: "none" },
         status: "misconfigured",
         reason: "the Cloudflare decision provider needs CLOUDFLARE_ACCOUNT_ID",
+        reasonCode: "cloudflare-account-missing",
       },
     ];
     for (const view of states) {
@@ -158,7 +174,10 @@ describe("the decision provider section", () => {
     }
     expect(decisionHint(DEFAULT_NO_KEY, english)).toContain("There is no key for TypeSafe Jev");
     expect(decisionHint(states[3]!, english)).toBe(
-      "the Cloudflare decision provider needs CLOUDFLARE_ACCOUNT_ID. Enter the Cloudflare account id below (or set CLOUDFLARE_ACCOUNT_ID on the node); until then Clark uses its built-in rules.",
+      "This configuration can't be used: Cloudflare needs an account id (CLOUDFLARE_ACCOUNT_ID). Enter the Cloudflare account id below (or set CLOUDFLARE_ACCOUNT_ID on the node); until then Clark uses its built-in rules.",
+    );
+    expect(decisionHint(states[3]!, vietnamese)).toBe(
+      "Cấu hình này chưa dùng được: Cloudflare cần một account id (CLOUDFLARE_ACCOUNT_ID). Nhập account id Cloudflare bên dưới (hoặc đặt CLOUDFLARE_ACCOUNT_ID trên node); trong lúc đó Clark dùng quy tắc có sẵn.",
     );
     expect(decisionHint(states[1]!, english)).toContain("CLARKCANT_JEV_LOCAL_ONLY");
     expect(decisionHint(states[2]!, english)).toContain("CLARKCANT_JEV_ENABLED");
@@ -221,6 +240,43 @@ describe("the decision provider section", () => {
     const refused = draw({ listing: { status: "failed", reason: "the node is unreachable" } });
     expect(refused).toContain('data-decision-state="failed"');
     expect(refused).toContain(MESSAGES_EN["settings.decision.retry"]);
+  });
+
+  it("words every reason the node can give in both languages, and never inserts the node's English", () => {
+    for (const code of DECISION_REASON_CODES) {
+      expect(MESSAGES_EN[`settings.decision.reason.${code}`]).toBeTruthy();
+      expect(MESSAGES_VI[`settings.decision.reason.${code}`]).toBeTruthy();
+      expect(MESSAGES_VI[`settings.decision.reason.${code}`]).not.toBe(MESSAGES_EN[`settings.decision.reason.${code}`]);
+    }
+    const misconfigured: DecisionProviderView = {
+      ...READY,
+      provider: "openrouter",
+      selection: { provider: "openrouter", model: "openrouter/auto" },
+      model: "openrouter/auto",
+      status: "misconfigured",
+      reason: "the OpenRouter decision model is an OpenRouter router",
+      reasonCode: "openrouter-model-router",
+    };
+    const hint = decisionHint(misconfigured, vietnamese);
+    expect(hint).not.toContain(misconfigured.reason);
+    expect(hint).toContain("router của OpenRouter");
+    // A node too old to send a code gets the generic wording, still in the person's language.
+    const { reasonCode: _dropped, ...withoutCode } = misconfigured;
+    expect(decisionHint(withoutCode, vietnamese)).not.toContain(misconfigured.reason);
+    expect(decisionReasonText(undefined, vietnamese)).toBe(MESSAGES_VI["settings.decision.reason.unknown"]);
+  });
+
+  it("words a refused write in the person's language, not the node's English", () => {
+    const refusedSlug = new GatewayError(400, "INVALID_SCHEMA", "model: is an OpenRouter router, not a pinned model");
+    const selection = decisionWriteFailure("selection", refusedSlug, vietnamese);
+    expect(selection).toBe(
+      "Không lưu được; cấu hình trước đó vẫn giữ nguyên. Node không nhận lựa chọn này; hãy kiểm tra model hoặc account id.",
+    );
+    expect(selection).not.toContain("OpenRouter router");
+    expect(decisionWriteFailure("key:typesafe", new GatewayError(400, "INVALID_SCHEMA", "value: too long"), english)).toContain(
+      "a key is 1 to 4096 characters",
+    );
+    expect(decisionWriteFailure("selection", new Error("fetch failed"), vietnamese)).not.toContain("fetch failed");
   });
 
   it("reads in Vietnamese with full diacritics", () => {

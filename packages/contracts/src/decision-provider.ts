@@ -93,6 +93,49 @@ export const HOST_OWNED_DECISION_CREDENTIALS: readonly string[] = Object.freeze(
 export const DECISION_PROVIDER_STATUSES = Object.freeze(["ready", "local-only", "misconfigured", "no-credential", "disabled"] as const);
 export type DecisionProviderStatus = (typeof DECISION_PROVIDER_STATUSES)[number];
 
+/**
+ * Why a decision provider cannot be used, or why its last call got no answer, as a code a surface words in the
+ * person's own language. The English `reason` beside it stays for logs and machine clients; a card never shows it.
+ *
+ * Configuration (`misconfigured`): `provider-unknown`, `model-other-provider` (a Cloudflare or OpenRouter model left
+ * for TypeSafe), `cloudflare-model-missing`, `cloudflare-account-missing`, `cloudflare-account-invalid`,
+ * `openrouter-model-missing`, `openrouter-model-invalid`, `openrouter-model-router`, `endpoint-invalid`.
+ * A call not made: `local-only`, `disabled`, `no-credential`, `budget-exhausted`, `request-too-large`,
+ * `request-carried-credential`, `state-too-large`.
+ * A call that got no answer: `provider-rejected-key`, `provider-rejected-request`, `provider-rate-limited`,
+ * `provider-overloaded`, `provider-http-error`, `response-shape`, `model-drift`, `deadline`, `endpoint-refused`,
+ * `call-failed`.
+ */
+export const DECISION_REASON_CODES = Object.freeze([
+  "provider-unknown",
+  "model-other-provider",
+  "cloudflare-model-missing",
+  "cloudflare-account-missing",
+  "cloudflare-account-invalid",
+  "openrouter-model-missing",
+  "openrouter-model-invalid",
+  "openrouter-model-router",
+  "endpoint-invalid",
+  "local-only",
+  "disabled",
+  "no-credential",
+  "budget-exhausted",
+  "request-too-large",
+  "request-carried-credential",
+  "state-too-large",
+  "provider-rejected-key",
+  "provider-rejected-request",
+  "provider-rate-limited",
+  "provider-overloaded",
+  "provider-http-error",
+  "response-shape",
+  "model-drift",
+  "deadline",
+  "endpoint-refused",
+  "call-failed",
+] as const);
+export type DecisionReasonCode = (typeof DECISION_REASON_CODES)[number];
+
 /** What chose the provider in effect: the person in Settings, the node's environment, or neither (TypeSafe). */
 export type DecisionSelectionSource = "settings" | "environment" | "default";
 
@@ -113,8 +156,10 @@ export interface DecisionProviderView {
   /** The host decisions are sent to; never a path, never a query. */
   endpointHost: string;
   status: DecisionProviderStatus;
-  /** Why the status is not `ready`, in the decider's own words. */
+  /** Why the status is not `ready`, in the decider's own words (English, for logs and machine clients). */
   reason?: string;
+  /** The same reason as a code, which a card words in the person's language. */
+  reasonCode?: DecisionReasonCode;
   localOnly: boolean;
   credential: { name: string; source: DecisionCredentialSource };
   /**
@@ -133,6 +178,7 @@ export interface DecisionProviderView {
     model: string;
     durationMs: number;
     reason?: string;
+    reasonCode?: DecisionReasonCode;
   };
   /** Every provider this node can use, for the selector, each with where its key would come from. */
   providers: {

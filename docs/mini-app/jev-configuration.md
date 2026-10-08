@@ -74,6 +74,9 @@ TypeSafe Jev stays the default. There are two ways to choose another provider, a
    conversation model. The section shows the provider and model in effect, a badge saying what chose
    them (Settings, the environment, or the default), the status with its reason and what to do about
    it (for example "enter the Cloudflare account id below"), and the last call since the node started.
+   The node sends each reason as a code (`reasonCode`, beside its English `reason` for logs and machine
+   clients), and the card words the code in the interface language, so a Vietnamese card never shows the
+   node's English sentence; a refused save is worded the same way.
    The person picks "Follow environment", TypeSafe Jev, Cloudflare Clef or OpenRouter; Cloudflare offers
    its two models and an account-id field, and OpenRouter a model-slug field, which is saved only once a
    slug is entered. Each provider has a key card that says where its key comes from (saved here, the
@@ -87,7 +90,9 @@ TypeSafe Jev stays the default. There are two ways to choose another provider, a
    `{"selection": {"provider": "typesafe"}}` or `{"selection": null}`. Keys go to
    `PUT /decision-provider/credential` with `{provider, value}` and are removed with
    `DELETE /decision-provider/credential/<provider>`. Every one of these writes is person-only: an AI
-   client or another machine surface cannot choose which third party receives a decision.
+   client or another machine surface cannot choose which third party receives a decision. The generic
+   credential routes that also store the `typesafe` key (`POST /credentials`, `DELETE /credentials/<name>`)
+   are person-only as well, so they are no way around it.
 2. **In the environment**, for an operator who configures the node without Settings:
 
 ```bash

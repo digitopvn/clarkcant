@@ -1,5 +1,6 @@
 import {
   type CompositionSlot,
+  type DecisionReasonCode,
   type MiniAppSelection,
   checkSelectionAgainstCandidates,
   noulVerdict,
@@ -20,6 +21,7 @@ import {
   JEV_POLICY_VERSION,
   currentDecisionConfig,
   decisionCallRefusal,
+  decisionCallRefusalDetail,
   decisionConfigFromEnv,
 } from "./decision-config.ts";
 import {
@@ -119,6 +121,8 @@ export interface JevTelemetry {
   /** The enum that was selected, when there was one. Never free text from a model. */
   selection?: string;
   reason?: string;
+  /** The reason as a code a Settings card words in the person's language. */
+  reasonCode?: DecisionReasonCode;
   /** Which provider was asked. Absent means TypeSafe, so a line from a default node reads exactly as it always has. */
   provider?: DecisionProviderId;
 }
@@ -225,11 +229,11 @@ interface CallInput {
 }
 
 /** Why a call could not be made, without saying anything about the request contents. */
-function refusalReason(deps: JevDeps, budget: JevBudget): string | undefined {
-  const refused = jevCallRefusal(deps.config);
+function refusalReason(deps: JevDeps, budget: JevBudget): { code: DecisionReasonCode; reason: string } | undefined {
+  const refused = decisionCallRefusalDetail(deps.config);
   if (refused !== undefined) return refused;
   if (remainingBudget(deps, budget) <= 0) {
-    return "the selector budget for this turn was exhausted before the call";
+    return { code: "budget-exhausted", reason: "the selector budget for this turn was exhausted before the call" };
   }
   return undefined;
 }
@@ -268,7 +272,7 @@ async function callWith(
   const questionCount = Object.keys(input.questions).length;
 
   // Nothing was sent. Only the reason is recorded, never any part of the request.
-  const refuse = (reason: string): { ok: false; status: "unavailable"; reason: string } => {
+  const refuse = (reasonCode: DecisionReasonCode, reason: string): { ok: false; status: "unavailable"; reason: string } => {
     emit(deps, {
       event: "refusal",
       requestId,
@@ -278,11 +282,12 @@ async function callWith(
       status: "unavailable",
       questionCount,
       reason,
+      reasonCode,
     });
     return { ok: false, status: "unavailable", reason };
   };
 
-  if (refused !== undefined) return refuse(refused);
+  if (refused !== undefined) return refuse(refused.code, refused.reason);
 
   const body = { state: input.state, model: deps.config.model, questions: input.questions };
   /*
@@ -292,6 +297,7 @@ async function callWith(
   const requestBytes = serialisedBytes(body);
   if (requestBytes === undefined || requestBytes > MAX_DECISION_REQUEST_BYTES) {
     return refuse(
+      "request-too-large",
       requestBytes === undefined
         ? "the decision request could not be serialised, so it was not sent"
         : `the decision request was ${requestBytes} bytes, over the ${MAX_DECISION_REQUEST_BYTES}-byte ceiling, so it was not sent`,
@@ -310,7 +316,7 @@ async function callWith(
    * A hit is not sent redacted - redaction already ran and missed it - it is not sent at all, and the caller falls
    * back as it would for any provider failure. Nothing of the value is recorded.
    */
-  if (carriesCredential(body)) return refuse("the decision request still carried a credential, so it was not sent");
+  if (carriesCredential(body)) return refuse("request-carried-credential", "the decision request still carried a credential, so it was not sent");
 
   const transport = deps.transport ?? createFetchTransport();
   const startedAt = now();
@@ -353,6 +359,7 @@ async function callWith(
         status: "unavailable",
         questionCount,
         reason,
+        reasonCode: reasonCodeForStatus(response.status),
       });
       return { ok: false, status: "unavailable", reason };
     }
@@ -378,6 +385,7 @@ async function callWith(
         status: "unavailable",
         questionCount,
         reason,
+        reasonCode: "response-shape",
       });
       return { ok: false, status: "unavailable", reason };
     }
@@ -396,7 +404,9 @@ async function callWith(
       status: "answered",
       questionCount,
       ...(usage === undefined ? {} : { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }),
-      ...(drift ? { reason: `the provider answered with ${answeredModel}, not the pinned ${deps.config.model}` } : {}),
+      ...(drift
+        ? { reason: `the provider answered with ${answeredModel}, not the pinned ${deps.config.model}`, reasonCode: "model-drift" as const }
+        : {}),
     });
 
     if (drift) {
@@ -427,6 +437,7 @@ async function callWith(
       status: "unavailable",
       questionCount,
       reason,
+      reasonCode: aborted ? "deadline" : cause instanceof EndpointRefusedError ? "endpoint-refused" : "call-failed",
     });
     void cause;
     return { ok: false, status: "unavailable", reason };
@@ -441,6 +452,25 @@ function serialisedBytes(value: unknown): number | undefined {
     return Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
   } catch {
     return undefined;
+  }
+}
+
+/** `reasonForStatus` as a code: a refused key, a refused request, a rate limit, an overload, or another HTTP status. */
+function reasonCodeForStatus(status: number): DecisionReasonCode {
+  switch (status) {
+    case 401:
+    case 403:
+      return "provider-rejected-key";
+    case 400:
+    case 404:
+    case 422:
+      return "provider-rejected-request";
+    case 429:
+      return "provider-rate-limited";
+    case 529:
+      return "provider-overloaded";
+    default:
+      return "provider-http-error";
   }
 }
 
@@ -631,6 +661,7 @@ export async function selectTemplate(
       status: "unavailable",
       questionCount: 1,
       reason: sizeCheck.message,
+      reasonCode: "state-too-large",
     });
     return { status: "unavailable", reason: sizeCheck.message };
   }

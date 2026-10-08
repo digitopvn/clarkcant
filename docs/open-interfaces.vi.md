@@ -1295,7 +1295,11 @@ chạy raise ra), quyết định capability của package, cài một gói (`PO
 cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, báo cáo frame của widget đã làm gì với một hành động Clark nhờ nó thực hiện (`POST /app-intents/widget-perform/{performId}`), tin cậy một peer đã ghép cặp, cấp
 grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
 của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), gửi một báo cáo sản phẩm
-(`POST /feedback/reports/{reportId}/publish`; gửi lên GitHub thay người dùng là quyết định của họ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
+(`POST /feedback/reports/{reportId}/publish`; gửi lên GitHub thay người dùng là quyết định của họ), lưu hoặc gỡ một credential đã lưu (`POST /credentials` và
+`DELETE /credentials/{name}`, giống `PUT /decision-provider/credential` và `DELETE` của nó; một khoá quyết định node
+hành động trên tài khoản của ai, và khoá `typesafe` mà các route chung lưu chính là khoá của nhà cung cấp quyết định, nên
+chúng không được là đường vòng qua route đó; gỡ một credential cũng xoá phần mô tả lưu bên cạnh nó; liệt kê tên vẫn dùng
+được), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
@@ -1309,6 +1313,12 @@ nó không bao giờ đưa ra câu trả lời của người dùng về một t
 thông báo (`403 PERSON_ONLY` cho cả hai, route cập nhật bị từ chối như trên). `read_inbox` đánh dấu tiêu đề và nội
 dung của mọi thông báo là dữ liệu do việc khác báo lại, không bao giờ là chỉ dẫn, và giữ mỗi thông báo trên một dòng.
 Discovery document ghi điều này ở mục `personDecisions`.
+
+Một lời từ chối nói rõ bề mặt nào đã từ chối và vì sao. Thân của nó là `{ "code": "PERSON_ONLY", "surface", "message" }`,
+trong đó `surface` là `relay`, `mcp` hoặc `cli-api`, còn `message` nêu tên bề mặt đó cùng phương thức và đường dẫn bị từ
+chối (ví dụ "the WebSocket relay refused DELETE /credentials/typesafe: storing or removing a stored credential is the
+person's decision ..."); `clarkcant api` in ra đúng thông điệp đó. Một route credential bị gateway HTTP từ chối vì
+yêu cầu mang dấu của một bề mặt máy cũng nhận cùng thân đó. Client so khớp theo `code` vẫn chạy như cũ.
 
 **Kết nối MCP riêng của service trong package.** Node là MCP client của mỗi service trong package mà nó chạy qua
 stdio. Khi facet `tools` của service khai báo `egress`, request `initialize` của node đề nghị

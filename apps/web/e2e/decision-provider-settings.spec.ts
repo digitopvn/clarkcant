@@ -86,8 +86,10 @@ test("each provider is chosen, Cloudflare says what it is missing, and its key i
   await segment("cloudflare").click();
   await expect(current).toHaveAttribute("data-decision-active-provider", "cloudflare", { timeout: 10_000 });
   await expect(current).toHaveAttribute("data-decision-status", "misconfigured");
-  await expect(current.locator("[data-decision-hint]")).toContainText("CLOUDFLARE_ACCOUNT_ID");
+  // The reason is worded in the person's language from the node's code; the node's English sentence never appears.
+  await expect(current.locator("[data-decision-hint]")).toContainText("Cấu hình này chưa dùng được: Cloudflare cần một account id (CLOUDFLARE_ACCOUNT_ID)");
   await expect(current.locator("[data-decision-hint]")).toContainText("Nhập account id Cloudflare");
+  await expect(current.locator("[data-decision-hint]")).not.toContainText("decision provider needs");
   await expect(section.locator('[data-decision-account-source="none"]')).toBeVisible();
 
   // The account id fixes that; the provider then needs only its key.
@@ -127,6 +129,8 @@ test("each provider is chosen, Cloudflare says what it is missing, and its key i
   await slug.fill("openrouter/auto");
   await section.locator("[data-decision-model-use]").click();
   await expect(section.locator('[data-decision-outcome="selection"]')).toHaveAttribute("data-result", "failed", { timeout: 10_000 });
+  await expect(section.locator('[data-decision-outcome="selection"]')).toContainText("Node không nhận lựa chọn này");
+  await expect(section.locator('[data-decision-outcome="selection"]')).not.toContainText("router");
   await expect(current).toHaveAttribute("data-decision-active-provider", "cloudflare");
   await slug.fill("typesafe/jev-1.13");
   await section.locator("[data-decision-model-use]").click();
@@ -193,7 +197,9 @@ test("on a phone, in English, the card fits the screen and every control is reac
   const section = await openDecisionProvider(page);
   await expect(section.locator("h3")).toHaveText("Decision provider", { timeout: 10_000 });
   await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-status", "misconfigured");
-  await expect(section.locator("[data-decision-hint]")).toContainText("Enter the Cloudflare account id below");
+  await expect(section.locator("[data-decision-hint]")).toContainText(
+    "This configuration can't be used: Cloudflare needs an account id (CLOUDFLARE_ACCOUNT_ID). Enter the Cloudflare account id below",
+  );
   const controls = [
     ...(await section.locator('[data-segmented="decision-provider"] button').all()),
     section.locator("[data-decision-account-input]"),

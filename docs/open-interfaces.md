@@ -1279,7 +1279,10 @@ person's execution mode asked about, confirming an app intent, reporting what th
 issuing a grant, asking for a browser token for a frame
 (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a
 machine client would be asking for a credential to keep), publishing a product report (`POST /feedback/reports/{reportId}/publish`; filing to GitHub on the person's behalf is
-their decision), and recording whether an action whose outcome nobody saw took effect
+their decision), storing or removing a stored credential (`POST /credentials` and `DELETE /credentials/{name}`, like
+`PUT /decision-provider/credential` and its `DELETE`; a key decides whose account the node acts on, and the
+`typesafe` key the generic routes store is the decision provider's key, so they must not be a way around that route;
+removing a credential also forgets the description stored beside it; listing names stays reachable), and recording whether an action whose outcome nobody saw took effect
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
@@ -1293,6 +1296,12 @@ available, and so does `act_on_notice`: it never offers the person's answer abou
 notice's update (`403 PERSON_ONLY` for both, the update route refused as above). `read_inbox` marks every notice's
 title and body as data reported by other work, never instructions, and keeps each on one line. The discovery document
 lists this under `personDecisions`.
+
+A refusal says which surface refused and why. Its body is `{ "code": "PERSON_ONLY", "surface", "message" }`, where
+`surface` is `relay`, `mcp` or `cli-api` and `message` names that surface and the refused method and path (for
+example "the WebSocket relay refused DELETE /credentials/typesafe: storing or removing a stored credential is the
+person's decision ..."); `clarkcant api` prints the same message. A credential route refused on the HTTP gateway because
+the request was marked by a machine surface gets the same body. Clients that match on `code` keep working.
 
 **A package service's own MCP connection.** The node is the MCP client of each package service it runs over stdio.
 When the service's `tools` facet declares `egress`, the node's `initialize` request offers
