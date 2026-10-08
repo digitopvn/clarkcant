@@ -118,13 +118,44 @@ describe("the widget dev status line", () => {
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "folder-gone", running: undefined, activation: { state: "none" } }), en).text).toBe(
       "No longer watching the folder · no build runs yet. The folder is gone.",
     );
-    // Refused at a restart, for example a chosen folder made again: the person is told to choose it again.
-    const refusedVi = widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), vi).text;
-    expect(refusedVi).toContain("hãy chọn lại thư mục bằng /develop");
-    expect(refusedVi).toContain("chép dự án vào không gian widget của Clark");
-    const refusedEn = widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), en).text;
-    expect(refusedEn).toContain("choose the folder again with /develop");
-    expect(refusedEn).toContain("deleted and made again after you chose it");
+  });
+
+  it("says what helps a folder refused at a restart, by the check that refused it", () => {
+    const refused = (stopCode?: string) => (t: (key: MessageKey) => string) =>
+      widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused", ...(stopCode === undefined ? {} : { stopCode }) }), t).text;
+
+    // Clark is no longer allowed to watch it on its own, for example a chosen folder made again: choosing it again helps.
+    const owned = refused("ROOT_NOT_OWNED");
+    expect(owned(en)).toContain("build 2 keeps running");
+    expect(owned(en)).toContain("Clark is no longer allowed to watch this folder on its own");
+    expect(owned(en)).toContain("choose the folder again with /develop");
+    expect(owned(en)).not.toContain("may no longer");
+    expect(owned(vi)).toContain("hãy chọn lại thư mục bằng /develop");
+    expect(owned(vi)).toContain("chép dự án vào không gian widget của Clark");
+
+    // A network share or the data folder is refused for anyone: choosing again is not offered, copying the project is.
+    for (const [code, where, whereVi] of [
+      ["ROOT_NOT_LOCAL", "network share or device path", "thư mục chia sẻ qua mạng"],
+      ["ROOT_IN_DATA_FOLDER", "Clark's data folder", "thư mục dữ liệu của Clark"],
+    ] as const) {
+      const line = refused(code);
+      expect(line(en), code).toContain(where);
+      expect(line(en), code).toContain("choosing it again is refused too");
+      expect(line(en), code).toContain("Copy the project into Clark's widget workspace");
+      expect(line(en), code).not.toContain("choose the folder again");
+      expect(line(vi), code).toContain(whereVi);
+      expect(line(vi), code).toContain("chọn lại nó cũng bị từ chối");
+      expect(line(vi), code).not.toContain("hãy chọn lại thư mục bằng /develop");
+    }
+
+    // A stop recorded before nodes kept the code, or a code this surface does not know, gets the line that holds for every case.
+    for (const line of [refused(), refused("ROOT_SOMETHING_NEW")]) {
+      expect(line(en)).toContain("it could no longer watch this folder");
+      expect(line(en)).toContain("if that is refused too, copy the project into Clark's widget workspace");
+      expect(line(vi)).toContain("không thể theo dõi thư mục này nữa");
+    }
+    // The code means something only with root-refused.
+    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "capacity", stopCode: "ROOT_NOT_LOCAL" }), en).text).toContain("as many folders as it can");
   });
 
   it("says a problem the host found in the person's language and the package's own words as written", () => {
