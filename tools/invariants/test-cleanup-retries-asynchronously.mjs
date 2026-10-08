@@ -16,23 +16,23 @@
  *
  * How the check reads a file:
  *
- * - Comments and the text of string literals are blanked first, so a call named in a comment or a string is not a call,
- *   and a `(` in a string does not unbalance the call around it. Code inside a template literal's `${...}` is still read.
- * - A call is read whole by balancing parentheses, so an options object that wraps across lines is still seen. An
- *   optional call (`fs.rmSync?.(...)`) and bracket access with a literal key (`fs["rmSync"](...)`) count as calls.
+ * - The file is parsed by the TypeScript parser, as TypeScript, TSX or JavaScript with JSX by its extension, so
+ *   comments, strings, template text, regular expression literals and JSX text are never read as code, and code inside
+ *   a template literal's `${...}` is.
+ * - A call is a call expression, so an options object that wraps across lines is still seen. An optional call
+ *   (`fs.rmSync?.(...)`), a call through parentheses (`(await import("node:fs")).rmSync(...)`) and bracket access with
+ *   a literal key (`fs["rmSync"](...)`) count as calls. The call asks for retries when `maxRetries` is named among its
+ *   arguments.
  * - `rmSync` reached under another name is seen when the name is given in the file: `rmSync as name` in an import,
- *   `{ rmSync: name }` in a destructuring, or `const name = rmSync` (also `fs.rmSync`, `require("node:fs").rmSync` or
- *   `fs["rmSync"]`). Options passed as a variable are not seen.
+ *   `{ rmSync: name }` in a destructuring, or `const name = rmSync` or `name = rmSync` (also `fs.rmSync`,
+ *   `require("node:fs").rmSync`, `fs["rmSync"]` or another such name). Names are matched by spelling, not by scope.
+ *   Options passed as a variable are not seen.
  * - A call that is meant to show the failing form carries `invariant-allow: sync-rm-retries` in a comment on its line or
- *   the line above. The marker in a string literal does not count.
+ *   the line above. The marker in a string literal, a template or JSX text does not count.
  *
- * Known limits, since the check reads text and does not parse:
- *
- * - A regular expression literal is read as code, so one holding a quote can blank what follows on its line; none does
- *   today.
- * - JSX text is read as code. A quote right after a letter or digit (`<p>Don't</p>`) is taken as an apostrophe, never
- *   valid code there, so it hides nothing. A quote in JSX text after a space or a tag (`<p>It is 'odd</p>`,
- *   `<p>"Quoted</p>`) still opens a string, and blanks what follows on its line.
+ * The parser comes from the `typescript` dev dependency. CI runs the invariants before it installs dependencies; there
+ * the check says it was skipped, and `tools/test/test-cleanup-retries.spec.ts` runs it over the repository after the
+ * install.
  *
  * It covers test code: specs and the helpers beside them in `test/` and `e2e/` folders, plus the test tooling CI runs on
  * every OS (`TEST_TOOLING`).
@@ -40,6 +40,15 @@
 import { join } from "node:path";
 
 import { readFileSync } from "./context.mjs";
+
+/** The TypeScript compiler API, or undefined before dependencies are installed. */
+const ts = await import("typescript").then(
+  (module) => module.default,
+  (error) => {
+    if (error?.code === "ERR_MODULE_NOT_FOUND") return undefined;
+    throw error;
+  },
+);
 
 const TEST_ROOTS = ["apps", "packages", "packs", "tools", "examples"];
 const EXTENSION = String.raw`\.(?:[cm]?[jt]s|[jt]sx)$`;
@@ -55,154 +64,191 @@ export function isTestPath(path) {
 }
 
 /**
- * `source` read two ways, each the same length with newlines kept, so every index and line still points at the same
- * place: `code` has comments and string-literal text replaced by spaces, and `comments` keeps only the comments.
- * Template literals are followed into their `${...}` expressions.
+ * `source` parsed as the language its path names. A path is optional: a snippet is read as TSX, which accepts JSX and
+ * every TypeScript form but the `<Type>value` assertion.
  */
-function scan(source) {
-  const out = source.split("");
-  const comments = source.replace(/[^\n]/g, " ").split("");
-  const blank = (index) => {
-    if (out[index] !== "\n") out[index] = " ";
-  };
-  const blankComment = (index) => {
-    comments[index] = source[index];
-    blank(index);
-  };
-  /** What encloses the current position: a template literal, or a `${` expression with its own brace depth. */
-  const stack = [];
-  let index = 0;
-  const inTemplateText = () => stack.length > 0 && stack[stack.length - 1].kind === "template";
-  while (index < source.length) {
-    const character = source[index];
-    const next = source[index + 1];
-    if (inTemplateText()) {
-      if (character === "\\") {
-        blank(index);
-        if (index + 1 < source.length) blank(index + 1);
-        index += 2;
-      } else if (character === "`") {
-        stack.pop();
-        index += 1;
-      } else if (character === "$" && next === "{") {
-        stack.push({ kind: "expression", depth: 0 });
-        index += 2;
-      } else {
-        blank(index);
-        index += 1;
-      }
-      continue;
-    }
-    if (character === "/" && next === "/") {
-      while (index < source.length && source[index] !== "\n") blankComment(index++);
-    } else if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      const stop = end === -1 ? source.length : end + 2;
-      while (index < stop) blankComment(index++);
-    } else if ((character === '"' || character === "'") && /[\w$]/.test(source[index - 1] ?? "")) {
-      // A quote right after a name or a number cannot open a string in code; it is an apostrophe in JSX text.
-      index += 1;
-    } else if (character === '"' || character === "'") {
-      index += 1;
-      while (index < source.length && source[index] !== character && source[index] !== "\n") {
-        if (source[index] === "\\") blank(index++);
-        if (index < source.length) blank(index++);
-      }
-      index += 1;
-    } else if (character === "`") {
-      stack.push({ kind: "template" });
-      index += 1;
-    } else {
-      const top = stack[stack.length - 1];
-      if (top?.kind === "expression") {
-        if (character === "{") top.depth += 1;
-        else if (character === "}") {
-          if (top.depth === 0) stack.pop();
-          else top.depth -= 1;
-        }
-      }
-      index += 1;
-    }
-  }
-  return { code: out.join(""), comments: comments.join("") };
+function parse(source, path = "snippet.tsx") {
+  if (!ts) throw new Error("the typescript package is not installed; run pnpm install");
+  const { ScriptKind } = ts;
+  const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+  const kind = { ".ts": ScriptKind.TS, ".mts": ScriptKind.TS, ".cts": ScriptKind.TS, ".tsx": ScriptKind.TSX, ".jsx": ScriptKind.JSX }[extension];
+  return ts.createSourceFile(
+    path,
+    source,
+    { languageVersion: ts.ScriptTarget.Latest, jsDocParsingMode: ts.JSDocParsingMode.ParseNone },
+    false,
+    kind ?? (/^\.[cm]?js$/.test(extension) ? ScriptKind.JS : ScriptKind.TSX),
+  );
 }
 
-/** `source` with comments and string-literal text replaced by spaces, newlines kept. */
-export function blankCommentsAndStrings(source) {
-  return scan(source).code;
+/** The range of a literal token's own text, its delimiters left out, or undefined for a token that is code. */
+function literalText(token, start, source) {
+  const { SyntaxKind } = ts;
+  switch (token.kind) {
+    case SyntaxKind.StringLiteral:
+    case SyntaxKind.NoSubstitutionTemplateLiteral:
+    case SyntaxKind.TemplateTail:
+      return [start + 1, token.end - 1];
+    case SyntaxKind.TemplateHead:
+    case SyntaxKind.TemplateMiddle:
+      return [start + 1, token.end - 2];
+    case SyntaxKind.RegularExpressionLiteral:
+      return [start + 1, source.lastIndexOf("/", token.end - 1)];
+    default:
+      return undefined;
+  }
 }
 
 /**
- * `code` with each bracket access by a literal key, `["rmSync"]`, written as `.rmSync` padded to the same length, so the
- * rest of the check reads it as member access. `code` has the key blanked, so `source` names it.
+ * `source` read two ways, each the same length with newlines kept, so every index and line still points at the same
+ * place: `code` has comments and the text of literals (strings, templates, regular expressions and JSX text) replaced by
+ * spaces, and `comments` keeps only the comments.
  */
-function bracketAccessAsMember(code, source) {
-  const out = code.split("");
-  for (const match of source.matchAll(/\[(\s*)(["'`])rmSync\2\s*\]/g)) {
-    const quote = match.index + 1 + match[1].length;
-    // Only where the brackets and quotes are code: not inside a comment or a string.
-    if (code[match.index] !== "[" || code[quote] !== match[2] || code[quote + 7] !== match[2]) continue;
-    const replacement = ".rmSync".padEnd(match[0].length, " ");
-    for (let offset = 0; offset < match[0].length; offset += 1) {
-      if (out[match.index + offset] !== "\n") out[match.index + offset] = replacement[offset];
+function scan(file) {
+  const source = file.text;
+  const code = source.split("");
+  const comments = source.replace(/[^\n]/g, " ").split("");
+  const blank = (from, to) => {
+    for (let index = from; index < to; index += 1) if (code[index] !== "\n") code[index] = " ";
+  };
+  const visit = (node) => {
+    const children = node.getChildren(file);
+    if (children.length > 0) {
+      for (const child of children) visit(child);
+      return;
     }
-  }
-  return out.join("");
+    if (node.kind === ts.SyntaxKind.JsxText) {
+      // JSX text has no trivia: all of it is text, even where it reads like a comment.
+      blank(node.pos, node.end);
+      return;
+    }
+    // A token's leading trivia is whitespace and comments, so what is not whitespace there is a comment.
+    const start = node.getStart(file);
+    for (let index = node.pos; index < start; index += 1) {
+      const character = source[index];
+      if (character !== " " && character !== "\n" && character !== "\r" && !/\s/.test(character)) {
+        comments[index] = character;
+        code[index] = " ";
+      }
+    }
+    const literal = literalText(node, start, source);
+    if (literal) blank(...literal);
+  };
+  visit(file);
+  return { code: code.join(""), comments: comments.join("") };
 }
 
-/** The text of the call whose `(` is at `open`, by balancing parentheses. */
-function callText(code, open) {
-  let depth = 0;
-  for (let index = open; index < code.length; index += 1) {
-    const character = code[index];
-    if (character === "(") depth += 1;
-    else if (character === ")") {
-      depth -= 1;
-      if (depth === 0) return code.slice(open, index + 1);
-    }
-  }
-  return code.slice(open);
+/**
+ * `source` with comments and the text of literals replaced by spaces, newlines kept. `path` names the language, as in
+ * the check; without it the source is read as TSX.
+ */
+export function blankCommentsAndStrings(source, path) {
+  return scan(parse(source, path)).code;
 }
 
-/** The names `rmSync` goes by in `code`: its own, and any alias the file gives it. */
-function rmSyncNames(code) {
+/** `node` without the parentheses, non-null assertions and type assertions around it. */
+function unwrap(node) {
+  let inner = node;
+  while (
+    ts.isParenthesizedExpression(inner) ||
+    ts.isNonNullExpression(inner) ||
+    ts.isAsExpression(inner) ||
+    ts.isSatisfiesExpression(inner) ||
+    ts.isTypeAssertionExpression(inner)
+  ) {
+    inner = inner.expression;
+  }
+  return inner;
+}
+
+/** The node that names `rmSync` when `node` reads it (`rmSync` or a name it goes by, `x.rmSync`, `x["rmSync"]`). */
+function rmSyncReference(node, names) {
+  const inner = unwrap(node);
+  if (ts.isIdentifier(inner)) return names.has(inner.text) ? inner : undefined;
+  if (ts.isPropertyAccessExpression(inner)) return inner.name.text === "rmSync" ? inner.name : undefined;
+  if (ts.isElementAccessExpression(inner) && ts.isStringLiteralLike(inner.argumentExpression)) {
+    return inner.argumentExpression.text === "rmSync" ? inner.argumentExpression : undefined;
+  }
+  return undefined;
+}
+
+/** The text of a property name, or undefined for a computed one. */
+const propertyText = (name) => (name && !ts.isComputedPropertyName(name) ? name.text : undefined);
+
+/** The names `rmSync` goes by in `file`: its own, and any the file gives it, in the order the file gives them. */
+function rmSyncNames(file) {
   const names = new Set(["rmSync"]);
-  const assigned = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$]+\s*(?:\([^()]*\))?\s*\.\s*)*rmSync\b(?!\s*(?:\?\.\s*)?\()/g;
-  for (const pattern of [/\brmSync\s+as\s+([A-Za-z_$][\w$]*)/g, /\brmSync\s*:\s*([A-Za-z_$][\w$]*)/g, assigned]) {
-    for (const match of code.matchAll(pattern)) names.add(match[1]);
-  }
-  return [...names];
+  const visit = (node) => {
+    if (ts.isImportSpecifier(node) && propertyText(node.propertyName ?? node.name) === "rmSync") {
+      names.add(node.name.text);
+    } else if (ts.isObjectBindingPattern(node)) {
+      for (const element of node.elements) {
+        if (ts.isIdentifier(element.name) && propertyText(element.propertyName ?? element.name) === "rmSync") names.add(element.name.text);
+      }
+    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      if (rmSyncReference(node.initializer, names)) names.add(node.name.text);
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      rmSyncReference(node.right, names)
+    ) {
+      names.add(node.left.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return names;
 }
 
-const escapeName = (name) => name.replace(/\$/g, "\\$");
+/** Whether `node` names `maxRetries`: as a name, a property or a quoted property key. */
+function namesMaxRetries(node) {
+  if (ts.isIdentifier(node)) return node.text === "maxRetries";
+  if (ts.isPropertyAssignment(node) && propertyText(node.name) === "maxRetries") return true;
+  return ts.forEachChild(node, namesMaxRetries) ?? false;
+}
 
-/** The 1-based line of each `rmSync(...)` call in `source` that passes `maxRetries`. */
-export function retryingRmSyncLines(source) {
-  const scanned = scan(source);
-  const code = bracketAccessAsMember(scanned.code, source);
-  const commentLines = scanned.comments.split("\n");
-  const names = rmSyncNames(code).map(escapeName).join("|");
+/**
+ * The 1-based line of each `rmSync(...)` call in `source` that passes `maxRetries`. `path` names the language, as in
+ * the check; without it the source is read as TSX.
+ */
+export function retryingRmSyncLines(source, path) {
+  // Both names are spelled out in any call the check finds, so a file without them needs no parse.
+  if (!source.includes("rmSync") || !source.includes("maxRetries")) return [];
+  const file = parse(source, path);
+  const names = rmSyncNames(file);
   const lines = [];
-  for (const match of code.matchAll(new RegExp(`(?<![\\w$])(?:${names})\\s*(?:\\?\\.\\s*)?\\(`, "g"))) {
-    // A declaration of the name (`function rmSync(`) is not a call; neither is the import or alias itself.
-    if (/\bfunction\s+$/.test(code.slice(Math.max(0, match.index - 12), match.index))) continue;
-    const open = match.index + match[0].length - 1;
-    if (!/\bmaxRetries\b/.test(callText(code, open))) continue;
-    const line = code.slice(0, match.index).split("\n").length;
-    if (commentLines[line - 1]?.includes(ALLOW) || commentLines[line - 2]?.includes(ALLOW)) continue;
-    lines.push(line);
-  }
-  return lines;
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && node.arguments.some(namesMaxRetries)) {
+      const reference = rmSyncReference(node.expression, names);
+      if (reference) lines.push(file.getLineAndCharacterOfPosition(reference.getStart(file)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (lines.length === 0) return lines;
+  const commentLines = source.includes(ALLOW) ? scan(file).comments.split("\n") : [];
+  return lines
+    .filter((line) => !commentLines[line - 1]?.includes(ALLOW) && !commentLines[line - 2]?.includes(ALLOW))
+    .sort((a, b) => a - b);
+}
+
+/** The repo-relative paths of the files the check reads. */
+export function checkedFiles({ repoRoot, walk, relative }) {
+  return TEST_ROOTS.flatMap((root) => walk(join(repoRoot, root), (path) => SOURCE.test(path)))
+    .map((path) => relative(path))
+    .filter(isTestPath);
 }
 
 export default function run(ctx) {
-  const { repoRoot, check, walk, relative } = ctx;
-  const c = check("test-cleanup-retries-asynchronously");
-  const files = TEST_ROOTS.flatMap((root) => walk(join(repoRoot, root), (path) => SOURCE.test(path)))
-    .map((path) => relative(path))
-    .filter(isTestPath);
+  const c = ctx.check("test-cleanup-retries-asynchronously");
+  if (!ts) {
+    c.notes.push("skipped: the typescript package is not installed yet; the unit tests run this check after pnpm install");
+    return;
+  }
+  const files = checkedFiles(ctx);
   for (const path of files) {
-    for (const line of retryingRmSyncLines(readFileSync(join(repoRoot, path), "utf8"))) {
+    for (const line of retryingRmSyncLines(readFileSync(join(ctx.repoRoot, path), "utf8"), path)) {
       c.failures.push(
         `${path}:${String(line)} calls rmSync with maxRetries, which on Windows fails at once or blocks the event loop while it retries; await removeTestDirectory() from tools/test-cleanup.ts`,
       );
@@ -210,3 +256,4 @@ export default function run(ctx) {
   }
   c.notes.push(`${files.length} test file(s) checked for synchronous removal that asks for retries`);
 }
+

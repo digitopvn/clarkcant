@@ -1,12 +1,19 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { repoRelativePath, walk } from "../invariants/context.mjs";
-import runCheck, { isTestPath, retryingRmSyncLines } from "../invariants/test-cleanup-retries-asynchronously.mjs";
+import runCheck, {
+  blankCommentsAndStrings,
+  checkedFiles,
+  isTestPath,
+  retryingRmSyncLines,
+} from "../invariants/test-cleanup-retries-asynchronously.mjs";
 import { removeTestDirectory } from "../test-cleanup.ts";
 
 // The sources below are strings, which the check blanks before it reads a file, so this file does not read as the calls
@@ -92,8 +99,9 @@ describe("the check on retrying synchronous removal in test code", () => {
       "const erase = require('fs').rmSync",
       "wipe(dir, { maxRetries: 3 });",
       "erase(dir, { maxRetries: 3 });",
+      '(await import("node:fs")).rmSync(dir, { maxRetries: 3 });',
     ].join("\n");
-    expect(retryingRmSyncLines(source)).toEqual([3, 4]);
+    expect(retryingRmSyncLines(source)).toEqual([3, 4, 5]);
   });
 
   it("finds an optional call", () => {
@@ -134,6 +142,48 @@ describe("the check on retrying synchronous removal in test code", () => {
     expect(retryingRmSyncLines(source)).toEqual([1, 2]);
   });
 
+  it("keeps reading code after a regular expression that holds a quote or a backtick", () => {
+    const source = [
+      "const said = /say: `Đã /u;",
+      "const quoted = /it's \"(/g;",
+      "rmSync(dir, { maxRetries: 3 });",
+      "const text = `/not a regex: '`; rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([3, 4]);
+    const blanked = ["say: `Đã ", "it's \"(", "/not a regex: '"].reduce((text, body) => text.replace(body, " ".repeat(body.length)), source);
+    expect(blankCommentsAndStrings(source)).toBe(blanked);
+  });
+
+  it("reads a string right after a keyword as a string", () => {
+    const source = [
+      "function open() { return'(' } rmSync(dir, { maxRetries: 3 });",
+      "switch (key) { case'(': break; } rmSync(dir, { maxRetries: 3 });",
+      "if (typeof'(' === kind) {} rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2, 3]);
+  });
+
+  it("finds bracket access whose key sits on the next line", () => {
+    const source = ["fs[", '  "rmSync"](dir, { maxRetries: 3 });', "fs?.[", "  `rmSync`", "](dir, { maxRetries: 3 });"].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([2, 4]);
+  });
+
+  it("does not take the marker written as JSX text for a comment", () => {
+    const source = [
+      "const view = <p>// invariant-allow: sync-rm-retries</p>;",
+      "rmSync(dir, { maxRetries: 3 });",
+      "const note = <p>{/* invariant-allow: sync-rm-retries */}</p>;",
+      "rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([2]);
+  });
+
+  it("reads a file in the language its extension names", () => {
+    const source = "const size = <number>value; rmSync(dir, { maxRetries: 3 });";
+    expect(retryingRmSyncLines(source, "apps/web/test/helper.ts")).toEqual([1]);
+    expect(blankCommentsAndStrings("const s = <p>it's</p>;", "apps/web/test/view.jsx")).toBe("const s = <p>    </p>;");
+  });
+
   it("reads every file it counts as test code, a .jsx spec included", async () => {
     const root = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-check-"));
     try {
@@ -157,6 +207,82 @@ describe("the check on retrying synchronous removal in test code", () => {
     expect(isTestPath("tools/smoke-widget-tooling.mjs")).toBe(true);
     expect(isTestPath("apps/runtime/src/worker-process.ts")).toBe(false);
     expect(isTestPath("tools/test-cleanup.ts")).toBe(false);
+  });
+});
+
+describe("the check over this repository's test code", () => {
+  const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+  const ctx = { repoRoot, walk, relative: (target: string) => repoRelativePath(repoRoot, target) };
+
+  /**
+   * What the parser says is not code in `source`, as one flag per character: comments, found from every node's and
+   * node list's edges, and the text of literals, delimiters left out. Read through the AST independently of the check's
+   * own walk over tokens.
+   */
+  function parserNonCode(source: string, path: string): boolean[] {
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+    const flags: boolean[] = Array.from({ length: source.length }, () => false);
+    const mark = (from: number, to: number, value: boolean) => {
+      for (let index = from; index < to; index += 1) flags[index] = value;
+    };
+    const comments: ts.CommentRange[] = [];
+    const jsxText: [number, number][] = [];
+    const edges = (...points: number[]) => {
+      for (const point of points) {
+        comments.push(...(ts.getLeadingCommentRanges(source, point) ?? []), ...(ts.getTrailingCommentRanges(source, point) ?? []));
+      }
+    };
+    const visit = (node: ts.Node) => {
+      const start = node.getStart(file);
+      if (ts.isJsxText(node)) jsxText.push([node.pos, node.end]);
+      else edges(node.pos, node.end);
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateTail(node)) mark(start + 1, node.end - 1, true);
+      else if (ts.isTemplateHead(node) || ts.isTemplateMiddle(node)) mark(start + 1, node.end - 2, true);
+      else if (ts.isRegularExpressionLiteral(node)) mark(start + 1, source.lastIndexOf("/", node.end - 1), true);
+      ts.forEachChild(node, visit, (nodes) => {
+        edges(nodes.pos, nodes.end);
+        nodes.forEach(visit);
+      });
+    };
+    visit(file);
+    // A shebang is not code either; the comment ranges start after it.
+    if (source.startsWith("#!")) comments.push({ pos: 0, end: source.search(/\r?\n|$/), kind: ts.SyntaxKind.SingleLineCommentTrivia });
+    for (const range of comments) mark(range.pos, range.end, true);
+    // What reads like a comment inside JSX text is text, and all of JSX text is literal text.
+    for (const [from, to] of jsxText) mark(from, to, true);
+    return flags;
+  }
+
+  it("agrees with the TypeScript parser on what is code, in every file it reads", () => {
+    const disagreements: string[] = [];
+    const files = checkedFiles(ctx);
+    for (const path of files) {
+      const source = readFileSync(join(repoRoot, path), "utf8");
+      const code = blankCommentsAndStrings(source, path);
+      const nonCode = parserNonCode(source, path);
+      expect(code.length).toBe(source.length);
+      for (let index = 0; index < source.length; index += 1) {
+        const character = source.charAt(index);
+        if (character === " " || character === "\n" || character === "\r" || character === "\t" || (character > "~" && /\s/.test(character))) continue;
+        if ((code[index] === " ") !== nonCode[index]) {
+          const line = source.slice(0, index).split("\n").length;
+          const text = source.split("\n")[line - 1] ?? "";
+          disagreements.push(`${path}:${String(line)} ${nonCode[index] ? "reads as code" : "blanks code"}: ${text.trim()}`);
+          break;
+        }
+      }
+    }
+    expect(files.length).toBeGreaterThan(500);
+    expect(disagreements).toEqual([]);
+    // Parsing every test file twice takes seconds, more on a slow runner.
+  }, 60_000);
+
+  // CI runs the invariants before it installs the parser, so this is where CI holds the repository to the check.
+  it("finds no retrying synchronous removal in the repository's test code", () => {
+    const result = { failures: [] as string[], notes: [] as string[] };
+    runCheck({ ...ctx, check: () => result });
+    expect(result.failures).toEqual([]);
+    expect(result.notes.join("\n")).toMatch(/test file\(s\) checked/);
   });
 });
 
