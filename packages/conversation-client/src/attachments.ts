@@ -38,7 +38,8 @@ export type AttachmentAction =
   | { type: "remove"; id: string }
   | { type: "stored"; id: string; attachmentId: string }
   | { type: "failed"; id: string; reason: string }
-  | { type: "sent" };
+  | { type: "sent" }
+  | { type: "cleared" };
 
 /**
  * The chip list, as a reducer.
@@ -68,6 +69,9 @@ export function attachmentReducer(
       // Ready chips are gone because the message now owns them; a failed one stays, because nothing was
       // sent for it and its explanation is the only place the person can read what went wrong.
       return state.filter((chip) => chip.state === "failed");
+    case "cleared":
+      // The conversation they were attached for is gone from the screen, so none of them belongs to the next one.
+      return [];
     default: {
       // Unreachable while the union is exhaustive. Present because a new action added without a case here
       // must fail loudly rather than leave the chip list in a state nobody decided.
@@ -80,6 +84,31 @@ export function attachmentReducer(
 /** The ids a message should carry: the stored ones, in the order the person added them. */
 export function readyAttachmentIds(chips: readonly AttachmentChip[]): string[] {
   return chips.flatMap((chip) => (chip.state === "ready" && chip.attachmentId !== undefined ? [chip.attachmentId] : []));
+}
+
+/**
+ * The commands after which the files stay behind: one that leaves this conversation for another, and Stop.
+ *
+ * Kept for the next message, the files of a "new conversation" would ride into a conversation they were never attached
+ * for, and a Stop is the person ending what is happening rather than starting the next message.
+ */
+const COMMANDS_THAT_DROP_FILES: readonly string[] = ["nav.home", "conversation.delete", "turn.stop"];
+
+/**
+ * What a send the node accepted does to the file chips.
+ *
+ * `sent`: the message was stored and carries them, so they are its now. `kept`: the host answered a command, which
+ * carries no files (`resolution: "app-intent"`), so they stay in the composer for the next message instead of
+ * vanishing without a word. A command that leaves the conversation or stops it is `sent` too: nothing carries them,
+ * and there is no next message here for them to wait for.
+ */
+export function chipsAfterAnswer(answer: {
+  resolution: string;
+  appIntent?: { kind: string; intent?: { kind: string } } | undefined;
+}): "sent" | "kept" {
+  if (answer.resolution !== "app-intent") return "sent";
+  const intentKind = answer.appIntent?.intent?.kind;
+  return intentKind !== undefined && COMMANDS_THAT_DROP_FILES.includes(intentKind) ? "sent" : "kept";
 }
 
 /**

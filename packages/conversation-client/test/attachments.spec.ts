@@ -4,6 +4,7 @@ import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
 
 import {
   attachmentReducer,
+  chipsAfterAnswer,
   clientAccepts,
   formatFileSize,
   nameForPastedFile,
@@ -119,6 +120,40 @@ describe("the chip list", () => {
     state = attachmentReducer(state, { type: "stored", id: "chip_1", attachmentId: "att_1" });
     state = attachmentReducer(state, { type: "failed", id: "chip_2", reason: "bị từ chối" });
     expect(attachmentReducer(state, { type: "sent" }).map((entry) => entry.id)).toEqual(["chip_2"]);
+  });
+
+  it("leaving the conversation clears every chip, failed ones included", () => {
+    let state = attachmentReducer([], { type: "add", chips: [chip(), chip({ id: "chip_2", filename: "b.txt" })] });
+    state = attachmentReducer(state, { type: "failed", id: "chip_2", reason: "bị từ chối" });
+    expect(attachmentReducer(state, { type: "cleared" })).toEqual([]);
+    // An upload that lands after the conversation was left does not bring its chip back.
+    expect(attachmentReducer([], { type: "stored", id: "chip_1", attachmentId: "att_1" })).toEqual([]);
+  });
+});
+
+describe("the chips after the node answered", () => {
+  const intent = (kind: string) => ({ kind: "intent", intent: { kind } });
+
+  it("a stored message carries its files, so they leave the composer", () => {
+    expect(chipsAfterAnswer({ resolution: "model" })).toBe("sent");
+    // `/background` with files, and a command-like sentence that names no command, are both stored as a turn.
+    expect(chipsAfterAnswer({ resolution: "model", appIntent: { kind: "none" } })).toBe("sent");
+  });
+
+  it("a command the host answered carries no files, so they are kept for the next message", () => {
+    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("settings.open") })).toBe("kept");
+    // `/thinking high` is answered by the host without a decision for the page to run.
+    expect(chipsAfterAnswer({ resolution: "app-intent" })).toBe("kept");
+    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: { kind: "refused" } })).toBe("kept");
+    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: { kind: "needs-confirmation", intent: { kind: "app.quit" } } })).toBe(
+      "kept",
+    );
+  });
+
+  it("a command that leaves the conversation or stops it does not keep them", () => {
+    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("nav.home") })).toBe("sent");
+    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("conversation.delete") })).toBe("sent");
+    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("turn.stop") })).toBe("sent");
   });
 });
 
