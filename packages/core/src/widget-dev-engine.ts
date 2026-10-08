@@ -59,6 +59,14 @@ export const DEV_ENGINE_ROOT_UNREADABLE_MS = 30_000;
  */
 export const DEV_ENGINE_WATCH_CATCH_UP_MS = 500;
 /**
+ * How long after a build is reported a change build is reported only when it is news. A platform watcher can report part
+ * of a save after the build that already read all of it (FSEvents on macOS delivers events in batches, late under load),
+ * and the build that late report causes finds the files exactly as they were built. Whether a report is late can only be
+ * told from the files, not from timestamps a network share or a coarse clock would make wrong, so the build still runs and
+ * says nothing when it finds nothing new; a save made meanwhile changes the files, which is news.
+ */
+const DEV_ENGINE_LATE_EVENT_MS = 1_000;
+/**
  * How many looks in a row may find a watched folder under a new file id (`replaced`), with no look between them finding
  * the same folder again, before watching stops. A build that makes its output folder again re-arms once and the next
  * look finds the new folder unchanged, however often that happens; a filesystem that gives the folder a new id on every
@@ -129,7 +137,11 @@ export interface DevEngineOptions {
    * naming a second generation 1.
    */
   generationsBefore?: number;
-  /** Told about every build the watcher or `rebuild` ran, including ones that produced nothing new. */
+  /**
+   * Told about every build `rebuild` ran, and every build the watcher ran, including ones that produced nothing new, except
+   * a watcher build that says nothing new: the catch-up build after watching starts, or a change build in the moments
+   * after another build was reported (a change the watcher reported late).
+   */
   onBuild?: (event: DevEngineEvent) => void;
   /**
    * Told when the watcher itself fails (the folder was removed, the platform cannot watch it), or when the folder could
@@ -793,7 +805,8 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    * The moments after the folder is watched anew. A new watcher reports more than the saves made after it: FSEvents on
    * macOS can deliver the writes that made the folder, from just before the stream started, and Windows reports folders the
    * first build lists. Until `until`, once the build the re-arm asked for has been reported, a change build is reported
-   * only when it is news, as the catch-up build is; a save made meanwhile changes the files, which is news.
+   * only when it is news, as the catch-up build is; a save made meanwhile changes the files, which is news. Every build
+   * reported opens the same window for `DEV_ENGINE_LATE_EVENT_MS`, for a change the watcher reports after it was built.
    */
   let settling: { until: number; reported: boolean } | undefined;
   /** Whether a change build starting now is past the first report after a re-arm and inside its settling window. */
@@ -806,7 +819,9 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     return settling.reported;
   };
   const reportBuild = (event: DevEngineEvent): void => {
-    if (settling !== undefined) settling.reported = true;
+    // Whatever was reported, a change the watcher reports late is about files this build read (`DEV_ENGINE_LATE_EVENT_MS`).
+    const until = performance.now() + DEV_ENGINE_LATE_EVENT_MS;
+    settling = { until: Math.max(settling?.until ?? 0, until), reported: true };
     options.onBuild?.(event);
   };
   /** Whether a build says anything the last one did not: new files, a new failure, or the end of a failure. */

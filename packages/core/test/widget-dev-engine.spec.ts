@@ -29,6 +29,9 @@ const statNewId = vi.hoisted(() => ({ path: undefined as string | undefined, fla
 /** Runs once just before this file is read: a build reading its manifest, at the moment something else changes the folder. */
 const beforeRead = vi.hoisted(() => ({ path: undefined as string | undefined, run: undefined as (() => void) | undefined }));
 
+/** The newest listener given to `watch` for each folder, to report a change as the platform watcher would, when a test says. */
+const watchListeners = vi.hoisted(() => new Map<string, fs.WatchListener<string>>());
+
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
   const readFileSync = ((path: fs.PathOrFileDescriptor, options?: Parameters<typeof actual.readFileSync>[1]) => {
@@ -51,7 +54,12 @@ vi.mock("node:fs", async (importOriginal) => {
     }
     return stat;
   }) as typeof actual.statSync;
-  return { ...actual, statSync, readFileSync, default: { ...actual, statSync, readFileSync } };
+  const watch = ((path: fs.PathLike, options: fs.WatchOptionsWithStringEncoding, listener: fs.WatchListener<string>) => {
+    const watcher = actual.watch(path, options, listener);
+    watchListeners.set(resolve(String(path)), listener);
+    return watcher;
+  }) as typeof actual.watch;
+  return { ...actual, statSync, readFileSync, watch, default: { ...actual, statSync, readFileSync, watch } };
 });
 
 /**
@@ -989,6 +997,39 @@ describe("the dev engine", () => {
 
     // A save right after still builds.
     writeFileSync(join(root, "widgets", "main", "parts", "deeper", "part.js"), "export const part = 2;");
+    const saved = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 3 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(3);
+  });
+
+  it("reports nothing for a change the platform watcher reports late, after a build already built it, and still builds a save after it", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    const built: string[] = [];
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`) });
+    engines.push(engine);
+    await engine.ready;
+    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    built.length = 0;
+
+    const part = join(root, "widgets", "main", "parts", "deeper", "part.js");
+    mkdirSync(join(root, "widgets", "main", "parts", "deeper"), { recursive: true });
+    writeFileSync(part, "export const part = 1;");
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+
+    // FSEvents on macOS can deliver part of a save after the build that read all of it: the same change, reported late.
+    const listener = watchListeners.get(engine.root);
+    expect(listener).toBeDefined();
+    listener?.("rename", join("widgets", "main", "parts", "deeper", "part.js"));
+    // Past the debounce, so the late change has started its build; a rebuild then runs after it, in order.
+    await new Promise((done) => setTimeout(done, 60));
+    expect((await engine.rebuild()).kind).toBe("unchanged");
+    expect(built).toEqual(["change:generation", "rebuild:unchanged"]);
+
+    // A save right after is news, and builds.
+    writeFileSync(part, "export const part = 2;");
     const saved = Date.now() + 5_000;
     while (engine.latest()?.generation.generation !== 3 && Date.now() < saved) await new Promise((done) => setTimeout(done, 25));
     expect(engine.latest()?.generation.generation).toBe(3);
