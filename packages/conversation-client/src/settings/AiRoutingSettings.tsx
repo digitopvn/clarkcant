@@ -6,6 +6,7 @@ import { PERSONAL_INSTRUCTIONS_MAX_CHARS, THINKING_LEVELS, type ModelPool, type 
 import type { MessageKey } from "../i18n/messages.ts";
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
+import { ProviderSignInSection } from "./controls/provider-sign-in-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
 import { modelSwitchShortcut } from "../use-model-alias.ts";
@@ -76,18 +77,24 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
 
   useEffect(() => {
     let cancelled = false;
-    void client
-      .model()
-      .then((answer) => {
-        if (!cancelled) setCatalogue(answer.catalogue);
-      })
-      .catch(() => {
-        // An empty list rather than an error: the question this section answers is what can be chosen, and a
-        // failure to read the list is not something the person in front of the panel can act on.
-        if (!cancelled) setCatalogue([]);
-      });
+    const read = (): void => {
+      void client
+        .model()
+        .then((answer) => {
+          if (!cancelled) setCatalogue(answer.catalogue);
+        })
+        .catch(() => {
+          // An empty list rather than an error: the question this section answers is what can be chosen, and a
+          // failure to read the list is not something the person in front of the panel can act on.
+          if (!cancelled) setCatalogue([]);
+        });
+    };
+    read();
+    // Signing in to or out of a provider changes what can be chosen, so the catalogue is read again then.
+    const stop = client.onModelChange(read);
     return () => {
       cancelled = true;
+      stop();
     };
   }, [client]);
 
@@ -207,6 +214,8 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
           </p>
         )}
       </section>
+
+      <ProviderSignInSection client={client} />
 
       <CredentialsSection client={client} entries={CREDENTIAL_ENTRIES} />
 

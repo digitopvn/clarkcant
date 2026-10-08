@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, ProviderSignInView, WidgetDevFolderForgetResult, WidgetDevSessionView } from "@clarkcant/contracts";
+import type { CommandCardAction, FeedbackPublishIntent, FeedbackRequestInput, WidgetDevFolderForgetResult, WidgetDevSessionView } from "@clarkcant/contracts";
 
 import { type GatewayClient, GatewayError, type Timeline, type WidgetDevSessionRead } from "./api.ts";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { nodeViewRefusalText } from "./node-view-refusal.ts";
+import { useProviderSignIns } from "./use-provider-sign-ins.ts";
 import type {
   ArtifactOpenState,
   BlockActions,
@@ -148,9 +149,6 @@ function sessionOutcome(view: WidgetDevSessionView, t: (key: MessageKey) => stri
  * with one handler each. `blocks.tsx` renders the transcript; this hook is what the buttons in it
  * actually do.
  */
-/** Often enough that a finished browser sign-in shows within a moment, rarely enough to stay quiet. */
-const SIGN_IN_POLL_MS = 1500;
-
 export function useBlockActions({
   client,
   conversationId,
@@ -493,43 +491,7 @@ export function useBlockActions({
    * browser page finishing, a code arriving — so the card asks rather than guesses.
    */
   const [commandAction, setCommandAction] = useState<Record<string, CommandActionState>>({});
-  const [signIns, setSignIns] = useState<Record<string, ProviderSignInView>>({});
-  const signInTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  useEffect(() => {
-    const timers = signInTimers.current;
-    return () => {
-      for (const timer of timers.values()) clearTimeout(timer);
-      timers.clear();
-    };
-  }, []);
-
-  const followSignIn = useCallback(
-    (key: string, view: ProviderSignInView) => {
-      setSignIns((current) => ({ ...current, [key]: view }));
-      const previous = signInTimers.current.get(key);
-      if (previous !== undefined) clearTimeout(previous);
-      signInTimers.current.delete(key);
-      if (view.state !== "running" && view.state !== "waiting") {
-        // A provider that is now signed in changes what the model picker can offer.
-        if (view.state === "done") client.notifyModelChange();
-        return;
-      }
-      signInTimers.current.set(
-        key,
-        setTimeout(() => {
-          void client.providerSignIn(view.signInId).then(
-            (next) => followSignIn(key, next),
-            (error: unknown) =>
-              setSignIns((current) => ({
-                ...current,
-                [key]: { ...view, state: "failed", prompt: undefined, error: error instanceof Error ? error.message : String(error) },
-              })),
-          );
-        }, SIGN_IN_POLL_MS),
-      );
-    },
-    [client],
-  );
+  const { signIns, start: startSignIn, answer: answerSignIn, cancel: cancelSignIn, signOut: signOutProvider } = useProviderSignIns(client, setError);
 
   /** Rows of a `/develop` card asking for a folder's path in words, and why (`FolderEntryReason`). */
   const [folderEntries, setFolderEntries] = useState<Record<string, FolderEntryReason>>({});
@@ -580,19 +542,17 @@ export function useBlockActions({
           return;
         case "provider-sign-in":
           settle({ status: "pending" });
-          void client.startProviderSignIn(action.providerId, action.method).then((view) => {
+          void startSignIn(`${cardId}/${rowId}`, action.providerId, action.method).then(() => {
             setCommandAction((current) => {
               const { [key]: _started, ...rest } = current;
               return rest;
             });
-            followSignIn(`${cardId}/${rowId}`, view);
           }, fail);
           return;
         case "provider-sign-out":
           settle({ status: "pending" });
-          void client.signOutProvider(action.providerId).then(() => {
+          void signOutProvider(action.providerId).then(() => {
             settle({ status: "done", message: t("commandCard.signOut.done") });
-            client.notifyModelChange();
           }, fail);
           return;
         case "develop-folder": {
@@ -633,27 +593,7 @@ export function useBlockActions({
           return;
       }
     },
-    [client, developFolder, followSignIn, newConversation, openConversation, t],
-  );
-
-  const answerSignIn = useCallback(
-    ({ key, signInId, value }: { key: string; signInId: string; value: string }) => {
-      void client.answerProviderSignIn(signInId, value).then(
-        (view) => followSignIn(key, view),
-        (error: unknown) => setError(error instanceof Error ? error.message : String(error)),
-      );
-    },
-    [client, followSignIn, setError],
-  );
-
-  const cancelSignIn = useCallback(
-    ({ key, signInId }: { key: string; signInId: string }) => {
-      void client.cancelProviderSignIn(signInId).then(
-        (view) => followSignIn(key, view),
-        (error: unknown) => setError(error instanceof Error ? error.message : String(error)),
-      );
-    },
-    [client, followSignIn, setError],
+    [client, developFolder, newConversation, openConversation, signOutProvider, startSignIn, t],
   );
 
   /**
