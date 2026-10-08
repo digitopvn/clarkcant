@@ -55,10 +55,10 @@ import {
   DETACHED_LEASE,
   detachedBootstrap,
   detachedWindowOptions,
-  holdDetachedLease,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
   reviewDetachedAppearance,
+  superviseDetachedWindow,
 } from "./detached-window.mjs";
 import { createNodeCaller } from "./node-call.mjs";
 import { COMPACT_MIN_SIZE } from "./window-mode.mjs";
@@ -418,7 +418,7 @@ async function closeDetachedWindow() {
   const open = detached;
   if (open === undefined) return;
   open.window.close();
-  await Promise.race([open.released, new Promise((resolve) => setTimeout(resolve, 2_000))]);
+  await Promise.race([open.lease.released, new Promise((resolve) => setTimeout(resolve, 2_000))]);
 }
 
 function registerHandlers() {
@@ -772,7 +772,6 @@ function registerHandlers() {
 `);
     });
 
-    let markReleased;
     const opened = {
       window,
       url,
@@ -781,10 +780,6 @@ function registerHandlers() {
       instanceId,
       ownerToken: randomUUID(),
       lease: undefined,
-      // Settled once the lease is given back, so quitting can wait for it rather than cutting the release off.
-      released: new Promise((resolve) => {
-        markReleased = resolve;
-      }),
     };
     detached = opened;
     /*
@@ -792,45 +787,36 @@ function registerHandlers() {
      * conversation's own numbers. A refresh refused because another surface holds the instance now means this window
      * shows something it no longer owns, so it closes and the conversation takes the widget back — and is told, by
      * its own claim, where the widget is shown instead.
+     *
+     * Closing the window is a reattach whether or not anybody clicked anything. An instance cannot be left ownerless
+     * by a window that simply disappeared, so the lease is released and the shell is told to take the instance back.
+     * The close path and the explicit attach path are the same path. The shell is told once the release has settled,
+     * or once its bound has passed: told earlier, its claim would meet this window's lease still in place; never told,
+     * the widget would stay read-only with no window open.
      */
-    opened.lease = holdDetachedLease({
+    opened.lease = superviseDetachedWindow({
+      window,
+      isCurrent: () => detached === opened,
       claim: () =>
         callNode(liveOwnerPath(opened), {
           method: "POST",
           body: { ownerToken: opened.ownerToken, surface: "detached", leaseMs: DETACHED_LEASE.leaseMs },
         }),
       release: () => callNode(liveOwnerPath(opened), { method: "DELETE", body: { ownerToken: opened.ownerToken } }),
-      isOpen: () => detached === opened && !window.isDestroyed(),
       refreshMs: detachedLeaseRefreshMs,
-      onLost: () => {
-        if (!window.isDestroyed()) window.close();
+      onClosed: () => {
+        if (detached === opened) detached = undefined;
       },
-    });
-
-    /*
-     * Closing the window is a reattach whether or not anybody clicked anything.
-     *
-     * An instance cannot be left ownerless by a window that simply disappeared, so the lease is released here and
-     * the shell is told to take the instance back. The close path and the explicit attach path are the same path.
-     * The shell is told only once the release has settled: told earlier, its claim would meet this window's lease
-     * still in place and show the widget read-only.
-     */
-    window.on("closed", () => {
-      if (detached === opened) detached = undefined;
-      void opened.lease.end().finally(() => {
-        markReleased();
+      onEnded: () => {
         // The conversation window may be the reason this one closed, and a destroyed window has no page to tell.
         liveShellWindow()?.webContents.send("desktop:widgetReattached", { instanceRef: opened.instanceId });
-      });
+      },
     });
     window.once("ready-to-show", () => window.show());
     await window.loadURL(url);
 
     const claimed = await opened.lease.begin();
-    if (!claimed.ok) {
-      if (!window.isDestroyed()) window.close();
-      return { ok: false, refused: claimed.refused };
-    }
+    if (!claimed.ok) return { ok: false, refused: claimed.refused };
     return { ok: true, detached: { instanceRef: instanceId, title: reviewed.bootstrap.title } };
   });
 

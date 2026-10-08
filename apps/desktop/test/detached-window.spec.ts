@@ -15,6 +15,7 @@ import {
   reviewDetachedBootstrap,
   reviewDetachedIntent,
   reviewDetachedAppearance,
+  superviseDetachedWindow,
 } from "../src/detached-window.mjs";
 
 /**
@@ -254,7 +255,7 @@ describe("the detached window keeps its lease while it is open", () => {
   });
 
   it("uses the conversation's own numbers, refreshing well inside the lease", () => {
-    expect(DETACHED_LEASE).toEqual({ refreshMs: 30_000, leaseMs: 90_000 });
+    expect(DETACHED_LEASE).toEqual({ refreshMs: 30_000, leaseMs: 90_000, endWithinMs: 5_000 });
     expect(DETACHED_LEASE.refreshMs * 3).toBe(DETACHED_LEASE.leaseMs);
   });
 
@@ -444,5 +445,190 @@ describe("the detached window's lease is never claimed after the window is gone"
     expect((await begun).ok).toBe(false);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(claim).toHaveBeenCalledTimes(1);
+  });
+});
+describe("the detached window's lease cannot be held past its window by a node that does not answer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const never = <T>() => new Promise<T>(() => undefined);
+
+  it("settles end() within its bound when a refresh in flight never lands", async () => {
+    vi.useFakeTimers();
+    const claim = vi
+      .fn<() => Promise<{ ok: boolean }>>()
+      .mockResolvedValueOnce({ ok: true })
+      .mockImplementation(() => never());
+    const release = vi.fn(async () => undefined);
+    const lease = holdDetachedLease({ claim, release, onLost: vi.fn(), isOpen: () => true, refreshMs: 1_000 });
+    await lease.begin();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(claim).toHaveBeenCalledTimes(2);
+
+    let ended = false;
+    void lease.end().then(() => (ended = true));
+    await vi.advanceTimersByTimeAsync(DETACHED_LEASE.endWithinMs - 1);
+    expect(ended).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ended).toBe(true);
+    // The release still waits for the refresh: past the bound it is the conversation that stops waiting, not the order.
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("settles end() within its bound when the release never lands", async () => {
+    vi.useFakeTimers();
+    const lease = holdDetachedLease({
+      claim: async () => ({ ok: true }),
+      release: () => never(),
+      onLost: vi.fn(),
+      isOpen: () => true,
+      endWithinMs: 2_000,
+    });
+    await lease.begin();
+    let ended = false;
+    void lease.end().then(() => (ended = true));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(ended).toBe(true);
+  });
+
+  it("claims once however often begin() is called, so end() stops every refresh", async () => {
+    vi.useFakeTimers();
+    const claim = vi.fn(async () => ({ ok: true }));
+    const lease = holdDetachedLease({
+      claim,
+      release: vi.fn(async () => undefined),
+      onLost: vi.fn(),
+      isOpen: () => true,
+      refreshMs: 1_000,
+    });
+    const first = lease.begin();
+    const second = lease.begin();
+    expect(second).toBe(first);
+    await first;
+    await lease.begin();
+    expect(claim).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(claim).toHaveBeenCalledTimes(2);
+
+    await lease.end();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(claim).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The lease as the main process wires it to the window (`superviseDetachedWindow`), driven with a stand-in window.
+ */
+describe("the detached window as the main process wires its lease", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function standInWindow() {
+    const closed: Array<() => void> = [];
+    let destroyed = false;
+    const window = {
+      closeCalls: 0,
+      on(event: "closed", listener: () => void) {
+        if (event === "closed") closed.push(listener);
+        return window;
+      },
+      close() {
+        window.closeCalls += 1;
+        if (destroyed) return;
+        destroyed = true;
+        for (const listener of closed) listener();
+      },
+      isDestroyed: () => destroyed,
+    };
+    return window;
+  }
+
+  it("tells the conversation to take the widget back within the bound when the node never answers the release", async () => {
+    vi.useFakeTimers();
+    const window = standInWindow();
+    const order: string[] = [];
+    const supervised = superviseDetachedWindow({
+      window,
+      isCurrent: () => true,
+      claim: async () => ({ ok: true }),
+      release: () => new Promise(() => undefined),
+      onClosed: () => order.push("closed"),
+      onEnded: () => order.push("reattach sent"),
+    });
+    expect((await supervised.begin()).ok).toBe(true);
+    let released = false;
+    void supervised.released.then(() => (released = true));
+
+    window.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["closed"]);
+    await vi.advanceTimersByTimeAsync(DETACHED_LEASE.endWithinMs);
+    expect(order).toEqual(["closed", "reattach sent"]);
+    expect(released).toBe(true);
+  });
+
+  it("tells the conversation only after the release has landed, when the node answers", async () => {
+    vi.useFakeTimers();
+    const window = standInWindow();
+    const order: string[] = [];
+    const supervised = superviseDetachedWindow({
+      window,
+      isCurrent: () => true,
+      claim: async () => ({ ok: true }),
+      release: async () => {
+        order.push("release landed");
+      },
+      onEnded: () => order.push("reattach sent"),
+    });
+    await supervised.begin();
+    window.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["release landed", "reattach sent"]);
+  });
+
+  it("closes the window when its first claim is refused, and claims nothing for a window that is no longer current", async () => {
+    const refused = superviseDetachedWindow({
+      window: standInWindow(),
+      isCurrent: () => true,
+      claim: async () => ({ ok: false, code: "ALREADY_OWNED", refused: "held elsewhere" }),
+      release: vi.fn(async () => undefined),
+      onEnded: vi.fn(),
+    });
+    expect(await refused.begin()).toMatchObject({ ok: false, refused: "held elsewhere" });
+
+    const claim = vi.fn(async () => ({ ok: true }));
+    const stale = superviseDetachedWindow({
+      window: standInWindow(),
+      isCurrent: () => false,
+      claim,
+      release: vi.fn(async () => undefined),
+      onEnded: vi.fn(),
+    });
+    expect((await stale.begin()).ok).toBe(false);
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it("closes the window when a refresh finds another surface holding the instance", async () => {
+    vi.useFakeTimers();
+    const window = standInWindow();
+    const onEnded = vi.fn();
+    const supervised = superviseDetachedWindow({
+      window,
+      isCurrent: () => true,
+      claim: vi
+        .fn<() => Promise<{ ok: boolean; code?: string }>>()
+        .mockResolvedValueOnce({ ok: true })
+        .mockResolvedValue({ ok: false, code: "ALREADY_OWNED" }),
+      release: async () => undefined,
+      onEnded,
+      refreshMs: 1_000,
+    });
+    await supervised.begin();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(window.isDestroyed()).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onEnded).toHaveBeenCalledTimes(1);
   });
 });
