@@ -874,7 +874,8 @@ export async function installPackage(
    * by this point (git and npm sources are re-pointed at their cache path, local ones at their snapshot), so this is
    * the package's own word, read from the bytes that will run.
    */
-  const fetchedManifest = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path).manifest : undefined;
+  const fetchedPackage = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path) : undefined;
+  const fetchedManifest = fetchedPackage?.manifest;
 
   /*
    * What the person was shown is what they agree to. The listing and the install question show the entry's declared
@@ -964,6 +965,9 @@ export async function installPackage(
     // The facets the digest-verified artifact itself declares, so a listing that left a service facet out cannot
     // lower the lane its capabilities are granted in.
     ...(fetchedManifest?.facets ?? []).map((facet) => facet.isolation),
+    // A facet of a kind this node does not know is never run here, but its lane still counts, so a skipped facet can
+    // only raise the lane; one that names no lane this node knows counts as the strongest.
+    ...(fetchedPackage?.skippedFacets ?? []).map((facet) => facet.isolation ?? "trusted-native"),
   ]);
 
   /*

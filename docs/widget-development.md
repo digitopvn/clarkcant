@@ -165,6 +165,30 @@ needs 3; the tools write the lowest version a package needs, so a package withou
 host that reads only version 2. Such a host refuses a version 3 package as a whole, with a message that names the
 version, rather than install it without the facet. A host that reads version 3 validates the facet like any other.
 
+**Facet kinds a host does not know.** From the host that added this rule on, a host reads past a facet whose `kind` is
+a plain name it does not know (`readPackageManifest` in `packages/contracts/src/install.ts`). It installs the facets it
+knows, leaves that facet out, and reports it as declared but not understood. It never runs, lists or grants anything
+for that facet. Its declared `isolation` still counts toward the lane the package's requested capabilities are decided
+in, and a facet that names no known lane counts as `trusted-native`, so the facet can only make a grant harder. A
+listing that names such a kind in `facets` or `isolations` is read the same way, and the kind is named in the listing's
+unread fields; a listing with no kind the host knows is left out of the directory rather than making it unreadable.
+Hosts from before this rule refuse such a package as a whole.
+
+Only the facet kind is tolerated. A known kind with a field or value the host does not accept, an unknown top-level
+field, a `schemaVersion` the host does not read, and a manifest whose facets are all of unknown kinds are still
+refused. A top-level field can qualify every facet (what the package reaches, the resources it runs with), so a host
+cannot tell that skipping one is safe; a facet is one part the host can decline as a whole. This gives the rule for
+changing the format:
+
+- a new facet kind is added within the current `schemaVersion`, and hosts from this rule on skip it;
+- a new field in an existing facet or at the top level needs a new `schemaVersion`, which an older host refuses with a
+  message that says to update ClarkCant;
+- a package whose purpose depends on a newer facet raises `hostApi.min`, so an older host does not list or install it.
+
+The author's tools stay strict: `clark widget test`, `clark theme test`, `pack` and `publish` fail a facet kind they do
+not know, since to an author it is more often a misspelling than a newer kind, and a listing made without it would
+describe less than the package holds. `clarkcant instructions check` warns about it.
+
 A `tools` facet declares its capabilities in the manifest, so consent can show them before any of the package's code
 runs. Installing the package is the consent to what it declares; each call is still decided by the execution policy.
 

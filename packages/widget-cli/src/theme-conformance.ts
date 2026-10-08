@@ -3,7 +3,7 @@ import { compileAppearance, auditThemeDocument, themeDrawProblem } from "@clarkc
 import { MOTION_DURATION_NAMES, MOTION_EASING_NAMES } from "@clarkcant/contracts";
 
 import { packageFiles } from "./package-files.ts";
-import { runConformance, type ConformanceCheck, type ConformanceReport } from "./conformance.ts";
+import { runConformance, skippedFacetChecks, type ConformanceCheck, type ConformanceReport } from "./conformance.ts";
 
 /** Theme facets use the same compiler/audits as installed themes, never a private author palette. */
 export function runThemeConformance(root: string): ConformanceReport {
@@ -13,6 +13,7 @@ export function runThemeConformance(root: string): ConformanceReport {
   };
   const pkg = readPackage(root);
   add("theme-manifest", "schema", "Package manifest and declarations", pkg.problems.length === 0, pkg.problems.join("; ") || "Current generalized package manifest accepted");
+  checks.push(...skippedFacetChecks(pkg));
   if (pkg.problems.length === 0) {
     const result = installedThemes({ source: { kind: "local", path: root } });
     add("theme-documents", "schema", "Contained Theme documents", result.ok && result.themes.length > 0 && result.problems.length === 0,
@@ -39,7 +40,8 @@ export function runThemeConformance(root: string): ConformanceReport {
       pkg.manifest.requestedCapabilities.length === 0 && permissions.networkOrigins.length === 0 &&
       permissions.filesystem.length === 0 && !permissions.microphone && !permissions.camera && permissions.lifecycleScripts.length === 0
     ), themeOnly ? "Data-only theme packages require no capabilities, network, filesystem, device or lifecycle-script permissions" : "Theme documents are data-only; other declared facets retain their own trust lanes");
-    if (pkg.facets.length > 0) checks.push(...runConformance(root).checks);
+    // The widget suite repeats the skipped-facet checks already listed above.
+    if (pkg.facets.length > 0) checks.push(...runConformance(root).checks.filter((check) => !checks.some((listed) => listed.id === check.id)));
   }
   try {
     const files = packageFiles(root);

@@ -125,7 +125,7 @@ describe("the canonical package manifest", () => {
     expect(packageManifestSchema.safeParse({ ...canonical(), facets: [tools] }).success).toBe(false);
   });
 
-  it("refuses a facet kind it does not know rather than ignoring it", () => {
+  it("refuses a facet kind it does not know in the writer's schema, which a host's reader skips instead", () => {
     const unknown = { kind: "daemon", id: "x", entry: "x.mjs", isolation: "service" };
     expect(packageManifestSchema.safeParse({ ...canonical(), facets: [unknown] }).success).toBe(false);
   });
@@ -243,6 +243,25 @@ describe("reading a package", () => {
     const pkg = readPackage(writePackage({ ...canonical(), schemaVersion: 4 }));
     expect(pkg.facets).toEqual([]);
     expect(pkg.problems).toEqual([expect.stringContaining("schemaVersion 4 is newer than this build reads (2 or 3); update ClarkCant")]);
+  });
+
+  it("installs past a facet kind it does not know: the rest is read, and the facet is reported as not understood", () => {
+    const later = { kind: "agents", id: "com.example.board.agents", entry: "agents/index.json", isolation: "trusted-native" };
+    const manifest = canonical();
+    const pkg = readPackage(writePackage({ ...manifest, facets: [...manifest.facets, later] }));
+    expect(pkg.problems).toEqual([]);
+    expect(pkg.manifest.facets.map((facet) => facet.kind)).toEqual(["ui", "tools", "skills"]);
+    expect(pkg.facets.map((facet) => facet.facetId)).toEqual([WIDGET_ID]);
+    expect(pkg.skippedFacets).toEqual([{ index: 3, kind: "agents", id: "com.example.board.agents", isolation: "trusted-native" }]);
+  });
+
+  it("still refuses the package when a known facet kind has a bad body beside an unknown one", () => {
+    const [ui] = canonical().facets;
+    const later = { kind: "agents", id: "com.example.board.agents", entry: "agents/index.json", isolation: "declarative" };
+    const pkg = readPackage(writePackage({ ...canonical(), facets: [{ ...ui, isolation: "service" }, later] }));
+    expect(pkg.facets).toEqual([]);
+    expect(pkg.skippedFacets).toEqual([]);
+    expect(pkg.problems).toHaveLength(1);
   });
 
   it("reads a version 3 manifest, which may carry an instructions facet", () => {

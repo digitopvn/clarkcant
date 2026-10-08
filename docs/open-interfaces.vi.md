@@ -1310,8 +1310,9 @@ trong gói.
   gỡ cài đặt, và khôi phục gói hoặc cài gói khi nó chưa được cài sẽ xoá mọi cặp còn sót lại cho id đó, nên gói bắt đầu
   với hướng dẫn tắt ở mọi nơi cho tới khi người dùng bật lại. Khi khởi động, node cũng bỏ mọi cặp có gói không được cài.
   Nâng cấp hoặc quay lui giữ nguyên các cặp, vì gói vẫn được cài.
-- `clarkcant instructions check <thư mục gói>` kiểm tra manifest theo `packageManifestSchema`, cùng tệp quy tắc và các
-  đoạn hướng dẫn của facet `instructions`, cảnh báo khi có `pin` và khi một đoạn dài hơn mức node nêu.
+- `clarkcant instructions check <thư mục gói>` đọc manifest theo cách node đọc (`readPackageManifest`), rồi kiểm tra
+  tệp quy tắc và các đoạn hướng dẫn của facet `instructions`. Lệnh cảnh báo khi có `pin`, khi một đoạn dài hơn mức node
+  nêu, và khi có facet thuộc loại mà bản build này không biết (node sẽ bỏ qua facet đó).
 
 ## Thay đổi một bề mặt
 

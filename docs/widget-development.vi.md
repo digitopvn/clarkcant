@@ -165,6 +165,30 @@ luôn ghi version thấp nhất mà package cần, nên package không có facet
 như vậy từ chối toàn bộ package version 3, kèm thông báo nêu rõ version, chứ không cài nó mà bỏ qua facet. Host đọc được
 version 3 kiểm tra facet này như mọi facet khác.
 
+**Loại facet mà host không biết.** Kể từ host có quy tắc này, host đọc lướt qua facet có `kind` là một tên đơn mà nó
+không biết (`readPackageManifest` trong `packages/contracts/src/install.ts`). Host cài các facet nó biết, để riêng facet
+đó ra và báo là đã khai báo nhưng không hiểu. Host không bao giờ chạy, liệt kê hay cấp gì cho facet đó. `isolation` mà
+facet khai báo vẫn được tính vào lane dùng để quyết định các capability package yêu cầu, và facet không nêu lane nào host
+biết thì được tính là `trusted-native`, nên facet này chỉ có thể làm việc cấp quyền khó hơn. Listing nêu loại như vậy
+trong `facets` hoặc `isolations` cũng được đọc theo cách đó, và loại ấy được nêu trong các trường chưa đọc của listing;
+listing không có loại nào host biết sẽ bị để ra ngoài directory, chứ không làm cả directory không đọc được. Các host có
+trước quy tắc này từ chối toàn bộ package như vậy.
+
+Chỉ loại facet được bỏ qua. Loại đã biết mà có trường hoặc giá trị host không chấp nhận, trường cấp cao nhất mà host
+không biết, `schemaVersion` mà host không đọc, và manifest mà mọi facet đều thuộc loại không biết thì vẫn bị từ chối.
+Trường cấp cao nhất có thể chi phối mọi facet (package chạm tới đâu, chạy với tài nguyên nào), nên host không thể biết
+bỏ qua nó có an toàn hay không; còn một facet là một phần mà host có thể từ chối trọn vẹn. Từ đó có quy tắc thay đổi
+định dạng:
+
+- loại facet mới được thêm trong `schemaVersion` hiện tại, và các host từ quy tắc này trở đi bỏ qua nó;
+- trường mới trong một facet đã có hoặc ở cấp cao nhất cần `schemaVersion` mới, mà host cũ từ chối kèm thông báo bảo
+  cập nhật ClarkCant;
+- package mà mục đích phụ thuộc vào một facet mới hơn thì nâng `hostApi.min`, để host cũ không liệt kê hay cài nó.
+
+Công cụ của tác giả vẫn nghiêm ngặt: `clark widget test`, `clark theme test`, `pack` và `publish` đánh lỗi loại facet
+mà chúng không biết, vì với tác giả đó thường là gõ sai hơn là một loại mới, và listing tạo ra khi thiếu facet đó sẽ mô
+tả ít hơn những gì package có. `clarkcant instructions check` thì cảnh báo về nó.
+
 Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ
 đoạn code nào của package chạy. Việc cài package chính là sự đồng ý với những gì package khai báo; mỗi lời gọi vẫn do
 execution policy quyết định.

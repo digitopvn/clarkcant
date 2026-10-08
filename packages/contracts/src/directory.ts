@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { declaredReachSchema } from "./declared-reach.ts";
 import { resourceRequestSchema } from "./resource-profiles.ts";
-import { facetKindSchema, isolationClassSchema } from "./install.ts";
+import { facetKindSchema, isUnknownFacetKind, isolationClassSchema } from "./install.ts";
 import { platformSchema, semverSchema, type Platform } from "./primitives.ts";
 
 /**
@@ -180,7 +180,11 @@ export type UnreadEntryFields = { names: string[]; unnamed: number };
  * publisher writes the entry either way, so no order would stop them choosing which names come first, and the count is
  * what tells a person how much there is.
  */
-function splitKnownFields(value: Record<string, unknown>): { known: Record<string, unknown>; unread: UnreadEntryFields } {
+function splitKnownFields(value: Record<string, unknown>): {
+  known: Record<string, unknown>;
+  unread: UnreadEntryFields;
+  skippedKinds: string[];
+} {
   const known: Record<string, unknown> = {};
   const unread: UnreadEntryFields = { names: [], unnamed: 0 };
   const left = (segments: readonly string[]): void => {
@@ -206,7 +210,37 @@ function splitKnownFields(value: Record<string, unknown>): { known: Record<strin
     }
     known[key] = nested;
   }
-  return { known, unread };
+  const skippedKinds = skipUnknownFacetKinds(known);
+  for (const kind of skippedKinds) left(["facets", kind]);
+  return { known, unread, skippedKinds };
+}
+
+/**
+ * A facet kind this node does not know, in `facets` or `isolations`, is left out and named once as `facets.<kind>`, the
+ * same way the manifest reader skips the facet itself (`readPackageManifest`). Nothing else in either list is relaxed: a
+ * malformed item, or a known kind with an unknown isolation, still refuses the entry. The entry's `riskTier` is kept as
+ * listed, so a skipped facet's lane still counts toward the lane its capabilities are granted in.
+ */
+function skipUnknownFacetKinds(known: Record<string, unknown>): string[] {
+  const skipped = new Set<string>();
+  const facets = known["facets"];
+  if (Array.isArray(facets)) {
+    known["facets"] = facets.filter((kind) => {
+      if (!isUnknownFacetKind(kind)) return true;
+      skipped.add(kind);
+      return false;
+    });
+  }
+  const isolations = known["isolations"];
+  if (Array.isArray(isolations)) {
+    known["isolations"] = isolations.filter((entry) => {
+      const kind = isPlainObject(entry) ? entry["facetKind"] : undefined;
+      if (!isUnknownFacetKind(kind)) return true;
+      skipped.add(kind);
+      return false;
+    });
+  }
+  return [...skipped];
 }
 
 /**
@@ -224,19 +258,39 @@ function splitKnownFields(value: Record<string, unknown>): { known: Record<strin
  * `unreadFields` exists so what was dropped is said rather than hidden: a field this node does not know may be one the
  * newer directory treats as binding, and a listing shown without it would claim less than the listing says.
  *
+ * A facet kind this node does not know is skipped the same way and named as `facets.<kind>`. An entry left with no facet
+ * kind this node knows fails with `onlyUnknownFacets`, so an index reader can leave that one listing out (nothing of it
+ * could run here) rather than refuse every other listing in the index.
+ *
  * Publishing stays strict: `clark widget publish` validates with `directoryEntrySchema`, where an unknown field is a
  * mistake rather than a newer format.
  */
 export function readDirectoryEntry(
   candidate: unknown,
-): { success: true; data: DirectoryEntry; unreadFields: UnreadEntryFields } | { success: false; error: z.ZodError } {
+):
+  | { success: true; data: DirectoryEntry; unreadFields: UnreadEntryFields }
+  | { success: false; error: z.ZodError; onlyUnknownFacets?: true } {
   if (!isPlainObject(candidate)) {
     const result = directoryEntrySchema.safeParse(candidate);
     return result.success
       ? { success: true, data: result.data, unreadFields: { names: [], unnamed: 0 } }
       : { success: false, error: result.error };
   }
-  const { known, unread } = splitKnownFields(candidate);
+  const { known, unread, skippedKinds } = splitKnownFields(candidate);
+  if (skippedKinds.length > 0 && Array.isArray(known["facets"]) && known["facets"].length === 0) {
+    return {
+      success: false,
+      onlyUnknownFacets: true,
+      error: new z.ZodError([
+        {
+          code: "custom",
+          path: ["facets"],
+          message: `lists no facet kind this node understands (${skippedKinds.join(", ")})`,
+          input: candidate["facets"],
+        },
+      ]),
+    };
+  }
   const result = directoryEntrySchema.safeParse(known);
   return result.success ? { success: true, data: result.data, unreadFields: unread } : { success: false, error: result.error };
 }

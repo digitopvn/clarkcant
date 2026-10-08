@@ -137,6 +137,9 @@ export function readDirectoryCandidates(directory: string, parsed: unknown): Dir
   const unreadFields = new Map<string, UnreadEntryFields>();
   for (const candidate of parsed) {
     const result = readDirectoryEntry(candidate);
+    // A listing made only of facet kinds this node does not know has nothing that could run here, so it is left out, as a
+    // search leaves out a listing that cannot run on this host, rather than making every other listing unreadable.
+    if (!result.success && result.onlyUnknownFacets === true) continue;
     if (!result.success) {
       const first = result.error.issues[0];
       return {

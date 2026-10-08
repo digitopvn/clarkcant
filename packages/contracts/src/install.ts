@@ -221,7 +221,7 @@ export function packageManifestSchemaVersionFor(facets: readonly { kind: FacetKi
   return facets.some((facet) => FACET_SCHEMA_VERSIONS[facet.kind] === 3) ? 3 : 2;
 }
 
-/** The most facets one package manifest may declare. */
+/** The most facets one package manifest may declare, counting the ones a reader skips. */
 export const MAX_PACKAGE_FACETS = 64;
 
 /**
@@ -290,6 +290,109 @@ export const packageManifestSchema = z.strictObject({
     .default([]),
 });
 export type PackageManifest = z.infer<typeof packageManifestSchema>;
+
+/**
+ * A facet kind a reader may skip: a plain name, as every kind so far is. A kind that is not one (empty, spaced, very
+ * long) is not a newer kind but a broken facet, so it stays in the list and the schema refuses it.
+ */
+const SKIPPABLE_FACET_KIND = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const KNOWN_FACET_KINDS: readonly string[] = facetKindSchema.options;
+
+/** Whether `kind` names a facet kind this build does not know, which a reader skips rather than refuses. */
+export function isUnknownFacetKind(kind: unknown): kind is string {
+  return typeof kind === "string" && SKIPPABLE_FACET_KIND.test(kind) && !KNOWN_FACET_KINDS.includes(kind);
+}
+
+/**
+ * A facet a reader left out because this build does not know its kind: declared, but not understood here. Only what
+ * can be shown as written is carried (the kind, an id that is a valid facet id, a known isolation class); the rest of
+ * the facet is never read, so nothing in it reaches a consumer.
+ */
+export interface SkippedFacet {
+  /** Its position in the manifest's `facets` list. */
+  index: number;
+  kind: string;
+  id?: string;
+  isolation?: IsolationClass;
+}
+
+/** One line for a skipped facet, as a reader's report says it. */
+export function describeSkippedFacet(facet: SkippedFacet): string {
+  return `facet ${facet.id ?? `#${String(facet.index)}`}: kind "${facet.kind}" is declared but not understood by this version of ClarkCant, so it is skipped`;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read a package manifest the way a host reads one: tolerant of facet kinds it does not know, strict about everything
+ * it does.
+ *
+ * A new facet kind is a new part a package can carry, and a host that does not know it can still run the parts it
+ * does. So a facet whose `kind` is a plain name outside `facetKindSchema` is left out of the manifest and reported in
+ * `skippedFacets`. It is never passed on, so no consumer (installer, directory, service host, consent) sees a value
+ * nobody validated, and it grants nothing: what a host runs, shows and grants comes only from the facets it read.
+ *
+ * Everything else is held to `packageManifestSchema` exactly as before: a known kind with a bad body, an unknown
+ * top-level field, an unknown field inside a known facet, and a `schemaVersion` this build does not read all refuse the
+ * manifest. A manifest whose facets are all skipped is refused too, since this host would have nothing of it to run.
+ *
+ * Writers stay strict: `packageManifestSchema` itself still refuses an unknown kind, and the author's tools fail on
+ * one, where it is more likely a misspelling than a newer format.
+ */
+export function readPackageManifest(
+  candidate: unknown,
+): { success: true; data: PackageManifest; skippedFacets: SkippedFacet[] } | { success: false; error: z.ZodError } {
+  const facets = isPlainRecord(candidate) ? candidate["facets"] : undefined;
+  // Bounded before anything is skipped, so the limit counts every facet the file declares.
+  if (!isPlainRecord(candidate) || !Array.isArray(facets) || facets.length > MAX_PACKAGE_FACETS) {
+    const result = packageManifestSchema.safeParse(candidate);
+    return result.success ? { success: true, data: result.data, skippedFacets: [] } : { success: false, error: result.error };
+  }
+  const known: unknown[] = [];
+  /** Each kept facet's position in the file, so a problem names the facet the author wrote. */
+  const positions: number[] = [];
+  const skippedFacets: SkippedFacet[] = [];
+  for (const [index, facet] of facets.entries()) {
+    const kind = isPlainRecord(facet) ? facet["kind"] : undefined;
+    if (!isPlainRecord(facet) || !isUnknownFacetKind(kind)) {
+      known.push(facet);
+      positions.push(index);
+      continue;
+    }
+    const id = facetIdSchema.safeParse(facet["id"]);
+    const isolation = isolationClassSchema.safeParse(facet["isolation"]);
+    skippedFacets.push({
+      index,
+      kind,
+      ...(id.success ? { id: id.data } : {}),
+      ...(isolation.success ? { isolation: isolation.data } : {}),
+    });
+  }
+  if (skippedFacets.length > 0 && known.length === 0) {
+    const kinds = [...new Set(skippedFacets.map((facet) => facet.kind))].join(", ");
+    return {
+      success: false,
+      error: new z.ZodError([
+        {
+          code: "custom",
+          path: ["facets"],
+          message: `declares no facet kind this version of ClarkCant understands (${kinds}); update ClarkCant`,
+          input: facets,
+        },
+      ]),
+    };
+  }
+  const result = packageManifestSchema.safeParse({ ...candidate, facets: known });
+  if (result.success) return { success: true, data: result.data, skippedFacets };
+  if (skippedFacets.length === 0) return { success: false, error: result.error };
+  const issues = result.error.issues.map((issue) => {
+    const [field, at, ...rest] = issue.path;
+    return field === "facets" && typeof at === "number" ? { ...issue, path: ["facets", positions[at] ?? at, ...rest] } : issue;
+  });
+  return { success: false, error: new z.ZodError(issues) };
+}
 
 /**
  * What the shape cannot say about a manifest: rules that relate one field to another.

@@ -1301,8 +1301,9 @@ package.
   its id, so the package starts with its instructions off everywhere until the person turns them on again. A node also
   drops, at start, every pair whose package is not installed. An upgrade or a rollback keeps the pairs, because the
   package stays installed.
-- `clarkcant instructions check <package folder>` validates the manifest against `packageManifestSchema` and its
-  `instructions` facet's rules file and snippets, warns about a `pin` and about a snippet longer than a node states.
+- `clarkcant instructions check <package folder>` reads the manifest as a node does (`readPackageManifest`) and checks
+  its `instructions` facet's rules file and snippets. It warns about a `pin`, about a snippet longer than a node
+  states, and about a facet of a kind this build does not know, which a node skips.
 
 ## Changing a surface
 

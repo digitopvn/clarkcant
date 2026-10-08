@@ -7,12 +7,13 @@ import {
   MACHINE_SURFACE_HEADER,
   type MessageBlock,
   messageBlocksAsText,
+  describeSkippedFacet,
   instructionNameSchema,
   isHostWrittenMessage,
   manifestProblems,
   PACKAGE_INSTRUCTION_LIMITS,
-  packageManifestSchema,
   PERSON_ONLY_REFUSAL,
+  readPackageManifest,
   PROJECT_INSTRUCTION_LIMITS,
   PROJECT_INSTRUCTIONS_PATH,
   parseSseChunk,
@@ -438,7 +439,9 @@ function checkPackageInstructions(path: string, read: (file: string) => string):
   } catch {
     return { problems: ["clarkcant.json: not valid JSON"], warnings: [], rules: 0 };
   }
-  const parsed = packageManifestSchema.safeParse(value);
+  // Read the way a node reads it: a facet kind this build does not know is skipped, and said as a warning, since it
+  // changes nothing about the package's instructions.
+  const parsed = readPackageManifest(value);
   if (!parsed.success) {
     return {
       problems: parsed.error.issues.map((issue) => `clarkcant.json: ${issue.path.join(".") || "manifest"}: ${issue.message}`),
@@ -448,7 +451,7 @@ function checkPackageInstructions(path: string, read: (file: string) => string):
   }
   const result: InstructionsCheck = {
     problems: manifestProblems(parsed.data).map((problem) => `clarkcant.json: ${problem}`),
-    warnings: [],
+    warnings: parsed.skippedFacets.map((facet) => `clarkcant.json: ${describeSkippedFacet(facet)}`),
     rules: 0,
   };
   const facets = parsed.data.facets.filter((facet) => facet.kind === "instructions");

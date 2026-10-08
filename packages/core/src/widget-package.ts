@@ -8,11 +8,12 @@ import {
   fixtureDatasetSchema,
   manifestProblems,
   networkOriginSchema,
-  packageManifestSchema,
+  readPackageManifest,
   unsafeSchemaPattern,
   widgetDefinitionSchema,
   type FixtureDataset,
   type PackageManifest,
+  type SkippedFacet,
   type WidgetDefinition,
 } from "@clarkcant/contracts";
 import { z } from "zod";
@@ -136,6 +137,11 @@ export interface WidgetPackage {
   datasets: Record<string, FixtureDataset>;
   /** Anything that stopped the package from being read at all. */
   problems: string[];
+  /**
+   * Facets the manifest declares whose kind this build does not know: declared but not understood, so left out of
+   * `manifest.facets` and never run, shown or granted anything here. Empty when the package could not be read.
+   */
+  skippedFacets: SkippedFacet[];
 }
 function readJson(path: string): { ok: true; value: unknown } | { ok: false; problem: string } {
   if (!existsSync(path)) return { ok: false, problem: `${path} does not exist` };
@@ -158,7 +164,9 @@ function firstIssue(error: z.ZodError, fallback: string): string {
  * the same checks — including the ones only `manifestProblems` can make, such as a facet whose files are outside the
  * package, which this reader would otherwise go on to open.
  */
-export function parseManifest(value: unknown): { ok: true; manifest: PackageManifest } | { ok: false; problems: string[] } {
+export function parseManifest(
+  value: unknown,
+): { ok: true; manifest: PackageManifest; skippedFacets: SkippedFacet[] } | { ok: false; problems: string[] } {
   const schemaVersion = typeof value === "object" && value !== null ? (value as { schemaVersion?: unknown }).schemaVersion : undefined;
   let candidate = value;
   if (schemaVersion === 1) {
@@ -176,13 +184,14 @@ export function parseManifest(value: unknown): { ok: true; manifest: PackageMani
       ],
     };
   }
-  const parsed = packageManifestSchema.safeParse(candidate);
+  // A facet kind this build does not know is skipped and reported, never refused (`readPackageManifest`).
+  const parsed = readPackageManifest(candidate);
   if (!parsed.success) {
     const problem = firstIssue(parsed.error, "does not match the manifest schema");
     return { ok: false, problems: [schemaVersion === 1 ? `${problem} (a schemaVersion 1 value the canonical manifest does not accept)` : problem] };
   }
   const problems = manifestProblems(parsed.data);
-  return problems.length === 0 ? { ok: true, manifest: parsed.data } : { ok: false, problems };
+  return problems.length === 0 ? { ok: true, manifest: parsed.data, skippedFacets: parsed.skippedFacets } : { ok: false, problems };
 }
 
 export function readPackage(root: string): WidgetPackage {
@@ -195,6 +204,7 @@ export function readPackage(root: string): WidgetPackage {
     fixtures: {},
     datasets: {},
     problems: reasons,
+    skippedFacets: [],
   });
   const read = readJson(manifestPath);
   // Nothing else can be read without a manifest, and guessing at one would validate the wrong package.
@@ -278,7 +288,7 @@ export function readPackage(root: string): WidgetPackage {
     }
   }
 
-  return { root, manifest, facets, fixtures, datasets, problems };
+  return { root, manifest, facets, fixtures, datasets, problems, skippedFacets: parsed.skippedFacets };
 }
 
 /** The fixture names the standard requires, because the states they stand for are the ones a widget must survive. */
