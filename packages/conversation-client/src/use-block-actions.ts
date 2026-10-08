@@ -104,6 +104,19 @@ export function developStartRefused(error: unknown, t: (key: MessageKey) => stri
   return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
 }
 
+/**
+ * What a Forget press that did not come back as an answer the app could read settles on.
+ *
+ * An answer the app cannot read (`NodeViewUnreadable`) means the node answered, but what it said cannot be read: it may
+ * not have forgotten the folder, or Clark may still reach it through another. Neither is claimed, so the state is
+ * `unknown` rather than done, and the row keeps the badge it was drawn with. Any other error is said as the node's reason.
+ */
+export function forgetRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
+  const unread = nodeViewRefusalText(error, t, "shell.nodeView.answered");
+  if (unread !== undefined) return { status: "unknown", message: unread };
+  return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
+}
+
 /** What a Forget press did, saying so when the folder stays reachable through a folder that holds it. */
 export function forgetOutcomeMessage(result: WidgetDevFolderForgetResult, t: (key: MessageKey) => string): string {
   const folder = result.root;
@@ -615,13 +628,7 @@ export function useBlockActions({
                 status: "done",
                 message: forgetOutcomeMessage(result, t),
               }),
-            // The node answered, but what it said cannot be read: it may not have forgotten the folder, or Clark may still
-            // reach it through another. Neither is claimed, and the row keeps the badge it was drawn with.
-            (error: unknown) => {
-              const unread = nodeViewRefusalText(error, t, "shell.nodeView.answered");
-              if (unread === undefined) fail(error);
-              else settle({ status: "unknown", message: unread });
-            },
+            (error: unknown) => settle(forgetRefused(error, t)),
           );
           return;
       }

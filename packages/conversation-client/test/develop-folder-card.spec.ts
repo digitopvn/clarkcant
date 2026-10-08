@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { type CommandCard, type WidgetDevSessionView, instantSchema } from "@clarkcant/contracts";
 
+import { GatewayClient } from "../src/api.ts";
 import { CommandCardBlock } from "../src/command-card.tsx";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
-import { developOutcomeMessage, forgetOutcomeMessage } from "../src/use-block-actions.ts";
+import { developOutcomeMessage, forgetOutcomeMessage, forgetRefused } from "../src/use-block-actions.ts";
 
 /**
  * The `/develop` card in the page: a typed folder path where the OS folder dialog cannot answer, with the reason it is
@@ -89,6 +90,46 @@ describe("the /develop card", () => {
     expect(failed).toContain("you chose");
     expect(MESSAGES_VI["commandCard.develop.forgotten"]).toContain("{folder}");
     expect(MESSAGES_EN["commandCard.develop.notChosen"]).toContain("{folder}");
+  });
+
+  it("settles a Forget whose answer this app cannot read as unknown, keeping the row's badge", async () => {
+    // The node answered the forget with a field this app does not know; that answer is read strictly, so it refuses.
+    const fetchImpl = (async (input: string | URL | Request) =>
+      new URL(String(input)).pathname === "/node"
+        ? Response.json({ clarkVersion: "0.3.0" })
+        : Response.json({ root: "/home/me/widgets", forgotten: true, keptFor: "a newer reason" })) as typeof fetch;
+    const client = new GatewayClient({ baseUrl: "http://127.0.0.1:8765", token: "tok", fetchImpl, appVersion: "0.2.1" });
+    const cause = await client.forgetWidgetDevFolder("/home/me/widgets").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    const state = forgetRefused(cause, en);
+    expect(state).toEqual({
+      status: "unknown",
+      message: `${en("shell.nodeView.answered")} ${en("shell.nodeView.newer").replace("{node}", "0.3.0").replace("{app}", "0.2.1")}`,
+    });
+    expect(forgetRefused(cause, vi)).toMatchObject({ status: "unknown", message: expect.stringMatching(/^Node đã trả lời, /u) as string });
+    // Any other error is the node's reason, said as a failure.
+    expect(forgetRefused(new Error("offline"), en)).toEqual({ status: "failed", message: "offline" });
+
+    // Neither forgotten nor kept is claimed: the row keeps the badge it was drawn with, and the line is not a success.
+    const chosen: CommandCard = {
+      ...CARD,
+      rows: [
+        {
+          rowId: "chosen:0",
+          label: "/home/me/widgets",
+          badge: { text: "you chose", tone: "success" },
+          actions: [{ actionId: "forget", label: "Forget", action: { kind: "develop-folder-forget", root: "/home/me/widgets" } }],
+        },
+      ],
+    };
+    const drawn = renderToStaticMarkup(
+      createElement(CommandCardBlock, { block: chosen, t: en, actions: { onCommandAction: () => undefined, commandAction: { "card_develop/chosen:0/forget": state } } }),
+    );
+    expect(drawn).toContain('data-result="unknown"');
+    expect(drawn).toContain("you chose");
   });
 
   it("says when a press was not kept as a folder Clark may use, and why", () => {
