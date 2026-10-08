@@ -89,23 +89,103 @@ function canStartRun(message: SdkQueuedMessage): boolean {
   return parts !== undefined && (parts.text !== "" || parts.images.length > 0);
 }
 
+interface RunOptions {
+  selectedTools: string[];
+}
+
+/** The private members of the SDK 1.0.2 session that `prompt()` uses after its input handlers. */
+interface SessionPromptInternals {
+  _flushPendingBashMessages: () => void;
+  _flushPendingCustomMessages: () => void;
+  _baseSystemPromptOptions: RunOptions;
+  _runSystemPromptOptions: RunOptions | undefined;
+  _pendingNextTurnMessages: SdkQueuedMessage[];
+  _extensionRunner: {
+    emitBeforeAgentStart: (
+      text: string,
+      images: SdkImage[] | undefined,
+      options: RunOptions,
+    ) => Promise<{
+      messages: { customType: string; content: unknown; display: boolean; details?: unknown }[];
+      systemPromptOptions: RunOptions;
+    }>;
+  };
+  _normalizePromptImages: (images: SdkImage[] | undefined) => Promise<{ images: SdkImage[]; hints: string[] }>;
+  _preparePromptAndToolLoadout: (options: RunOptions) => SdkQueuedMessage | undefined;
+  _runAgentPrompt: (messages: SdkQueuedMessage[]) => Promise<void>;
+}
+
 /**
- * The session's own run on messages that are ready to send: the run `prompt` starts once its input handlers, expansion
- * and `before_agent_start` are done, with its retry, compaction, streaming flag and settle events.
- *
- * SAFETY: `_runAgentPrompt` is private in SDK 1.0.2. The public ways in each fall short for a steer sent again:
- * `prompt` and `sendUserMessage` run the extensions' input handlers a second time on text they already handled when it
- * was steered, `sendCustomMessage` sends an extension's message rather than the person's, and the agent's own `prompt`
- * or `continue` skip the session's run, so no retry, compaction or settle event. It is the same run `sendCustomMessage`
- * starts with `triggerTurn`. Looked up at call time and checked, so an SDK that renames it fails loudly here instead of
- * quietly running the input handlers twice; the late-steer tests drive it through the real SDK.
+ * The session's private members `promptWithoutInputHandlers` needs, when every one is there with the shape it uses;
+ * undefined otherwise, so the caller can fall back to the public `prompt` before anything is taken off the queue.
  */
-function sessionRun(session: SdkSession): (messages: SdkQueuedMessage[]) => Promise<void> {
-  const run = (session as unknown as { _runAgentPrompt?: unknown })._runAgentPrompt;
-  if (typeof run !== "function") {
-    throw new Error("the Pi SDK's session has no _runAgentPrompt, so a queued steer cannot be sent without its input handlers running again");
+function sessionPromptInternals(session: SdkSession): SessionPromptInternals | undefined {
+  const internals = session as unknown as Partial<Record<keyof SessionPromptInternals, unknown>>;
+  const functions = [
+    internals._flushPendingBashMessages,
+    internals._flushPendingCustomMessages,
+    internals._normalizePromptImages,
+    internals._preparePromptAndToolLoadout,
+    internals._runAgentPrompt,
+    (internals._extensionRunner as { emitBeforeAgentStart?: unknown } | undefined)?.emitBeforeAgentStart,
+  ];
+  const base = internals._baseSystemPromptOptions as { selectedTools?: unknown } | undefined;
+  const shaped =
+    functions.every((member) => typeof member === "function") &&
+    Array.isArray(base?.selectedTools) &&
+    Array.isArray(internals._pendingNextTurnMessages) &&
+    "_runSystemPromptOptions" in internals;
+  return shaped ? (session as unknown as SessionPromptInternals) : undefined;
+}
+
+/**
+ * Start the session's run on text that already went through the extensions' input handlers and expansion, as
+ * `prompt()` does after those steps.
+ *
+ * SAFETY: mirrors `AgentSession.prompt()` of `@earendil-works/pi-coding-agent` 1.0.2 from the step after its input
+ * handlers and expansion to its `_runAgentPrompt` call. It runs `before_agent_start` and applies what it returns: the
+ * system prompt (ClarkCant's personal instructions arrive this way), the injected messages and the tool loadout. It
+ * also attaches pending `nextTurn` messages and normalises the pictures. It leaves out the steps that need nothing
+ * from a re-send: the streaming and compaction checks (the caller refuses first) and the auth pre-check (a provider
+ * refusal still ends the run with an error the caller reports). Every private member is checked first by
+ * `sessionPromptInternals`; an SDK upgrade must re-read `prompt()` and keep this in step with it.
+ */
+async function promptWithoutInputHandlers(
+  session: SdkSession,
+  internals: SessionPromptInternals,
+  text: string,
+  images: SdkImage[] | undefined,
+): Promise<void> {
+  internals._flushPendingBashMessages();
+  internals._flushPendingCustomMessages();
+  if (!session.model) throw new Error("no model is selected for this session");
+  const selectedToolsBefore = internals._baseSystemPromptOptions.selectedTools;
+  const result = await internals._extensionRunner.emitBeforeAgentStart(text, images, internals._baseSystemPromptOptions);
+  const handlerEditedTools =
+    result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
+    result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
+  if (!handlerEditedTools) result.systemPromptOptions.selectedTools = session.getActiveToolNames();
+  const normalized = await internals._normalizePromptImages(images);
+  const userText = normalized.hints.length > 0 ? `${text}\n\n${normalized.hints.join("\n")}` : text;
+  const messages: SdkQueuedMessage[] = [
+    { role: "user", content: [{ type: "text", text: userText }, ...normalized.images], timestamp: Date.now() },
+  ];
+  messages.push(...internals._pendingNextTurnMessages);
+  internals._pendingNextTurnMessages = [];
+  for (const message of result.messages) {
+    messages.push({
+      role: "custom",
+      customType: message.customType,
+      content: message.content ?? [],
+      display: message.display,
+      details: message.details,
+      timestamp: Date.now(),
+    } as SdkQueuedMessage);
   }
-  return (messages) => (run as (messages: SdkQueuedMessage[]) => Promise<void>).call(session, messages);
+  const updateMessage = internals._preparePromptAndToolLoadout(result.systemPromptOptions);
+  internals._runSystemPromptOptions = result.systemPromptOptions;
+  if (updateMessage) messages.unshift(updateMessage);
+  await internals._runAgentPrompt(messages);
 }
 
 /**
@@ -336,6 +416,8 @@ export class RealPiAdapter implements PiAdapter {
   >();
 
   #sdk: SdkModule | undefined;
+  /** Whether this adapter already warned that a queued steer went through the public `prompt` again. */
+  #promptFallbackWarned = false;
   #modelRuntime: SdkModelRuntime | undefined;
   #builtins: ReadonlyMap<string, { api: string; baseUrl: string }> | undefined;
   #loader:
@@ -1067,13 +1149,16 @@ export class RealPiAdapter implements PiAdapter {
    *
    * Answered through the session's own run rather than the agent underneath it, so retry on a transient provider error,
    * compaction, the streaming flag and its settle events apply, which a bare `agent.continue()` skips. The person's
-   * messages are sent as they were queued, not through `prompt` again: they already went through the extensions' input
-   * handlers and were expanded when they were steered, so neither runs a second time. Bounded as a prompt is.
+   * messages already went through the extensions' input handlers and were expanded when they were steered, so they are
+   * sent the way `prompt` sends text after those steps (`promptWithoutInputHandlers`): `before_agent_start` runs again
+   * and its system prompt, messages and tools apply, but the input handlers do not run a second time. When the SDK no
+   * longer has what that needs, they go through the public `prompt` instead, with a warning. Bounded as a prompt is,
+   * and refused with the queue untouched while the session still streams or compacts.
    *
    * The agent's queue also holds what a Pi extension queued, interleaved with the person's steers. Clearing the
    * session's queue clears the agent's too, so the whole queue is taken off, in the order Pi would deliver it: every
    * steer, then every follow-up. The run starts from its head. When the head is the person's, it and the person's
-   * messages straight after it in the same queue start the run together, each with its text and pictures; when it is an
+   * messages straight after it in the same queue are joined into one prompt, their pictures kept; when it is an
    * extension's message, that message starts the run itself. Everything after the head is put back in the queue it came
    * from, in its order, so a steer stays a steer and a follow-up a follow-up, and the run takes it from there exactly as
    * Pi takes any queued message — in the default one-at-a-time mode, one steer per model call. Each message is sent
@@ -1088,8 +1173,12 @@ export class RealPiAdapter implements PiAdapter {
     const entry = this.#require(sessionId);
     const { session } = entry;
     if (!session.agent.hasQueuedMessages()) return;
-    // Looked up before the queue is taken off, so an SDK without it fails with nothing lost.
-    const run = sessionRun(session);
+    // Refused before the queue is taken off, so nothing is lost: a run cannot start while one streams or compacts.
+    if (session.isStreaming || session.isCompacting) {
+      throw new Error(`worker ${sessionId} is still ${session.isStreaming ? "running" : "compacting"}; its queued messages stay queued`);
+    }
+    // Checked before the queue is taken off too, so the choice of path below never strands a message.
+    const internals = sessionPromptInternals(session);
     const queued = takeAgentQueues(session.agent);
     // The session's own text copies of the person's messages; the agent's messages carry the same text and pictures.
     session.clearQueue();
@@ -1122,7 +1211,28 @@ export class RealPiAdapter implements PiAdapter {
       await this.#bounded(sessionId, () => session.sendCustomMessage({ customType, content, display, details }, { triggerTurn: true }));
       return;
     }
-    await this.#bounded(sessionId, () => run(joined.filter(canStartRun)));
+    const parts = joined.flatMap((message) => {
+      const part = queuedUserParts(message);
+      return part === undefined ? [] : [part];
+    });
+    const text = parts.map((part) => part.text).filter((sentence) => sentence !== "").join("\n\n");
+    const pictures = parts.flatMap((part) => part.images);
+    const images = pictures.length === 0 ? undefined : pictures;
+    if (internals !== undefined) {
+      await this.#bounded(sessionId, () => promptWithoutInputHandlers(session, internals, text, images));
+      return;
+    }
+    // SAFETY: the fallback when the session's private members `promptWithoutInputHandlers` mirrors from SDK 1.0.2 are
+    // missing or changed shape. The public `prompt` runs the extensions' input handlers a second time on text they
+    // already handled, but nothing is lost and the run keeps its `before_agent_start` system prompt.
+    if (!this.#promptFallbackWarned) {
+      this.#promptFallbackWarned = true;
+      process.emitWarning(
+        "the Pi SDK's session no longer has the private members a queued steer is sent with (mirrored from SDK 1.0.2); " +
+          "queued steers go through prompt() again, so extensions' input handlers run on them twice",
+      );
+    }
+    await this.#bounded(sessionId, () => session.prompt(text, { expandPromptTemplates: false, ...(images === undefined ? {} : { images }) }));
   }
 
   async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
