@@ -10,6 +10,7 @@ import {
   detachedBootstrap,
   detachedBounds,
   detachedWindowOptions,
+  holdDetachedLease,
   keepDetachedLease,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
@@ -309,5 +310,139 @@ describe("the detached window keeps its lease while it is open", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(claim).toHaveBeenCalledTimes(2);
     lease.stop();
+  });
+
+  it("answers the refresh still on its way when stopped, so a release can wait for it", async () => {
+    vi.useFakeTimers();
+    let answer: (value: { ok: boolean }) => void = () => undefined;
+    const claim = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => (answer = resolve)));
+    const lease = keepDetachedLease({ claim, onLost: vi.fn(), refreshMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(claim).toHaveBeenCalledTimes(1);
+
+    let settled = false;
+    const stopped = lease.stop();
+    expect(stopped).toBeInstanceOf(Promise);
+    void stopped.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    answer({ ok: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+  });
+});
+
+describe("the detached window's lease is never claimed after the window is gone", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function controlled<T>() {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((done) => (resolve = done));
+    return { promise, resolve };
+  }
+
+  it("releases only after a refresh in flight at close has landed, and settles only after the release", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const refresh = controlled<{ ok: boolean }>();
+    const release = controlled<void>();
+    const claim = vi
+      .fn<() => Promise<{ ok: boolean }>>()
+      .mockResolvedValueOnce({ ok: true })
+      .mockImplementationOnce(() => {
+        order.push("refresh sent");
+        return refresh.promise.then((answer) => {
+          order.push("refresh landed");
+          return answer;
+        });
+      });
+    const lease = holdDetachedLease({
+      claim,
+      release: () => {
+        order.push("release sent");
+        return release.promise.then(() => order.push("release landed"));
+      },
+      onLost: vi.fn(),
+      isOpen: () => true,
+      refreshMs: 1_000,
+    });
+    expect(await lease.begin()).toEqual({ ok: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(order).toEqual(["refresh sent"]);
+
+    let ended = false;
+    void lease.end().then(() => {
+      ended = true;
+      order.push("conversation told");
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["refresh sent"]);
+
+    refresh.resolve({ ok: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["refresh sent", "refresh landed", "release sent"]);
+    expect(ended).toBe(false);
+
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ended).toBe(true);
+    expect(order).toEqual(["refresh sent", "refresh landed", "release sent", "release landed", "conversation told"]);
+    // Stopped: no refresh follows the release.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(claim).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not claim for a window that closed while it was loading", async () => {
+    const claim = vi.fn(async () => ({ ok: true }));
+    const release = vi.fn(async () => undefined);
+    const lease = holdDetachedLease({ claim, release, onLost: vi.fn(), isOpen: () => false });
+    const answer = await lease.begin();
+    expect(answer.ok).toBe(false);
+    expect(claim).not.toHaveBeenCalled();
+    await lease.end();
+    // Nothing was claimed, so nothing is released either.
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("does not claim once the window has ended, even if asked to begin afterwards", async () => {
+    const claim = vi.fn(async () => ({ ok: true }));
+    const lease = holdDetachedLease({ claim, release: vi.fn(async () => undefined), onLost: vi.fn(), isOpen: () => true });
+    await lease.end();
+    expect((await lease.begin()).ok).toBe(false);
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it("releases after a first claim that was still on its way when the window closed, and keeps no refresh", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const first = controlled<{ ok: boolean }>();
+    const claim = vi.fn(() => {
+      order.push("claim sent");
+      return first.promise.then((answer) => {
+        order.push("claim landed");
+        return answer;
+      });
+    });
+    const lease = holdDetachedLease({
+      claim,
+      release: async () => {
+        order.push("release sent");
+      },
+      onLost: vi.fn(),
+      isOpen: () => true,
+      refreshMs: 1_000,
+    });
+    const begun = lease.begin();
+    const ended = lease.end();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["claim sent"]);
+    first.resolve({ ok: true });
+    await ended;
+    expect(order).toEqual(["claim sent", "claim landed", "release sent"]);
+    expect((await begun).ok).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(claim).toHaveBeenCalledTimes(1);
   });
 });

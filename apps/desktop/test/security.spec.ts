@@ -115,11 +115,38 @@ describe("the window's policy is applied to the window's documents", () => {
     expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
   });
 
+  const NODE = { nodeOrigin: "http://127.0.0.1:8765" };
+  const FRAME_URL = "http://127.0.0.1:8765/frame/grant_abc/widgets/main/index.html";
+
   it("leaves a framed widget document its own policy, which the window's would refuse outright", () => {
     const responseHeaders = { "content-security-policy": [WIDGET_POLICY] };
-    const headers = withContentSecurityPolicy({ resourceType: "subFrame", responseHeaders }, POLICY);
+    const headers = withContentSecurityPolicy({ resourceType: "subFrame", url: FRAME_URL, responseHeaders }, POLICY, NODE);
     expect(headers).toEqual(responseHeaders);
     expect(headers["Content-Security-Policy"]).toBeUndefined();
+  });
+
+  it("adds the window's policy to a framed document that is not one of the node's widget frames", () => {
+    const responseHeaders = { "content-security-policy": [WIDGET_POLICY] };
+    for (const url of [
+      "http://127.0.0.1:8765/conversations/c1",
+      "http://127.0.0.1:9999/frame/grant_abc/index.html",
+      "https://example.com/frame/grant_abc/index.html",
+      undefined,
+    ]) {
+      const headers = withContentSecurityPolicy({ resourceType: "subFrame", url, responseHeaders }, POLICY, NODE);
+      expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
+    }
+    // No node known: no frame keeps its own policy alone.
+    const unknownNode = withContentSecurityPolicy({ resourceType: "subFrame", url: FRAME_URL, responseHeaders }, POLICY);
+    expect(unknownNode["Content-Security-Policy"]).toEqual([POLICY]);
+  });
+
+  it("adds the window's policy to a widget frame whose own policy is empty", () => {
+    for (const empty of [[""], ["   "], [], ""]) {
+      const responseHeaders = { "Content-Security-Policy": empty };
+      const headers = withContentSecurityPolicy({ resourceType: "subFrame", url: FRAME_URL, responseHeaders }, POLICY, NODE);
+      expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
+    }
   });
 
   it("gives a framed document with no policy of its own the window's, so nothing is framed with less", () => {

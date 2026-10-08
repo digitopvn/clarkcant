@@ -28,6 +28,7 @@ import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
 import { offscreenPlayback } from "./offscreen-playback.ts";
+import { type LiveLeaseRefresh, refreshLiveLease } from "./live-lease-refresh.ts";
 
 export interface MenuBarPopoverProps {
   nodeLabel: string;
@@ -298,6 +299,13 @@ export function PinnedLiveSurface({
    */
   const detachedHere = useRef(false);
   /*
+   * Whether this surface is between letting the lease go and hearing whether the detached window took it. The
+   * periodic re-claim is paused for that stretch too: landing after the release, it would hold the widget again and
+   * the window's own claim would be refused.
+   */
+  const handingOff = useRef(false);
+  const leaseRefresh = useRef<LiveLeaseRefresh | undefined>(undefined);
+  /*
    * Graph events go to the node one at a time, each against the revision the one before it produced, and the surface is
    * re-read once they have all landed. Sent together they would race for one revision; re-read after each, a query typed
    * on would flicker back through every value it passed on the way.
@@ -402,21 +410,30 @@ export function PinnedLiveSurface({
     };
 
     void claim();
-    const timer = setInterval(() => {
-      // The detached window holds the lease now; re-claiming it here would take the widget out from under it.
-      if (detachedHere.current) return;
-      void client
-        .claimLiveOwner(conversationId, instanceId, {
+    const ownedElsewhere = t("shell.live.ownedElsewhere");
+    const refresh = refreshLiveLease({
+      claim: () =>
+        client.claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
           surface: "pin",
           leaseMs: CLAIM_REFRESH_MS * 3,
-        })
-        .catch(() => undefined);
-    }, CLAIM_REFRESH_MS);
+        }),
+      // Handing off to, or held by, a detached window: re-claiming here would take the widget out from under it.
+      paused: () => handingOff.current || detachedHere.current,
+      onOwner: () => {
+        if (cancelled) return;
+        // A surface that could not read the widget stays in error; holding the lease does not make it readable.
+        setOwnership((current) => (current === "error" ? current : "owner"));
+        setNotice((current) => (current === ownedElsewhere ? undefined : current));
+      },
+      refreshMs: CLAIM_REFRESH_MS,
+    });
+    leaseRefresh.current = refresh;
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      refresh.stop();
+      if (leaseRefresh.current === refresh) leaseRefresh.current = undefined;
       // Best effort: the lease is what makes a failed release recoverable.
       void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
     };
@@ -481,35 +498,42 @@ export function PinnedLiveSurface({
    */
   const detach = useCallback(async (): Promise<void> => {
     const bridge = shellDetachBridge();
-    if (bridge === undefined || !canShowDetached(live)) return;
+    if (bridge === undefined || !canShowDetached(live) || handingOff.current) return;
+    handingOff.current = true;
     try {
-      await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
-    } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : String(cause));
-      return;
+      // A re-claim already on its way would land after the release below and hold the widget again.
+      await leaseRefresh.current?.settled();
+      try {
+        await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
+      } catch (cause) {
+        setNotice(cause instanceof Error ? cause.message : String(cause));
+        return;
+      }
+      const answer = await bridge.detachWidget({
+        conversationId,
+        instanceId,
+        ...(title === undefined ? {} : { title }),
+        live,
+        appearance: readAppearanceSnapshot(),
+      });
+      if (!answer.ok) {
+        setNotice(answer.refused ?? t("shell.live.detachFailed"));
+        await client
+          .claimLiveOwner(conversationId, instanceId, {
+            ownerToken: ownerToken.current,
+            surface: "pin",
+            leaseMs: CLAIM_REFRESH_MS * 3,
+          })
+          .then(() => setOwnership("owner"))
+          .catch(() => undefined);
+        return;
+      }
+      detachedHere.current = true;
+      setOwnership("elsewhere");
+      setNotice(t("shell.live.detachedOpen"));
+    } finally {
+      handingOff.current = false;
     }
-    const answer = await bridge.detachWidget({
-      conversationId,
-      instanceId,
-      ...(title === undefined ? {} : { title }),
-      live,
-      appearance: readAppearanceSnapshot(),
-    });
-    if (!answer.ok) {
-      setNotice(answer.refused ?? t("shell.live.detachFailed"));
-      await client
-        .claimLiveOwner(conversationId, instanceId, {
-          ownerToken: ownerToken.current,
-          surface: "pin",
-          leaseMs: CLAIM_REFRESH_MS * 3,
-        })
-        .then(() => setOwnership("owner"))
-        .catch(() => undefined);
-      return;
-    }
-    detachedHere.current = true;
-    setOwnership("elsewhere");
-    setNotice(t("shell.live.detachedOpen"));
   }, [client, conversationId, instanceId, live, title, t]);
 
   /*
