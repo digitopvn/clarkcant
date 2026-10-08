@@ -2204,7 +2204,8 @@ Closing a detached window only moves presentation ownership; it does not delete 
 
 A detached window holds the instance's live-owner lease as the `detached` surface and keeps it refreshed while it is
 open. It closes, and hands the instance back, when the conversation view that opened it goes away, when the
-conversation window closes, when the app quits, or when another surface has taken the lease.
+conversation window closes, when the app quits, or when another surface has taken the lease. Handing the instance back waits for the node to confirm the release for at most a few seconds: a node that does
+not answer does not leave the widget read-only with no window open, and the window's lease then lapses on its own.
 
 Only composed widgets can be detached today. A widget that runs in its own (isolated) frame stays in the
 conversation: a detached window holds no credential, and that frame needs the conversation's credential to save

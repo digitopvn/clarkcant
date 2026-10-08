@@ -173,7 +173,7 @@ export function reviewDetachedIntent(payload) {
  * The same numbers as the conversation's own surface (`CLAIM_REFRESH_MS` in `DesktopSurfaces.tsx`): refreshed well
  * inside its lifetime, so one missed refresh does not hand the instance to somebody else.
  */
-export const DETACHED_LEASE = Object.freeze({ refreshMs: 30_000, leaseMs: 90_000 });
+export const DETACHED_LEASE = Object.freeze({ refreshMs: 30_000, leaseMs: 90_000, endWithinMs: 5_000 });
 
 /**
  * Keep the detached window's claim alive while it is open.
@@ -242,17 +242,32 @@ const CLOSED_BEFORE_CLAIM = Object.freeze({ ok: false, refused: "the window clos
  * - `end()` waits for every claim still on its way — the first one or a refresh — before it releases, so the release
  *   is the last word. It settles once the release has, which is when the conversation may take the instance back.
  *
+ * The wait in `end()` is bounded (`endWithinMs`). A node that accepts the call and never answers would otherwise keep
+ * the conversation from taking the widget back for minutes, with no window on screen. Past the bound `end()` settles
+ * anyway: the claim and release it waited for still run in their order, and a release the node never hears lapses
+ * with the lease.
+ *
+ * `begin()` claims once. A second call answers with the first call's result rather than starting a second refresh
+ * timer, which `end()` would not stop and which would keep claiming after the release.
+ *
  * @param {{
  *   claim: () => Promise<{ ok: boolean, code?: string, refused?: string }>,
  *   release: () => Promise<unknown>,
  *   onLost: (answer: { ok: false, code?: string, refused?: string }) => void,
  *   isOpen: () => boolean,
  *   refreshMs?: number,
- *   timers?: { setInterval: typeof setInterval, clearInterval: typeof clearInterval },
+ *   endWithinMs?: number,
+ *   timers?: {
+ *     setInterval: typeof setInterval,
+ *     clearInterval: typeof clearInterval,
+ *     setTimeout?: typeof setTimeout,
+ *     clearTimeout?: typeof clearTimeout,
+ *   },
  * }} input
  * @returns {{ begin: () => Promise<{ ok: boolean, code?: string, refused?: string }>, end: () => Promise<void> }}
  */
 export function holdDetachedLease(input) {
+  const timers = input.timers ?? globalThis;
   let ended = false;
   /** @type {Promise<unknown> | undefined} */
   let claiming;
@@ -260,7 +275,13 @@ export function holdDetachedLease(input) {
   let kept;
   /** @type {Promise<void> | undefined} */
   let ending;
-  const begin = async () => {
+  /** @type {Promise<{ ok: boolean, code?: string, refused?: string }> | undefined} */
+  let begun;
+  const begin = () => {
+    begun ??= claimOnce();
+    return begun;
+  };
+  const claimOnce = async () => {
     if (ended || !input.isOpen()) return CLOSED_BEFORE_CLAIM;
     const sent = input.claim();
     claiming = sent;
@@ -280,7 +301,7 @@ export function holdDetachedLease(input) {
     if (ending !== undefined) return ending;
     ended = true;
     const pending = [claiming, kept?.stop()].filter((entry) => entry !== undefined);
-    ending = Promise.allSettled(pending).then(async () => {
+    const released = Promise.allSettled(pending).then(async () => {
       // Nothing was ever claimed, so there is nothing to give back.
       if (claiming === undefined) return;
       try {
@@ -289,9 +310,81 @@ export function holdDetachedLease(input) {
         // A release the node did not hear lapses with the lease; the conversation's own claim says so if it matters.
       }
     });
+    const setTimer = timers.setTimeout ?? globalThis.setTimeout;
+    const clearTimer = timers.clearTimeout ?? globalThis.clearTimeout;
+    ending = new Promise((resolve) => {
+      const bound = setTimer(resolve, input.endWithinMs ?? DETACHED_LEASE.endWithinMs);
+      void released.then(() => {
+        clearTimer(bound);
+        resolve();
+      });
+    });
     return ending;
   };
   return { begin, end };
+}
+
+/**
+ * The detached window's lease, wired to the window it belongs to.
+ *
+ * This is the main process's whole use of `holdDetachedLease`, kept here so it can be driven with a stand-in window:
+ *
+ * - the window counts as open only while it is still the detached window and not destroyed;
+ * - a refresh refused because somebody else holds the instance closes the window;
+ * - a first claim that is refused closes the window, and `begin()` answers with the refusal;
+ * - closing the window, for whatever reason, ends the lease, and the conversation is told to take the widget back only
+ *   once that has settled or its bound has passed (`onEnded`). `released` settles at the same moment, so quitting can
+ *   wait for it.
+ *
+ * @param {{
+ *   window: { on: (event: "closed", listener: () => void) => unknown, close: () => void, isDestroyed: () => boolean },
+ *   isCurrent: () => boolean,
+ *   claim: () => Promise<{ ok: boolean, code?: string, refused?: string }>,
+ *   release: () => Promise<unknown>,
+ *   onClosed?: () => void,
+ *   onEnded: () => void,
+ *   refreshMs?: number,
+ *   endWithinMs?: number,
+ *   timers?: Parameters<typeof holdDetachedLease>[0]["timers"],
+ * }} input
+ * @returns {{ begin: () => Promise<{ ok: boolean, code?: string, refused?: string }>, released: Promise<void> }}
+ */
+export function superviseDetachedWindow(input) {
+  const { window } = input;
+  const close = () => {
+    if (!window.isDestroyed()) window.close();
+  };
+  const lease = holdDetachedLease({
+    claim: input.claim,
+    release: input.release,
+    isOpen: () => input.isCurrent() && !window.isDestroyed(),
+    onLost: close,
+    refreshMs: input.refreshMs,
+    endWithinMs: input.endWithinMs,
+    timers: input.timers,
+  });
+  /** @type {() => void} */
+  let markReleased = () => undefined;
+  const released = new Promise((resolve) => {
+    markReleased = resolve;
+  });
+  window.on("closed", () => {
+    input.onClosed?.();
+    void lease.end().then(() => {
+      markReleased();
+      try {
+        input.onEnded();
+      } catch {
+        // The window that would have been told is gone; it takes the widget back when it is next shown.
+      }
+    });
+  });
+  const begin = async () => {
+    const answer = await lease.begin();
+    if (!answer.ok) close();
+    return answer;
+  };
+  return { begin, released };
 }
 
 /** Where a detached window opens: beside its parent, and inside the work area the parent is already in. */

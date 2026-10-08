@@ -274,6 +274,9 @@ export function PinnedLiveSurface({
   const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);
   const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
+  // Read by the periodic re-claim, whose callback outlives the render that created it.
+  const ownershipNow = useRef(ownership);
+  ownershipNow.current = ownership;
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   /*
@@ -332,13 +335,16 @@ export function PinnedLiveSurface({
     return () => observer.disconnect();
   }, []);
 
-  const load = useCallback(async (): Promise<void> => {
+  /** Re-reads the surface; answers whether the read succeeded, so a caller recovering from `error` knows it may. */
+  const load = useCallback(async (): Promise<boolean> => {
     try {
       const resolved = await client.liveWidget(conversationId, instanceId);
       setLive((previous) => keepMountedFrame(previous, resolved));
+      return true;
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : String(cause));
       setOwnership("error");
+      return false;
     }
   }, [client, conversationId, instanceId]);
 
@@ -422,9 +428,21 @@ export function PinnedLiveSurface({
       paused: () => handingOff.current || detachedHere.current,
       onOwner: () => {
         if (cancelled) return;
-        // A surface that could not read the widget stays in error; holding the lease does not make it readable.
-        setOwnership((current) => (current === "error" ? current : "owner"));
-        setNotice((current) => (current === ownedElsewhere ? undefined : current));
+        if (ownershipNow.current !== "error") {
+          setOwnership("owner");
+          setNotice((current) => (current === ownedElsewhere ? undefined : current));
+          return;
+        }
+        /*
+         * Holding the lease does not make a widget the surface could not read readable, so a surface in error reads it
+         * again first, and becomes the owner — with the error notice gone — only once that read succeeds. Without this
+         * one failed read left the widget read-only until the surface was mounted again.
+         */
+        void load().then((read) => {
+          if (!read || cancelled || handingOff.current || detachedHere.current) return;
+          setOwnership("owner");
+          setNotice(undefined);
+        });
       },
       refreshMs: CLAIM_REFRESH_MS,
     });
@@ -501,7 +519,8 @@ export function PinnedLiveSurface({
     if (bridge === undefined || !canShowDetached(live) || handingOff.current) return;
     handingOff.current = true;
     try {
-      // A re-claim already on its way would land after the release below and hold the widget again.
+      // A re-claim already on its way would land after the release below and hold the widget again. Bounded, so a
+      // node that never answers does not leave Detach waiting with nothing on screen.
       await leaseRefresh.current?.settled();
       try {
         await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
@@ -509,13 +528,22 @@ export function PinnedLiveSurface({
         setNotice(cause instanceof Error ? cause.message : String(cause));
         return;
       }
-      const answer = await bridge.detachWidget({
-        conversationId,
-        instanceId,
-        ...(title === undefined ? {} : { title }),
-        live,
-        appearance: readAppearanceSnapshot(),
-      });
+      /*
+       * A bridge call that throws (the window closed while it was loading, the page failed to load) is a window that did
+       * not open, said the same way as a refusal: the person is told, and the lease is taken back.
+       */
+      let answer: { ok: boolean; refused?: string };
+      try {
+        answer = await bridge.detachWidget({
+          conversationId,
+          instanceId,
+          ...(title === undefined ? {} : { title }),
+          live,
+          appearance: readAppearanceSnapshot(),
+        });
+      } catch (cause) {
+        answer = { ok: false, ...(cause instanceof Error && cause.message !== "" ? { refused: cause.message } : {}) };
+      }
       if (!answer.ok) {
         setNotice(answer.refused ?? t("shell.live.detachFailed"));
         await client
