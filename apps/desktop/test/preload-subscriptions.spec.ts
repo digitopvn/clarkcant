@@ -1,7 +1,9 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { DETACHED_PERFORM_LIMITS } from "../src/detached-window.mjs";
 
 /**
  * The preload's named subscriptions, loaded against a stand-in `electron`.
@@ -17,12 +19,12 @@ interface Bridge {
   onNotificationClicked(callback: (payload: { target?: unknown }) => void): () => void;
 }
 
-function loadPreload(): { bridge: Bridge; listeners: Map<string, Set<Listener>> } {
+function loadPreload<T = Bridge>(file = "preload.cjs"): { bridge: T; listeners: Map<string, Set<Listener>> } {
   const listeners = new Map<string, Set<Listener>>();
-  let exposed: Bridge | undefined;
+  let exposed: T | undefined;
   const electron = {
     contextBridge: {
-      exposeInMainWorld(_name: string, value: Bridge) {
+      exposeInMainWorld(_name: string, value: T) {
         exposed = value;
       },
     },
@@ -41,7 +43,7 @@ function loadPreload(): { bridge: Bridge; listeners: Map<string, Set<Listener>> 
     },
   };
   const require = createRequire(import.meta.url);
-  const path = fileURLToPath(new URL("../src/preload.cjs", import.meta.url));
+  const path = fileURLToPath(new URL(`../src/${file}`, import.meta.url));
   const electronPath = require.resolve("electron");
   delete require.cache[path];
   const previous = require.cache[electronPath];
@@ -96,5 +98,56 @@ describe("preload subscriptions", () => {
     fire(undefined);
     expect(seen).toEqual([{ target: "notice:ntf_1" }, {}, {}]);
     off();
+  });
+});
+
+describe("the detached preload's performs", () => {
+  interface DetachedBridge {
+    onPerform(callback: (push: unknown) => void): () => void;
+  }
+  const push = (listeners: Map<string, Set<Listener>>, performId: string) => {
+    for (const listener of listeners.get("detached:perform") ?? []) listener({ sender: "ipc" }, { performId, action: "format", input: {} });
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("hands a perform pushed before the page listened to the page when it subscribes, once", () => {
+    const { bridge, listeners } = loadPreload<DetachedBridge>("detached-preload.cjs");
+    push(listeners, "perform_early");
+    const seen: unknown[] = [];
+    const off = bridge.onPerform((value) => seen.push(value));
+    expect(seen).toEqual([{ performId: "perform_early", action: "format", input: {} }]);
+    push(listeners, "perform_next");
+    expect(seen).toHaveLength(2);
+    off();
+
+    // Held for the next subscriber, while unsubscribed, and handed over only once.
+    push(listeners, "perform_between");
+    const again: unknown[] = [];
+    const offAgain = bridge.onPerform((value) => again.push(value));
+    expect(again).toEqual([{ performId: "perform_between", action: "format", input: {} }]);
+    offAgain();
+    const third: unknown[] = [];
+    bridge.onPerform((value) => third.push(value))();
+    expect(third).toEqual([]);
+    expect(seen).toHaveLength(2);
+  });
+
+  it("drops a held perform once the host has stopped waiting on it", () => {
+    vi.useFakeTimers();
+    const { bridge, listeners } = loadPreload<DetachedBridge>("detached-preload.cjs");
+    push(listeners, "perform_in_time");
+    vi.advanceTimersByTime(DETACHED_PERFORM_LIMITS.answerWithinMs - 1);
+    const seen: { performId?: string }[] = [];
+    bridge.onPerform((value) => seen.push(value as { performId?: string }))();
+    expect(seen.map((value) => value.performId)).toEqual(["perform_in_time"]);
+
+    push(listeners, "perform_too_late");
+    vi.advanceTimersByTime(DETACHED_PERFORM_LIMITS.answerWithinMs);
+    const late: unknown[] = [];
+    bridge.onPerform((value) => late.push(value))();
+    expect(late).toEqual([]);
   });
 });
