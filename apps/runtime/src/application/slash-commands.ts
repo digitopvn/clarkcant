@@ -109,8 +109,8 @@ export async function answerSlashCommand(
         const levels = [null, ...THINKING_LEVELS] as const;
         return {
           text: say(
-            `Mức suy nghĩ hiện tại: ${current ?? "mặc định của model"}. Chọn mức cho các lượt sau.`,
-            `Thinking level now: ${current ?? "the model's default"}. Choose one for the turns that follow.`,
+            `Mức suy nghĩ hiện tại: ${current ?? "tự động (model dùng mức mặc định của nó)"}. Chọn mức cho các lượt sau.`,
+            `Thinking level now: ${current ?? "auto (the model uses its own default)"}. Choose one for the turns that follow.`,
           ),
           card: card("thinking", {
             title: say("Mức suy nghĩ", "Thinking level"),
@@ -120,7 +120,8 @@ export async function answerSlashCommand(
             ),
             rows: levels.map((level) => ({
               rowId: level ?? "default",
-              label: level ?? say("Mặc định của model", "Model default"),
+              // Auto is no level at all: nothing is sent, and the model thinks at its own default.
+              label: level ?? say("Tự động (mặc định của model)", "Auto (model default)"),
               ...((level ?? undefined) === current ? { current: true } : {}),
               actions:
                 (level ?? undefined) === current
@@ -131,7 +132,7 @@ export async function answerSlashCommand(
         };
       }
       const wanted = argument.toLowerCase();
-      const level = ["default", "auto", "mặc định", "mac dinh"].includes(wanted)
+      const level = ["auto", "default", "tự động", "tu dong", "mặc định", "mac dinh"].includes(wanted)
         ? null
         : (THINKING_LEVELS as readonly string[]).includes(wanted)
           ? (wanted as (typeof THINKING_LEVELS)[number])
@@ -139,8 +140,8 @@ export async function answerSlashCommand(
       if (level === undefined) {
         return {
           text: say(
-            `Không có mức suy nghĩ “${argument}”. Các mức: ${THINKING_LEVELS.join(", ")}, hoặc default. Gõ /thinking để chọn từ danh sách.`,
-            `There is no thinking level "${argument}". Levels: ${THINKING_LEVELS.join(", ")}, or default. Type /thinking to choose from a list.`,
+            `Không có mức suy nghĩ “${argument}”. Các mức: ${THINKING_LEVELS.join(", ")}, hoặc auto để model tự dùng mức mặc định. Gõ /thinking để chọn từ danh sách.`,
+            `There is no thinking level "${argument}". Levels: ${THINKING_LEVELS.join(", ")}, or auto for the model's own default. Type /thinking to choose from a list.`,
           ),
         };
       }
@@ -149,7 +150,10 @@ export async function answerSlashCommand(
       return {
         text:
           level === null
-            ? say("Đã trả mức suy nghĩ về mặc định của model, từ lượt sau.", "The thinking level is back to the model's default from the next turn.")
+            ? say(
+                "Đã đặt mức suy nghĩ về tự động: từ lượt sau, model dùng mức mặc định của nó.",
+                "Thinking is back to auto: from the next turn, the model uses its own default.",
+              )
             : say(`Đã đặt mức suy nghĩ ${level}, từ lượt sau.`, `Thinking level set to ${level} from the next turn.`),
       };
     }
