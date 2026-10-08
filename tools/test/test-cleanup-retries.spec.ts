@@ -1,12 +1,20 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { repoRelativePath, walk } from "../invariants/context.mjs";
-import runCheck, { isTestPath, retryingRmSyncLines } from "../invariants/test-cleanup-retries-asynchronously.mjs";
+import runCheck, {
+  checkedFiles,
+  commentsOf,
+  isTestPath,
+  parserUnavailable,
+  retryingRmSyncLines,
+} from "../invariants/test-cleanup-retries-asynchronously.mjs";
 import { removeTestDirectory } from "../test-cleanup.ts";
 
 // The sources below are strings, which the check blanks before it reads a file, so this file does not read as the calls
@@ -92,8 +100,9 @@ describe("the check on retrying synchronous removal in test code", () => {
       "const erase = require('fs').rmSync",
       "wipe(dir, { maxRetries: 3 });",
       "erase(dir, { maxRetries: 3 });",
+      '(await import("node:fs")).rmSync(dir, { maxRetries: 3 });',
     ].join("\n");
-    expect(retryingRmSyncLines(source)).toEqual([3, 4]);
+    expect(retryingRmSyncLines(source)).toEqual([3, 4, 5]);
   });
 
   it("finds an optional call", () => {
@@ -134,6 +143,75 @@ describe("the check on retrying synchronous removal in test code", () => {
     expect(retryingRmSyncLines(source)).toEqual([1, 2]);
   });
 
+  it("keeps reading code after a regular expression that holds a quote or a backtick", () => {
+    const source = [
+      "const said = /say: `Đã /u;",
+      "const quoted = /it's \"(/g;",
+      "rmSync(dir, { maxRetries: 3 });",
+      "const text = `/not a regex: '`; rmSync(dir, { maxRetries: 3 });",
+      "const slashes = /[//] invariant-allow: sync-rm-retries/;",
+      "rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([3, 4, 6]);
+    expect(commentsOf(source).trim()).toBe("");
+  });
+
+  it("reads a string right after a keyword as a string", () => {
+    const source = [
+      "function open() { return'(' } rmSync(dir, { maxRetries: 3 });",
+      "switch (key) { case'(': break; } rmSync(dir, { maxRetries: 3 });",
+      "if (typeof'(' === kind) {} rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2, 3]);
+  });
+
+  it("finds bracket access whose key sits on the next line", () => {
+    const source = ["fs[", '  "rmSync"](dir, { maxRetries: 3 });', "fs?.[", "  `rmSync`", "](dir, { maxRetries: 3 });"].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([2, 4]);
+  });
+
+  it("does not take the marker written as JSX text for a comment", () => {
+    const source = [
+      "const view = <p>// invariant-allow: sync-rm-retries</p>;",
+      "rmSync(dir, { maxRetries: 3 });",
+      "const note = <p>{/* invariant-allow: sync-rm-retries */}</p>;",
+      "rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([2]);
+  });
+
+  it("reads a file in the language its extension names", () => {
+    const source = "const size = <number>value; rmSync(dir, { maxRetries: 3 });";
+    expect(retryingRmSyncLines(source, "apps/web/test/helper.ts")).toEqual([1]);
+    expect(commentsOf("const s = <p>// it's</p>; // real", "apps/web/test/view.jsx")).toBe(`${" ".repeat(26)}// real`);
+  });
+
+  it("finds rmSync called through call and apply", () => {
+    const source = [
+      "fs.rmSync.call(fs, dir, { maxRetries: 3 });",
+      "rmSync.apply(undefined, [dir, { maxRetries: 3 }]);",
+      "fs.rmSync.call(fs, dir, { recursive: true });",
+      "other.call(fs, dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2]);
+  });
+
+  it("names a file that does not parse, since a call after the error may be missed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-check-"));
+    try {
+      mkdirSync(join(root, "apps/web/test"), { recursive: true });
+      writeFileSync(join(root, "apps/web/test/broken.ts"), "const = ;\nrmSync(dir, { maxRetries: 3 });\n");
+      writeFileSync(join(root, "apps/web/test/fine.ts"), "rmSync(dir, { recursive: true }); // maxRetries\n");
+      const result = { failures: [] as string[], notes: [] as string[] };
+      runCheck({ repoRoot: root, walk, relative: (target: string) => repoRelativePath(root, target), check: () => result });
+      expect(result.notes.filter((note) => note.startsWith("warning:"))).toEqual([
+        expect.stringMatching(/^warning: apps\/web\/test\/broken\.ts:1 does not parse \(.+\), so a call after it may be missed$/),
+      ]);
+    } finally {
+      await removeTestDirectory(root);
+    }
+  });
+
   it("reads every file it counts as test code, a .jsx spec included", async () => {
     const root = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-check-"));
     try {
@@ -157,6 +235,140 @@ describe("the check on retrying synchronous removal in test code", () => {
     expect(isTestPath("tools/smoke-widget-tooling.mjs")).toBe(true);
     expect(isTestPath("apps/runtime/src/worker-process.ts")).toBe(false);
     expect(isTestPath("tools/test-cleanup.ts")).toBe(false);
+  });
+});
+
+describe("the check over this repository's test code", () => {
+  const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+  const ctx = { repoRoot, walk, relative: (target: string) => repoRelativePath(repoRoot, target) };
+
+  /**
+   * Where the parser says `source` has comments, as one flag per character: the comment ranges at every node's and node
+   * list's edges, read through the AST independently of the check's own walk over tokens. What reads like a comment
+   * inside JSX text is text.
+   */
+  function parserComments(source: string, path: string): boolean[] {
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest);
+    const flags: boolean[] = Array.from({ length: source.length }, () => false);
+    const mark = (from: number, to: number, value: boolean) => {
+      for (let index = from; index < to; index += 1) flags[index] = value;
+    };
+    const comments: ts.CommentRange[] = [];
+    const jsxText: [number, number][] = [];
+    const edges = (...points: number[]) => {
+      for (const point of points) {
+        comments.push(...(ts.getLeadingCommentRanges(source, point) ?? []), ...(ts.getTrailingCommentRanges(source, point) ?? []));
+      }
+    };
+    const visit = (node: ts.Node) => {
+      if (ts.isJsxText(node)) jsxText.push([node.pos, node.end]);
+      else edges(node.pos, node.end);
+      ts.forEachChild(node, visit, (nodes) => {
+        edges(nodes.pos, nodes.end);
+        nodes.forEach(visit);
+      });
+    };
+    visit(file);
+    // The check counts a shebang as a comment; the comment ranges start after it.
+    if (source.startsWith("#!")) comments.push({ pos: 0, end: source.search(/\r?\n|$/), kind: ts.SyntaxKind.SingleLineCommentTrivia });
+    for (const range of comments) mark(range.pos, range.end, true);
+    for (const [from, to] of jsxText) mark(from, to, false);
+    return flags;
+  }
+
+  // The marker counts only in a comment, so where the check finds comments has to be where the parser does.
+  it("agrees with the TypeScript parser on where the comments are, in every file it reads", () => {
+    const disagreements: string[] = [];
+    const files = checkedFiles(ctx);
+    for (const path of files) {
+      const source = readFileSync(join(repoRoot, path), "utf8");
+      const comments = commentsOf(source, path);
+      const expected = parserComments(source, path);
+      expect(comments.length).toBe(source.length);
+      for (let index = 0; index < source.length; index += 1) {
+        const character = source.charAt(index);
+        if (character === " " || character === "\n" || character === "\r" || character === "\t" || (character > "~" && /\s/.test(character))) continue;
+        if ((comments[index] !== " ") !== expected[index]) {
+          const line = source.slice(0, index).split("\n").length;
+          const text = source.split("\n")[line - 1] ?? "";
+          disagreements.push(`${path}:${String(line)} ${expected[index] ? "misses a comment" : "reads code as a comment"}: ${text.trim()}`);
+          break;
+        }
+      }
+    }
+    expect(files.length).toBeGreaterThan(500);
+    expect(disagreements).toEqual([]);
+    // Parsing every test file twice takes seconds, more on a slow runner.
+  }, 60_000);
+
+  // CI runs the invariants before it installs the parser, so this is where CI holds the repository to the check.
+  it("finds no retrying synchronous removal in the repository's test code", () => {
+    const result = { failures: [] as string[], notes: [] as string[] };
+    runCheck({ ...ctx, check: () => result });
+    expect(result.failures).toEqual([]);
+    expect(result.notes.join("\n")).toMatch(/test file\(s\) checked/);
+  });
+});
+
+describe("the check without its parser", () => {
+  const notFound = Object.assign(new Error("Cannot find package 'typescript' imported from /repo/tools/invariants/x.mjs"), {
+    code: "ERR_MODULE_NOT_FOUND",
+  });
+
+  it("skips only when dependencies are not installed at all", async () => {
+    const root = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-parser-"));
+    try {
+      expect(parserUnavailable(notFound, root)).toEqual({ skip: expect.stringMatching(/not installed/) });
+      mkdirSync(join(root, "node_modules"));
+      expect(parserUnavailable(notFound, root)).toEqual({ fail: expect.stringMatching(/could not be loaded: Cannot find package 'typescript'/) });
+      const otherPackage = Object.assign(new Error("Cannot find package 'source-map' imported from typescript"), { code: "ERR_MODULE_NOT_FOUND" });
+      expect(parserUnavailable(otherPackage, join(root, "elsewhere"))).toEqual({ fail: expect.any(String) });
+      expect(parserUnavailable(new SyntaxError("Unexpected token"), join(root, "elsewhere"))).toEqual({ fail: expect.any(String) });
+    } finally {
+      await removeTestDirectory(root);
+    }
+  });
+
+  /** The check copied to `root`, run there by a separate Node with `root` as the repository, and its result. */
+  function runCopied(root: string): { failures: string[]; notes: string[]; skipped: boolean } {
+    const invariants = join(root, "tools", "invariants");
+    mkdirSync(invariants, { recursive: true });
+    for (const name of ["test-cleanup-retries-asynchronously.mjs", "context.mjs"]) {
+      copyFileSync(fileURLToPath(new URL(`../invariants/${name}`, import.meta.url)), join(invariants, name));
+    }
+    const script = [
+      'import { pathToFileURL } from "node:url";',
+      "const root = process.argv[1];",
+      'const { default: run } = await import(pathToFileURL(root + "/tools/invariants/test-cleanup-retries-asynchronously.mjs").href);',
+      "const result = { failures: [], notes: [], skipped: false };",
+      "run({ repoRoot: root, walk: () => [], relative: (path) => path, check: () => result });",
+      "process.stdout.write(JSON.stringify(result));",
+    ].join("\n");
+    return JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script, root], { encoding: "utf8" })) as {
+      failures: string[];
+      notes: string[];
+      skipped: boolean;
+    };
+  }
+
+  it("reports itself skipped before the install, and fails when the install is there but the parser does not load", async () => {
+    const root = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-parser-"));
+    try {
+      const before = runCopied(root);
+      expect(before).toMatchObject({ skipped: true, failures: [] });
+      expect(before.notes).toEqual([expect.stringMatching(/not installed/)]);
+
+      mkdirSync(join(root, "node_modules"));
+      expect(runCopied(root)).toMatchObject({ skipped: false, failures: [expect.stringMatching(/Cannot find package 'typescript'/)] });
+
+      const broken = join(root, "node_modules", "typescript");
+      mkdirSync(broken);
+      writeFileSync(join(broken, "package.json"), JSON.stringify({ name: "typescript", main: "index.js" }));
+      writeFileSync(join(broken, "index.js"), 'throw new Error("a broken install");\n');
+      expect(runCopied(root)).toMatchObject({ skipped: false, failures: [expect.stringMatching(/could not be loaded: a broken install/)] });
+    } finally {
+      await removeTestDirectory(root);
+    }
   });
 });
 

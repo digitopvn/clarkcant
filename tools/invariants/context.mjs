@@ -59,6 +59,32 @@ export function writeJson(path, value) {
 export { existsSync, readFileSync, readdirSync, statSync };
 
 /**
+ * The runner's report on `results`: a line per check (`PASS`, `SKIP` or `FAIL`, a check with failures failing even if
+ * it also said it skipped) with its notes and failures, then a summary that counts a skipped check as skipped, never as
+ * passed. `failed` is the number of failing checks.
+ */
+export function formatReport(results) {
+  const lines = [];
+  let failed = 0;
+  let skipped = 0;
+  for (const entry of results) {
+    const status = entry.failures.length > 0 ? "FAIL" : entry.skipped ? "SKIP" : "PASS";
+    if (status === "FAIL") failed += 1;
+    if (status === "SKIP") skipped += 1;
+    lines.push(`${status}  ${entry.name}`);
+    for (const note of entry.notes) lines.push(`      · ${note}`);
+    for (const failure of entry.failures) lines.push(`      ✗ ${failure}`);
+  }
+  const passed = results.length - failed - skipped;
+  const skippedText = skipped > 0 ? `, ${String(skipped)} skipped` : "";
+  let summary;
+  if (failed > 0) summary = `${String(failed)} invariant check(s) failed${skippedText}`;
+  else if (skipped > 0) summary = `${String(passed)} invariant check(s) passed${skippedText}`;
+  else summary = `all ${String(results.length)} invariant checks passed`;
+  return { text: `${lines.join("\n")}\n\n${summary}\n`, failed };
+}
+
+/**
  * Build the shared context: the `results` array every check appends to, a `check(name)`
  * factory, and the implementation-status registry, loaded once.
  *
@@ -84,11 +110,12 @@ export async function buildContext() {
     (Array.isArray(statusRegistry) ? statusRegistry : []).map((entry) => [entry.capabilityId, entry]),
   );
 
-  /** @type {{name: string, failures: string[], notes: string[]}[]} */
+  /** @type {{name: string, failures: string[], notes: string[], skipped: boolean}[]} */
   const results = [];
 
+  /** A check's result. A check that could not run sets `skipped` and says why in a note. */
   function check(name) {
-    const entry = { name, failures: [], notes: [] };
+    const entry = { name, failures: [], notes: [], skipped: false };
     results.push(entry);
     return entry;
   }
