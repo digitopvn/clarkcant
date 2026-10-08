@@ -1227,6 +1227,18 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     }
 
     /*
+     * An installed CLI's catalog runtime, under the nonce like the package frame's runtime above: the frame's opaque
+     * origin is answered only under the nonce, and a bare `/runtime/` path is one any website can name. A checkout's
+     * catalog frame loads its runtime from Vite instead, so there this path names nothing.
+     */
+    if (framePath === "/catalog-runtime.js" && root === undefined) {
+      if (sendPrebundledRuntime(response, browserRuntime("catalog-runtime").url)) return;
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("catalog runtime module not found\n");
+      return;
+    }
+
+    /*
      * The live-owner lease, read and written for real.
      *
      * `GET` answers with the current claim so a collector (or a test) can observe the handoff without guessing
@@ -1301,7 +1313,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       response.end(
         catalogFrameHtml(
           { definitionId: source.definitionId, fixtureId: state.fixture },
-          runtime.prebundled ? runtime.url : `${modulePrefix}${runtime.url}`,
+          runtime.prebundled ? `${framePrefix}/catalog-runtime.js` : `${modulePrefix}${runtime.url}`,
         ),
       );
       return;
@@ -1348,9 +1360,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     }
 
     if (root === undefined) {
-      // A catalog widget has no package files to serve. An installed CLI's catalog runtime is its module graph,
-      // bundled, and is served as it is.
-      if (sendPrebundledRuntime(response, path)) return;
+      // A catalog widget has no package files to serve; its runtime is served under the nonce, above.
       response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       response.end("not found\n");
       return;

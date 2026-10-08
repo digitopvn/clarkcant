@@ -193,6 +193,13 @@ The origin stays with the work it started:
   The bundled composer keeps the file chips for the next message after any command, with a short note that commands
   don't carry files, including a command that is refused or declined. Starting over, by a command or the header's
   button, drops them, so they never ride into the new conversation.
+- `/settings` opens the Settings dialog the header's gear opens, and `/settings <tab>` opens it on that tab. A tab is
+  named by its id (`experience`, `ai`, `control`, `extensions`, `devices`, `memory`, `developer`) or by the words a
+  typed "open settings" command accepts (`thiết bị`, `kiểm soát`, `tab ai`, ...). The answer carries the host's own
+  `settings.open` or `settings.tab` decision as `appIntent` (on `/messages/stream`, in the `done` frame), which the
+  page runs through its app-intent executor: the same dialog, not a second one and not stacked on another, with the
+  conversation and the composer's file chips left as they were and focus returned to the composer when it closes. A
+  tab that does not exist opens nothing and is answered with the list of tabs. No model is asked.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A

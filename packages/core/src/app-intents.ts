@@ -523,6 +523,17 @@ function findTab(normalised: string): SettingsTab | undefined {
   return undefined;
 }
 
+/**
+ * The Settings tab a whole word names, such as the argument of `/settings ai` or `/settings thiết bị`.
+ *
+ * Exact rather than a search inside a sentence, as `findTab` is: an argument is only the name of a tab, so anything
+ * else is a tab that does not exist and is refused by name instead of guessed. "tab ai" is read as "ai".
+ */
+export function settingsTabNamed(text: string): SettingsTab | undefined {
+  const name = normaliseIntentText(text).replace(/^tab /u, "");
+  return TAB_WORDS.find((entry) => entry.words.includes(name))?.tab;
+}
+
 function looksLikeTabRequest(normalised: string): boolean {
   const padded = ` ${normalised} `;
   return TAB_INTENT_MARKERS.some((marker) => padded.includes(marker)) || normalised.startsWith("tab ");

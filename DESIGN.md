@@ -36,7 +36,7 @@ AI should make ClarkCant simpler over time, not more complex: simple enough that
 - Do not turn widgets into a parallel dashboard.
 - Hidden is not the goal; summonable is. Everything the user may need — sessions, provider sign-in/out, model and thinking, settings, diagnostics — can be called up in chat, by voice or with a slash command, and appears as an agent message with widget UIs (a mini app). Slash commands, words and voice converge on the same typed action.
 - Answers that benefit from structure are composed as a mini app: asked to compare two models' benchmarks, Clark researches and replies with tables, charts and diagrams wired into one coherent surface, not a wall of text.
-- Settings is a secondary surface, opened over the conversation and closed back to where it was.
+- Settings is a secondary surface, opened over the conversation and closed back to where it was. The gear, "open settings" typed or spoken, and `/settings` (`/settings <tab>` for one tab) all open that one dialog.
 - The marketplace may have a browser surface, but it must open from chat/settings and must not become a second home screen.
 - Every important action must have an equivalent chat and voice path.
 

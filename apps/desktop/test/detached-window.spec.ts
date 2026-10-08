@@ -1,15 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
+  BROWSER_TOKEN_LIMITS,
   COMPOSER_SURFACE_HEADER as CONTRACT_COMPOSER_SURFACE_HEADER,
   appearanceSnapshotSchema,
+  browserTokenSessionSchema,
   semanticProposalSchema,
 } from "@clarkcant/contracts";
 import { compileAppearance } from "@clarkcant/design-tokens";
 import { DETACHED_RELAY_LIMITS, FRAME_BROKER_LIMITS, FRAME_MESSAGE_MAX_BYTES } from "@clarkcant/widget-host/session";
+import {
+  ARTIFACT_BRIDGE_LIMITS,
+  TOKEN_BRIDGE_LIMITS,
+  artifactRequestSchema,
+  jobRefWireSchema,
+  jobRequestSchema,
+  tokenRequestSchema,
+} from "@clarkcant/widget-sdk";
 
 import {
+  ARTIFACT_RELAY_LIMITS,
   BROKER_RELAY_VERBS,
+  PACKAGES_CHANGED_SETTLE_MS,
+  RELAY_PATTERNS,
+  TOKEN_RELAY_LIMITS,
+  TOKEN_SESSION,
+  relayPackagesChanged,
   COMPOSER_SURFACE_HEADER,
   DETACHED_CHANNELS,
   DETACHED_LEASE,
@@ -414,6 +430,17 @@ describe("the developer's folder path in a relayed dev-session status", () => {
   });
 });
 
+/** A JSON Schema node, as loosely as the drift tests below read one. */
+type SchemaNode = { properties: Record<string, any> } & Record<string, any>;
+
+/** One request of a widget SDK union, by its `op`, as JSON Schema: the bounds it holds a frame to, in one place. */
+function sdkRequest(schema: { toJSONSchema: () => unknown }, op: string): SchemaNode {
+  const json = schema.toJSONSchema() as { oneOf?: SchemaNode[]; anyOf?: SchemaNode[] };
+  const found = [...(json.oneOf ?? []), ...(json.anyOf ?? [])].find((variant) => variant.properties?.op?.const === op);
+  if (found === undefined) throw new Error(`the SDK has no ${op} request`);
+  return found;
+}
+
 describe("the relay limits and schema, against the packages they copy", () => {
   it("holds the host's limits equal to the widget host's", () => {
     expect(JSON.parse(JSON.stringify(RELAY_LIMITS))).toEqual(JSON.parse(JSON.stringify(DETACHED_RELAY_LIMITS)));
@@ -423,6 +450,48 @@ describe("the relay limits and schema, against the packages they copy", () => {
     for (const bucket of ["artifacts", "jobs", "tokens"] as const) {
       const { timeoutMs: _timeout, ...rate } = RELAY_LIMITS[bucket];
       expect(rate).toEqual(FRAME_BROKER_LIMITS[bucket]);
+    }
+  });
+
+  it("holds the file relay's sizes and patterns equal to the widget SDK's", () => {
+    expect(ARTIFACT_RELAY_LIMITS.chunkBytes).toBe(ARTIFACT_BRIDGE_LIMITS.chunkBytes);
+    expect(ARTIFACT_RELAY_LIMITS.chunkBase64Chars).toBe(ARTIFACT_BRIDGE_LIMITS.chunkBase64Chars);
+    expect(ARTIFACT_RELAY_LIMITS.maxAccept).toBe(ARTIFACT_BRIDGE_LIMITS.maxAccept);
+    expect(ARTIFACT_RELAY_LIMITS.nameMaxChars).toBe(ARTIFACT_BRIDGE_LIMITS.nameMaxChars);
+    const pick = sdkRequest(artifactRequestSchema, "pick");
+    expect(pick.properties.accept.maxItems).toBe(ARTIFACT_RELAY_LIMITS.maxAccept);
+    expect(pick.properties.accept.items.pattern).toBe(RELAY_PATTERNS.acceptType.source);
+    expect(pick.properties.accept.items.maxLength).toBe(ARTIFACT_RELAY_LIMITS.acceptMaxChars);
+    const read = sdkRequest(artifactRequestSchema, "read");
+    expect(read.properties.artifactId.pattern).toBe(RELAY_PATTERNS.artifactId.source);
+    expect(read.properties.length.maximum).toBe(ARTIFACT_RELAY_LIMITS.chunkBytes);
+    const create = sdkRequest(artifactRequestSchema, "create");
+    expect(create.properties.mimeType.minLength).toBe(ARTIFACT_RELAY_LIMITS.mimeTypeMinChars);
+    expect(create.properties.mimeType.maxLength).toBe(ARTIFACT_RELAY_LIMITS.mimeTypeMaxChars);
+    expect(create.properties.name.maxLength).toBe(ARTIFACT_RELAY_LIMITS.nameMaxChars);
+    expect(sdkRequest(artifactRequestSchema, "write").properties.chunkBase64.maxLength).toBe(ARTIFACT_RELAY_LIMITS.chunkBase64Chars);
+  });
+
+  it("holds the job relay's id pattern equal to the widget SDK's", () => {
+    expect((jobRefWireSchema.toJSONSchema() as { pattern?: string }).pattern).toBe(RELAY_PATTERNS.jobId.source);
+    expect(sdkRequest(jobRequestSchema, "get").properties.jobId.pattern).toBe(RELAY_PATTERNS.jobId.source);
+  });
+
+  it("holds the token relay's session, patterns and lifetimes equal to the widget SDK's and the contract's", () => {
+    expect((browserTokenSessionSchema.toJSONSchema() as { pattern?: string }).pattern).toBe(RELAY_PATTERNS.tokenSession.source);
+    expect(TOKEN_SESSION).toBe(RELAY_PATTERNS.tokenSession);
+    const request = tokenRequestSchema.toJSONSchema() as unknown as SchemaNode;
+    expect(request.properties.provider.pattern).toBe(RELAY_PATTERNS.tokenProvider.source);
+    expect(request.properties.provider.maxLength).toBe(TOKEN_RELAY_LIMITS.providerMaxChars);
+    expect(request.properties.scopes.items.pattern).toBe(RELAY_PATTERNS.tokenScope.source);
+    expect(request.properties.scopes.items.maxLength).toBe(TOKEN_RELAY_LIMITS.scopeMaxChars);
+    expect(request.properties.scopes.maxItems).toBe(TOKEN_RELAY_LIMITS.scopes);
+    expect(request.properties.ttlSeconds.minimum).toBe(TOKEN_RELAY_LIMITS.minTtlSeconds);
+    expect(request.properties.ttlSeconds.maximum).toBe(TOKEN_RELAY_LIMITS.maxTtlSeconds);
+    for (const source of [TOKEN_BRIDGE_LIMITS, BROWSER_TOKEN_LIMITS]) {
+      expect(source.scopes).toBe(TOKEN_RELAY_LIMITS.scopes);
+      expect(source.minTtlSeconds).toBe(TOKEN_RELAY_LIMITS.minTtlSeconds);
+      expect(source.maxTtlSeconds).toBe(TOKEN_RELAY_LIMITS.maxTtlSeconds);
     }
   });
 
@@ -968,9 +1037,19 @@ describe("the file, job and token relays", () => {
     expect([...BROKER_RELAY_VERBS].sort()).toEqual(Object.keys(BROKER_ACCEPTED).sort());
     expect(Object.keys(RELAY_BUCKETS).sort()).toEqual([...BROKER_RELAY_VERBS].sort());
     for (const verb of BROKER_RELAY_VERBS) {
-      for (const bucket of RELAY_BUCKETS[verb as keyof typeof RELAY_BUCKETS]) {
-        const limits = RELAY_LIMITS[bucket as keyof typeof RELAY_LIMITS] as { timeoutMs?: number };
-        expect(typeof limits.timeoutMs === "number" && limits.timeoutMs > 0 && limits.timeoutMs <= 60_000, `${verb} ${bucket}`).toBe(true);
+      // The first bucket a verb names is the one whose time limit its node calls get.
+      const [bucket] = RELAY_BUCKETS[verb as keyof typeof RELAY_BUCKETS];
+      const limits = RELAY_LIMITS[bucket as keyof typeof RELAY_LIMITS] as { timeoutMs?: number };
+      expect(typeof limits.timeoutMs === "number" && limits.timeoutMs > 0 && limits.timeoutMs <= 60_000, `${verb} ${bucket}`).toBe(true);
+    }
+  });
+
+  it("set no time limit on a bucket that is never a verb's first, since it would never apply", () => {
+    const first = new Set([...BROKER_RELAY_VERBS].map((verb) => RELAY_BUCKETS[verb as keyof typeof RELAY_BUCKETS][0]));
+    for (const buckets of Object.values(RELAY_BUCKETS)) {
+      for (const bucket of buckets.slice(1)) {
+        if (first.has(bucket)) continue;
+        expect(RELAY_LIMITS[bucket as keyof typeof RELAY_LIMITS], bucket).not.toHaveProperty("timeoutMs");
       }
     }
   });
@@ -1103,5 +1182,72 @@ describe("the token sessions a detached window was issued under", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+describe("package changes reaching the detached window", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A stand-in for the detached window: what it was sent, and whether it (or its page) is gone. */
+  function stubWindow() {
+    const sent: string[] = [];
+    const state = { destroyed: false, contentsDestroyed: false };
+    const window = {
+      isDestroyed: () => state.destroyed,
+      webContents: { isDestroyed: () => state.contentsDestroyed, send: (channel: string) => sent.push(channel) },
+    };
+    return { window, sent, state };
+  }
+
+  it("re-reads once after a burst of signals settles, and that read is inside the read budget", () => {
+    vi.useFakeTimers();
+    const { window, sent } = stubWindow();
+    const relay = relayPackagesChanged({ target: () => window });
+    const signals = RELAY_LIMITS["frame.read"].burst + 5;
+    for (let index = 0; index < signals; index += 1) {
+      relay.signal();
+      vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS / 10);
+    }
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS);
+    expect(sent).toEqual(["detached:packagesChanged"]);
+
+    // The window re-reads on each signal it hears, after the read that opened it.
+    const budget = relayBudget({ now: () => 0 });
+    const reads = [budget.take("frame.read"), ...sent.map(() => budget.take("frame.read"))];
+    expect(reads.every((read) => read.ok)).toBe(true);
+  });
+
+  it("passes on a signal that comes after a burst has settled", () => {
+    vi.useFakeTimers();
+    const { window, sent } = stubWindow();
+    const relay = relayPackagesChanged({ target: () => window });
+    relay.signal();
+    vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS);
+    relay.signal();
+    vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("sends nothing to a window that was destroyed, or closed, while the burst settled", () => {
+    vi.useFakeTimers();
+    const destroyed = stubWindow();
+    const toDestroyed = relayPackagesChanged({ target: () => destroyed.window });
+    toDestroyed.signal();
+    destroyed.state.destroyed = true;
+    expect(() => vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS)).not.toThrow();
+    expect(destroyed.sent).toEqual([]);
+
+    const pageGone = stubWindow();
+    const toPageGone = relayPackagesChanged({ target: () => pageGone.window });
+    toPageGone.signal();
+    pageGone.state.contentsDestroyed = true;
+    vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS);
+    expect(pageGone.sent).toEqual([]);
+
+    const closed = relayPackagesChanged({ target: () => undefined });
+    closed.signal();
+    expect(() => vi.advanceTimersByTime(PACKAGES_CHANGED_SETTLE_MS)).not.toThrow();
   });
 });
