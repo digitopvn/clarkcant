@@ -2173,8 +2173,11 @@ có handler bị từ chối với `ACTION_NOT_OFFERED`. Output mang token bị 
 **Không mở thì không thực hiện.** Một lần perform bị từ chối với `FRAME_NOT_MOUNTED` trong các trường hợp sau:
 
 - không trang nào đang hiện widget;
-- bên gọi đang chạy lượt không tới được frame (CLI, một relay, một trang cũ hơn, hoặc một cửa sổ desktop đã tách);
+- bên gọi đang chạy lượt không tới được frame (CLI, một relay hoặc một trang cũ hơn);
 - frame chưa được mount.
+
+Widget đang mở trong cửa sổ desktop riêng thì bị từ chối với `FRAME_DETACHED`: hãy gắn lại để Clark thao tác được.
+Không có gì được gửi tới frame nào.
 
 Trang mà hội thoại đã đổi trước khi kịp hỏi thì trả `SURFACE_GONE`. Trang không đọc được sự kiện thì trả
 `PERFORM_UNREADABLE`, hoặc `PERFORM_VERSION_UNSUPPORTED` với phiên bản khác. Không có gì được xếp hàng để làm sau và
@@ -2264,7 +2267,9 @@ Các surface còn lại:
 - historical inline snapshot; hoặc
 - read-only preview.
 
-Detach không reset state/subscription/media.
+Detach giữ state bền của instance: widget bắt đầu trong cửa sổ mới, và khi về lại hội thoại, từ những gì nó đã lưu
+trên node. Composition được chuyển nguyên trạng. Widget chạy trong khung riêng được mount lại trong cửa sổ mới, nên
+view state (`ephemeralStateKeys`) và vị trí phát đều bắt đầu lại; nó không bao giờ phát ở hai nơi.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
 
@@ -2273,10 +2278,25 @@ và trả instance về, khi phần hiển thị trong hội thoại đã mở n
 hoặc khi một bề mặt khác đã lấy lease. Việc trả instance về chỉ chờ node xác nhận nhả lease trong tối đa vài giây: node không trả lời
 thì widget cũng không bị kẹt ở chế độ chỉ đọc khi không còn cửa sổ nào mở, và lease của cửa sổ sẽ tự hết hạn.
 
-Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
-thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
-semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
-Việc detach một isolated frame được theo dõi ở [#577](https://github.com/digitopvn/clarkcant/issues/577).
+Widget chạy trong khung riêng (isolated frame) cũng detach được trên desktop. Cửa sổ vẫn không giữ credential nào.
+Desktop host chuyển tiếp từng yêu cầu của frame, cho đúng một instance mà nó đã mở cửa sổ này, bằng token của chính nó:
+
+- mỗi lần đọc widget, kèm một frame grant mới (URL hết hạn thì được làm mới bằng cách đọc lại);
+- mỗi lần ghi state, được trả lời bằng những gì node đã lưu hoặc bằng state node đang giữ;
+- mỗi lần publish semantic;
+- mỗi lần bấm, được gửi như của người dùng, giống một lần bấm trong hội thoại. Host tự phân giải digest của binding từ
+  lần đọc mới nhất của nó.
+
+Cửa sổ không nêu tên hội thoại lẫn instance. Các relay có giới hạn, và frame hỏi quá nhanh thì bị từ chối chứ không
+xếp hàng (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). Trạng thái bản dựng của phiên phát triển widget được hiện trong cửa sổ,
+không kèm đường dẫn thư mục. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai, và các lần
+perform của Clark trên widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại.
+
+Cửa sổ tách rời chưa có: tệp (`artifacts@1`), job (`jobs@1`), browser token (`tokens@1`) và các hành động Clark thực
+hiện (`offeredActions`). Frame được báo là chúng không được cung cấp, và chúng chạy lại khi widget được gắn lại
+([#616](https://github.com/digitopvn/clarkcant/issues/616)). Widget mà package đã mất (`frame: null`) không có nút
+detach; nó hiện văn bản thay thế trong hội thoại. Phần việc còn lại được theo dõi ở
+[#577](https://github.com/digitopvn/clarkcant/issues/577) và [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
 Audio/call/player không được duplicate playback khi chuyển surface.
 
@@ -3387,8 +3407,9 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng không gian widget và thư mục gốc dự án do người dùng cấu hình và được quyết định như đề
   xuất của Clark, chỉ facet frame và dữ liệu, dọn dẹp các bản dựng đã bị thay thế, chỉ mount lại frame, và trạng thái
   bản dựng do host sở hữu. Ghim một widget đang phát triển đã
-  chạy được; tách một widget cách ly ra cửa sổ riêng, cùng các điều khiển fixture, viewport, theme và reduced motion của
-  dev host đặt cạnh một frame trên node, thì chưa có.
+  chạy được, và tách nó ra cửa sổ desktop riêng cũng vậy (§11), cửa sổ đó hiện trạng thái bản dựng mà không kèm đường
+  dẫn thư mục. Các điều khiển fixture, viewport, theme và reduced motion của dev host đặt cạnh một frame trên node thì
+  chưa có.
 - State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).
 - Gỡ / khôi phục / quay về package từ Settings và qua `manage_package` trong hội thoại; dữ liệu được giữ.
 - Câu hỏi capability đang chờ được trả lời trong Settings (do host sở hữu; model không duyệt được). Frame chỉ
@@ -3429,7 +3450,10 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   `detachedWindowOptions`, `apps/web/src/App.tsx` phục vụ `?detached=1`), và được
   `apps/desktop/test/detached-window.spec.ts` cùng `apps/web/e2e/detach.spec.ts` phủ — **không phải** bởi
   check `detach` của bộ conformance: harness chỉ chạy trên dev host trong trình duyệt, mà dev host không có
-  cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có.
+  cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có. Một widget chạy trong khung
+  riêng được tách thật do smoke test desktop (`pnpm --filter @clarkcant/app-desktop smoke`) điều khiển: nó mount widget
+  từ lần đọc của host và chuyển tiếp một lần ghi state, một lần publish, một lần bấm và một lần đọc phiên phát triển tới
+  một node giả lập.
 - Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
 
 ---

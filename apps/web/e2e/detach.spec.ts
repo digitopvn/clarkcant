@@ -162,7 +162,7 @@ test("closing the conversation's view of a detached widget closes its window", a
   await expect.poll(() => page.evaluate(() => (window as unknown as { __shellCalls: string[] }).__shellCalls)).toEqual(["detach", "attach"]);
 });
 
-test("a widget in its own frame open in the conversation does not offer Detach", async ({ page }) => {
+test("a widget in its own frame open in the conversation offers Detach", async ({ page }) => {
   await openConversationWithDetachBridge(page);
   await say(page, "mở trình soạn thảo văn bản");
   const open = page.locator("[data-open-live]").last();
@@ -171,12 +171,9 @@ test("a widget in its own frame open in the conversation does not offer Detach",
   const live = page.locator("[data-pin-live]").last();
   await expect(live.locator("[data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
   await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 20_000 });
-  // The head is drawn (its Close is there), so a missing Detach is the gate, not a missing head.
-  await expect(live.locator("[data-close-live]")).toBeVisible();
-  await expect(live.locator("[data-detach-widget]")).toHaveCount(0);
-  expect(await page.evaluate(() => (window as unknown as { __detachRequests: unknown[] }).__detachRequests)).toEqual([]);
+  // The desktop host relays the frame's reads, writes and presses, so the detached window can run it.
+  await expect(live.locator("[data-detach-widget='true']")).toBeVisible();
 });
-
 test("the detached composition draws the host revision and follows a checked appearance relay in place", async ({ page }) => {
   const initial = compileAppearance({ scheme: "dark" });
   const next = compileAppearance({ scheme: "light", reducedMotion: true });
@@ -223,31 +220,115 @@ test("the detached window draws the instance the host handed over, and asks it t
   expect(calls).toContain("release");
 });
 
-test("a widget in its own frame is refused by name rather than crashing the window", async ({ page }) => {
-  /*
-   * The conversation does not offer Detach for an isolated widget and the host refuses one, so this window is reached
-   * only past both. It holds no credential to save that frame's state, so it mounts no frame and says why.
-   */
+/** A frame read as the desktop host answers it: absolute on the node's origin, with a fresh grant each read. */
+const FRAME_DOCUMENT = "http://127.0.0.1:47011/frame-fixture/document.html";
+
+function frameLive(frame: unknown, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "isolated-frame",
+    instanceId: "widget_detached_1",
+    revision: 3,
+    readOnly: false,
+    frame,
+    bindings: [{ actionBindingId: "refresh", label: "Refresh", effectCategory: "read", bindingDigest: "sha256:binding" }],
+    props: {},
+    stateRevision: 1,
+    stateVersion: 1,
+    state: { count: 1 },
+    stateStatus: { kind: "writable" },
+    ephemeralStateKeys: [],
+    ...extra,
+  };
+}
+
+/**
+ * The detached preload with the frame relays, as `detached-preload.cjs` exposes them. Every call is recorded; none of
+ * them names an instance or a conversation, because the host performs each against the instance it opened.
+ */
+async function stubFrameBridge(page: import("@playwright/test").Page, read: Record<string, unknown>): Promise<void> {
+  await page.addInitScript((frameRead) => {
+    const calls: unknown[] = [];
+    (window as unknown as { __detachedCalls: unknown[] }).__detachedCalls = calls;
+    let grant = 0;
+    (window as unknown as { clarkcantDetached: unknown }).clarkcantDetached = {
+      bootstrap: async () => {
+        calls.push("bootstrap");
+        // The conversation's own read, whose grant was minted for it: the window mounts only what it reads itself.
+        return { ok: true, bootstrap: { instanceRef: "widget_detached_1", title: "Trình soạn thảo", widgetKind: "widget", live: frameRead } };
+      },
+      frameRead: async (...args: unknown[]) => {
+        calls.push({ frameRead: args });
+        grant += 1;
+        const frame = (frameRead as { frame: { url: string } | null }).frame;
+        return { ok: true, live: { ...frameRead, frame: frame === null ? null : { ...frame, url: `${frame.url}?grant=${grant}` } } };
+      },
+      saveState: async (write: unknown) => {
+        calls.push({ saveState: write });
+        return { ok: false, code: "RELAY_REFUSED", refused: "recorded only" };
+      },
+      publishSemantic: async (input: unknown) => {
+        calls.push({ publishSemantic: input });
+        return { ok: true };
+      },
+      devSession: async () => {
+        calls.push("devSession");
+        return { ok: false, code: "NO_DEV_SESSION", refused: "no session" };
+      },
+      intent: async (input: unknown) => {
+        calls.push({ intent: input });
+        return { ok: false, refused: "recorded only" };
+      },
+      release: async () => {
+        calls.push("release");
+        return { ok: true };
+      },
+    };
+  }, read);
+}
+
+test("a widget in its own frame mounts in the detached window through the host's relays, holding no credential", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await stubBridge(page, {
-    ok: true,
-    bootstrap: {
-      ...BOOTSTRAP,
-      live: { kind: "isolated-frame", instanceId: "widget_detached_1", frame: { url: "/widgets/frame" }, bindings: [] },
-    },
+  let conversationRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.includes("/conversations")) conversationRequests += 1;
   });
+  // The frame's document, served where the host's read said it is.
+  await page.route(`${FRAME_DOCUMENT}*`, (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><p>frame</p>" }));
+  await stubFrameBridge(
+    page,
+    frameLive({ url: FRAME_DOCUMENT, document: "build-1", isolation: "opaque-origin", grantedCapabilities: [], allowedOrigins: [] }),
+  );
   await page.goto("/?detached=1");
 
   const surface = page.locator("[data-detached-surface='true']");
-  await expect(surface).toHaveAttribute("data-detached-unsupported", "isolated-frame");
-  await expect(surface.locator("iframe")).toHaveCount(0);
-  await page.locator("[data-detached-release='true']").click();
-  const calls = await page.evaluate(() => (window as unknown as { __detachedCalls: Recorded[] }).__detachedCalls);
-  expect(calls).toContain("release");
+  await expect(surface).toHaveAttribute("data-detached-frame", "true");
+  await expect(surface).toHaveAttribute("data-detached-instance", "widget_detached_1");
+  const iframe = surface.locator("[data-widget-frame='widget_detached_1'] iframe");
+  // The URL from the window's own read, with its own grant, in the same sandbox the conversation uses.
+  await expect(iframe).toHaveAttribute("src", `${FRAME_DOCUMENT}?grant=1`);
+  await expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
+
+  const calls = await page.evaluate(() => (window as unknown as { __detachedCalls: unknown[] }).__detachedCalls);
+  // The frame was read through the relay, which takes no arguments: the host names the instance.
+  expect(calls).toContainEqual({ frameRead: [] });
+  expect(conversationRequests).toBe(0);
+  expect(await page.evaluate(() => [window.sessionStorage.getItem("cc_token"), window.localStorage.getItem("cc_token")])).toEqual([null, null]);
+  expect(await page.evaluate(() => Object.keys(window.localStorage).filter((key) => /token/i.test(key)))).toEqual([]);
   expect(errors).toEqual([]);
 });
 
+test("a widget whose package is gone shows its text alternative in the detached window, not an empty frame", async ({ page }) => {
+  await stubFrameBridge(page, frameLive(null, { textFallback: "Bản nháp: 3 đoạn văn" }));
+  await page.goto("/?detached=1");
+
+  const surface = page.locator("[data-detached-surface='true']");
+  await expect(surface.locator("[data-widget-text-fallback='true']")).toHaveText("Bản nháp: 3 đoạn văn");
+  await expect(surface.locator("iframe")).toHaveCount(0);
+  await page.locator("[data-detached-release='true']").click();
+  const calls = await page.evaluate(() => (window as unknown as { __detachedCalls: unknown[] }).__detachedCalls);
+  expect(calls).toContain("release");
+});
 test("a window that was handed nothing says so instead of showing an empty frame", async ({ page }) => {
   // "The host refused" and "the widget is blank" look identical on screen and mean opposite things.
   await stubBridge(page, { ok: false, refused: "this window is not showing a detached instance" });

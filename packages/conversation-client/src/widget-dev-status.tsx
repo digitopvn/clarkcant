@@ -2,7 +2,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 
 import { WIDGET_DEV_DIAGNOSTIC_CODES, widgetDevRootRefusedCode, type WidgetDevSessionView } from "@clarkcant/contracts";
 
-import type { GatewayClient, WidgetDevSessionRead } from "./api.ts";
+import type { WidgetDevSessionRead } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 import { nodeViewRefusalText } from "./node-view-refusal.ts";
@@ -57,8 +57,15 @@ export function widgetDevDiagnosticText(diagnostic: { code?: string | undefined;
   return known === undefined ? diagnostic.message : t(`shell.dev.diagnostic.${known}`);
 }
 
+/**
+ * What the status reads of a session: everything but where its folder is and where it is placed, which the status never
+ * shows. A detached window is given exactly this (the desktop host drops the folder path), and the conversation's full
+ * read satisfies it too.
+ */
+export type WidgetDevStatusView = Omit<WidgetDevSessionRead, "root" | "placed">;
+
 /** The one line the status says, and whether it is a notice (something is not current) rather than plain status. */
-export function widgetDevStatusLine(view: WidgetDevSessionView, t: Translate): { text: string; notice: boolean } {
+export function widgetDevStatusLine(view: Omit<WidgetDevSessionView, "root" | "placed">, t: Translate): { text: string; notice: boolean } {
   const running = view.running?.generation;
   const latest = view.latest?.generation ?? running ?? 0;
   if (view.status === "stopped") {
@@ -88,7 +95,8 @@ export function widgetDevStatusLine(view: WidgetDevSessionView, t: Translate): {
 }
 
 export interface WidgetDevStatusProps {
-  client: Pick<GatewayClient, "widgetDevSession">;
+  /** The conversation's client, or a detached window's relay that answers the same view without the folder path. */
+  client: { widgetDevSession: (sessionId: string) => Promise<WidgetDevStatusView> };
   sessionId: string;
   /** Told when the node runs another generation of the session, so the surface re-reads and remounts the frame. */
   onRunningChange: () => void;
@@ -104,7 +112,7 @@ export function widgetDevUnreachableText(cause: unknown, t: Translate): string {
 
 export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDevStatusProps): ReactElement | null {
   const t = useT();
-  const [view, setView] = useState<WidgetDevSessionRead | undefined>(undefined);
+  const [view, setView] = useState<WidgetDevStatusView | undefined>(undefined);
   // Why the status is not known, as the sentence the line shows; undefined while it is.
   const [unreachable, setUnreachable] = useState<string | undefined>(undefined);
   const seenRunning = useRef<string | undefined>(undefined);
@@ -154,7 +162,7 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
 }
 
 /** What the status says for one read of the session: drawn from the view alone, so it can be checked without a node. */
-export function WidgetDevStatusReport({ view }: { view: WidgetDevSessionRead }): ReactElement {
+export function WidgetDevStatusReport({ view }: { view: WidgetDevStatusView }): ReactElement {
   const t = useT();
   const line = widgetDevStatusLine(view, t);
   const problems = view.lastBuild?.ok === false ? view.lastBuild.diagnostics : [];

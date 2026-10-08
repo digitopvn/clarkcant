@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   contentSecurityPolicy,
   createWindowOptions,
+  DETACHED_WINDOW_CHANNELS,
   IPC_CHANNELS,
   normalizeExternalUrl,
   reviewCredentialRequest,
@@ -351,9 +352,38 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:setWindowMode",
       "desktop:updateAppearance",
       "detached:bootstrap",
+      "detached:dev.session",
+      "detached:frame.read",
       "detached:intent",
       "detached:release",
+      "detached:semantic.publish",
+      "detached:state.save",
     ]);
+  });
+
+  it("lets only the detached document use each detached channel, and refuses it every desktop channel", () => {
+    const detachedUrl = "file:///Applications/clarkcant/shell.html?detached=1";
+    const relays = ["detached:frame.read", "detached:state.save", "detached:semantic.publish", "detached:dev.session"];
+    expect(DETACHED_WINDOW_CHANNELS).toEqual(expect.arrayContaining(relays));
+    for (const channel of DETACHED_WINDOW_CHANNELS) {
+      expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, detachedUrl).allowed).toBe(true);
+      // The conversation's own document may not ask for them, nor may a frame inside the detached window.
+      expect(reviewIpcCall(sender(SHELL_URL), channel, SHELL_URL, detachedUrl).allowed).toBe(false);
+      expect(reviewIpcCall(sender(detachedUrl, frame(detachedUrl)), channel, SHELL_URL, detachedUrl).allowed).toBe(false);
+      // With no detached window open there is no document entitled to them at all.
+      expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, undefined).allowed).toBe(false);
+    }
+    for (const channel of IPC_CHANNELS.filter((name) => name.startsWith("desktop:"))) {
+      expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, detachedUrl).allowed).toBe(false);
+    }
+  });
+
+  it("offers no generic node call, no external link and no hand-over of a token to a detached window", () => {
+    for (const refused of ["detached:openExternal", "detached:node", "detached:getSession", "detached:pickDirectory", "detached:timeline"]) {
+      expect(IPC_CHANNELS).not.toContain(refused);
+    }
+    // The relays a later phase adds are absent until they exist.
+    expect(IPC_CHANNELS.some((name) => /^detached:(artifacts|jobs|tokens|perform)/.test(name))).toBe(false);
   });
 });
 

@@ -2178,8 +2178,11 @@ uncertain.
 **Not open means not performed.** A perform is refused with `FRAME_NOT_MOUNTED` in these cases:
 
 - no page is showing the widget;
-- the caller running the turn cannot reach a frame (the CLI, a relay, an older page, or a detached desktop window);
+- the caller running the turn cannot reach a frame (the CLI, a relay or an older page);
 - the frame is not mounted.
+
+A widget that is open in its own desktop window is refused with `FRAME_DETACHED`: reattach it to let Clark act on it.
+Nothing is sent to either frame.
 
 A page whose conversation changed before it could ask answers `SURFACE_GONE`. A page that cannot read the event
 answers `PERFORM_UNREADABLE`, or `PERFORM_VERSION_UNSUPPORTED` for another version. Nothing is queued for later and
@@ -2268,7 +2271,9 @@ The remaining surfaces are:
 - a historical inline snapshot; or
 - a read-only preview.
 
-Detach does not reset state/subscriptions/media.
+Detach keeps the instance's durable state: the widget starts in the new window, and again back in the conversation,
+from what it saved on the node. A composition moves as it is. A widget in its own frame is mounted again in the new
+window, so its view state (`ephemeralStateKeys`) and any playback position start over; it never plays in two places.
 
 Closing a detached window only moves presentation ownership; it does not delete the instance.
 
@@ -2277,11 +2282,26 @@ open. It closes, and hands the instance back, when the conversation view that op
 conversation window closes, when the app quits, or when another surface has taken the lease. Handing the instance back waits for the node to confirm the release for at most a few seconds: a node that does
 not answer does not leave the widget read-only with no window open, and the window's lease then lapses on its own.
 
-Only composed widgets can be detached today. A widget that runs in its own (isolated) frame stays in the
-conversation: a detached window holds no credential, and that frame needs the conversation's credential to save
-state, publish its semantic view and renew its URL. The conversation does not offer Detach for it, and the desktop
-host refuses its bootstrap. Detaching an isolated frame is tracked in
-[#577](https://github.com/digitopvn/clarkcant/issues/577).
+A widget that runs in its own (isolated) frame can be detached on the desktop too. The window still holds no
+credential. The desktop host relays each request the frame makes, against the one instance it opened the window for
+and with its own token:
+
+- each read of the widget, with a fresh frame grant (a URL that lapses is renewed by reading again);
+- each state write, answered with what the node committed or with the state it holds;
+- each semantic publish;
+- each press, sent as the person's, as a press in the conversation is. The host resolves the binding's digest from its
+  own newest read.
+
+The window names neither the conversation nor the instance. Its relays are bounded, and a frame that asks too fast is
+refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A widget dev session's build status is shown in the
+window without the folder path. While the widget is detached, the conversation shows a note instead of a second frame,
+and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached.
+
+Not yet in a detached window: files (`artifacts@1`), jobs (`jobs@1`), browser tokens (`tokens@1`) and the actions
+Clark performs (`offeredActions`). The frame is told they are not offered, and they work again once the widget is
+reattached ([#616](https://github.com/digitopvn/clarkcant/issues/616)). A widget whose package is gone (`frame: null`)
+is not offered Detach; it shows its text alternative in the conversation. The rest of the work is tracked in
+[#577](https://github.com/digitopvn/clarkcant/issues/577) and [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
 Audio/call/player must not duplicate playback when moving between surfaces.
 
@@ -3401,8 +3421,9 @@ This section states which parts of the document already have code, so that nobod
 - Widget dev sessions in the conversation (§16, "Developing in the conversation"): one build engine shared with the dev
   host, immutable generations, last-known-good, policy-decided installs under a reach-bound consent scope, Clark-started
   sessions confined to the widget workspace and project roots the person configured and decided as Clark's proposal, frame and data facets
-  only, cleanup of superseded builds, frame-only remount, and host-owned build status. Pinning a dev widget works; detaching an isolated widget into its own window,
-  and the dev host's fixture, viewport, theme and reduced-motion controls beside a node frame, are not yet available.
+  only, cleanup of superseded builds, frame-only remount, and host-owned build status. Pinning a dev widget works, and so does detaching it into its own desktop window (§11),
+  which shows its build status without the folder path. The dev host's fixture, viewport, theme and reduced-motion
+  controls beside a node frame are not yet available.
 - Durable state for isolated widgets, declarative host-run migrations, and `ephemeralStateKeys` (§15).
 - Remove / restore / roll back a package from Settings and via `manage_package` in the conversation; data is kept.
 - Pending capability questions are answered in Settings (host-owned; the model cannot approve them). The frame only
@@ -3444,7 +3465,10 @@ This section states which parts of the document already have code, so that nobod
   `detachedWindowOptions`, `apps/web/src/App.tsx` serves `?detached=1`), and it is covered by
   `apps/desktop/test/detached-window.spec.ts` together with `apps/web/e2e/detach.spec.ts` — **not** by the
   conformance suite's `detach` check: the harness only runs on the in-browser dev host, and the dev host has no
-  detached window to drive. The ownership half (`detached` on the live-owner claim) is implemented.
+  detached window to drive. The ownership half (`detached` on the live-owner claim) is implemented. A widget in its
+  own frame detached for real is driven by the desktop smoke test (`pnpm --filter @clarkcant/app-desktop smoke`),
+  which mounts it from the host's read and relays a state write, a publish, a press and a dev-session read to a
+  stand-in node.
 - Runtime for MCP Apps: the isolated-app path is implemented; MCP Apps have not yet been proven on that same path.
 
 ---

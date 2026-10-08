@@ -26,6 +26,27 @@ export function registerMountedFrame(instanceId: string, session: FrameSession):
   };
 }
 
+/**
+ * The instances this page has handed to a detached desktop window, counted per surface that did.
+ *
+ * Clark cannot ask a frame in another window yet, so a perform for one of these is answered as detached, with what to do
+ * about it, rather than handed to a copy on this page or reported as a widget nobody shows.
+ */
+const detached = new Map<string, number>();
+
+/** Mark an instance as open in its own window. Returns the function that unmarks it, for the surface's cleanup. */
+export function markFrameDetached(instanceId: string): () => void {
+  detached.set(instanceId, (detached.get(instanceId) ?? 0) + 1);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const left = (detached.get(instanceId) ?? 1) - 1;
+    if (left <= 0) detached.delete(instanceId);
+    else detached.set(instanceId, left);
+  };
+}
+
 function report(outcome: FramePerformOutcome): WidgetPerformReport {
   if (outcome.status === "done") return outcome.output === undefined ? { status: "done" } : { status: "done", output: outcome.output.slice(0, 4_000) };
   if (outcome.status === "refused") {
@@ -47,6 +68,14 @@ function report(outcome: FramePerformOutcome): WidgetPerformReport {
  * person is looking at. A frame that cannot be asked is refused by its own session with nothing posted.
  */
 export async function performInMountedFrame(request: WidgetPerformRequest): Promise<WidgetPerformReport> {
+  if (detached.has(request.instanceId)) {
+    return {
+      status: "refused",
+      by: "page",
+      code: "FRAME_DETACHED",
+      message: "the widget is open in its own window; reattach it to let Clark act on it; nothing was sent",
+    };
+  }
   const sessions = mounted.get(request.instanceId) ?? [];
   const session = sessions[sessions.length - 1];
   if (session === undefined) {

@@ -44,6 +44,9 @@
       "@clarkcant/widget-host": [
         "packages/widget-host/src/index.ts"
       ],
+      "@clarkcant/widget-host/session": [
+        "packages/widget-host/src/session.ts"
+      ],
       "@clarkcant/widget-catalog": [
         "packages/widget-catalog/src/index.ts"
       ],

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { WIDGET_PERFORM_VERSION, readWidgetPerformRequest, type WidgetPerformReport, type WidgetPerformRequest } from "@clarkcant/contracts";
 import type { FramePerformOutcome, FrameSession } from "@clarkcant/widget-host/session";
 
-import { answerWidgetPerform, performInMountedFrame, registerMountedFrame } from "../src/frame-performs.ts";
+import { answerWidgetPerform, markFrameDetached, performInMountedFrame, registerMountedFrame } from "../src/frame-performs.ts";
 
 /**
  * The page's side of an action Clark asked a widget to perform: finding the frame that shows the widget now, and always
@@ -62,10 +62,24 @@ describe("handing a perform to the mounted frame", () => {
     expect(await performInMountedFrame(request("wi_widget"))).toEqual({ status: "refused", by: "widget", code: "NOTHING_SELECTED", message: "select cells" });
     removeWidget();
   });
+  it("says a widget open in its own window is detached, without asking any frame, until it is reattached", async () => {
+    const shown = frame({ status: "done", output: "inline" });
+    const remove = registerMountedFrame("wi_detached", shown.session);
+    const reattach = markFrameDetached("wi_detached");
+    expect(await performInMountedFrame(request("wi_detached"))).toMatchObject({
+      status: "refused",
+      by: "page",
+      code: "FRAME_DETACHED",
+      message: expect.stringContaining("reattach it to let Clark act on it"),
+    });
+    expect(shown.asked).toHaveLength(0);
+    reattach();
+    expect(await performInMountedFrame(request("wi_detached"))).toEqual({ status: "done", output: "inline" });
+    remove();
+  });
 });
 
-describe("answering a widget-perform event", () => {
-  it("answers a perform that reached a page whose session moved on, without asking the frame", async () => {
+describe("answering a widget-perform event", () => {  it("answers a perform that reached a page whose session moved on, without asking the frame", async () => {
     const shown = frame({ status: "done" });
     const remove = registerMountedFrame("wi_stale", shown.session);
     const sent: [string, WidgetPerformReport][] = [];
