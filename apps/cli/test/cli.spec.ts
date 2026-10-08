@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { PACKAGE_INSTRUCTION_LIMITS } from "@clarkcant/contracts";
 import { bootNodeServices, createNodeServer, type NodeServices } from "@clarkcant/runtime";
 
 import { type CliIo, resolveConnection, runCli } from "../src/cli.ts";
@@ -259,6 +260,30 @@ describe("instructions check", () => {
     const missing = io();
     expect(await runCli(["instructions", "check", gone], missing)).toBe(1);
     expect(missing.out.join("")).toContain("facet rules (rules/none.json): no such file in the package");
+  });
+
+  it("allows one instructions facet, never opens a rules file outside the package, and warns about a snippet a node clips", async () => {
+    const two = pkg({ version: 1, rules: [RULE] }, {
+      facets: [
+        { kind: "instructions", id: "rules", entry: "rules/instructions.json", isolation: "declarative" },
+        { kind: "instructions", id: "more", entry: "rules/instructions.json", isolation: "declarative" },
+      ],
+    });
+    const twice = io();
+    expect(await runCli(["instructions", "check", two], twice)).toBe(1);
+    expect(twice.out.join("")).toContain("at most one instructions facet");
+
+    const escapes = pkg({ version: 1, rules: [RULE] }, { facets: [{ kind: "instructions", id: "rules", entry: "../outside.json", isolation: "declarative" }] });
+    const outside = io();
+    expect(await runCli(["instructions", "check", escapes], outside)).toBe(1);
+    expect(outside.out.join("")).toContain("escapes the package root");
+    expect(outside.out.join("")).not.toContain("no such file in the package");
+
+    const long = pkg({ version: 1, rules: [RULE] });
+    writeFileSync(join(long, "rules", "instructions", "migrations.md"), "x".repeat(PACKAGE_INSTRUCTION_LIMITS.snippetChars + 1));
+    const clipped = io();
+    expect(await runCli(["instructions", "check", long], clipped)).toBe(0);
+    expect(clipped.out.join("")).toContain(`instructions/migrations.md: ${String(PACKAGE_INSTRUCTION_LIMITS.snippetChars + 1)} characters`);
   });
 });
 describe("commands", () => {

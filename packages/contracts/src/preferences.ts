@@ -830,8 +830,9 @@ export const PREFERENCE_REGISTRY = {
   },
   /*
    * The projects where an installed package's conditional instructions apply (`package-instructions.ts`). Per node,
-   * because the projects are this machine's folders. Written by the person in Settings, or by Clark as the execution
-   * policy decides; a machine surface cannot write it directly (`isPersonOnlyRoute`), and a package never does.
+   * because the projects are this machine's folders. Turned on by Clark as the execution policy decides, turned off the
+   * same way or by the person in Settings; a machine surface cannot write it directly (`isPersonOnlyRoute`), and a
+   * package never does.
    */
   [PACKAGE_INSTRUCTIONS_PREFERENCE]: {
     key: PACKAGE_INSTRUCTIONS_PREFERENCE,

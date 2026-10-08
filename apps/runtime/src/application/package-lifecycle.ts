@@ -18,6 +18,7 @@ import {
 } from "@clarkcant/core";
 
 import type { PackageInstallDeps } from "./package-install.ts";
+import { forgetPackageInstructions } from "./package-instructions.ts";
 import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
@@ -173,6 +174,11 @@ export function changePackage(
 
   if (!outcome.ok) {
     return { kind: "refused", status: REFUSAL_STATUS[outcome.code], code: outcome.code, message: outcome.message };
+  }
+  // An uninstalled package's instructions are forgotten with it: installed again, under any source, it starts off.
+  // Rollback and restore keep the package installed, and what the person turned on stays on.
+  if (input.action === "uninstall") {
+    forgetPackageInstructions({ db: deps.runtime.db, now: nowInstant }, { principalId, packageId: input.packageId, source: input.source });
   }
   // An uninstalled package's services stop, a restored or rolled-back one's start from the generation now active.
   deps.packagesChanged?.();

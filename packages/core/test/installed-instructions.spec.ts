@@ -82,16 +82,33 @@ describe("installedInstructions", () => {
     expect(text.endsWith("[…đã cắt bớt]")).toBe(true);
   });
 
-  it("names a broken facet and keeps the others, and reaches no file outside the package", () => {
-    write("clarkcant.json", manifest([facet("broken", "broken.json"), facet("missing", "missing.json"), facet("good", "good/instructions.json")]));
+  it("names a broken or missing rules file, and reaches no file outside the package", () => {
+    write("clarkcant.json", manifest([facet("broken", "broken.json")]));
     write("broken.json", "{ not json");
+    const broken = read();
+    if (!broken.ok) throw new Error(broken.message);
+    expect(broken.facets).toEqual([]);
+    expect(broken.problems.map((problem) => problem.facetId)).toEqual(["broken"]);
+
+    write("clarkcant.json", manifest([facet("missing", "missing.json")]));
+    const missing = read();
+    if (!missing.ok) throw new Error(missing.message);
+    expect(missing.problems.map((problem) => problem.facetId)).toEqual(["missing"]);
+
+    write("clarkcant.json", manifest([facet("good", "good/instructions.json")]));
     write("good/instructions.json", { version: 1, rules: [{ when: {}, include: ["ok", "outside"] }, { when: {}, include: ["../../outside"] }] });
     write("good/instructions/ok.md", "được");
+    const good = read();
+    if (!good.ok) throw new Error(good.message);
+    expect(good.facets.map((entry) => entry.facetId)).toEqual(["good"]);
+    expect([...(good.facets[0]?.snippets.keys() ?? [])]).toEqual(["ok"]);
+  });
+
+  it("refuses a package that declares more than one instructions facet", () => {
+    write("clarkcant.json", manifest([facet("one", "one.json"), facet("two", "two.json")]));
     const outcome = read();
-    if (!outcome.ok) throw new Error(outcome.message);
-    expect(outcome.facets.map((entry) => entry.facetId)).toEqual(["good"]);
-    expect([...(outcome.facets[0]?.snippets.keys() ?? [])]).toEqual(["ok"]);
-    expect(outcome.problems.map((problem) => problem.facetId)).toEqual(["broken", "missing"]);
+    expect(outcome).toMatchObject({ ok: false, code: "UNREADABLE" });
+    if (!outcome.ok) expect(outcome.message).toContain("at most one instructions facet");
   });
 
   it("refuses an instructions facet under schemaVersion 2, and a source this node has no bytes for", () => {

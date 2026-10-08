@@ -44,14 +44,15 @@ import { entryFor } from "./themes.ts";
  * host states as data. Installing a package states none of it. The person turns a package's instructions on for one
  * project at a time, kept as the node preference `instructions.packages`:
  *
- *   - in Settings, the person's own click on a host-owned, person-only route;
- *   - by asking Clark (`manage_package`), which is an effect the execution policy decides like any other: it runs and is
- *     recorded, or becomes the host's approval card, or is refused. Nothing here asks on its own account, and a package
- *     or a widget never reaches the write.
+ *   - turned on by asking Clark (`manage_package`), which is an effect the execution policy decides like any other: it
+ *     runs and is recorded, or becomes the host's approval card, or is refused. Nothing here asks on its own account,
+ *     and a package or a widget never reaches the write;
+ *   - turned off the same way, or by the person's own click in Settings on a person-only route that removes one pair.
  *
  * A project must be inside a root the person already granted, both when it is enabled and on every turn it is stated:
- * enabling grants no root, and a root withdrawn since withdraws the package's rules with it. Uninstalling the package, or
- * turning it off, removes its rules from the next turn, because only active generations are read.
+ * enabling grants no root, and a root withdrawn since withdraws the package's rules with it. Turning it off removes its
+ * rules from the next turn; uninstalling the package does too, and forgets every project it was on in, so the package
+ * installed again starts with its instructions off.
  */
 
 export interface PackageInstructionsDeps {
@@ -208,12 +209,64 @@ export function writePackageInstructions(
   });
 }
 
-/** What an approval is bound to: exactly this package, this project and this direction. */
-export function packageInstructionsDigest(change: PackageInstructionsChange): string {
-  return payloadDigest(asJsonValue({ kind: "package-instructions", packageId: change.packageId, project: change.project, enabled: change.enabled }));
+/**
+ * Turn one package's instructions off in one project: the person's own click in Settings. Computed against what is
+ * stored now, never against what a screen last read, so it removes exactly this pair and cannot put back one that was
+ * turned off elsewhere in the meantime. Turning off a pair that is already off writes nothing and says so.
+ */
+export function turnOffPackageInstructions(
+  deps: { db: Database; now: () => Instant },
+  input: { principalId: string; packageId: string; project: string },
+): { ok: true; removed: boolean } | { ok: false; code: string; message: string } {
+  const current = readPackageInstructionsEnabled({ db: deps.db, principalId: input.principalId });
+  if (!current.some((entry) => entry.packageId === input.packageId && entry.project === input.project)) return { ok: true, removed: false };
+  const written = writePackageInstructions(deps, { packageId: input.packageId, project: input.project, enabled: false, principalId: input.principalId, source: "click" });
+  return written.ok ? { ok: true, removed: true } : { ok: false, code: written.code, message: written.message };
 }
 
-type Checked = { ok: true; change: PackageInstructionsChange; name: string; version: string } | { ok: false; code: string; message: string };
+/**
+ * Forget every project a package's instructions were on in: part of uninstalling it. A package installed again under
+ * the same id, from whatever source, starts with its instructions off everywhere, so nobody's earlier decision carries
+ * over to bytes it was not made about.
+ */
+export function forgetPackageInstructions(
+  deps: { db: Database; now: () => Instant },
+  input: { principalId: string; packageId: string; source: PackageInstructionsSource },
+): number {
+  const current = readPackageInstructionsEnabled({ db: deps.db, principalId: input.principalId });
+  const kept = current.filter((entry) => entry.packageId !== input.packageId);
+  if (kept.length === current.length) return 0;
+  const written = writeRegisteredPreference(deps, {
+    principalId: input.principalId,
+    key: PACKAGE_INSTRUCTIONS_PREFERENCE,
+    value: kept,
+    source: input.source === "click" ? "user" : "agent",
+  });
+  if (!written.ok) throw new Error(`could not forget ${input.packageId}'s instructions: ${written.message}`);
+  return current.length - kept.length;
+}
+
+/**
+ * What an approval is bound to: exactly this package at this version and these bytes, this project and this direction.
+ * A package updated or rolled back while the card waited is not what the person was shown, so the card no longer covers
+ * it.
+ */
+export function packageInstructionsDigest(change: PackageInstructionsChange, generation: { version: string; digest: string }): string {
+  return payloadDigest(
+    asJsonValue({
+      kind: "package-instructions",
+      packageId: change.packageId,
+      project: change.project,
+      enabled: change.enabled,
+      version: generation.version,
+      digest: generation.digest,
+    }),
+  );
+}
+
+type Checked =
+  | { ok: true; change: PackageInstructionsChange; name: string; version: string; generation: { version: string; digest: string } }
+  | { ok: false; code: string; message: string };
 
 /**
  * Whether a change can be made at all, before anyone decides it: the project is an absolute folder inside a granted
@@ -224,15 +277,16 @@ function checkChange(deps: Omit<PackageInstructionsDeps, "now">, input: PackageI
   if (pathProblem !== undefined) return { ok: false, code: "PROJECT_INVALID", message: `project ${pathProblem}` };
   const project = resolve(input.project);
   const change = { packageId: input.packageId, project, enabled: input.enabled };
+  const pkg = installedOf(deps).find((entry) => entry.packageId === input.packageId);
   if (!input.enabled) {
     const on = readPackageInstructionsEnabled(deps).some((entry) => entry.packageId === input.packageId && entry.project === project);
     if (!on) return { ok: false, code: "NOT_ENABLED", message: `${input.packageId}'s instructions are not on for ${project}` };
-    return { ok: true, change, name: input.packageId, version: "" };
+    const generation = { version: pkg?.version ?? "", digest: pkg?.digest ?? "" };
+    return { ok: true, change, name: input.packageId, version: "", generation };
   }
   if (!projectInGrantedRoot(deps.roots(), project)) {
     return { ok: false, code: "PROJECT_NOT_GRANTED", message: `${project} is not a folder inside a root this node was granted; grant the root first` };
   }
-  const pkg = installedOf(deps).find((entry) => entry.packageId === input.packageId);
   if (pkg === undefined) return { ok: false, code: "PACKAGE_NOT_INSTALLED", message: `${input.packageId} is not installed on this node` };
   const read = readPackageInstructions(deps, pkg);
   if (!read.ok) return { ok: false, code: read.code, message: read.message };
@@ -240,7 +294,9 @@ function checkChange(deps: Omit<PackageInstructionsDeps, "now">, input: PackageI
     const why = read.problems.map((problem) => problem.message).join("; ");
     return { ok: false, code: "NO_INSTRUCTIONS", message: `${input.packageId} carries no usable instructions${why === "" ? "" : `: ${why}`}` };
   }
-  return { ok: true, change, name: read.manifestId, version: read.version };
+  // A package installed from a folder is recorded under that path: two folders declaring the same id read apart.
+  const name = read.manifestId === pkg.packageId ? read.manifestId : `${read.manifestId} (${pkg.packageId})`;
+  return { ok: true, change, name, version: read.version, generation: { version: pkg.version, digest: pkg.digest } };
 }
 
 const APPROVAL_TTL_MS = 15 * 60_000;
@@ -275,9 +331,9 @@ export function requestPackageInstructions(
 ): PackageInstructionsRequestOutcome {
   const checked = checkChange(deps, input);
   if (!checked.ok) return { kind: "refused", code: checked.code, message: checked.message };
-  const { change, name, version } = checked;
+  const { change, name, version, generation } = checked;
   const category = "local-write";
-  const operationDigest = packageInstructionsDigest(change);
+  const operationDigest = packageInstructionsDigest(change, generation);
   const execution = readExecutionPolicy({ db: deps.db, now: deps.now }, deps.principalId);
   const decided = decideExecution({
     policy: execution,
@@ -289,6 +345,9 @@ export function requestPackageInstructions(
   const description = describeChange(name, version, change, language);
 
   if (decided.kind === "execute") {
+    // Written first and recorded after: the activity never says a change ran that the preference refused.
+    const written = writePackageInstructions(deps, { ...change, principalId: deps.principalId, source: input.source });
+    if (!written.ok) return { kind: "refused", code: written.code, message: written.message };
     recordEffectExecution(deps, {
       principalId: deps.principalId,
       mode: execution.mode,
@@ -299,12 +358,10 @@ export function requestPackageInstructions(
       description: `Clark: ${description}`,
       ...(input.origin === undefined ? {} : { origin: input.origin }),
     });
-    const written = writePackageInstructions(deps, { ...change, principalId: deps.principalId, source: input.source });
-    if (!written.ok) return { kind: "refused", code: written.code, message: written.message };
     return { kind: "done", change, receipt: receiptOf(name, change, language) };
   }
 
-  const payload = JSON.stringify({ kind: "package-instructions", ...change, source: input.source });
+  const payload = JSON.stringify({ kind: "package-instructions", ...change, ...generation, source: input.source });
   const approval = requestApproval(deps, {
     operationDigest,
     operationDescription: description,
@@ -349,21 +406,35 @@ export function runApprovedPackageInstructions(
   deps: PackageInstructionsDeps,
   input: { payload: string; expectedDigest: string; approvalId: string },
 ): { ok: true; blocks: MessageBlock[]; description: string } | { ok: false; code: string; message: string } {
-  let parsed: { packageId?: unknown; project?: unknown; enabled?: unknown; source?: unknown };
+  let parsed: { packageId?: unknown; project?: unknown; enabled?: unknown; version?: unknown; digest?: unknown; source?: unknown };
   try {
     parsed = JSON.parse(input.payload) as typeof parsed;
   } catch {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload is not readable" };
   }
-  if (typeof parsed.packageId !== "string" || typeof parsed.project !== "string" || typeof parsed.enabled !== "boolean") {
+  if (
+    typeof parsed.packageId !== "string" ||
+    typeof parsed.project !== "string" ||
+    typeof parsed.enabled !== "boolean" ||
+    typeof parsed.version !== "string" ||
+    typeof parsed.digest !== "string"
+  ) {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload names no package instructions change" };
   }
   const asked = { packageId: parsed.packageId, project: parsed.project, enabled: parsed.enabled };
-  if (packageInstructionsDigest(asked) !== input.expectedDigest) {
+  const shown = { version: parsed.version, digest: parsed.digest };
+  if (packageInstructionsDigest(asked, shown) !== input.expectedDigest) {
     return { ok: false, code: "APPROVAL_FORGED", message: "the operation changed after it was displayed; the decision does not cover what would run" };
   }
   const checked = checkChange(deps, asked);
   if (!checked.ok) return { ok: false, code: checked.code, message: checked.message };
+  if (checked.generation.version !== shown.version || checked.generation.digest !== shown.digest) {
+    return {
+      ok: false,
+      code: "PACKAGE_CHANGED",
+      message: `${asked.packageId} changed while the card waited (${shown.version} then, ${checked.generation.version === "" ? "not installed" : checked.generation.version} now); nothing was changed, so ask again`,
+    };
+  }
   const execution = readExecutionPolicy(deps, deps.principalId);
   const now = decideExecution({
     policy: execution,

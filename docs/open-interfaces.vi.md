@@ -1242,8 +1242,9 @@ này, và `clarkcant instructions check` cũng dùng đúng schema đó để ki
 ### Package instructions
 
 Một gói có thể mang quy tắc theo cùng hợp đồng này qua một facet `instructions`, là nội dung khai báo và cần
-`"schemaVersion": 3` ([widget development §4](widget-development.vi.md#4-package-manifest)). `entry` của facet là tệp
-quy tắc, và mỗi đoạn hướng dẫn là `instructions/<name>.md` nằm cạnh tệp đó, bên trong gói.
+`"schemaVersion": 3` ([widget development §4](widget-development.vi.md#4-package-manifest)). Một gói khai báo tối đa một
+facet như vậy. `entry` của facet là tệp quy tắc, và mỗi đoạn hướng dẫn là `instructions/<name>.md` nằm cạnh tệp đó, bên
+trong gói.
 
 - **Tắt cho tới khi người dùng bật, theo từng dự án.** Preference của node `instructions.packages` (scope `node`) liệt
   kê các cặp `{ "project": "<thư mục tuyệt đối>", "packageId": "<id>" }`, tối đa 64 cặp
@@ -1251,8 +1252,13 @@ quy tắc, và mỗi đoạn hướng dẫn là `instructions/<name>.md` nằm c
   `/preferences/instructions.packages` chỉ dành cho con người: không AI client, widget hay bề mặt máy từ xa nào chạm
   tới được. Clark chỉ thay đổi nó qua `manage_package` `enable_instructions` / `disable_instructions`, một tác động mà
   chính sách thực thi quyết định như một thao tác ghi cục bộ: nó chạy, hoặc trở thành một thẻ phê duyệt do host sở hữu,
-  hoặc bị từ chối. Để bật, dự án phải là một thư mục nằm trong root đã cấp và gói phải được cài với một facet
-  `instructions` đọc được; việc bật không cấp root nào.
+  hoặc bị từ chối. Một thẻ chỉ bao gói ở đúng phiên bản và digest mà nó đã hiển thị; gói được cập nhật hoặc quay lui
+  trong lúc thẻ chờ sẽ bị từ chối (`PACKAGE_CHANGED`). Để bật, dự án phải là một thư mục nằm trong root đã cấp và gói
+  phải được cài với một facet `instructions` đọc được; việc bật không cấp root nào.
+- **Tắt cho một dự án.** `POST /packages/instructions/turn-off` `{ "packageId", "project" }` bỏ đúng cặp đó khỏi những
+  gì node đang giữ và trả về `{ packageId, project, removed }`; một cặp đã tắt trả về `removed: false` và không ghi gì,
+  và route này không bao giờ thêm lại một cặp. Route chỉ dành cho con người, như preference; Cài đặt → Tiện ích & widget
+  dùng nó cho nút Tắt.
 - **Nơi áp dụng.** Chỉ cho công việc bên trong một dự án đã bật mà, sau khi phân giải liên kết, vẫn nằm trong root đã
   cấp. Glob `path` tính tương đối với dự án đó và `when.project` là tên thư mục của nó. Một quy tắc chỉ include được các
   đoạn hướng dẫn của chính facet của nó.
@@ -1264,10 +1270,11 @@ quy tắc, và mỗi đoạn hướng dẫn là `instructions/<name>.md` nằm c
   `source="<id>@<version>/<name>"`, và một ghi chú của host nói rằng các khối như vậy xếp sau hướng dẫn riêng của dự án.
   Mỗi đoạn được nêu hoặc bị giữ lại đều được ghi vào nhật ký audit với kind `instructions`, kèm id gói, phiên bản và tên
   đoạn, không bao giờ kèm nội dung.
-- **Gỡ bỏ.** Tắt một cặp, hoặc gỡ cài đặt gói, sẽ bỏ các quy tắc của nó khỏi lượt kế tiếp. Cặp đó vẫn còn cho tới khi
-  người dùng tắt nó, nên khôi phục gói sẽ mang các quy tắc trở lại.
+- **Gỡ bỏ.** Tắt một cặp sẽ bỏ các quy tắc của nó khỏi lượt kế tiếp. Gỡ cài đặt gói sẽ xoá mọi cặp của gói trong cùng
+  thao tác đó, nên gói được cài lại hoặc khôi phục dưới cùng id sẽ bắt đầu với hướng dẫn tắt ở mọi nơi. Nâng cấp hoặc
+  quay lui giữ nguyên các cặp, vì gói vẫn được cài.
 - `clarkcant instructions check <thư mục gói>` kiểm tra manifest theo `packageManifestSchema`, cùng tệp quy tắc và các
-  đoạn hướng dẫn của từng facet `instructions`, và cảnh báo khi có `pin`.
+  đoạn hướng dẫn của facet `instructions`, cảnh báo khi có `pin` và khi một đoạn dài hơn mức node nêu.
 
 ## Thay đổi một bề mặt
 

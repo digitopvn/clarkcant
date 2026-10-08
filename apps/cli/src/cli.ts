@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -10,6 +10,7 @@ import {
   instructionNameSchema,
   isHostWrittenMessage,
   manifestProblems,
+  PACKAGE_INSTRUCTION_LIMITS,
   packageManifestSchema,
   PERSON_ONLY_REFUSAL,
   PROJECT_INSTRUCTION_LIMITS,
@@ -454,6 +455,8 @@ function checkPackageInstructions(path: string, read: (file: string) => string):
   if (facets.length === 0) result.warnings.push("clarkcant.json: declares no instructions facet");
   for (const facet of facets) {
     const where = `facet ${facet.id} (${facet.entry})`;
+    // Already reported above, and never opened: a rules file outside the package is not the package's.
+    if (result.problems.includes(`clarkcant.json: facet ${facet.id}: ${facet.entry} escapes the package root`)) continue;
     const entry = join(dirname(path), ...facet.entry.split("/"));
     if (!isFile(entry)) {
       result.problems.push(`${where}: no such file in the package`);
@@ -462,7 +465,7 @@ function checkPackageInstructions(path: string, read: (file: string) => string):
     const checked = checkRulesFile(entry, read, true);
     if (checked.unreadable !== undefined) return checked;
     result.problems.push(...checked.problems.map((problem) => `${where}: ${problem}`));
-    result.warnings.push(...checked.warnings.map((warning) => `${where}: ${warning}`));
+    result.warnings.push(...checked.warnings.map((warning) => `${where}: ${warning}`), ...longSnippets(entry, read).map((warning) => `${where}: ${warning}`));
     result.rules += checked.rules;
   }
   return result;
@@ -486,7 +489,35 @@ function missingSnippets(path: string, rules: unknown): string[] {
     }
   }
   return warnings;
-}interface AskContext {
+}
+
+/** Each snippet beside a package's rules file that a node clips to the package slice, so its end is never stated. */
+function longSnippets(path: string, read: (file: string) => string): string[] {
+  const folder = join(dirname(path), "instructions");
+  let names: string[];
+  try {
+    names = readdirSync(folder).filter((name) => name.endsWith(".md")).sort();
+  } catch {
+    return [];
+  }
+  const warnings: string[] = [];
+  for (const name of names) {
+    let text: string;
+    try {
+      text = read(join(folder, name)).trim();
+    } catch {
+      continue;
+    }
+    if (text.length > PACKAGE_INSTRUCTION_LIMITS.snippetChars) {
+      warnings.push(
+        `instructions/${name}: ${String(text.length)} characters; a node states only the first ${String(PACKAGE_INSTRUCTION_LIMITS.snippetChars)} of a package's snippet`,
+      );
+    }
+  }
+  return warnings;
+}
+
+interface AskContext {
   connection: Connection;
   io: CliIo;
   call: (method: string, path: string, body?: unknown) => Promise<{ status: number; body: unknown }>;

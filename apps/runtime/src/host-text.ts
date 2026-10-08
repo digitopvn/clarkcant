@@ -69,6 +69,7 @@ export interface HostText {
   /** Receipts for decisions and for tasks. */
   tasks: {
     refusedTilePolicy: string;
+    refusedPackageInstructions: string;
     refusedCapability: string;
     refusedCommand: string;
     /** `markers` is the project's markers already joined, or empty. */
@@ -456,6 +457,7 @@ const VI: HostText = {
   duration: (ms) => (ms < 60_000 ? `${String(Math.max(1, Math.round(ms / 1_000)))} giây` : `${String(Math.round(ms / 60_000))} phút`),
   tasks: {
     refusedTilePolicy: "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi.",
+    refusedPackageInstructions: "Đã từ chối: hướng dẫn của gói không thay đổi.",
     refusedCapability: "Đã từ chối gọi capability đó. Không có gì được chạy.",
     refusedCommand: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
     projectSessionOpened: (project, relPath, kind, markers) =>
@@ -776,6 +778,7 @@ const EN: HostText = {
   },
   tasks: {
     refusedTilePolicy: "Refused the map tile policy change. Nothing changed.",
+    refusedPackageInstructions: "Refused: the package's instructions were not changed.",
     refusedCapability: "Refused to call that capability. Nothing ran.",
     refusedCommand: "Refused to run that command. Nothing ran.",
     projectSessionOpened: (project, relPath, kind, markers) =>

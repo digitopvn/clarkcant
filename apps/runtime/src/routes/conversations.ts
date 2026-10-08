@@ -2196,9 +2196,7 @@ export async function decideApprovalForNode(
       : tilePolicyChange
       ? say.refusedTilePolicy
       : instructionsChange
-      ? locale === "en"
-        ? "Refused: the package's instructions were not changed."
-        : "Đã từ chối: hướng dẫn của gói không thay đổi."
+      ? say.refusedPackageInstructions
       : artifactWrite
         ? deniedWidgetArtifactWriteLabel(services, input.at)
         : widgetPerform

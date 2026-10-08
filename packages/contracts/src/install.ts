@@ -312,6 +312,12 @@ export function manifestProblems(manifest: PackageManifest): string[] {
       problems.push(`facet ${facet.id}: an ${facet.kind} facet needs "schemaVersion": ${String(needs)}`);
     }
   }
+  // One rules file per package: every instructions facet is matched against every touched path on every ask, so more
+  // than one would multiply that work without adding anything one file cannot say.
+  const instructionFacets = manifest.facets.filter((facet) => facet.kind === "instructions");
+  if (instructionFacets.length > 1) {
+    problems.push(`facets: a package may declare at most one instructions facet; this one declares ${String(instructionFacets.length)} (${instructionFacets.map((facet) => facet.id).join(", ")})`);
+  }
 
   const ids = manifest.facets.map((facet) => facet.id);
   for (const id of new Set(ids)) {

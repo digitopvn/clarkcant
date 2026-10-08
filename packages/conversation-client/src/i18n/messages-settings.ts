@@ -483,6 +483,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.extensions.installed.working": "Đang thực hiện…",
   "settings.extensions.instructions.label": "Hướng dẫn dự án đang bật cho",
   "settings.extensions.instructions.turnOff": "Tắt",
+  "settings.extensions.instructions.turnOffFor": "Tắt hướng dẫn của {package} cho {project}",
   "settings.extensions.instructions.turnedOff": "Đã tắt hướng dẫn của {package} cho {project}; từ lượt sau không còn nêu nữa.",
   "settings.extensions.instructions.failed": "Chưa tắt được hướng dẫn của {package}: {reason}",
   "settings.extensions.installed.uninstalled":
@@ -1013,6 +1014,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.extensions.installed.working": "Working…",
   "settings.extensions.instructions.label": "Project instructions on for",
   "settings.extensions.instructions.turnOff": "Turn off",
+  "settings.extensions.instructions.turnOffFor": "Turn off {package}'s instructions for {project}",
   "settings.extensions.instructions.turnedOff": "Turned off {package}'s instructions for {project}; they are not stated from the next turn.",
   "settings.extensions.instructions.failed": "Could not turn off {package}'s instructions: {reason}",
   "settings.extensions.installed.uninstalled":

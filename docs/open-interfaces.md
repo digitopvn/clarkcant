@@ -1234,16 +1234,23 @@ it, and `clarkcant instructions check` validates it with the same schema. How a 
 ### Package instructions
 
 A package can carry rules in the same contract through an `instructions` facet, declarative content that needs
-`"schemaVersion": 3` ([widget development §4](widget-development.md#4-package-manifest)). The facet's `entry` is the
-rules file, and a snippet is `instructions/<name>.md` beside it inside the package.
+`"schemaVersion": 3` ([widget development §4](widget-development.md#4-package-manifest)). A package declares at most one
+such facet. The facet's `entry` is the rules file, and a snippet is `instructions/<name>.md` beside it inside the
+package.
 
 - **Off until the person turns it on, per project.** The node preference `instructions.packages` (scope `node`) lists
   `{ "project": "<absolute folder>", "packageId": "<id>" }` pairs, at most 64
   (`packages/contracts/src/package-instructions.ts`). Writing or undoing it on `/preferences/instructions.packages`
   is person-only: no AI client, widget or remote machine surface reaches it. Clark changes it only through
   `manage_package` `enable_instructions` / `disable_instructions`, an effect the execution policy decides as a local
-  write: it runs, or becomes a host-owned approval card, or is refused. Enabling needs the project to be a folder inside
-  a granted root and the package to be installed with a readable `instructions` facet; it grants no root.
+  write: it runs, or becomes a host-owned approval card, or is refused. A card covers the package at the version and
+  digest it showed; a package updated or rolled back while the card waited is refused (`PACKAGE_CHANGED`). Enabling
+  needs the project to be a folder inside a granted root and the package to be installed with a readable
+  `instructions` facet; it grants no root.
+- **Turning one project off.** `POST /packages/instructions/turn-off` `{ "packageId", "project" }` removes that one pair
+  from what the node holds now and answers `{ packageId, project, removed }`; a pair already off answers
+  `removed: false` and writes nothing, and it never adds a pair back. It is person-only, like the preference; Settings →
+  Extensions & widgets uses it for Turn off.
 - **Where they apply.** Only for work inside an enabled project that is, links resolved, still inside a granted root.
   `path` globs are relative to that project and `when.project` names its folder. A rule can include only its own
   facet's snippets.
@@ -1254,10 +1261,11 @@ rules file, and a snippet is `instructions/<name>.md` beside it inside the packa
   receiving model's data classes. Its block carries `package="<id>@<version>"` and `source="<id>@<version>/<name>"`, and
   a host note says such blocks rank after the project's own. Each snippet stated or withheld is written to the audit
   log as kind `instructions` with the package id, version and snippet name, never its text.
-- **Removal.** Turning a pair off, or uninstalling the package, removes its rules from the next turn. The pair stays
-  until the person turns it off, so restoring the package brings its rules back.
-- `clarkcant instructions check <package folder>` validates the manifest against `packageManifestSchema` and each
-  `instructions` facet's rules file and snippets, and warns about a `pin`.
+- **Removal.** Turning a pair off removes its rules from the next turn. Uninstalling the package removes every pair it
+  had in the same operation, so a package installed or restored again under that id starts with its instructions off
+  everywhere. An upgrade or a rollback keeps the pairs, because the package stays installed.
+- `clarkcant instructions check <package folder>` validates the manifest against `packageManifestSchema` and its
+  `instructions` facet's rules file and snippets, warns about a `pin` and about a snippet longer than a node states.
 
 ## Changing a surface
 

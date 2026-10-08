@@ -202,7 +202,7 @@ approval's Approve and Deny, the inbox's answers or Stop) and reduced motion, fr
 Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
 
-**How the node reads an instructions facet.** An `instructions` facet's `entry` is a rules file in the same open
+**How the node reads an instructions facet.** A package declares at most one `instructions` facet. Its `entry` is a rules file in the same open
 contract as a project's `.clarkcant/instructions.json` (`projectInstructionRuleSchema` in
 `packages/contracts/src/project-instructions.ts`; see [open interfaces](open-interfaces.md#package-instructions)), such
 as `{ "kind": "instructions", "id": "rules", "entry": "rules/instructions.json", "isolation": "declarative" }`. A snippet a
@@ -216,7 +216,8 @@ already granted. Within it, paths are relative to the project and `when.project`
 snippets are stated after the project's own, within their own slice of the turn's budget, framed with the session's
 code, withheld above the receiving model's data classes, labelled and audited with the package id and version, and
 never pinned: a rule's `pin` is ignored. A snippet grants nothing. Settings → Extensions & widgets lists the projects
-each package's instructions are on in, with Turn off; uninstalling the package removes its rules from the next turn.
+each package's instructions are on in, with Turn off. Uninstalling the package turns its instructions off everywhere, so
+installing it again starts with them off; an upgrade or rollback keeps them on where they were.
 `clarkcant instructions check <package folder>` validates the manifest and each facet's rules and snippets.
 
 **Reference packages.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) and

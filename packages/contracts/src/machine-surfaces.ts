@@ -83,7 +83,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "widget-dev" && second === "chosen-folders" && third === "forget") ||
         // POST /packages/:id/connection: connecting a package's service to the person's account. Consent is the host's
         // and the person's; an AI client that could start it could grant a package an account nobody chose to give it.
-        (first === "packages" && third === "connection")
+        (first === "packages" && third === "connection") ||
+        // POST /packages/instructions/turn-off: the person's Turn off in Settings, one pair at a time. A machine surface
+        // that wants a package's instructions off asks Clark, whose `manage_package` the execution policy decides.
+        (first === "packages" && second === "instructions" && third === "turn-off")
       );
     case 4:
       // POST /feedback/reports/:id/publish: filing a report on GitHub with the person's token, only on the person's own
@@ -122,7 +125,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
 
 /**

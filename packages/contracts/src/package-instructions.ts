@@ -8,8 +8,9 @@ import { absoluteHostPathProblem } from "./host-path.ts";
  * A package's `instructions` facet (`install.ts`) carries rules in the same contract a project's own
  * `.clarkcant/instructions.json` does (`project-instructions.ts`). Installing the package states none of them. They apply
  * only in a project the person enabled them for, and only while that project is inside a root the person already granted:
- * one entry here per project and package. The person enables one from Settings or by asking Clark, whose request the
- * execution policy decides; nothing a package or a widget says can add an entry.
+ * one entry here per project and package. The person enables one by asking Clark, whose request the execution policy
+ * decides, and turns one off the same way or in Settings; nothing a package or a widget says can add an entry.
+ * Uninstalling a package removes its entries.
  *
  * A node preference: the paths are this machine's.
  */

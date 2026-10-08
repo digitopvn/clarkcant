@@ -208,7 +208,7 @@ từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
 
-**Node đọc facet hướng dẫn như thế nào.** `entry` của một facet `instructions` là một tệp quy tắc theo cùng hợp đồng mở
+**Node đọc facet hướng dẫn như thế nào.** Một gói khai báo tối đa một facet `instructions`. `entry` của facet là một tệp quy tắc theo cùng hợp đồng mở
 với `.clarkcant/instructions.json` của dự án (`projectInstructionRuleSchema` trong
 `packages/contracts/src/project-instructions.ts`; xem [giao diện mở](open-interfaces.vi.md#package-instructions)), ví dụ
 `{ "kind": "instructions", "id": "rules", "entry": "rules/instructions.json", "isolation": "declarative" }`. Đoạn hướng
@@ -221,9 +221,10 @@ quyết định), và chỉ khi dự án đó nằm trong một thư mục gốc
 dự án và `when.project` là tên thư mục của nó. Đoạn hướng dẫn của gói được nêu sau hướng dẫn riêng của dự án, trong
 phần ngân sách riêng của lượt, được bọc bằng mã của session, bị giữ lại khi vượt mức dữ liệu model nhận được, được ghi
 nhãn và ghi audit kèm id và phiên bản của gói, và không bao giờ được ghim: `pin` của quy tắc bị bỏ qua. Đoạn hướng dẫn
-không cấp quyền nào. Cài đặt → Tiện ích & widget liệt kê các dự án đang bật hướng dẫn của từng gói, kèm nút Tắt; gỡ gói
-thì từ lượt sau các quy tắc của nó không còn nữa. `clarkcant instructions check <thư mục gói>` kiểm tra manifest cùng
-quy tắc và đoạn hướng dẫn của từng facet.
+không cấp quyền nào. Cài đặt → Tiện ích & widget liệt kê các dự án đang bật hướng dẫn của từng gói, kèm nút Tắt. Gỡ gói
+sẽ tắt hướng dẫn của nó ở mọi nơi, nên cài lại sẽ bắt đầu với hướng dẫn tắt; nâng cấp hoặc quay lui giữ chúng bật ở
+những nơi đã bật. `clarkcant instructions check <thư mục gói>` kiểm tra manifest cùng quy tắc và đoạn hướng dẫn của
+facet.
 
 **Gói tham chiếu.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) và
 [Neo Brutalism](../examples/themes/neo-brutalism/README.md) là gói tổng quát chỉ chứa dữ liệu, cài qua vòng đời

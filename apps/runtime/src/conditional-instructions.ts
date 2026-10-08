@@ -916,6 +916,9 @@ export function rememberTouch(touched: InstructionTouch[], touch: InstructionTou
   if (touched.length > INSTRUCTION_LIMITS.touched) touched.splice(0, touched.length - INSTRUCTION_LIMITS.touched);
 }
 
+/** How many conversations' withheld package snippets the audit remembers having recorded. */
+const WITHHELD_AUDIT_CONVERSATIONS = 256;
+
 /** What a conversation's turn asks: the instructions to state now, for what its session has touched. */
 export type TurnInstructions = (input: {
   conversationId: string;
@@ -943,6 +946,30 @@ export function turnInstructions(deps: {
   /** Told which package snippets each statement stated or withheld, for the audit. */
   onPackages?: (input: { conversationId: string; outcomes: readonly PackageInstructionOutcome[] }) => void;
 }): TurnInstructions {
+  /*
+   * The withheld package snippets each conversation's audit already has. A stated snippet is audited once because it is
+   * then in the session's stated set; a withheld one never is, so without this it would be audited again on every turn
+   * and every tool result. Bounded: the oldest conversation goes first, and is audited once more if it comes back.
+   */
+  const auditedWithheld = new Map<string, Set<string>>();
+  const firstWithheld = (conversationId: string, outcomes: readonly PackageInstructionOutcome[]): PackageInstructionOutcome[] => {
+    let seen = auditedWithheld.get(conversationId);
+    if (seen === undefined) {
+      seen = new Set();
+      auditedWithheld.set(conversationId, seen);
+      if (auditedWithheld.size > WITHHELD_AUDIT_CONVERSATIONS) auditedWithheld.delete(auditedWithheld.keys().next().value as string);
+    }
+    const fresh: PackageInstructionOutcome[] = [];
+    for (const outcome of outcomes) {
+      if (outcome.outcome === "withheld") {
+        const key = `${outcome.package.id}@${outcome.package.version}#${outcome.package.snippet}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      fresh.push(outcome);
+    }
+    return fresh;
+  };
   return (input) => {
     const referenced = deps.referenced(input.conversationId, input.messageId);
     // The message's places get what an ask has beyond the session's own memory, so however many it points at, they never
@@ -954,7 +981,10 @@ export function turnInstructions(deps: {
     ];
     const active = deps.instructions.active({ touched, role: "foreground", skills: referenced.skills });
     const section = instructionSection({ active, stated: input.stated, allowed: input.allowed, newOnly: input.newOnly, nonce: input.nonce });
-    if (section.packages.length > 0) deps.onPackages?.({ conversationId: input.conversationId, outcomes: section.packages });
+    if (section.packages.length > 0 && deps.onPackages !== undefined) {
+      const outcomes = firstWithheld(input.conversationId, section.packages);
+      if (outcomes.length > 0) deps.onPackages({ conversationId: input.conversationId, outcomes });
+    }
     return section;
   };
 }

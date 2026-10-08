@@ -42,6 +42,11 @@ describe("the instructions facet", () => {
     expect(packageManifestSchema.safeParse(manifest(3, [{ ...facet, extra: true }])).success).toBe(false);
   });
 
+  it("is declared at most once per package", () => {
+    const two = packageManifestSchema.parse(manifest(3, [facet, { ...facet, id: "more", entry: "more/instructions.json" }]));
+    expect(manifestProblems(two)).toEqual([expect.stringContaining("at most one instructions facet")]);
+  });
+
   it("needs schemaVersion 3, while every other package keeps version 2", () => {
     expect(PACKAGE_MANIFEST_SCHEMA_VERSION).toBe(3);
     const old = packageManifestSchema.parse(manifest(2, [facet]));

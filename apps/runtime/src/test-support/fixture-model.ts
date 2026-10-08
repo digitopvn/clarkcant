@@ -58,7 +58,10 @@ import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
 import { sweepUnknownEffects } from "../effect-notices.ts";
-import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
+import { referenceBrief, referencedWork, referencesForLastUserMessage, referencesForMessage } from "../composer-references.ts";
+import { auditPackageInstructions, packageInstructionsDepsOf } from "../application/package-instructions.ts";
+import { nodeConditionalInstructions } from "../bootstrap/model-bootstrap.ts";
+import { turnInstructions } from "../conditional-instructions.ts";
 import { QUESTION_TTL_MS, type InteractionDeps, createQuestion } from "../interactions.ts";
 import { sweepExpired } from "../expiry-notices.ts";
 import { checkForUpdates } from "../update-checks.ts";
@@ -273,6 +276,34 @@ function uiEchoModelTurn(conductor: () => NodeServices["conductor"]): Promise<Mo
 }
 
 /**
+ * A model turn whose provider answers with the prompt it was given, with the node's conditional instructions wired the
+ * way the composition root wires them: the projects' own and the installed packages' the person turned on, matched
+ * against what the message points at. A journey reads from the reply which instructions a turn was given.
+ */
+let instructionsEchoTurn: Promise<ModelTurn | undefined> | undefined;
+
+function instructionsEchoModelTurn(services: () => Pick<NodeServices, "runtime" | "conductor" | "projects">): Promise<ModelTurn | undefined> {
+  instructionsEchoTurn ??= createModelTurn({
+    env: { CC_MODEL_PROVIDER: "fake", CC_MODEL_ID: "fake-model" },
+    cwd: process.cwd(),
+    adapter: new FakePiAdapter(),
+    instructions: turnInstructions({
+      instructions: { active: (state) => nodeConditionalInstructions(process.env, services())?.active(state) ?? [] },
+      referenced: (conversationId, messageId) =>
+        referencedWork(
+          services().projects,
+          messageId === undefined
+            ? referencesForLastUserMessage({ db: services().runtime.db, conversationId })
+            : referencesForMessage({ db: services().runtime.db, conversationId, messageId }),
+        ),
+      onPackages: ({ conversationId, outcomes }) => {
+        auditPackageInstructions(packageInstructionsDepsOf(services()), outcomes, `conversation ${conversationId}`);
+      },
+    }),
+  });
+  return instructionsEchoTurn;
+}
+/**
  * The `control_app` call a scripted sentence stands for, if it is one.
  *
  * Two spellings: the original "go home" sentences the voice journey says, and `agent control_app <kind> [arg]`,
@@ -437,6 +468,26 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       };
     }
 
+    /*
+     * Which instructions a turn is given, read from the prompt the production model turn built. Ahead of the reference
+     * brief below, because the question names the files it is about.
+     */
+    if (/^(?:hướng dẫn nào đang áp dụng|which instructions apply)\b/iu.test(input.text.trim())) {
+      const turn = await instructionsEchoModelTurn(deps.services);
+      if (turn === undefined) return undefined;
+      const reply = await turn.answer({
+        conversationId: input.conversationId as never,
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user",
+          nodeId: deps.services().runtime.identity.nodeId as never,
+        },
+        text: input.text,
+        messageId: input.messageId,
+        onEvent: (event) => input.emit?.(event),
+      });
+      return { text: reply.text, block: { type: "text", format: "plain", content: reply.text, streaming: false } };
+    }
     /*
      * The references, as the turn would brief them.
      *

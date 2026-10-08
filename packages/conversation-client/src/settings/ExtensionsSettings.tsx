@@ -5,7 +5,6 @@ import {
   PACKAGE_INSTRUCTIONS_PREFERENCE,
   type PackageInstructionsEnablement,
   packageInstructionsPreferenceSchema,
-  withPackageInstructions,
 } from "@clarkcant/contracts";
 
 import { useLocale, useT } from "../i18n/locale-context.tsx";
@@ -541,8 +540,9 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
     if (busy !== undefined) return;
     setBusy(`${packageId}:instructions:${project}`);
     setStatus(undefined);
+    // The node removes this one pair from what it stores now; the list on screen is never written back.
     void client
-      .writePreference(PACKAGE_INSTRUCTIONS_PREFERENCE, withPackageInstructions(instructions, { packageId, project, enabled: false }))
+      .turnOffPackageInstructions(packageId, project)
       .then(() => {
         setStatus({
           tone: "done",
@@ -673,6 +673,9 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                               <button
                                 type="button"
                                 data-package-instructions-off={enabled.project}
+                                aria-label={t("settings.extensions.instructions.turnOffFor")
+                                  .replace("{package}", entry.packageId)
+                                  .replace("{project}", enabled.project)}
                                 disabled={busy !== undefined}
                                 onClick={() => turnOffInstructions(entry.packageId, enabled.project)}
                               >

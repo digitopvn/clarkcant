@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
   type Instant,
+  MACHINE_SURFACE_HEADER,
   PACKAGE_INSTRUCTION_LIMITS,
   PACKAGE_INSTRUCTIONS_PREFERENCE,
   isPersonOnlyRoute,
@@ -199,6 +200,20 @@ describe("a package's rules in the matcher", () => {
     expect(brief).toContain('package="com.example.style@1.2.0"');
     expect(audited).toEqual([expect.objectContaining({ outcome: "stated" })]);
   });
+
+  it("tells the audit of a withheld snippet once per conversation, not on every turn and tool result", () => {
+    const instructions = reader(() => [set({}, "Gửi báo cáo cho duy@example.com")]);
+    const told: { conversationId: string; outcomes: readonly unknown[] }[] = [];
+    const turn = turnInstructions({ instructions, referenced: () => ({ places: [], skills: [] }), onPackages: (input) => told.push(input) });
+    const ask = (conversationId: string, newOnly: boolean) =>
+      turn({ conversationId, touched: [write(join(project, "packages", "a.ts"))], stated: new Set(), allowed: ["public", "internal"], newOnly, nonce: "n" });
+    ask("conv_1", false);
+    ask("conv_1", true);
+    ask("conv_1", false);
+    ask("conv_2", false);
+    expect(told.map((entry) => entry.conversationId)).toEqual(["conv_1", "conv_2"]);
+    expect(told[0]?.outcomes).toEqual([expect.objectContaining({ outcome: "withheld" })]);
+  });
 });
 
 /*
@@ -218,10 +233,10 @@ describe("installed packages on a node", () => {
   let previousIndex: string | undefined;
   let previousAllowLocalGit: string | undefined;
 
-  const manifest = (id: string): Record<string, unknown> => ({
+  const manifest = (id: string, version = "1.0.0"): Record<string, unknown> => ({
     schemaVersion: 3,
     id,
-    version: "1.0.0",
+    version,
     displayName: id,
     description: "A package that carries project instructions.",
     hostApi: { min: 1, max: 1 },
@@ -231,9 +246,9 @@ describe("installed packages on a node", () => {
     platforms: ["linux-x64", "darwin-arm64", "darwin-x64", "win32-x64", "web"],
   });
 
-  function writePackage(folder: string, id: string, text: string): void {
+  function writePackage(folder: string, id: string, text: string, version = "1.0.0"): void {
     mkdirSync(join(folder, "rules", "instructions"), { recursive: true });
-    writeFileSync(join(folder, "clarkcant.json"), JSON.stringify(manifest(id)));
+    writeFileSync(join(folder, "clarkcant.json"), JSON.stringify(manifest(id, version)));
     writeFileSync(
       join(folder, "rules", "instructions.json"),
       JSON.stringify({ version: 1, rules: [{ when: { path: "src/**", operation: "write" }, include: ["style"] }] }),
@@ -241,10 +256,10 @@ describe("installed packages on a node", () => {
     writeFileSync(join(folder, "rules", "instructions", "style.md"), text);
   }
 
-  function listing(id: string, source: Record<string, unknown>, digest: string): Record<string, unknown> {
+  function listing(id: string, source: Record<string, unknown>, digest: string, version = "1.0.0"): Record<string, unknown> {
     return {
       packageId: id,
-      version: "1.0.0",
+      version,
       displayName: id,
       description: "A package that carries project instructions.",
       source,
@@ -272,14 +287,16 @@ describe("installed packages on a node", () => {
   }
 
   /** A package listed by a path on this machine, installed by its id with the digest of its bytes. */
-  async function installLocal(): Promise<void> {
-    const folder = join(dir, "local-package");
-    writePackage(folder, "com.example.local", "Quy tắc của gói cục bộ.");
+  async function installLocal(version = "1.0.0", text = "Quy tắc của gói cục bộ."): Promise<void> {
+    const folder = join(dir, `local-package-${version}`);
+    writePackage(folder, "com.example.local", text, version);
     const digest = digestOfDirectory(folder, { exclude: [] });
     if (!digest.ok) throw new Error(digest.message);
-    entries.push(listing("com.example.local", { kind: "local", path: folder }, digest.digest));
+    if (!entries.some((entry) => entry["packageId"] === "com.example.local" && entry["version"] === version)) {
+      entries.push(listing("com.example.local", { kind: "local", path: folder }, digest.digest, version));
+    }
     writeFileSync(indexPath, JSON.stringify(entries));
-    const response = await call("POST", "/packages/install", { packageId: "com.example.local", version: "1.0.0", localDigest: digest.digest });
+    const response = await call("POST", "/packages/install", { packageId: "com.example.local", version, localDigest: digest.digest });
     expect(response.status, JSON.stringify(response.body)).toBe(200);
   }
 
@@ -393,16 +410,7 @@ describe("installed packages on a node", () => {
 
   it("asks on the host's card when the policy asks, and writes only what the card showed once approved", async () => {
     await installLocal();
-    const written = writeRegisteredPreference(
-      { db: services.runtime.db, now: () => AT as Instant },
-      {
-        principalId: services.runtime.identity.ownerPrincipalId,
-        key: EXECUTION_POLICY_PREFERENCE_KEY,
-        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [{ effectCategory: "local-write", decision: "ask" }] },
-        source: "user",
-      },
-    );
-    expect(written.ok).toBe(true);
+    policy("ask");
     const instructions = packageInstructionsDepsOf(services);
     const asked = requestPackageInstructions(instructions, { packageId: "com.example.local", project, enabled: true, source: "agent" });
     expect(asked.kind).toBe("approval-required");
@@ -425,26 +433,135 @@ describe("installed packages on a node", () => {
     expect(stated()).toEqual(["Quy tắc của gói cục bộ."]);
   });
 
-  it("removes the rules from the next turn when turned off in Settings or uninstalled, and keeps the write person-only", async () => {
+  const effects = (): number => allRows<{ document: string }>(services.runtime.db, "SELECT document FROM events WHERE kind = 'effect.executed'").length;
+
+  function policy(decision?: "ask" | "deny"): void {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT as Instant },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: decision === undefined ? [] : [{ effectCategory: "local-write", decision }] },
+        source: "user",
+      },
+    );
+    expect(written.ok).toBe(true);
+  }
+
+  it("turns one project off from Settings against what is stored now, never puts back what was turned off elsewhere, and is person-only", async () => {
+    await installLocal();
+    await installFromGit();
+    await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });
+    await tool().execute({ action: "enable_instructions", packageId: "com.example.fetched", project });
+    expect(stated()).toEqual(["Quy tắc của gói đã cài.", "Quy tắc của gói cục bộ."]);
+
+    expect(isPersonOnlyRoute("POST", "/packages/instructions/turn-off")).toBe(true);
+    const machine = await handleRequest(deps, {
+      method: "POST",
+      path: "/packages/instructions/turn-off",
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}`, [MACHINE_SURFACE_HEADER]: "mcp" },
+      body: JSON.stringify({ packageId: "com.example.local", project }),
+    });
+    expect(machine.status).toBe(403);
+    expect(isPersonOnlyRoute("PUT", `/preferences/${PACKAGE_INSTRUCTIONS_PREFERENCE}`)).toBe(true);
+    expect(enabled()).toHaveLength(2);
+
+    // Clark turns the fetched package off after Settings last read the list; Settings' click names only its own pair.
+    await tool().execute({ action: "disable_instructions", packageId: "com.example.fetched", project });
+    const off = await call("POST", "/packages/instructions/turn-off", { packageId: "com.example.local", project });
+    expect(off.status, JSON.stringify(off.body)).toBe(200);
+    expect(off.body).toMatchObject({ packageId: "com.example.local", project, removed: true });
+    expect(enabled()).toEqual([]);
+    expect(stated()).toEqual([]);
+
+    const again = await call("POST", "/packages/instructions/turn-off", { packageId: "com.example.local", project });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ removed: false });
+    expect(enabled()).toEqual([]);
+    expect((await call("POST", "/packages/instructions/turn-off", { packageId: "com.example.local" })).status).toBe(400);
+  });
+
+  it("forgets a package's projects when it is uninstalled, so installing it again under the same id starts with nothing on", async () => {
+    await installLocal();
+    await installFromGit();
+    await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });
+    await tool().execute({ action: "enable_instructions", packageId: "com.example.fetched", project });
+
+    const uninstalled = await call("POST", "/packages/com.example.local/uninstall");
+    expect(uninstalled.status, JSON.stringify(uninstalled.body)).toBe(200);
+    expect(enabled()).toEqual([{ project, packageId: "com.example.fetched" }]);
+    expect(stated()).toEqual(["Quy tắc của gói đã cài."]);
+
+    expect((await call("POST", "/packages/com.example.local/restore")).status).toBe(200);
+    expect(stated()).toEqual(["Quy tắc của gói đã cài."]);
+    expect((await call("POST", "/packages/com.example.local/uninstall")).status).toBe(200);
+    await installLocal("1.0.0", "Quy tắc khác dưới cùng một id.");
+    expect(enabled()).toEqual([{ project, packageId: "com.example.fetched" }]);
+    expect(stated()).toEqual(["Quy tắc của gói đã cài."]);
+  });
+
+  it("keeps a package's projects through an upgrade and a rollback, since it stays installed", async () => {
     await installLocal();
     await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });
-    expect(stated()).toEqual(["Quy tắc của gói cục bộ."]);
-
-    expect(isPersonOnlyRoute("PUT", `/preferences/${PACKAGE_INSTRUCTIONS_PREFERENCE}`)).toBe(true);
-    const off = await call("PUT", `/preferences/${PACKAGE_INSTRUCTIONS_PREFERENCE}`, { value: [] });
-    expect(off.status, JSON.stringify(off.body)).toBe(200);
-    expect(stated()).toEqual([]);
-
-    await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });
-    expect(stated()).toEqual(["Quy tắc của gói cục bộ."]);
-    const uninstalled = await call("POST", "/packages/com.example.local/uninstall");
-    expect(uninstalled.status).toBe(200);
-    expect(stated()).toEqual([]);
-    // The choice is kept, so a restore brings the rules back.
-    expect((await call("POST", "/packages/com.example.local/restore")).status).toBe(200);
+    await installLocal("1.1.0", "Quy tắc của bản 1.1.0.");
+    expect(stated()).toEqual(["Quy tắc của bản 1.1.0."]);
+    const rolledBack = await call("POST", "/packages/com.example.local/rollback");
+    expect(rolledBack.status, JSON.stringify(rolledBack.body)).toBe(200);
+    expect(enabled()).toEqual([{ project, packageId: "com.example.local" }]);
     expect(stated()).toEqual(["Quy tắc của gói cục bộ."]);
   });
 
+  it("writes and records nothing when the policy refuses local writes", async () => {
+    await installLocal();
+    policy("deny");
+    const before = effects();
+    const refused = await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });
+    expect(refused.text).toContain("POLICY_REFUSED");
+    expect(enabled()).toEqual([]);
+    expect(effects()).toBe(before);
+    expect(stated()).toEqual([]);
+  });
+
+  it("records the effect only after the write succeeds", async () => {
+    await installLocal();
+    const store = (value: unknown): void => {
+      const written = writeRegisteredPreference(
+        { db: services.runtime.db, now: () => AT as Instant },
+        { principalId: services.runtime.identity.ownerPrincipalId, key: PACKAGE_INSTRUCTIONS_PREFERENCE, value, source: "user" },
+      );
+      expect(written.ok).toBe(true);
+    };
+    store(Array.from({ length: PACKAGE_INSTRUCTION_LIMITS.enabled }, (_, index) => ({ project, packageId: `com.example.other${String(index)}` })));
+    const before = effects();
+    const refused = requestPackageInstructions(packageInstructionsDepsOf(services), { packageId: "com.example.local", project, enabled: true, source: "agent" });
+    expect(refused.kind).toBe("refused");
+    expect(effects()).toBe(before);
+
+    store([]);
+    const done = requestPackageInstructions(packageInstructionsDepsOf(services), { packageId: "com.example.local", project, enabled: true, source: "agent" });
+    expect(done.kind).toBe("done");
+    expect(effects()).toBe(before + 1);
+  });
+
+  it("binds the card to the package's version, so a card shown for one version does not turn on another", async () => {
+    await installLocal();
+    policy("ask");
+    const instructions = packageInstructionsDepsOf(services);
+    const asked = requestPackageInstructions(instructions, { packageId: "com.example.local", project, enabled: true, source: "agent" });
+    if (asked.kind !== "approval-required") throw new Error(`expected a card, got ${asked.kind}`);
+    expect(String(asked.card["payload"])).toContain('"version":"1.0.0"');
+    policy();
+    await installLocal("1.1.0", "Quy tắc của bản 1.1.0.");
+    const approved = runApprovedPackageInstructions(instructions, {
+      payload: String(asked.card["payload"]),
+      expectedDigest: asked.approval.operationDigest,
+      approvalId: asked.approval.approvalId,
+    });
+    expect(approved).toMatchObject({ ok: false, code: "PACKAGE_CHANGED" });
+    expect(enabled()).toEqual([]);
+    expect(stated()).toEqual([]);
+  });
   it("audits each package snippet stated in a conversation with the package id and version", async () => {
     await installLocal();
     await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });

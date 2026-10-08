@@ -169,13 +169,16 @@ export function historySearchFor(
 }
 
 /** One reader of project instructions per node, so a conversation's turns and its tasks share the same cache. */
-const instructionReaders = new WeakMap<NodeServices, ConditionalInstructions>();
+const instructionReaders = new WeakMap<object, ConditionalInstructions>();
 
 /**
  * The node's conditional instructions (#433), read from the projects inside its approved roots; undefined with
  * `CLARKCANT_CONDITIONAL_INSTRUCTIONS=off`.
  */
-export function nodeConditionalInstructions(env: NodeJS.ProcessEnv, services: NodeServices): ConditionalInstructions | undefined {
+export function nodeConditionalInstructions(
+  env: NodeJS.ProcessEnv,
+  services: Pick<NodeServices, "runtime" | "conductor" | "projects">,
+): ConditionalInstructions | undefined {
   if (conditionalInstructionsFromEnv(env) === "off") return undefined;
   let reader = instructionReaders.get(services);
   if (reader === undefined) {
