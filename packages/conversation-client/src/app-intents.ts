@@ -25,6 +25,8 @@
 import {
   type AppIntent,
   type AppIntentDecision,
+  type AppIntentKind,
+  type AppIntentResolution,
   type ColorScheme,
   type NoticeOperationId,
   type OrbProfileName,
@@ -399,4 +401,51 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
     default:
       return true;
   }
+}
+
+/**
+ * The clicks the page carries out the moment they happen, before the node has answered.
+ *
+ * Only the logo, for now: the node never refuses a clicked `nav.home` and never asks to confirm it, and leaving the
+ * conversation changes only what the page shows - the conversation stays in the node's history, and a reply still being
+ * written there goes on. Waiting for the answer instead left a window in which the composer still belonged to the
+ * conversation being left: a message sent in it was checked only as a command there, and the restart that landed after
+ * it emptied the composer, so the text was lost without a word.
+ */
+const CLICKS_RUN_AT_ONCE: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["nav.home"]);
+
+export interface ClickAppIntentDeps {
+  /** Asks the node what the click means; for a click run at once, the node's record of it. */
+  ask: () => Promise<AppIntentResolution>;
+  /** The one executor, through the page's own `runIntent`. */
+  run: (decision: AppIntentDecision) => void;
+  /** The node could not be asked, so a click that waits for it did nothing. */
+  onLookupFailed: () => void;
+}
+
+/**
+ * A click on one of the page's own controls, decided by the node and carried out by the one executor.
+ *
+ * A click in `CLICKS_RUN_AT_ONCE` runs first and is reported to the node at the same time, so typing that follows it
+ * lands in the new state. The node's answer then changes nothing when it names the same intent, which is what it
+ * does; any other answer is still the node's word and is carried out (a refusal is said). A failed request leaves the
+ * click done and unrecorded, with nothing on screen to correct.
+ */
+export function clickAppIntent(kind: AppIntentKind, deps: ClickAppIntentDeps): Promise<void> {
+  if (!CLICKS_RUN_AT_ONCE.has(kind)) {
+    return deps.ask().then(
+      (decision) => {
+        if (decision.kind !== "none") deps.run(decision);
+      },
+      () => deps.onLookupFailed(),
+    );
+  }
+  deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
+  return deps.ask().then(
+    (decision) => {
+      if (decision.kind === "none" || (decision.kind === "intent" && decision.intent.kind === kind)) return;
+      deps.run(decision);
+    },
+    () => undefined,
+  );
 }
