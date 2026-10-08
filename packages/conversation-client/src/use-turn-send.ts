@@ -8,7 +8,7 @@ import {
   type SnapshotPresentationResponse,
   type Timeline,
 } from "./api.ts";
-import { chipsAfterAnswer, readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
+import { chipsAfterAnswer, readyAttachmentIds, readyChipIds, type AttachmentChip } from "./attachments.ts";
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
@@ -85,7 +85,7 @@ export interface TurnSendDeps {
   timeline: Timeline | undefined;
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
-  dispatchChips: (action: { type: "sent" } | { type: "cleared" }) => void;
+  dispatchChips: (action: { type: "sent"; chipIds: readonly string[] } | { type: "cleared" }) => void;
   /**
    * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
    * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
@@ -174,6 +174,10 @@ export function useTurnSend({
    * Incremented by a restart, and captured by anything that is about to write a result back. A
    * reply that arrives after the user restarted belongs to a conversation they have left, so it is
    * dropped rather than drawn into the fresh start screen.
+   *
+   * Only `restartSession` increments it, and it clears `busy` as it does. The busy guard at the end of `send` depends on
+   * that: a send that finds the generation changed leaves `busy` alone because the restart already reset it. Anything
+   * else that increments the generation must reset `busy` too, or a stale send would leave Stop on screen for good.
    */
   const sessionGeneration = useRef(0);
 
@@ -254,6 +258,7 @@ export function useTurnSend({
       let answered: SendMessageResult | undefined;
       try {
         const attachmentIds = standalone ? [] : readyAttachmentIds(chips);
+        const sentChipIds = standalone ? [] : readyChipIds(chips);
         const references = options.references ?? liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
         // The user may have restarted while the conversation was being created or the model was
@@ -313,11 +318,12 @@ export function useTurnSend({
         // so the person can press send again rather than attaching the same file a second time. A command the host
         // answered carries no files, so they stay for the next message, and the composer says why they are still there.
         // A reply from a session the person already restarted away from touches nothing here: the restart dropped that
-        // session's chips, and the ones on screen now belong to the new conversation.
+        // session's chips, and the ones on screen now belong to the new conversation. Only the files this message
+        // carried leave: one attached while the reply was being written belongs to the next message.
         if (!standalone && sessionGeneration.current === generation) {
           const keep = attachmentIds.length > 0 && answered !== undefined && chipsAfterAnswer(answered) === "kept";
           if (keep) setChipsKept(true);
-          else dispatchChips({ type: "sent" });
+          else dispatchChips({ type: "sent", chipIds: sentChipIds });
           onReferencesSent();
         }
       } catch (cause) {
@@ -331,7 +337,9 @@ export function useTurnSend({
         // so the start screen comes back with the text, rather than an empty page with the composer at its foot.
         if ((timeline?.messages.length ?? 0) === 0) resetHero();
       } finally {
-        setBusy(false);
+        // A send from a session the person already left has no say over this one: the restart ended its busy state,
+        // and a newer send may be running in the new conversation.
+        if (sessionGeneration.current === generation) setBusy(false);
       }
     },
     [
