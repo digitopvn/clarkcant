@@ -434,8 +434,8 @@ export function runsAtOnce(kind: AppIntentKind): boolean {
  *
  * A sentence that means the same thing ("start a new conversation") is not read here: only the node knows what a
  * sentence means, and a second reading in the page would be a classifier that drifts from it. So typed as a sentence
- * during a reply, going home waits for the node's answer, and text typed into the composer before that answer lands
- * is cleared with the restart, as the logo clears it. Accepted: `/new` and the logo are the immediate ways.
+ * during a reply, going home waits for the node's answer; text typed into the composer after that Enter is kept
+ * through the restart the answer brings (`useTurnSend`). `/new` and the logo are the immediate ways.
  */
 export function typedCommandRunAtOnce(typed: TypedSlashCommand | undefined): AppIntentKind | undefined {
   const kind = typed === undefined ? undefined : SLASH_COMMAND_INTENTS[typed.command];
@@ -454,6 +454,13 @@ export interface RunAtOnceDeps {
    * the page itself knows (`intents.newConversationKept`).
    */
   onUnrecorded?: () => void;
+  /**
+   * Called right after the intent ran. The check it returns answers, once the node's answer lands, whether the page is
+   * still on the new conversation that intent started, with nothing sent in it yet. The read-back and `onUnrecorded` are
+   * said only then: a remark about leaving, shown over a message the person has since sent or over another
+   * conversation, would describe something that is no longer on screen.
+   */
+  watchStart?: () => () => boolean;
 }
 
 /**
@@ -466,20 +473,30 @@ export interface RunAtOnceDeps {
  * and saying "refused" over the start screen would contradict what is on it, so it is left as a trace for whoever
  * debugs the node. A request that failed is traced too, and `onUnrecorded` lets the caller say what the node's
  * read-back would have said: the conversation left behind is kept, and `/sessions` reopens it.
+ *
+ * Either remark is said only while the page is still where the intent left it (`watchStart`); a late one is dropped
+ * with a trace.
  */
 export function runAppIntentAtOnce(kind: AppIntentKind, deps: RunAtOnceDeps): Promise<void> {
   deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
+  const stillThere = deps.watchStart?.() ?? (() => true);
+  const say = (remark: (() => void) | undefined): void => {
+    if (remark === undefined) return;
+    if (stillThere()) remark();
+    else console.info(`the remark about the ${kind} arrived after the page had moved on; it is not shown`);
+  };
   return deps.ask().then(
     (decision) => {
       if (decision.kind === "intent" && decision.intent.kind === kind) {
-        deps.onRecorded?.(decision);
+        const onRecorded = deps.onRecorded;
+        say(onRecorded === undefined ? undefined : () => onRecorded(decision));
         return;
       }
       console.warn(`the node answered "${decision.kind}" for the ${kind} the page already carried out; the screen is left as it is`);
     },
     (cause: unknown) => {
       console.warn(`the ${kind} the page carried out could not be recorded by the node`, cause);
-      deps.onUnrecorded?.();
+      say(deps.onUnrecorded);
     },
   );
 }
@@ -493,6 +510,8 @@ export interface ClickAppIntentDeps {
   onLookupFailed: () => void;
   /** The node could not be told about a click already carried out (`RunAtOnceDeps.onUnrecorded`). */
   onUnrecorded?: () => void;
+  /** Whether the page is still where a click carried out at once left it (`RunAtOnceDeps.watchStart`). */
+  watchStart?: () => () => boolean;
 }
 
 /**

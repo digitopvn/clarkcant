@@ -62,6 +62,11 @@ export interface TurnSendState {
    * showing it, and the next message opens a new one.
    */
   restartSession: () => void;
+  /**
+   * Called right after a restart: the check it returns answers, later, whether the page is still on the new
+   * conversation that restart started, with nothing sent in it yet (`RunAtOnceDeps.watchStart`).
+   */
+  watchNewStart: () => () => boolean;
   /** The scroll container, and the reader's own decision to follow the bottom or not. */
   scroller: React.RefObject<HTMLDivElement | null>;
   /**
@@ -113,6 +118,8 @@ export interface TurnSendDeps {
    * Autonomous mode that repeats whatever the message asked for.
    */
   clearDraft: () => void;
+  /** The composer draft as it is now, read when a command's late answer could clear it. */
+  readDraft: () => string;
   /** A failed send restores the user's text to the composer draft, so nothing typed is lost. */
   onSendFailed: (originalText: string) => void;
   /** The interface language, for a failure the node did not word itself. */
@@ -149,6 +156,7 @@ export function useTurnSend({
   runIntent,
   onNotice,
   clearDraft,
+  readDraft,
   onSendFailed,
   t,
 }: TurnSendDeps): TurnSendState {
@@ -190,6 +198,19 @@ export function useTurnSend({
    * else that increments the generation must reset `busy` too, or a stale send would leave Stop on screen for good.
    */
   const sessionGeneration = useRef(0);
+  /**
+   * Moves on whenever the page leaves the start a restart made: another restart, a message sent, or a conversation
+   * opened or created some other way (voice, a file). A remark about leaving that lands later is said only if this has
+   * not moved since (`watchNewStart`).
+   */
+  const startMark = useRef(0);
+  useEffect(() => {
+    if (conversationId !== undefined) startMark.current += 1;
+  }, [conversationId]);
+  const watchNewStart = useCallback((): (() => boolean) => {
+    const mark = startMark.current;
+    return () => startMark.current === mark;
+  }, []);
 
   useEffect(() => {
     const node = scroller.current;
@@ -254,6 +275,7 @@ export function useTurnSend({
             run: runIntent,
             onRecorded: (decision) => onNotice(decision.readBack),
             onUnrecorded: () => onNotice(t("intents.newConversationKeptReplying")),
+            watchStart: watchNewStart,
           });
           return;
         }
@@ -269,6 +291,17 @@ export function useTurnSend({
           if (slash !== undefined) onNotice(t(decision === undefined ? "intents.commandLookupFailed" : "intents.commandWaits").replace("{command}", `/${slash.command}`));
           return;
         }
+        /*
+         * The command stayed in the composer while the node read it, and the person may have edited it since: going home
+         * on "về trang chủ" while they were already typing the next message. Text that is no longer the command is theirs,
+         * so the intent runs now and the draft is put back after it, rather than the restart emptying it without a word.
+         */
+        const typedSince = readDraft();
+        if (typedSince.trim() !== trimmed) {
+          runIntent(decision);
+          onSendFailed(typedSince);
+          return;
+        }
         clearDraft();
         setPendingIntent(decision);
         return;
@@ -279,6 +312,7 @@ export function useTurnSend({
 
       setBusy(true);
       setError(undefined);
+      startMark.current += 1;
       // Cleared here, after the guard above: a send refused for being empty or for arriving while
       // another turn is busy keeps its text. A send that fails later gets it back from `onSendFailed`.
       if (!standalone) {
@@ -397,12 +431,14 @@ export function useTurnSend({
       onNotice,
       onReferencesSent,
       onSendFailed,
+      readDraft,
       resetHero,
       setConversationId,
       setPendingIntent,
       runIntent,
       t,
       timeline,
+      watchNewStart,
     ],
   );
 
@@ -411,6 +447,7 @@ export function useTurnSend({
     // jump: a restart is the same layout change in the opposite direction.
     resetHero();
     sessionGeneration.current += 1;
+    startMark.current += 1;
     setConversationId(undefined);
     setTimeline(undefined);
     setDatasets({});
@@ -439,5 +476,5 @@ export function useTurnSend({
     }
   }, [busy, client, conversationId, t]);
 
-  return { busy, error, setError, chipsKept, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
+  return { busy, error, setError, chipsKept, pendingUser, live, send, stop, restartSession, watchNewStart, scroller, followsBottomNow };
 }
