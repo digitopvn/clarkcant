@@ -109,7 +109,8 @@ export const DETACHED_RELAY_LIMITS = {
   "state.save": { maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5, timeoutMs: 30_000 },
   "semantic.publish": { maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 },
   // A press is a frame message the session has already bounded, so it is held to the same ceiling. It waits longer than
-  // the node's longest action deadline (a workflow's 300 s), so a press the node is still running is not given up on.
+  // the longest deadline the node sets on a service call or a workflow (a workflow's 300 s), so such a press the node
+  // is still running is not given up on. An agent button's model turn has no such deadline and can outlast it.
   intent: { maxBytes: FRAME_MESSAGE_MAX_BYTES, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 },
   "dev.session": { burst: 5, refillPerSecond: 1, timeoutMs: 30_000 },
 } as const;

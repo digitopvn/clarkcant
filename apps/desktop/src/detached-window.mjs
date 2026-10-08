@@ -151,9 +151,10 @@ const INTENT_FIELDS = Object.freeze(["instanceRef", "actionBindingId", "expected
  *
  * Every verb is bounded in time as well (`timeoutMs`): a node that accepts calls and never answers would otherwise hold
  * the in-flight slots until the window closed, and every relay would be refused as busy meanwhile. A press waits longer
- * than the node's longest action deadline (a workflow's 300 s, `action-limits.ts` in the runtime), so a press the node
- * is still running is not given up on; `action-limits.spec.ts` there holds the two apart. A press that still times out
- * was sent and may take effect, so the window reports it as uncertain, never refused.
+ * than the longest deadline the node sets on a service call or a workflow (a workflow's 300 s, `action-limits.ts` in the
+ * runtime), so such a press the node is still running is not given up on; `action-limits.spec.ts` there holds the two
+ * apart. An agent button's model turn has no such deadline and can outlast it. A press that times out was sent and may
+ * take effect, so the window reports it as uncertain, never refused.
  */
 export const RELAY_LIMITS = Object.freeze({
   inFlight: 8,

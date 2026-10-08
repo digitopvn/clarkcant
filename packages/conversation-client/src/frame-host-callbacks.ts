@@ -236,9 +236,17 @@ export function frameHostCallbacks(input: {
         }
         return { status: "accepted", message: t("shell.live.actionSent"), ...(result.output === undefined ? {} : { output: result.output }) };
       } catch (cause) {
-        // Sent, and it may have taken effect: said as the conversation says it, so nobody is invited to press twice.
+        /*
+         * Sent, and it may have taken effect: uncertain, so nobody is invited to press twice. The widget shows the
+         * node's own sentence, as it shows every other answer. Only a desktop host that stopped waiting has none, and
+         * the host says it.
+         */
         if (cause instanceof GatewayError && pressMayHaveRun(cause.details)) {
-          return { status: "uncertain", message: actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details }) };
+          const message =
+            cause.code === "NODE_TIMEOUT"
+              ? actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details })
+              : cause.message;
+          return { status: "uncertain", message };
         }
         input.onPressRefused?.();
         return { status: "refused", message: cause instanceof Error ? cause.message : t("shell.live.actionRefusedGeneric") };

@@ -149,10 +149,8 @@ describe("a press in either window", () => {
       onPressRefused,
     });
     const fromConversation = await conversation.invokeAction(press);
-    expect(fromConversation).toEqual({
-      status: "uncertain",
-      message: `${t("widgets.action.uncertain.SERVICE_TIMED_OUT")} ${t("widgets.action.uncertain.next.inbox")}`,
-    });
+    // The node's own sentence, as the widget is given every other answer.
+    expect(fromConversation).toEqual({ status: "uncertain", message: "SERVICE_TIMED_OUT: no answer" });
     expect(await detached.invokeAction(press)).toEqual(fromConversation);
     expect(onPressRefused).not.toHaveBeenCalled();
   });

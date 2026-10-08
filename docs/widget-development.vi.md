@@ -2289,9 +2289,10 @@ Desktop host chuyển tiếp từng yêu cầu của frame, cho đúng một ins
 
 Cửa sổ không nêu tên hội thoại lẫn instance. Các relay có giới hạn, và frame hỏi quá nhanh thì bị từ chối chứ không
 xếp hàng (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). Relay mà node không trả lời trong 30 giây (10 giây với publish semantic)
-kết thúc với `NODE_TIMEOUT` và nhả chỗ của nó. Riêng một lần bấm thì chờ 330 giây, lâu hơn thời hạn dài nhất của một
-hành động trên node (300 giây với workflow), nên host không ngừng chờ một lần bấm mà node vẫn đang chạy. Nếu vẫn hết
-giờ, widget được báo rằng yêu cầu đã được gửi nhưng chưa rõ đã có hiệu lực hay chưa (`uncertain`), không bao giờ báo là
+kết thúc với `NODE_TIMEOUT` và nhả chỗ của nó. Riêng một lần bấm thì chờ 330 giây, lâu hơn thời hạn dài nhất mà node
+đặt cho một lần gọi dịch vụ hay một workflow (300 giây với workflow), nên host không ngừng chờ một lần bấm như vậy khi
+node vẫn đang chạy nó. Nút `agent` chạy một lượt của mô hình, vốn không có thời hạn như vậy, nên một lượt dài vẫn có thể
+vượt quá thời gian chờ. Nếu một lần bấm hết giờ, widget được báo rằng yêu cầu đã được gửi nhưng chưa rõ đã có hiệu lực hay chưa (`uncertain`), không bao giờ báo là
 bị từ chối. Trạng thái bản dựng của phiên phát triển widget được hiện trong cửa sổ, không kèm đường dẫn thư mục, kể cả
 bên trong thông báo lỗi dựng: thư mục được thay bằng `.`, nên một tệp bên trong nó được đọc theo đường dẫn tương đối
 với package. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai, và các lần perform của
