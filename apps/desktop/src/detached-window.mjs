@@ -185,28 +185,38 @@ export const DETACHED_LEASE = Object.freeze({ refreshMs: 30_000, leaseMs: 90_000
  * and `onLost` is told once so the host can close it. Any other failure — the node restarting, a network blip — is
  * retried on the next tick: the lease outlives a missed refresh on purpose.
  *
+ * `stop()` answers the claim still on its way to the node, if there is one. A release sent before that claim lands
+ * would be undone by it, and the instance would stay held for a whole lease by a window that no longer exists.
+ *
  * @param {{
  *   claim: () => Promise<{ ok: boolean, code?: string }>,
  *   onLost: (answer: { ok: false, code?: string, refused?: string }) => void,
  *   refreshMs?: number,
  *   timers?: { setInterval: typeof setInterval, clearInterval: typeof clearInterval },
  * }} input
- * @returns {{ stop: () => void }}
+ * @returns {{ stop: () => Promise<void> }}
  */
 export function keepDetachedLease(input) {
   const timers = input.timers ?? globalThis;
   let stopped = false;
   let refreshing = false;
+  /** @type {Promise<void>} */
+  let inFlight = Promise.resolve();
   const stop = () => {
     stopped = true;
     timers.clearInterval(timer);
+    return inFlight;
   };
   const timer = timers.setInterval(() => {
     // One refresh at a time: a node slow to answer must not collect a queue of claims behind it.
     if (stopped || refreshing) return;
     refreshing = true;
-    void input
-      .claim()
+    const sent = input.claim();
+    inFlight = sent.then(
+      () => undefined,
+      () => undefined,
+    );
+    void sent
       .then((answer) => {
         if (stopped || answer.ok || answer.code !== "ALREADY_OWNED") return;
         stop();
@@ -218,6 +228,70 @@ export function keepDetachedLease(input) {
       });
   }, input.refreshMs ?? DETACHED_LEASE.refreshMs);
   return { stop };
+}
+
+const CLOSED_BEFORE_CLAIM = Object.freeze({ ok: false, refused: "the window closed before it could show the widget" });
+
+/**
+ * The whole life of the detached window's lease: the first claim, the refreshes, and the release.
+ *
+ * Two orderings matter, and both are about a claim landing at the node after the window is gone, which would hold
+ * the instance for a whole lease with nothing on screen:
+ *
+ * - `begin()` claims only while the window is still open. A window closed while it was loading claims nothing.
+ * - `end()` waits for every claim still on its way — the first one or a refresh — before it releases, so the release
+ *   is the last word. It settles once the release has, which is when the conversation may take the instance back.
+ *
+ * @param {{
+ *   claim: () => Promise<{ ok: boolean, code?: string, refused?: string }>,
+ *   release: () => Promise<unknown>,
+ *   onLost: (answer: { ok: false, code?: string, refused?: string }) => void,
+ *   isOpen: () => boolean,
+ *   refreshMs?: number,
+ *   timers?: { setInterval: typeof setInterval, clearInterval: typeof clearInterval },
+ * }} input
+ * @returns {{ begin: () => Promise<{ ok: boolean, code?: string, refused?: string }>, end: () => Promise<void> }}
+ */
+export function holdDetachedLease(input) {
+  let ended = false;
+  /** @type {Promise<unknown> | undefined} */
+  let claiming;
+  /** @type {{ stop: () => Promise<void> } | undefined} */
+  let kept;
+  /** @type {Promise<void> | undefined} */
+  let ending;
+  const begin = async () => {
+    if (ended || !input.isOpen()) return CLOSED_BEFORE_CLAIM;
+    const sent = input.claim();
+    claiming = sent;
+    const answer = await sent.catch((cause) => ({ ok: false, refused: String(cause?.message ?? cause) }));
+    // Closed while the claim was on its way: `end()` already waits for it and releases after it.
+    if (ended) return CLOSED_BEFORE_CLAIM;
+    if (!answer.ok) return answer;
+    kept = keepDetachedLease({
+      claim: input.claim,
+      onLost: input.onLost,
+      refreshMs: input.refreshMs,
+      timers: input.timers,
+    });
+    return answer;
+  };
+  const end = () => {
+    if (ending !== undefined) return ending;
+    ended = true;
+    const pending = [claiming, kept?.stop()].filter((entry) => entry !== undefined);
+    ending = Promise.allSettled(pending).then(async () => {
+      // Nothing was ever claimed, so there is nothing to give back.
+      if (claiming === undefined) return;
+      try {
+        await input.release();
+      } catch {
+        // A release the node did not hear lapses with the lease; the conversation's own claim says so if it matters.
+      }
+    });
+    return ending;
+  };
+  return { begin, end };
 }
 
 /** Where a detached window opens: beside its parent, and inside the work area the parent is already in. */

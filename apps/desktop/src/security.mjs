@@ -161,14 +161,41 @@ export function contentSecurityPolicy(input = {}) {
  * `script-src` added on top would refuse that document outright, since every policy a response carries is enforced.
  * A framed document with no policy of its own gets the window's, so nothing is framed with less than that.
  *
- * @param {{ resourceType?: string, responseHeaders?: Record<string, string | string[]> }} details
+ * Only the node's widget-frame documents (`<node>/frame/<grant>/...`) keep their own policy, and only a policy that
+ * says something: an empty header is no policy at all, and a frame from anywhere else gets the window's policy as
+ * well as whatever it brought, since every policy a response carries is enforced.
+ *
+ * @param {{ resourceType?: string, url?: string | undefined, responseHeaders?: Record<string, string | string[]> }} details
  * @param {string} policy
+ * @param {{ nodeOrigin?: string }} [frames]
  */
-export function withContentSecurityPolicy(details, policy) {
+export function withContentSecurityPolicy(details, policy, frames = {}) {
   const headers = { ...(details.responseHeaders ?? {}) };
-  const ownPolicy = Object.keys(headers).some((name) => name.toLowerCase() === "content-security-policy");
-  if (details.resourceType === "subFrame" && ownPolicy) return headers;
+  if (details.resourceType === "subFrame" && isWidgetFrame(details.url, frames.nodeOrigin) && hasOwnPolicy(headers)) {
+    return headers;
+  }
   return { ...headers, "Content-Security-Policy": [policy] };
+}
+
+/** Whether a response carries a Content-Security-Policy with at least one non-empty value. */
+function hasOwnPolicy(headers) {
+  return Object.entries(headers).some(([name, value]) => {
+    if (name.toLowerCase() !== "content-security-policy") return false;
+    const values = Array.isArray(value) ? value : [value];
+    return values.some((entry) => typeof entry === "string" && entry.trim() !== "");
+  });
+}
+
+/** Whether a URL is a widget-frame document the node serves. */
+function isWidgetFrame(value, nodeOrigin) {
+  const node = originOf(nodeOrigin);
+  if (node === undefined || typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.origin === node && url.pathname.startsWith("/frame/");
+  } catch {
+    return false;
+  }
 }
 
 /** The hosts a dev server may be on: this machine and nothing else. */
