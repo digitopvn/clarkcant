@@ -32,7 +32,7 @@ import {
   type Timeline,
   type TimelineAction,
 } from "./api.ts";
-import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
+import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage, pressMayHaveRun } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { type ArtifactFileHost, type MapTileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { createStateOnlyWriter, type StateOnlyWriter } from "./state-only-writes.ts";
@@ -742,7 +742,7 @@ export function useSurfaceRenderer({
                               const input = result?.approvalRequired !== undefined
                                 ? { approvalId: result.approvalRequired.approvalId }
                                 : { outcome: result === undefined
-                                  ? cause instanceof GatewayError && cause.details.outcome === "uncertain" ? "uncertain" : "refused"
+                                  ? cause instanceof GatewayError && pressMayHaveRun(cause.details) ? "uncertain" : "refused"
                                   : result.outcome === "done" ? "done" : "uncertain",
                                   ...(settledInstance.state?.pendingMove && typeof settledInstance.state.pendingMove === "object" && typeof (settledInstance.state.pendingMove as { approvalId?: unknown }).approvalId === "string"
                                     ? { approvalId: (settledInstance.state.pendingMove as { approvalId: string }).approvalId }

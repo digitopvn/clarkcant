@@ -55,9 +55,9 @@ import {
 import {
   COMPOSER_SURFACE_HEADER,
   DETACHED_LEASE,
-  RELAY_LIMITS,
   detachedBootstrap,
   detachedWindowOptions,
+  redactDevSessionView,
   relayBudget,
   reviewDetachedBootstrap,
   reviewDetachedDevSession,
@@ -67,6 +67,7 @@ import {
   reviewDetachedAppearance,
   reviewDetachedSemanticPublish,
   reviewDetachedStateSave,
+  runRelay,
   superviseDetachedWindow,
 } from "./detached-window.mjs";
 import { createNodeCaller } from "./node-call.mjs";
@@ -441,21 +442,19 @@ function relayRefusal(result) {
 /**
  * Run one relay for the detached window under its budget, against the window that asked.
  *
- * The budget is the window's own, so a window reopened starts afresh; a call over it is refused at once. A call that
- * settles after its window closed answers as refused, because what it would hand back belongs to a window that is gone.
+ * The budget is the window's own, so a window reopened starts afresh; a call over it is refused at once. `run` gets the
+ * only node caller a relay uses, bound to the verb's time limit, so a node that never answers frees the slot with
+ * `NODE_TIMEOUT`. A call that settles after its window closed answers as refused, because what it would hand back
+ * belongs to a window that is gone.
  */
 async function relayForDetached(verb, run) {
   const open = detached;
   if (open === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
-  const taken = open.budget.take(verb);
-  if (!taken.ok) return { ok: false, refused: taken.refused, code: taken.code, details: {} };
-  try {
-    const answer = await run(open);
+  return runRelay(open.budget, verb, callNode, async (call) => {
+    const answer = await run(open, call);
     if (detached !== open) return { ok: false, refused: "the widget window closed before the node answered", code: "WINDOW_CLOSED", details: {} };
     return answer;
-  } finally {
-    taken.done();
-  }
+  });
 }
 
 /**
@@ -924,7 +923,7 @@ function registerHandlers() {
       // A window that could act on an instance other than the one it shows would have reach beyond its own view.
       return { ok: false, refused: "this window may only act on the instance it is showing" };
     }
-    return relayForDetached("intent", async (open) => {
+    return relayForDetached("intent", async (open, call) => {
       // The bindings of the newest read the host made, so a digest the node changed since the window opened is the one
       // sent — and a binding the node no longer holds is refused here.
       const bindings = open.bootstrap.live?.bindings;
@@ -932,7 +931,7 @@ function registerHandlers() {
         ? bindings.find((entry) => entry?.actionBindingId === intent.actionBindingId)
         : undefined;
       if (binding === undefined) return { ok: false, refused: "that action is not bound on this instance", code: "ACTION_UNBOUND", details: {} };
-      const result = await callNode(widgetPath(open, "/actions"), {
+      const result = await call(widgetPath(open, "/actions"), {
         method: "POST",
         // A press in this window is the person's, as it is in the conversation.
         headers: { [COMPOSER_SURFACE_HEADER]: "composer" },
@@ -964,10 +963,10 @@ function registerHandlers() {
   handle("detached:frame.read", async (raw) => {
     const reviewed = reviewDetachedFrameRead(raw);
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
-    return relayForDetached("frame.read", async (open) => {
+    return relayForDetached("frame.read", async (open, call) => {
       const session = readNodeSession();
       if (!session.ok) return { ok: false, refused: session.refused, code: "NO_NODE_SESSION", details: {} };
-      const result = await callNode(widgetPath(open, "/live"), { method: "GET" });
+      const result = await call(widgetPath(open, "/live"), { method: "GET" });
       if (!result.ok) return relayRefusal(result);
       const answer = reviewDetachedFrameAnswer(result.body, { instanceId: open.instanceId, baseUrl: session.baseUrl });
       if (!answer.ok) return { ok: false, refused: answer.reason, code: "FRAME_READ_REFUSED", details: {} };
@@ -980,22 +979,21 @@ function registerHandlers() {
   handle("detached:state.save", async (raw) => {
     const reviewed = reviewDetachedStateSave(raw);
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
-    return relayForDetached("state.save", async (open) => {
-      const result = await callNode(widgetPath(open, "/state"), { method: "POST", body: reviewed.write });
+    return relayForDetached("state.save", async (open, call) => {
+      const result = await call(widgetPath(open, "/state"), { method: "POST", body: reviewed.write });
       if (!result.ok) return relayRefusal(result);
       return { ok: true, saved: result.body };
     });
   });
 
-  // What the frame says it shows, bounded in time as well as size: a publish the node does not answer is given up.
+  // What the frame says it shows, bounded in size, and in time as every relay is.
   handle("detached:semantic.publish", async (raw) => {
     const reviewed = reviewDetachedSemanticPublish(raw);
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
-    return relayForDetached("semantic.publish", async (open) => {
-      const result = await callNode(widgetPath(open, "/semantic"), {
+    return relayForDetached("semantic.publish", async (open, call) => {
+      const result = await call(widgetPath(open, "/semantic"), {
         method: "POST",
         body: { proposal: reviewed.proposal },
-        timeoutMs: RELAY_LIMITS["semantic.publish"].timeoutMs,
       });
       if (!result.ok) return relayRefusal(result);
       return { ok: true };
@@ -1004,25 +1002,23 @@ function registerHandlers() {
 
   /*
    * The status of the widget dev session whose build the frame runs: the session the host's newest read named, read
-   * only, and without the developer's folder path or where the session is placed. The conversation still shows those.
+   * only, and without the developer's folder path — in its own field or inside a build message — or where the session
+   * is placed. The conversation still shows those.
    */
   handle("detached:dev.session", async (raw) => {
     const reviewed = reviewDetachedDevSession(raw);
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
-    return relayForDetached("dev.session", async (open) => {
+    return relayForDetached("dev.session", async (open, call) => {
       const sessionId = open.bootstrap.live?.development?.sessionId;
       if (typeof sessionId !== "string" || sessionId === "") {
         return { ok: false, refused: "this widget is not running a widget dev session's build", code: "NO_DEV_SESSION", details: {} };
       }
-      const result = await callNode(`/widget-dev/sessions/${encodeURIComponent(sessionId)}`, { method: "GET" });
+      const result = await call(`/widget-dev/sessions/${encodeURIComponent(sessionId)}`, { method: "GET" });
       if (!result.ok) return relayRefusal(result);
       if (result.body === null || typeof result.body !== "object" || Array.isArray(result.body)) {
         return { ok: false, refused: "the node's session status is not an object", code: "MALFORMED_RESPONSE", details: {} };
       }
-      const view = { ...result.body };
-      delete view.root;
-      delete view.placed;
-      return { ok: true, view };
+      return { ok: true, view: redactDevSessionView(result.body) };
     });
   });
 
@@ -1619,7 +1615,12 @@ async function runSmokeTest() {
       ],
       [
         "the dev session's status reaches the window without the developer's folder",
-        devBefore?.ok === true && devBefore.view?.running?.generation === 1 && !("root" in devBefore.view) && !("placed" in devBefore.view),
+        devBefore?.ok === true &&
+          devBefore.view?.running?.generation === 1 &&
+          !("root" in devBefore.view) &&
+          !("placed" in devBefore.view) &&
+          !JSON.stringify(devBefore.view).includes("private-widget") &&
+          devBefore.view.lastBuild?.diagnostics?.[0]?.message === "./src/main.ts:3:7: Expected \";\"",
       ],
       [
         "a new build is seen through the relays: the session's running digest and the frame's document both move",

@@ -148,14 +148,21 @@ const INTENT_FIELDS = Object.freeze(["instanceRef", "actionBindingId", "expected
  * The limits the host holds every relay to: a bucket per verb, a ceiling on how many calls wait at once, and a size per
  * payload. A copy of `DETACHED_RELAY_LIMITS` in `@clarkcant/widget-host`, which this file cannot import because Electron
  * loads no TypeScript; `detached-window.spec.ts` holds the two equal.
+ *
+ * Every verb is bounded in time as well (`timeoutMs`): a node that accepts calls and never answers would otherwise hold
+ * the in-flight slots until the window closed, and every relay would be refused as busy meanwhile. A press waits longer
+ * than the longest deadline the node sets on a service call or a workflow (a workflow's 300 s, `action-limits.ts` in the
+ * runtime), so such a press the node is still running is not given up on; `action-limits.spec.ts` there holds the two
+ * apart. An agent button's model turn has no such deadline and can outlast it. A press that times out was sent and may
+ * take effect, so the window reports it as uncertain, never refused.
  */
 export const RELAY_LIMITS = Object.freeze({
   inFlight: 8,
-  "frame.read": Object.freeze({ burst: 10, refillPerSecond: 1 }),
-  "state.save": Object.freeze({ maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5 }),
+  "frame.read": Object.freeze({ burst: 10, refillPerSecond: 1, timeoutMs: 30_000 }),
+  "state.save": Object.freeze({ maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5, timeoutMs: 30_000 }),
   "semantic.publish": Object.freeze({ maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 }),
-  intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4 }),
-  "dev.session": Object.freeze({ burst: 5, refillPerSecond: 1 }),
+  intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 }),
+  "dev.session": Object.freeze({ burst: 5, refillPerSecond: 1, timeoutMs: 30_000 }),
 });
 
 /**
@@ -370,6 +377,66 @@ export function relayBudget(input = {}) {
     };
   };
   return { take };
+}
+
+/**
+ * Run one relayed verb under a budget, with a node caller bound to that verb's time limit.
+ *
+ * `run` receives the only `callNode` it may use, so no relay reaches the node without a bound. A call over the budget
+ * is refused at once; a call the node never answers ends as `NODE_TIMEOUT`; either way the slot is freed when the call
+ * settles.
+ *
+ * @param {{ take: (verb: string) => ({ ok: true, done: () => void } | { ok: false, refused: string, code: string }) }} budget
+ * @param {string} verb
+ * @param {(path: string, init?: Record<string, unknown>) => Promise<any>} callNode
+ * @param {(call: (path: string, init?: Record<string, unknown>) => Promise<any>) => Promise<any>} run
+ */
+export async function runRelay(budget, verb, callNode, run) {
+  const taken = budget.take(verb);
+  if (!taken.ok) return { ok: false, refused: taken.refused, code: taken.code, details: {} };
+  const timeoutMs = RELAY_LIMITS[verb]?.timeoutMs;
+  try {
+    return await run((path, init) => callNode(path, { ...init, timeoutMs }));
+  } finally {
+    taken.done();
+  }
+}
+
+/** Where a redacted folder path stood: the package root, as the diagnostics' own `path` is relative to it. */
+const REDACTED_ROOT = ".";
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A widget dev session's status as the detached window may see it: without the developer's folder path (owner decision
+ * E), wherever it appears.
+ *
+ * `root` and `placed` are dropped, and every string left — a build message is the reader's own words, and a bundler's
+ * names absolute files — has the folder replaced by `.`, so a file under it reads relative to the package, the way a
+ * diagnostic's `path` does. The folder is matched in either slash direction, URL-encoded, and ignoring case (a path on
+ * Windows or macOS may be spelled in any case), and only as whole names, so `/w/widget` is not taken for `/w/widget2` or `/w/widget.bak`.
+ *
+ * @param {Record<string, unknown>} view
+ * @returns {Record<string, unknown>}
+ */
+export function redactDevSessionView(view) {
+  const { root, ...rest } = view;
+  delete rest.placed;
+  if (typeof root !== "string") return rest;
+  const trimmed = root.replace(/[\\/]+$/, "");
+  if (trimmed === "") return rest;
+  const forward = trimmed.replace(/\\/g, "/");
+  const spellings = [...new Set([trimmed, forward, trimmed.replace(/\//g, "\\"), encodeURI(forward)])].sort((a, b) => b.length - a.length);
+  const pattern = new RegExp(`(?<![\\w~-])(?:${spellings.map(escapeRegExp).join("|")})(?![\\w~-]|\\.[\\w~-])`, "giu");
+  const redact = (value) => {
+    if (typeof value === "string") return value.replace(pattern, REDACTED_ROOT);
+    if (Array.isArray(value)) return value.map(redact);
+    if (isPlainObject(value)) return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry)]));
+    return value;
+  };
+  return redact(rest);
 }
 
 /**

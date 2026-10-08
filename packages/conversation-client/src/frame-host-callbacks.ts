@@ -1,6 +1,7 @@
 import { readNodeView, type SemanticProposal, widgetDevSessionViewSchema } from "@clarkcant/contracts";
 import type { FrameActionOutcome, FrameStateOutcome } from "@clarkcant/widget-host/session";
 
+import { actionRefusalMessage, pressMayHaveRun } from "./action-messages.ts";
 import { type ActionInvocationResult, GatewayError, type IsolatedFrameLiveResponse } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import type { WidgetDevStatusView } from "./widget-dev-status.tsx";
@@ -11,7 +12,7 @@ import type { WidgetDevStatusView } from "./widget-dev-status.tsx";
  * The frame runs in two hosts: the conversation, which reaches the node with its own credential, and a detached desktop
  * window, which holds none and asks the desktop host to relay each request. The two transports differ; what the widget
  * hears back must not. A stale state write carries the state the node holds in both, a refused press reads the same in
- * both, and a press waiting on an approval is "uncertain" in both. So the outcomes are mapped here, from a
+ * both, and a press waiting on an approval, or sent with no answer, is "uncertain" in both. So the outcomes are mapped here, from a
  * `GatewayError`, and each host only turns its own transport's refusal into one (`relayRefusalError`).
  */
 
@@ -147,7 +148,14 @@ export function detachedFrameTransport(bridge: DetachedFrameBridge, instanceRef:
         input: press.input,
         invocationId: press.invocationId,
       });
-      if (!answer.ok) throw relayRefusalError(answer);
+      if (!answer.ok) {
+        /*
+         * The host stopped waiting, not the node: the press was sent and the node may still take its effect. That is
+         * the node's own "uncertain" for a call whose answer never came, so it is said the same way, never "refused".
+         */
+        if (answer.code === "NODE_TIMEOUT") throw relayRefusalError({ ...answer, details: { ...answer.details, outcome: "uncertain" } });
+        throw relayRefusalError(answer);
+      }
       const result = isRecord(answer.result) ? answer.result : {};
       const approval = result["approvalRequired"];
       const output = result["output"];
@@ -228,6 +236,18 @@ export function frameHostCallbacks(input: {
         }
         return { status: "accepted", message: t("shell.live.actionSent"), ...(result.output === undefined ? {} : { output: result.output }) };
       } catch (cause) {
+        /*
+         * Sent, and it may have taken effect: uncertain, so nobody is invited to press twice. The widget shows the
+         * node's own sentence, as it shows every other answer. Only a desktop host that stopped waiting has none, and
+         * the host says it.
+         */
+        if (cause instanceof GatewayError && pressMayHaveRun(cause.details)) {
+          const message =
+            cause.code === "NODE_TIMEOUT"
+              ? actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details })
+              : cause.message;
+          return { status: "uncertain", message };
+        }
         input.onPressRefused?.();
         return { status: "refused", message: cause instanceof Error ? cause.message : t("shell.live.actionRefusedGeneric") };
       }

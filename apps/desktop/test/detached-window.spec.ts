@@ -19,6 +19,7 @@ import {
   detachedWindowOptions,
   holdDetachedLease,
   keepDetachedLease,
+  redactDevSessionView,
   relayBudget,
   reviewDetachedBootstrap,
   reviewDetachedDevSession,
@@ -28,8 +29,10 @@ import {
   reviewDetachedAppearance,
   reviewDetachedSemanticPublish,
   reviewDetachedStateSave,
+  runRelay,
   superviseDetachedWindow,
 } from "../src/detached-window.mjs";
+import { createNodeCaller } from "../src/node-call.mjs";
 
 /**
  * The detached window, checked as attacks.
@@ -305,6 +308,105 @@ describe("the relay budget", () => {
   it("refuses a verb it has no limits for", () => {
     expect(relayBudget().take("node")).toMatchObject({ ok: false, code: "RELAY_UNKNOWN" });
     expect(relayBudget().take("inFlight")).toMatchObject({ ok: false, code: "RELAY_UNKNOWN" });
+  });
+});
+
+describe("a node that accepts relayed calls and never answers", () => {
+  const VERBS = ["frame.read", "state.save", "semantic.publish", "intent", "dev.session"] as const;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("bounds every relayed verb in time", () => {
+    for (const verb of VERBS) {
+      const timeoutMs: unknown = (RELAY_LIMITS[verb] as { timeoutMs?: unknown }).timeoutMs;
+      // A press waits out the node's longest action deadline (held in the runtime's `action-limits.spec.ts`); the rest
+      // are single reads and writes.
+      const ceiling = verb === "intent" ? 360_000 : 60_000;
+      expect(typeof timeoutMs === "number" && timeoutMs > 0 && timeoutMs <= ceiling, verb).toBe(true);
+    }
+  });
+
+  it.each(VERBS)("answers %s with NODE_TIMEOUT and frees its in-flight slot", async (verb) => {
+    vi.useFakeTimers();
+    const silent = createNodeCaller({
+      readSession: () => ({ ok: true, baseUrl: "http://127.0.0.1:8765", token: "test-token-not-a-credential" }),
+      fetch: (_url: URL | RequestInfo, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    });
+    // A budget with room for exactly one call, so the slot this call holds is the only one.
+    const budget = relayBudget({ limits: { ...RELAY_LIMITS, inFlight: 1 } as unknown as typeof RELAY_LIMITS, now: () => 0 });
+    const hung = runRelay(budget, verb, silent, (call) => call("/x", { method: "GET" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await runRelay(budget, verb, silent, async () => ({ ok: true }))).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+    await vi.advanceTimersByTimeAsync(RELAY_LIMITS[verb].timeoutMs);
+    expect(await hung).toMatchObject({ ok: false, code: "NODE_TIMEOUT" });
+    expect(await runRelay(budget, verb, silent, async () => ({ ok: true }))).toEqual({ ok: true });
+  });
+
+  it("refuses a call over the budget without reaching the node", async () => {
+    const callNode = vi.fn();
+    const budget = relayBudget({ limits: { ...RELAY_LIMITS, inFlight: 0 } as unknown as typeof RELAY_LIMITS, now: () => 0 });
+    expect(await runRelay(budget, "frame.read", callNode, (call) => call("/x"))).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+    expect(callNode).not.toHaveBeenCalled();
+  });
+});
+
+describe("the developer's folder path in a relayed dev-session status", () => {
+  const diagnostics = (...messages: string[]) => ({
+    lastBuild: { ok: false, diagnostics: messages.map((message) => ({ severity: "error", message })) },
+  });
+  const messagesOf = (view: Record<string, unknown>) =>
+    (view["lastBuild"] as { diagnostics: { message: string }[] }).diagnostics.map((entry) => entry.message);
+
+  it("drops the folder and where the session is placed", () => {
+    const view = redactDevSessionView({ sessionId: "dev_1", root: "/home/someone/w", placed: { conversationId: "c", instanceId: "i" } });
+    expect(view).toEqual({ sessionId: "dev_1" });
+  });
+
+  it("replaces the folder inside build messages, and keeps a file under it relative to the package", () => {
+    const view = redactDevSessionView({
+      root: "/home/someone/private-widget/",
+      ...diagnostics(
+        "/home/someone/private-widget/src/main.ts:3:7: Expected \";\"",
+        "Could not read /home/someone/private-widget",
+        "see file:///home/someone/private-widget/manifest.json",
+        "/HOME/someone/Private-Widget/a.ts failed",
+      ),
+    });
+    expect(messagesOf(view)).toEqual([
+      "./src/main.ts:3:7: Expected \";\"",
+      "Could not read .",
+      "see file://./manifest.json",
+      "./a.ts failed",
+    ]);
+    expect(JSON.stringify(view).toLowerCase()).not.toContain("private-widget");
+  });
+
+  it("finds a Windows folder in either slash direction and URL-encoded", () => {
+    const view = redactDevSessionView({
+      root: "C:\\Users\\Some One\\widget",
+      ...diagnostics("C:\\Users\\Some One\\widget\\src\\a.ts: bad", "c:/users/some one/widget/src/a.ts: bad", "file:///C:/Users/Some%20One/widget/b.ts"),
+    });
+    expect(messagesOf(view)).toEqual([".\\src\\a.ts: bad", "./src/a.ts: bad", "file:///./b.ts"]);
+  });
+
+  it("leaves a sibling folder that only starts with the same name alone", () => {
+    const view = redactDevSessionView({ root: "/w/widget", ...diagnostics("/w/widget2/a.ts and /w/widget-old/b.ts") });
+    expect(messagesOf(view)).toEqual(["/w/widget2/a.ts and /w/widget-old/b.ts"]);
+  });
+
+  it("leaves a sibling whose name continues with a dot alone, and still redacts the folder before a full stop", () => {
+    const view = redactDevSessionView({ root: "/w", ...diagnostics("/w.bak/x, /w/a.ts: and /w.") });
+    expect(messagesOf(view)).toEqual(["/w.bak/x, ./a.ts: and .."]);
+  });
+
+  it("redacts every string in the view, not only messages", () => {
+    const view = redactDevSessionView({ root: "/r/w", activation: { state: "refused", message: "refused /r/w/x" }, notes: ["/r/w"] });
+    expect(view).toEqual({ activation: { state: "refused", message: "refused ./x" }, notes: ["."] });
   });
 });
 

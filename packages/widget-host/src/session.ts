@@ -99,17 +99,20 @@ export const FRAME_MESSAGE_MAX_BYTES = 64 * 1024;
  * The frame session already bounds what the frame posts; these bound what the detached window may ask the host to
  * send to the node, because that window is a second renderer the host cannot tell from an honest one. Each relay has a
  * bucket of `burst` requests refilled at `refillPerSecond`, and every relay together has at most `inFlight` calls
- * waiting; a call over either is refused, never queued. The Electron host cannot load TypeScript, so it keeps its own
- * copy, and a test holds the two equal.
+ * waiting; a call over either is refused, never queued. Each relay also gives up on a node that does not answer
+ * within `timeoutMs` (`NODE_TIMEOUT`), so a silent node cannot hold the in-flight slots. The Electron host cannot load
+ * TypeScript, so it keeps its own copy, and a test holds the two equal.
  */
 export const DETACHED_RELAY_LIMITS = {
   inFlight: 8,
-  "frame.read": { burst: 10, refillPerSecond: 1 },
-  "state.save": { maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5 },
+  "frame.read": { burst: 10, refillPerSecond: 1, timeoutMs: 30_000 },
+  "state.save": { maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5, timeoutMs: 30_000 },
   "semantic.publish": { maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 },
-  // A press is a frame message the session has already bounded, so it is held to the same ceiling.
-  intent: { maxBytes: FRAME_MESSAGE_MAX_BYTES, burst: 10, refillPerSecond: 2, inFlight: 4 },
-  "dev.session": { burst: 5, refillPerSecond: 1 },
+  // A press is a frame message the session has already bounded, so it is held to the same ceiling. It waits longer than
+  // the longest deadline the node sets on a service call or a workflow (a workflow's 300 s), so such a press the node
+  // is still running is not given up on. An agent button's model turn has no such deadline and can outlast it.
+  intent: { maxBytes: FRAME_MESSAGE_MAX_BYTES, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 },
+  "dev.session": { burst: 5, refillPerSecond: 1, timeoutMs: 30_000 },
 } as const;
 
 /**

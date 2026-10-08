@@ -2293,9 +2293,15 @@ and with its own token:
   own newest read.
 
 The window names neither the conversation nor the instance. Its relays are bounded, and a frame that asks too fast is
-refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A widget dev session's build status is shown in the
-window without the folder path. While the widget is detached, the conversation shows a note instead of a second frame,
-and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached.
+refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A relay the node does not answer within 30 seconds
+(10 seconds for a semantic publish) ends with `NODE_TIMEOUT` and frees its place. A press waits 330 seconds instead,
+longer than the longest deadline the node sets on a service call or a workflow (300 seconds for a workflow), so the host
+does not give up on such a press while the node is still running it. An `agent` button runs a model turn, which has no
+such deadline, so a long turn can still outlast the wait. If a press times out, the widget is told it was sent and
+whether it took effect is unknown (`uncertain`), never that it was refused. A widget dev session's build status is shown in the window without the folder
+path, inside build messages too: the folder is replaced by `.`, so a file under it reads relative to the package. While
+the widget is detached, the conversation shows a note instead of a second frame, and Clark's performs on it are refused
+with `FRAME_DETACHED` until it is reattached.
 
 Not yet in a detached window: files (`artifacts@1`), jobs (`jobs@1`), browser tokens (`tokens@1`) and the actions
 Clark performs (`offeredActions`). The frame is told they are not offered, and they work again once the widget is

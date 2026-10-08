@@ -86,6 +86,40 @@ describe("calling the node", () => {
     });
   });
 
+  it("drops a caller's header the host sets, in any spelling, so the two values are never joined", async () => {
+    const send = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => answer(200, {}));
+    const callNode = createNodeCaller({ readSession: () => SESSION, fetch: send });
+    await callNode("/x", {
+      headers: { "X-ClarkCant-Surface": "composer", Authorization: "Bearer forged", AUTHORIZATION: "Bearer forged", "Content-Type": "text/plain" },
+    });
+    const sent = send.mock.calls[0]?.[1]?.headers;
+    expect(sent).toEqual({
+      "x-clarkcant-surface": "composer",
+      "content-type": "application/json",
+      authorization: `Bearer ${SESSION.token}`,
+    });
+    // What the node reads, after the fetch layer folds names together.
+    const folded = new Headers(sent);
+    expect(folded.get("authorization")).toBe(`Bearer ${SESSION.token}`);
+    expect(folded.get("content-type")).toBe("application/json");
+  });
+
+  it("gives up on a node that sends its status and never finishes the body", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: async (_url: URL | RequestInfo, init?: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+            }),
+        }) as unknown as Response,
+    });
+    expect(await callNode("/x", { timeoutMs: 20 })).toMatchObject({ ok: false, code: "NODE_TIMEOUT" });
+  });
+
   it("gives up on a call the node accepts and never answers, and says so", async () => {
     const callNode = createNodeCaller({
       readSession: () => SESSION,

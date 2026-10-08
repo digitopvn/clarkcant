@@ -133,6 +133,47 @@ describe("a press in either window", () => {
     expect(onPressRefused).toHaveBeenCalledOnce();
   });
 
+  it("is uncertain, not refused, when the node says it was sent and may have run", async () => {
+    const onPressRefused = vi.fn();
+    const details = { outcome: "uncertain", recorded: true };
+    const conversation = frameHostCallbacks({
+      transport: conversationTransport({ invokeAction: () => Promise.reject(new GatewayError(504, "SERVICE_TIMED_OUT", "no answer", details)) }),
+      bindings: LIVE.bindings,
+      t,
+      onPressRefused,
+    });
+    const detached = frameHostCallbacks({
+      transport: detachedFrameTransport(bridge({ intent: async () => ({ ok: false, code: "SERVICE_TIMED_OUT", refused: "no answer", details }) }), "w"),
+      bindings: LIVE.bindings,
+      t,
+      onPressRefused,
+    });
+    const fromConversation = await conversation.invokeAction(press);
+    // The node's own sentence, as the widget is given every other answer.
+    expect(fromConversation).toEqual({ status: "uncertain", message: "SERVICE_TIMED_OUT: no answer" });
+    expect(await detached.invokeAction(press)).toEqual(fromConversation);
+    expect(onPressRefused).not.toHaveBeenCalled();
+  });
+
+  it("is uncertain, not refused, when the desktop host stopped waiting for the node", async () => {
+    const onPressRefused = vi.fn();
+    const detached = frameHostCallbacks({
+      transport: detachedFrameTransport(
+        bridge({ intent: async () => ({ ok: false, code: "NODE_TIMEOUT", refused: "the node did not answer in time", details: {} }) }),
+        "w",
+      ),
+      bindings: LIVE.bindings,
+      t,
+      onPressRefused,
+    });
+    // Sent, and the node may still be running it: pressing again could take the effect twice.
+    expect(await detached.invokeAction(press)).toEqual({
+      status: "uncertain",
+      message: `${t("widgets.action.uncertain")} ${t("widgets.action.uncertain.next.say")}`,
+    });
+    expect(onPressRefused).not.toHaveBeenCalled();
+  });
+
   it("waiting on an approval is uncertain, never a success", async () => {
     const detached = frameHostCallbacks({
       transport: detachedFrameTransport(bridge({ intent: async () => ({ ok: true, result: { approvalRequired: { approvalId: "appr_1" } } }) }), "w"),
