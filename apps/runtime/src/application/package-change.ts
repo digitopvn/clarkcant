@@ -30,7 +30,13 @@ export async function changePackageAndConnection(
   return outcome;
 }
 
-/** The connection an installed package declares, read from its manifest, or undefined. */
+/**
+ * The connection an installed package declares, read from its manifest, or undefined.
+ *
+ * Read without its generation's record of skipped facets, unlike every other reader of an installed package: the
+ * connection is only used to revoke its tokens and delete them, which takes access away and grants nothing. A record
+ * that cannot be read holds back the whole package everywhere else, and must not leave a provider token valid here.
+ */
 function declaredConnection(deps: PackageInstallDeps, packageId: string): ServiceConnectionRequirement | undefined {
   const { runtime } = deps;
   const installed = listInstalledPackages({
@@ -40,6 +46,6 @@ function declaredConnection(deps: PackageInstallDeps, packageId: string): Servic
     newId: deps.conductor.newId,
   }).find((entry) => entry.packageId === packageId);
   if (installed === undefined) return undefined;
-  const manifest = installedManifest(installed, runtime.dataDir, readNodeDirectory(runtime.dataDir));
+  const manifest = installedManifest({ ...installed, skippedFacets: undefined }, runtime.dataDir, readNodeDirectory(runtime.dataDir));
   return manifest === "unreadable" ? undefined : installedConnection(manifest);
 }
