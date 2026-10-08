@@ -314,10 +314,21 @@ export interface DevRootIdentity {
   ino: bigint;
 }
 
-/** The identity of the folder at `root` now, or undefined when it cannot be read as a folder. */
-function devRootIdentityOf(root: string): DevRootIdentity | undefined {
+/**
+ * The identity of the folder at `root` now, or undefined when it cannot be read as a folder.
+ *
+ * By default a link or junction at `root` is followed, as a watch follows it, and the folder it leads to gives the id.
+ * With `followLinks: false` the path itself must be the folder: a link or junction there gives no id, as a mark that
+ * names the chosen folder must not take the id of whatever a link leads to.
+ *
+ * A folder's device and file id say which folder it is only as long as the filesystem does not give a folder made later
+ * the same id. Some do: on Linux (ext4) a folder deleted and made again at once at the same path can get the same file
+ * id, and then reads as the same folder. Its birth time is no second check: it is no finer than the filesystem's clock
+ * tick, and where it cannot be read Node reports the change time, which moves with every file added or removed.
+ */
+export function devRootIdentityOf(root: string, options: { followLinks?: boolean } = {}): DevRootIdentity | undefined {
   try {
-    const stat = statSync(root, { bigint: true });
+    const stat = options.followLinks === false ? lstatSync(root, { bigint: true }) : statSync(root, { bigint: true });
     return stat.isDirectory() ? { dev: stat.dev, ino: stat.ino } : undefined;
   } catch {
     return undefined;

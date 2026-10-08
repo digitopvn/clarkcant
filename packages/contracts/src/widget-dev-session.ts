@@ -215,8 +215,9 @@ export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
  *   or junction, or it was not there when the node started again.
  * - `capacity`: the node already watched as many folders as it does at once when it started again.
  * - `root-refused`: when the node started again, the folder was no longer one the session may watch (for example a
- *   session Clark started whose folder is outside the widget workspace and every folder the person chose, or a folder
- *   now inside the data folder).
+ *   session Clark started whose folder is outside the widget workspace and every folder the person chose, a chosen
+ *   folder deleted and made again while the node was stopped, or a folder now inside the data folder). The person's own
+ *   start chooses the folder again.
  */
 export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity", "root-refused"]);
 export type WidgetDevStopReason = z.infer<typeof widgetDevStopReasonSchema>;

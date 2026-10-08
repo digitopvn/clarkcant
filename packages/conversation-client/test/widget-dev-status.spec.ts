@@ -118,8 +118,13 @@ describe("the widget dev status line", () => {
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "folder-gone", running: undefined, activation: { state: "none" } }), en).text).toBe(
       "No longer watching the folder · no build runs yet. The folder is gone.",
     );
-    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), vi).text).toContain("hãy chép dự án vào đó");
-    expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), en).text).toContain("copy the project there");
+    // Refused at a restart, for example a chosen folder made again: the person is told to choose it again.
+    const refusedVi = widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), vi).text;
+    expect(refusedVi).toContain("hãy chọn lại thư mục bằng /develop");
+    expect(refusedVi).toContain("chép dự án vào không gian widget của Clark");
+    const refusedEn = widgetDevStatusLine(view({ status: "stopped", stopReason: "root-refused" }), en).text;
+    expect(refusedEn).toContain("choose the folder again with /develop");
+    expect(refusedEn).toContain("deleted and made again after you chose it");
   });
 
   it("says a problem the host found in the person's language and the package's own words as written", () => {

@@ -2992,8 +2992,13 @@ chính là thư mục đó, nên một liên kết được đặt vào chỗ n�
 lại, cho tới khi bạn thu hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh
 thư mục đó. Thu hồi không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua
 thư mục đó (câu trả lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn
-thu hồi được; nó chỉ được tính lại khi chính thư mục đó được chuyển về, chứ không phải khi một thư mục khác được tạo ở
-đường dẫn đó. Chỉ tin nhắn do bạn gửi mới khiến Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
+thu hồi được; nó được tính lại khi chính thư mục đó được chuyển về, còn một thư mục mới ở đường dẫn đó được chọn khi
+chính bạn bắt đầu phát triển nó. Có một giới hạn: trên Linux (ext4 và các hệ thống tệp tương tự), một thư mục bị xoá
+(không phải bị chuyển đi) rồi được tạo lại ngay ở cùng đường dẫn có thể nhận mã tệp của thư mục đã xoá và khi đó vẫn
+được tính là thư mục bạn đã chọn, nên hãy thu hồi một thư mục trước khi xoá nó nếu không muốn một thư mục tạo ở đó về
+sau thừa hưởng lựa chọn. Nếu một phiên do Clark bắt đầu dừng lại sau một lần khởi động lại vì thư mục của nó không còn
+là nơi Clark được tự theo dõi (chẳng hạn nó đã bị xoá rồi tạo lại), những gì nó đã dựng vẫn tiếp tục chạy; hãy bấm
+**Phát triển lại** ở dòng của phiên đó trên thẻ `/develop` để chọn lại thư mục. Chỉ tin nhắn do bạn gửi mới khiến Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
 phiên, nhưng Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển,
 và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
 dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.

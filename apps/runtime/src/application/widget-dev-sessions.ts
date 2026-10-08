@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { mkdirSync, realpathSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -20,6 +20,7 @@ import {
   activeGeneration,
   cachedLocalSnapshotPath,
   devConsentScopeOf,
+  devRootIdentityOf,
   devRootState,
   getPreference,
   pinInstance,
@@ -200,12 +201,8 @@ type ChosenFolderId = NonNullable<StoredDevSession["chosenFolderId"]>;
 
 /** The device and file id of the folder at `path` itself, not reached through a link, or undefined when none is there. */
 function folderIdOf(path: string): ChosenFolderId | undefined {
-  try {
-    const stat = lstatSync(path, { bigint: true });
-    return stat.isDirectory() ? { dev: String(stat.dev), ino: String(stat.ino) } : undefined;
-  } catch {
-    return undefined;
-  }
+  const id = devRootIdentityOf(path, { followLinks: false });
+  return id === undefined ? undefined : { dev: String(id.dev), ino: String(id.ino) };
 }
 
 /** Whether the folder at `root` is still the one with `id` (`devRootState`, as a dev session watches its folder). */
