@@ -255,6 +255,7 @@ export const MESSAGES_SHELL_VI = {
 
   "shell.credential.sentNoName": "Đã gửi, nhưng node không ghi nhận tên nào.",
   "shell.credential.saved": "Đã lưu: {names}.",
+  "shell.credential.saving": "Đang lưu…",
   "shell.credential.saveFailed": "Không lưu được. Thử lại.",
   "shell.task.stopFailed": "Không gửi được yêu cầu dừng task.",
   "shell.artifact.openFailed": "Không mở được artifact này.",
@@ -602,6 +603,7 @@ export const MESSAGES_SHELL_EN = {
 
   "shell.credential.sentNoName": "Sent, but the node reported no name.",
   "shell.credential.saved": "Saved: {names}.",
+  "shell.credential.saving": "Saving…",
   "shell.credential.saveFailed": "Could not save. Try again.",
   "shell.task.stopFailed": "Could not send the stop request.",
   "shell.artifact.openFailed": "Could not open this artifact.",

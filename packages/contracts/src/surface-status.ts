@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { feedbackCardSchema } from "./feedback.ts";
-import type { providerSignInViewSchema } from "./slash-commands.ts";
+import type { commandCardSchema, providerSignInViewSchema } from "./slash-commands.ts";
 import type { StatusTone } from "./status-cards.ts";
 import type {
   approvalCardBlockSchema,
@@ -435,7 +435,20 @@ export const SIGN_IN_PHASE: Record<SignInState, SurfacePhase> = {
   cancelled: "cancelled",
 };
 
-type FeedbackPublication = NonNullable<z.infer<typeof feedbackCardSchema>["publication"]>["status"];
+type CommandBadgeTone = NonNullable<z.infer<typeof commandCardSchema>["rows"][number]["badge"]>["tone"];
+/**
+ * A command card row's badge, read as a phase where its tone claims one. The node writes the tone, not a phase, so
+ * the reading keeps each tone's colour and adds the phase's mark. `neutral` claims nothing — a queued job, a plain
+ * label — and is left out, so the badge is drawn plain rather than guessed into a phase.
+ */
+export const COMMAND_BADGE_PHASE: Record<Exclude<CommandBadgeTone, "neutral">, SurfacePhase> = {
+  active: "pending",
+  success: "success",
+  warning: "partial",
+  danger: "error",
+};
+
+type FeedbackPublication =NonNullable<z.infer<typeof feedbackCardSchema>["publication"]>["status"];
 /** A filed report: `unknown` means GitHub did not answer, which is not a failure and not a success. */
 export const FEEDBACK_PUBLICATION_PHASE: Record<FeedbackPublication, SurfacePhase> = {
   published: "success",

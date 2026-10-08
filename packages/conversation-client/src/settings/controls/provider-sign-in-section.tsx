@@ -9,7 +9,13 @@ import type { MessageKey } from "../../i18n/messages.ts";
 import { AfterSignIn, type ModelPickerPort } from "../../model-picker.tsx";
 import { SignInPanel } from "../../provider-sign-in-panel.tsx";
 import { useModelPickerPort } from "../../use-model-picker-port.ts";
-import { signInFailureReason, useProviderSignIns } from "../../use-provider-sign-ins.ts";
+import {
+  signInFailureReason,
+  signInStartRefused,
+  signOutRefused,
+  signOutSettled,
+  useProviderSignIns,
+} from "../../use-provider-sign-ins.ts";
 
 export type ProviderListing =
   | { status: "loading" }
@@ -153,21 +159,15 @@ export function ProviderSignInSection({ client }: { client: GatewayClient }): Re
         settle(provider.providerId, { status: "pending" });
         signIns.start(provider.providerId, provider.providerId, method).then(
           () => settle(provider.providerId, undefined),
-          (error: unknown) =>
-            settle(provider.providerId, { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: signInFailureReason(error) }) }),
+          (error: unknown) => settle(provider.providerId, signInStartRefused(error, t)),
         );
       }}
       onSignOut={(provider) => {
         setNotice(undefined);
         settle(provider.providerId, { status: "pending" });
         signIns.signOut(provider.providerId).then(
-          (result) =>
-            settle(provider.providerId, {
-              status: "done",
-              message: t(result.signedOut ? "commandCard.signOut.done" : "settings.providers.signOutNothing"),
-            }),
-          (error: unknown) =>
-            settle(provider.providerId, { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: signInFailureReason(error) }) }),
+          (result) => settle(provider.providerId, signOutSettled(result, t)),
+          (error: unknown) => settle(provider.providerId, signOutRefused(error, t)),
         );
       }}
       onAnswer={(providerId, signInId, value) => signIns.answer({ key: providerId, signInId, value })}

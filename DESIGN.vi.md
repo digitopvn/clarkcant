@@ -848,15 +848,19 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   trước khi kết quả tới: `error` là assertive, mọi thay đổi phase khác là
   polite; cùng phase lặp lại, `loading`, hay bất cứ gì đã có trên màn hình lúc
   mount (tải lại trang, cuộn ngược) đều không được thông báo.
-- **Câu trả lời đến muộn và thử lại (helper của hợp đồng, áp dụng dần từng
-  bề mặt).** `settleSurfaceStatus` của hợp đồng bỏ qua câu trả lời cho một lần
-  thử trước và giữ kết quả đầu tiên của một lần thử, nên cả một "vẫn đang chạy"
-  đến muộn lẫn một kết quả đến sau đều không thay được nó; `canRetry` chỉ đề
-  nghị thử lại khi phase là `error` hoặc `partial` và miền nêu rõ `retry` hoặc
-  `check-again`. Hiện chưa miniapp dựng sẵn nào gọi hai helper này: các lần thử
-  lại hôm nay (bấm lại khi dừng task, thử lại khi lưu thông tin xác thực) và câu
-  trả lời đến muộn trên các dòng của thẻ lệnh vẫn theo quy tắc riêng của từng bề
-  mặt, và sẽ chuyển sang các helper này khi những bề mặt đó được làm lại.
+- **Hủy không phải là thất bại.** Một lần đăng nhập do người dùng hủy được đọc
+  là `cancelled`, một câu trả lời mà ứng dụng này không đọc được là `partial`, và
+  một lời từ chối nói lý do của node bằng lời của người dùng, không bao giờ ở
+  dạng `CODE: message`.
+- **Câu trả lời đến muộn và thử lại.** `settleSurfaceStatus` của hợp đồng bỏ
+  qua câu trả lời cho một lần thử trước và giữ kết quả đầu tiên của một lần thử,
+  nên cả một "vẫn đang chạy" đến muộn lẫn một kết quả đến sau đều không thay được
+  nó. Các dòng của thẻ lệnh và thẻ thông tin xác thực đều chốt mọi lần bấm qua
+  helper này, mỗi lần bấm là một lần thử mới; một dòng hiện lần bấm mới nhất
+  trong các nút của nó. Một bề mặt mà lần thử lại có thể trả về đúng câu trả lời
+  cũ sẽ đi qua `pending` trước, nên cùng một thất bại hai lần được nói hai lần.
+  `canRetry` chỉ đề nghị thử lại khi phase là `error` hoặc `partial` và miền nêu
+  rõ `retry` hoặc `check-again`.
 
 ### 8.4 Local vs effect actions
 

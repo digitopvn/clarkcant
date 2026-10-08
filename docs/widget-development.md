@@ -493,9 +493,10 @@ it:
 
 The last rule, and the rule that a retry is offered only after a failure or a
 partial result, are helpers in the contract (`settleSurfaceStatus` and
-`canRetry`) that built-in cards adopt one surface at a time. No built-in card
-calls them yet, so do not read today's cards as the reference for late answers
-or retries.
+`canRetry`) that built-in cards adopt one surface at a time. Command-card rows
+and the credential card settle late answers through `settleSurfaceStatus`, and
+are the reference for that rule; no built-in card offers a retry through
+`canRetry` yet.
 
 ---
 

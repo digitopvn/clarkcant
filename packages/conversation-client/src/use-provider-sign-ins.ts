@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProviderSignInView } from "@clarkcant/contracts";
 
 import { GatewayError, type GatewayClient } from "./api.ts";
+import { fillMessage } from "./i18n/fill-message.ts";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /** Often enough that a finished browser sign-in shows within a moment, rarely enough to stay quiet. */
 const SIGN_IN_POLL_MS = 1500;
@@ -29,6 +31,27 @@ export interface ProviderSignIns {
 export function signInFailureReason(error: unknown): string {
   if (error instanceof GatewayError) return error.reason;
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * What a sign-in, sign-out press settles on, in the same words wherever it was pressed: a `/login` or `/logout` card
+ * row and a Settings provider row say the same thing about the same answer.
+ */
+export type ProviderPressOutcome = { status: "done" | "failed"; message: string };
+
+/** A sign-in that could not start, with the node's own reason and never its code. */
+export function signInStartRefused(error: unknown, t: (key: MessageKey) => string): ProviderPressOutcome {
+  return { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: signInFailureReason(error) }) };
+}
+
+/** A sign-out the node answered: removed, or nothing to remove. */
+export function signOutSettled(result: { signedOut: boolean }, t: (key: MessageKey) => string): ProviderPressOutcome {
+  return { status: "done", message: t(result.signedOut ? "commandCard.signOut.done" : "settings.providers.signOutNothing") };
+}
+
+/** A sign-out that did not happen: the credential is still there, with the node's reason and never its code. */
+export function signOutRefused(error: unknown, t: (key: MessageKey) => string): ProviderPressOutcome {
+  return { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: signInFailureReason(error) }) };
 }
 
 export type ProviderSignInPort = Pick<

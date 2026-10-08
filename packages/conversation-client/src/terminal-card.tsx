@@ -3,10 +3,12 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import type { FitAddon } from "@xterm/addon-fit";
 import type { ITheme, Terminal } from "@xterm/xterm";
 
+import type { SurfacePhase } from "@clarkcant/contracts";
 import { monoFontStack } from "@clarkcant/design-tokens";
 
 import type { GatewayClient } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { LiveNote, PhaseBadge } from "./surface-status.tsx";
 import { subscribeToDocumentTheme } from "./theme.ts";
 import {
   type PiSessionSummaryView,
@@ -50,6 +52,48 @@ type Phase =
   | { kind: "gone" }
   | { kind: "disconnected"; reason: string }
   | { kind: "load-failed"; reason: string };
+
+/** What the shell itself is doing, as the badge names it: ended, running a command, or ready for one. */
+export type TerminalShellState = "exited" | "running" | "idle";
+export const TERMINAL_SHELL_PHASE: Record<TerminalShellState, SurfacePhase> = {
+  // The shell ended; nothing failed because of it, and it will not come back.
+  exited: "cancelled",
+  // A command is work in progress, not a warning.
+  running: "pending",
+  idle: "success",
+};
+
+/** The line under the screen: why the terminal cannot be used, or what it is doing. */
+export type TerminalNotice = "gone" | "load-failed" | "disconnected" | "exited" | "session" | "observer" | "running";
+export const TERMINAL_NOTICE_PHASE: Record<TerminalNotice, SurfacePhase> = {
+  gone: "unavailable",
+  "load-failed": "error",
+  // The view lost the shell; the shell may still run. Said at once, with Reconnect beside it.
+  disconnected: "error",
+  exited: "cancelled",
+  session: "unavailable",
+  observer: "unavailable",
+  running: "pending",
+};
+
+/**
+ * Which notice the terminal shows, from its machine. The connection comes first: a terminal that cannot be reached says
+ * so before anything it last knew about the shell.
+ */
+export function terminalNotice(input: {
+  phase: Phase["kind"];
+  exited: boolean;
+  inSession: boolean;
+  driver: boolean;
+  running: boolean;
+}): TerminalNotice | undefined {
+  if (input.phase === "gone" || input.phase === "load-failed" || input.phase === "disconnected") return input.phase;
+  if (input.phase !== "attached") return undefined;
+  if (input.exited && !input.inSession) return "exited";
+  if (input.inSession) return "session";
+  if (!input.driver) return "observer";
+  return input.running ? "running" : undefined;
+}
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
@@ -485,6 +529,8 @@ function LiveTerminal({
   const onKill = (): void => {
     const target = viewing.kind === "terminal" ? viewing.terminalId : terminalId;
     setKilling(true);
+    // Cleared first, so a kill that fails again for the same reason is said again.
+    setNotice(undefined);
     client.killTerminal(target).catch((error: unknown) => {
       setKilling(false);
       setNotice(error instanceof Error ? error.message : String(error));
@@ -496,11 +542,31 @@ function LiveTerminal({
     panelToggleRef.current?.focus();
   };
 
-  const statusBadge = exited
-    ? { tone: "", label: t("blocks.terminal.exited") }
-    : runningCommand !== null
-      ? { tone: "warn", label: t("blocks.terminal.running") }
-      : { tone: "ok", label: t("blocks.terminal.idle") };
+  const shellState: TerminalShellState = exited ? "exited" : runningCommand !== null ? "running" : "idle";
+  const shellLabel: Record<TerminalShellState, MessageKey> = {
+    exited: "blocks.terminal.exited",
+    running: "blocks.terminal.running",
+    idle: "blocks.terminal.idle",
+  };
+  const shownNotice = terminalNotice({ phase: phase.kind, exited, inSession, driver, running: runningCommand !== null });
+  const noticeText = (shown: TerminalNotice): string => {
+    switch (shown) {
+      case "gone":
+        return t("blocks.terminal.gone");
+      case "load-failed":
+        return t("blocks.terminal.loadFailed").replace("{reason}", phase.kind === "load-failed" ? phase.reason : "");
+      case "disconnected":
+        return t("blocks.terminal.disconnected").replace("{reason}", phase.kind === "disconnected" ? phase.reason : "");
+      case "exited":
+        return exitNote;
+      case "session":
+        return t("blocks.terminal.sessionLimit");
+      case "observer":
+        return t("blocks.terminal.observer");
+      case "running":
+        return t("blocks.terminal.runningCommand").replace("{command}", runningCommand?.command ?? "…");
+    }
+  };
 
   const exitNote = t("blocks.terminal.exitedNotice").replace(
     "{code}",
@@ -527,9 +593,9 @@ function LiveTerminal({
           <code className="cc-terminal-cwd">{inSession ? "" : own ? cwd : (info?.cwd ?? "")}</code>
         </span>
         {inSession || !live ? null : (
-          <span className="cc-badge" data-tone={statusBadge.tone} data-terminal-badge="true">
-            {statusBadge.label}
-          </span>
+          <PhaseBadge phase={TERMINAL_SHELL_PHASE[shellState]} data-terminal-badge={shellState}>
+            {t(shellLabel[shellState])}
+          </PhaseBadge>
         )}
       </header>
 
@@ -555,32 +621,25 @@ function LiveTerminal({
         ) : null}
       </div>
 
-      <div className="cc-terminal-status" aria-live="polite">
-        {phase.kind === "gone" ? (
-          <p className="cc-freshness" data-terminal-notice="gone">{t("blocks.terminal.gone")}</p>
-        ) : phase.kind === "load-failed" ? (
-          <p className="cc-freshness" data-terminal-notice="load-failed">{t("blocks.terminal.loadFailed").replace("{reason}", phase.reason)}</p>
-        ) : phase.kind === "disconnected" ? (
-          <p className="cc-freshness" data-terminal-notice="disconnected">
-            {t("blocks.terminal.disconnected").replace("{reason}", phase.reason)}{" "}
-            <button type="button" className="cc-chip" data-terminal-reconnect="true" onClick={() => setAttempt((value) => value + 1)}>
-              {t("blocks.terminal.reconnect")}
-            </button>
-          </p>
-        ) : live && exited && !inSession ? (
-          <p className="cc-freshness" data-terminal-notice="exited">{exitNote}</p>
-        ) : live && inSession ? (
-          <p className="cc-freshness" data-terminal-notice="session">{t("blocks.terminal.sessionLimit")}</p>
-        ) : live && !driver ? (
-          <p className="cc-freshness" data-terminal-notice="observer">{t("blocks.terminal.observer")}</p>
-        ) : live && runningCommand !== null ? (
-          <p className="cc-freshness" data-terminal-notice="running">
-            {t("blocks.terminal.runningCommand").replace("{command}", runningCommand.command ?? "…")}
-          </p>
+      {/*
+        The terminal's state and a failed kill, each in live regions mounted with the card: losing the shell or failing
+        to stop it interrupts, anything else waits its turn, and what was already true when the card mounted is not said.
+      */}
+      <div className="cc-terminal-status">
+        <LiveNote
+          phase={shownNotice === undefined ? undefined : TERMINAL_NOTICE_PHASE[shownNotice]}
+          {...(shownNotice === undefined ? {} : { "data-terminal-notice": shownNotice })}
+        >
+          {shownNotice === undefined ? undefined : noticeText(shownNotice)}
+        </LiveNote>
+        {phase.kind === "disconnected" ? (
+          <button type="button" className="cc-chip" data-terminal-reconnect="true" onClick={() => setAttempt((value) => value + 1)}>
+            {t("blocks.terminal.reconnect")}
+          </button>
         ) : null}
-        {notice === undefined ? null : (
-          <p className="cc-freshness" data-terminal-error="true">{notice}</p>
-        )}
+        <LiveNote phase={notice === undefined ? undefined : "error"} data-terminal-error="true">
+          {notice}
+        </LiveNote>
       </div>
 
       <div className="cc-card-actions cc-terminal-actions">
@@ -853,7 +912,7 @@ function WorkStopButton({
       .catch(() => setState("failed"));
   };
   return (
-    <span className="cc-terminal-panel-actions">
+    <div className="cc-terminal-panel-actions">
       <button
         type="button"
         className="cc-chip"
@@ -864,12 +923,11 @@ function WorkStopButton({
       >
         {state === "stopping" ? t("blocks.terminal.panelStopping") : t("blocks.terminal.panelStop")}
       </button>
-      {state === "failed" ? (
-        <span className="cc-freshness" role="status" data-panel-stop-failed={workId}>
-          {t("blocks.terminal.panelStopFailed")}
-        </span>
-      ) : null}
-    </span>
+      {/* Mounted with the button, so a stop that fails is heard as a failure the moment it happens. */}
+      <LiveNote phase={state === "failed" ? "error" : undefined} data-panel-stop-failed={workId}>
+        {t("blocks.terminal.panelStopFailed")}
+      </LiveNote>
+    </div>
   );
 }
 

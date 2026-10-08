@@ -138,7 +138,8 @@ test("a sign-in left running is shown again when the tab is opened again, and it
   await expect(page.locator("#cc-tab-ai")).toBeFocused();
 
   await again.locator(".cc-sign-in").getByRole("button", { name: "Hủy" }).click();
-  await expect(again.locator(".cc-sign-in .cc-command-status")).toBeVisible({ timeout: 10_000 });
+  // Cancelled is its own ending, never drawn as a failure.
+  await expect(again.locator(".cc-sign-in [data-sign-in-status='cancelled']")).toHaveAttribute("data-result", "cancelled", { timeout: 10_000 });
   await expect(again.getByRole("button", { name: "Dùng API key" })).not.toHaveAttribute("aria-disabled", "true");
 });
 
