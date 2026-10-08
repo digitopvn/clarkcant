@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Readable } from "node:stream";
@@ -15,6 +15,7 @@ import {
   signalTree,
   stopTree,
 } from "../src/process-tree.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 // Fields 3.. of /proc/<pid>/stat; the 20th of them (field 22) is the start time.
 const TAIL = "S 1 100 100 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10";
@@ -168,8 +169,8 @@ describe.runIf(process.platform === "win32")("stopping a command a .cmd shim sta
     dir = mkdtempSync(join(tmpdir(), "cc-stop-shim-"));
   });
 
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  afterEach(async () => {
+    await removeTestDirectory(dir);
   });
 
   /** Run a shim the way `run_command` runs a command, and resolve once its command is running. */

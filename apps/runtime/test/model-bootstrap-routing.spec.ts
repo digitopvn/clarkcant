@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { routeNodeBackgroundModel, routeOrFallBack, workerModelCandidates } from
 import { writeModelPool } from "../src/model-registry.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { nodeWorkerModel } from "../src/worker-model.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The node's own background routing, as the model turn calls it: the pool it stores, the catalogue it reads, and what
@@ -31,9 +32,9 @@ beforeEach(() => {
   services.projects = projects;
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 function profile(alias: string, modelId: string, priority: number, enabled = true): UserModelProfile {

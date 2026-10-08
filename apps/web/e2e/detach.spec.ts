@@ -124,6 +124,44 @@ test("a composed widget open in the conversation offers Detach", async ({ page }
   await expect(live.locator("[data-detach-widget='true']")).toBeVisible();
 });
 
+test("closing the conversation's view of a detached widget closes its window", async ({ page }) => {
+  /*
+   * The surface that detached a widget is the one listening to take it back. When it goes away while the window is
+   * still open - here, by closing the pin - nothing else would, so it asks the host to close the window, which gives
+   * the lease back.
+   */
+  await page.addInitScript(() => {
+    if (window.top !== window) return;
+    const calls: string[] = [];
+    (window as unknown as { __shellCalls: string[] }).__shellCalls = calls;
+    (window as unknown as { clarkcant: unknown }).clarkcant = {
+      detachWidget: async () => {
+        calls.push("detach");
+        return { ok: true };
+      },
+      attachWidget: async () => {
+        calls.push("attach");
+        return { ok: true, attached: true };
+      },
+    };
+  });
+  if (NODE_PORT === undefined || NODE_PORT === "") throw new Error("CC_E2E_NODE_PORT is not set; run this suite through playwright.config.ts");
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  await say(page, "cho tui xem tổng quan công việc tuần này");
+  await expect(page.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
+  await page.locator("[data-open-live]").first().click();
+  const live = page.locator("[data-pin-live]").first();
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 30_000 });
+
+  await live.locator("[data-detach-widget='true']").click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __shellCalls: string[] }).__shellCalls)).toEqual(["detach"]);
+
+  await live.locator("[data-close-live]").click();
+  await expect(page.locator("[data-pin-live]")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __shellCalls: string[] }).__shellCalls)).toEqual(["detach", "attach"]);
+});
+
 test("a widget in its own frame open in the conversation does not offer Detach", async ({ page }) => {
   await openConversationWithDetachBridge(page);
   await say(page, "mở trình soạn thảo văn bản");

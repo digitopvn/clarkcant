@@ -191,6 +191,12 @@ Lease **chuyển** chứ không nhân bản: shell release trước, host claim 
 release rồi shell claim lại — nên không có thời điểm nào có hai owner. Đóng cửa sổ cũng chính là đường reattach, kể cả
 khi người dùng chỉ bấm nút đóng của hệ điều hành.
 
+Host giữ claim đó còn hiệu lực bằng chính các con số của hội thoại (làm mới mỗi 30 giây, lease 90 giây), và node ghi
+nhận nó là `detached`, nên một claim cạnh tranh được biết widget đang mở trong cửa sổ riêng. Khi cửa sổ đang mở, hội
+thoại không tự làm mới lease của mình. Một lần làm mới bị từ chối vì một bề mặt khác đã giữ instance sẽ đóng cửa sổ.
+Cửa sổ không bao giờ sống lâu hơn hội thoại đã mở nó: đóng phần hiển thị đó (mở hội thoại khác, đóng pin), đóng cửa sổ
+hội thoại hoặc thoát ứng dụng đều đóng cửa sổ detached, và lease của nó được trả lại trên đường đóng.
+
 ### 2.3 Wake phrase
 
 Target UX: local wake phrase **“Hey Clark”** mở voice mode.

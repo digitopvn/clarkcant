@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import { createPackageJobHost, type PackageJobHost } from "../src/job-host.ts";
 import { createServiceHost, type ServiceHost, type ServiceLauncher } from "../src/service-host.ts";
 import { createWorkSupervisor, type WorkSupervisor } from "../src/work-supervisor.ts";
 import { WAV_HEADER_BYTES, applyGain, fixtureClip, parseWavHeader, renderPlan, wavHeader } from "../../../examples/reference-apps/media-render/service/wav.mjs";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A package service reading a file a widget holds, end to end through the node: the reference media render package's
@@ -465,7 +466,7 @@ afterEach(async () => {
   await host?.stopAll();
   host = undefined;
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("a package service reading a widget's file", () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService, type AutomationService } from "../src/automation-service.ts";
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Standing requests on a running node: set up in the conversation, fired by a signal over the wire, reported back.
@@ -60,9 +61,9 @@ beforeEach(() => {
   boot();
 });
 
-afterEach(() => {
+afterEach(async () => {
   shutdown();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 async function request(method: string, path: string, body?: unknown, token = services.runtime.identity.localToken): Promise<GatewayResponse> {

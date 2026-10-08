@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -27,6 +27,7 @@ import { classifyCommand, ownedResources } from "../src/preflight.ts";
 import { createNodeServer } from "../src/server.ts";
 import type { ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Who started a turn (#427).
@@ -53,9 +54,9 @@ beforeEach(async () => {
   conversationId = (created.body as { conversationId: string }).conversationId;
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 function request(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<GatewayResponse> {

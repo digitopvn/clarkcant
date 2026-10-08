@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +37,7 @@ import { handleRequest } from "../src/gateway.ts";
 import { reconcileFeedbackAtStart } from "../src/routes/feedback.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { FAKE_GITHUB_VIEWER, createFakeGithub, type FakeGithub } from "../src/test-support/fake-github.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The product report service against an in-process GitHub.
@@ -75,10 +76,10 @@ beforeEach(async () => {
   conversationId = (created.body as { conversationId: string }).conversationId;
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 function bug(description: string, extra: Partial<FeedbackRequest> = {}): FeedbackRequest {
@@ -560,7 +561,7 @@ describe("a report checking cannot settle", () => {
     const inconclusive = checked.publication.inconclusive;
     expect(inconclusive?.since).toBe(getEffect(services.runtime.db, getFeedbackReport(services.runtime.db, draft.reportId)?.effectId ?? "")?.preparedAt);
     expect(decodeURIComponent(inconclusive?.searchUrl ?? "")).toBe(
-      `https://github.com/digitopvn/clarkcant/issues?q=is:issue author:@me created:>=${AT.slice(0, 10)}`,
+      `https://github.com/digitopvn/clarkcant/issues?q=is:issue author:${FAKE_GITHUB_VIEWER} created:>=${AT.slice(0, 10)}`,
     );
     expect(inconclusive?.manualUrl).toMatch(/^https:\/\/github\.com\/digitopvn\/clarkcant\/issues\/new\?/u);
     expect(github.writes()).toHaveLength(1);
@@ -614,7 +615,7 @@ describe("a report checking cannot settle", () => {
 });
 
 describe("looking for a report by its marker", () => {
-  it("looks among the token owner's own issues, asking GitHub who that is once per check", async () => {
+  it("looks among the issues of the account it was sent as, recorded when it was sent", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.parse(AT));
     github.fail("createIssue", { kind: "no-answer", applied: false });
@@ -628,8 +629,100 @@ describe("looking for a report by its marker", () => {
     const checked = await press(draft.reportId, "check");
 
     expect(checked.ok && checked.publication.status).toBe("failed");
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.attemptLogin).toBe(FAKE_GITHUB_VIEWER);
+    expect(github.calls.filter((call) => call.operation === "viewer")).toHaveLength(0);
+    expect(github.calls.find((call) => call.operation === "findIssue")?.detail).toContain(`by ${FAKE_GITHUB_VIEWER}`);
+  });
+
+  it("asks GitHub whose token it is once per check when the attempt recorded no login", async () => {
+    const { draft } = await prepared(bug("Caret jumps to the end"));
+    // A send handed off before the login was recorded, as a process that died mid-send leaves it.
+    updateFeedbackReport(services.runtime.db, {
+      reportId: draft.reportId,
+      status: "publishing",
+      publication: { status: "unknown", reportId: draft.reportId, reason: "sending" },
+      at: AT,
+    });
+    github.calls.length = 0;
+
+    await press(draft.reportId, "check");
+
     expect(github.calls.filter((call) => call.operation === "viewer")).toHaveLength(1);
     expect(github.calls.find((call) => call.operation === "findIssue")?.detail).toContain(`by ${FAKE_GITHUB_VIEWER}`);
+  });
+
+  it("still finds the report after the stored token changes hands, and does not offer to file it twice", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    // GitHub kept the issue, its answer never arrived, and it could not be looked up straight after.
+    github.fail("createIssue", { kind: "no-answer", applied: true });
+    github.fail("findIssue", { kind: "not-sent" });
+    const { draft } = await prepared(bug("Sidebar flashes on wake"));
+    const first = await press(draft.reportId);
+    expect(first.ok && first.publication.status).toBe("unknown");
+
+    // The person replaces `github_token` with one from another account, and checks long past the grace.
+    github.viewer = "another-account";
+    vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
+    const checked = await press(draft.reportId, "check");
+
+    expect(checked.ok && checked.publication.status).toBe("published");
+    expect(github.calls.filter((call) => call.operation === "findIssue").at(-1)?.detail).toContain(`by ${FAKE_GITHUB_VIEWER}`);
+    expect(github.writes()).toHaveLength(1);
+  });
+
+  it("scans without the owner filter when the token cannot read its owner, and still sends", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    // An App installation token: `GET /user` is refused, every time.
+    github.fail("viewer", { kind: "refused", status: 403, times: 10 });
+    github.fail("createIssue", { kind: "no-answer", applied: true });
+    github.fail("findIssue", { kind: "not-sent" });
+    const { draft } = await prepared(bug("Badge stays after reading"));
+    const first = await press(draft.reportId);
+    expect(first.ok && first.publication.status).toBe("unknown");
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.attemptLogin).toBeUndefined();
+
+    vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
+    const checked = await press(draft.reportId, "check");
+
+    expect(checked.ok && checked.publication.status).toBe("published");
+    expect(github.calls.filter((call) => call.operation === "findIssue").at(-1)?.detail).toBe(feedbackMarker(draft.reportId));
+    expect(github.writes()).toHaveLength(1);
+  });
+
+  it("keeps a rate-limited owner lookup as GitHub not checked, not as a reason to drop the filter", async () => {
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    // Every `GET /user` meets GitHub's rate limit: a refusal that asking later can get past.
+    github.fail("viewer", { kind: "refused", status: 403, retryable: true, times: 10 });
+    const { draft } = await prepared(bug("Tooltip never hides"));
+    await press(draft.reportId);
+    github.calls.length = 0;
+
+    const checked = await press(draft.reportId, "check", { ...FAST, reconcileGraceMs: 0 });
+
+    expect(github.calls.filter((call) => call.operation === "viewer")).toHaveLength(1);
+    expect(checked.ok && checked.publication.status).toBe("unknown");
+    expect(github.calls.some((call) => call.operation === "findIssue")).toBe(false);
+    expect(github.writes()).toHaveLength(0);
+  });
+
+  it("lets a new attempt replace the login an earlier one was sent as", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(AT));
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    const { draft } = await prepared(bug("Window title is stale"));
+    await press(draft.reportId);
+    vi.setSystemTime(Date.parse(AT) + 10 * MINUTE);
+    expect((await press(draft.reportId, "check")).ok).toBe(true);
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.status).toBe("failed");
+
+    // Send again with a token GitHub will not name an owner for: the earlier account no longer describes this attempt.
+    github.fail("viewer", { kind: "refused", status: 403 });
+    github.fail("createIssue", { kind: "no-answer", applied: false });
+    await press(draft.reportId, "send");
+
+    expect(getFeedbackReport(services.runtime.db, draft.reportId)?.attemptLogin).toBeUndefined();
   });
 
   it("says nothing new about a report already known to be unknown that is still unknown", async () => {

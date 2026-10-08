@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { chooseShell, createTerminalRegistry, type TerminalRegistry } from "../src/terminal-sessions.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The terminal registry against a real shell in a real pseudo-terminal.
@@ -28,7 +29,7 @@ beforeEach(() => {
 afterEach(async () => {
   await stopAndWait(registry);
   // A killed shell's children can still be letting go of the directory for a moment on macOS.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 /** Kill every shell and wait until each has exited, so nothing is still writing into the directory being removed. */

@@ -11,13 +11,15 @@ import { instantSchema } from "./primitives.ts";
  * background and the conversations before this one, `/login` and `/logout` sign in to and out of AI providers,
  * `/thinking` sets how hard the next turn thinks, `/background` runs a request beside the conversation, `/new`
  * starts a conversation of its own while keeping this one, `/changelog` shows what this version of Clark changed
- * (`/changelog 1.4`: what changed after 1.4), and `/report` files a bug report or a feature request on ClarkCant
- * itself (`/report bug …`, `/report feature …`; alone, it brings up the Feedback Composer).
+ * (`/changelog 1.4`: what changed after 1.4), `/report` files a bug report or a feature request on ClarkCant itself
+ * (`/report bug …`, `/report feature …`; alone, it brings up the Feedback Composer), and `/develop` lets the person
+ * choose a folder to develop a widget from live in the conversation (`/develop <folder>`: that folder; `/develop forget`:
+ * the folders Clark may develop in because the person chose them, to take one back).
  *
  * The node is the one place that decides what a command means; the composer offers the same list after `/`, so a
  * command is something a person can find rather than something they have to know.
  */
-export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog", "report"] as const;
+export const SLASH_COMMANDS = ["new", "sessions", "login", "logout", "thinking", "background", "changelog", "report", "develop"] as const;
 export const slashCommandSchema = z.enum(SLASH_COMMANDS);
 export type SlashCommand = z.infer<typeof slashCommandSchema>;
 
@@ -58,6 +60,20 @@ export const commandCardActionSchema = z.discriminatedUnion("kind", [
   /** Starts the provider's own sign-in, in the card: a browser page, a code to type, or a key to paste. */
   z.strictObject({ kind: z.literal("provider-sign-in"), providerId: idSchema, method: z.enum(["oauth", "api_key"]) }),
   z.strictObject({ kind: z.literal("provider-sign-out"), providerId: idSchema }),
+  /**
+   * Starts a live widget dev session for a folder, as the person, through the person-only `POST /widget-dev/sessions`.
+   * `root` is the folder the card names: the one Clark suggested, the command's argument, or a stopped session's folder.
+   * Without it the page asks the person for one: the OS folder dialog on the desktop when the node runs on the same
+   * machine, and a typed path otherwise. A card never starts a session by itself; only the person's press does, and
+   * the folder they start is one Clark may then develop in as well.
+   */
+  z.strictObject({ kind: z.literal("develop-folder"), root: z.string().min(1).max(1000).optional() }),
+  /**
+   * Takes back the person's choice of a folder, through the person-only `POST /widget-dev/chosen-folders/forget`: Clark
+   * may no longer start sessions in it, or in the folders inside it, unless another folder Clark may use holds it (the
+   * answer names that one). Sessions and what they run are left as they are.
+   */
+  z.strictObject({ kind: z.literal("develop-folder-forget"), root: z.string().min(1).max(1000) }),
 ]);
 export type CommandCardAction = z.infer<typeof commandCardActionSchema>;
 

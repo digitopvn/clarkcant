@@ -32,7 +32,7 @@ import { composeFeedback, feedbackComposeCard } from "./product-feedback.ts";
  */
 
 type Locale = "vi" | "en";
-type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub">;
+type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub" | "widgetDev">;
 
 export interface SlashCommandAnswer {
   text: string;
@@ -52,6 +52,7 @@ const NOTES: Record<SlashCommand, Record<Locale, string>> = {
   background: { vi: "Chạy một yêu cầu ở chế độ nền", en: "Run a request in the background" },
   changelog: { vi: "Phiên bản này của Clark có gì mới", en: "What this version of Clark changed" },
   report: { vi: "Báo lỗi hoặc đề xuất tính năng cho ClarkCant", en: "Report a bug or request a feature for ClarkCant" },
+  develop: { vi: "Phát triển widget từ một thư mục bạn chọn", en: "Develop a widget from a folder you choose" },
 };
 
 /** What the composer's picker says beside a command, in the person's language. */
@@ -192,7 +193,53 @@ export async function answerSlashCommand(
       return changelogAnswer(services, argument, say, input.at);
     case "report":
       return reportAnswer(services, input.conversationId, argument, input.at, say);
+    case "develop":
+      return developAnswer(services, argument, locale, say);
   }
+}
+
+/**
+ * `/develop`, `/develop <folder>` and `/develop forget`: the card the person chooses a folder to develop a widget from, or
+ * takes a choice back on. Nothing starts here;
+ * a press on the card starts the session through the person-only route, as the person.
+ */
+function developAnswer(services: SlashServices, argument: string, locale: Locale, say: Say): SlashCommandAnswer {
+  if (services.widgetDev === undefined) {
+    return {
+      text: say(
+        "Node này không chạy phiên phát triển widget, nên chưa phát triển được widget từ một thư mục ở đây.",
+        "This node is not running widget dev sessions, so a widget cannot be developed from a folder here.",
+      ),
+    };
+  }
+  // `/develop forget`: the folders Clark may develop in because the person chose them, each with a way to take that back.
+  // A folder is always an absolute path, so the word never names one.
+  if (argument.toLowerCase() === "forget") {
+    const chosen = services.widgetDev.marked().length;
+    return {
+      text:
+        chosen === 0
+          ? say("Bạn chưa chọn thư mục nào cho Clark, nên không có gì để thu hồi.", "You have not chosen any folder for Clark, so there is nothing to forget.")
+          : say(
+              "Đây là những thư mục Clark được phát triển vì bạn đã chọn chúng. Bấm “Thu hồi” ở thư mục nào thì Clark không tự bắt đầu phiên ở đó nữa, trừ khi nó nằm trong một thư mục khác Clark vẫn được dùng.",
+              "These are the folders Clark may develop in because you chose them. Press \"Forget\" on one and Clark no longer starts sessions there on its own, unless it lies inside another folder Clark may still use.",
+            ),
+      card: services.widgetDev.folderCard({ locale, only: "chosen" }),
+    };
+  }
+  return {
+    text:
+      argument === ""
+        ? say(
+            "Chọn thư mục chứa widget. Clark sẽ theo dõi nó, dựng lại mỗi lần bạn lưu và hiện widget ngay tại đây.",
+            "Choose the folder that holds the widget. Clark watches it, rebuilds on every save and shows the widget right here.",
+          )
+        : say(
+            "Bấm “Phát triển thư mục này” để Clark bắt đầu theo dõi thư mục đó, hoặc chọn một thư mục khác.",
+            "Press \"Develop this folder\" to have Clark start watching it, or choose another folder.",
+          ),
+    card: services.widgetDev.folderCard({ ...(argument === "" ? {} : { proposed: argument }), locale }),
+  };
 }
 
 /** `/changelog` and `/changelog 1.4`: the release notes embedded with this build, as the host-owned card. */

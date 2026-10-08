@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +23,7 @@ import { compileLayout, composeLayout, layoutLeafWidgets } from "../src/compose-
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Status, progress and details cards, placed the way a model's `show_view` places them.
@@ -114,9 +115,9 @@ beforeEach(() => {
   createConversation(services.runtime.db, { conversationId: CONVERSATION, homeNodeId: services.runtime.identity.nodeId, at: AT });
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("the model's vocabulary", () => {

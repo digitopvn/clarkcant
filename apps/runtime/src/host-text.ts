@@ -586,7 +586,7 @@ const VI: HostText = {
     devSessionWidened: (name, generation, added) =>
       `Bản dựng ${String(generation)} của ${name} được truy cập nhiều hơn bản trước (${added}). Chính sách thực thi của bạn cho phép cài mà không hỏi, nên bản này đang chạy; mọi thay đổi đã được ghi lại.`,
     devSessionRootNotOwned: (root, workspace) =>
-      `Clark phát triển widget trong không gian widget của mình (${workspace}); ${root} nằm ngoài đó, nên chưa có gì được bắt đầu. Để phát triển dự án đó ở đây, hãy chép thư mục của nó vào không gian widget rồi nhờ lại. Việc chọn một thư mục dự án khác để phát triển widget hiện chưa có (đang được theo dõi tại digitopvn/clarkcant#538).`,
+      `Clark chỉ tự phát triển widget trong không gian widget của mình (${workspace}) và trong những thư mục bạn đã chọn; ${root} không thuộc chỗ nào trong đó, nên chưa có gì được bắt đầu. Để phát triển thư mục đó ở đây, hãy tự chọn nó: bấm “Phát triển thư mục này” trên thẻ, hoặc gõ /develop rồi đến đường dẫn của thư mục.`,
     devBuildDenied: "bạn đã từ chối chạy bản dựng này, nên bản trước vẫn chạy",
     devBuildExpired: "không ai trả lời câu hỏi về bản dựng này kịp lúc, nên bản trước vẫn chạy",
     devBuildNotActive: "việc cài đặt đã được ghi lại, nhưng bản dựng này không phải bản đang chạy",
@@ -899,7 +899,7 @@ const EN: HostText = {
     devSessionWidened: (name, generation, added) =>
       `Build ${String(generation)} of ${name} reaches more than the one before it (${added}). Your execution policy lets installs run without asking, so it is running now; the change is recorded.`,
     devSessionRootNotOwned: (root, workspace) =>
-      `Clark develops widgets in its own widget workspace (${workspace}); ${root} is outside it, so nothing was started. To develop that project here, copy its folder into the widget workspace and ask again. Choosing another project folder for widget development is not available yet (tracked in digitopvn/clarkcant#538).`,
+      `Clark develops widgets on its own only in its widget workspace (${workspace}) and in folders you chose; ${root} is neither, so nothing was started. To develop that folder here, choose it yourself: press "Develop this folder" on the card, or type /develop followed by the folder's path.`,
     devBuildDenied: "you declined to run this build, so the previous one keeps running",
     devBuildExpired: "nobody answered the question about this build in time, so the previous one keeps running",
     devBuildNotActive: "the install was recorded, but this build is not the one running",

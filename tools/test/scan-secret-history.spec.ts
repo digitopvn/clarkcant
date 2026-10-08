@@ -1,15 +1,16 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { scanCredentialChunk, scanSecretHistory } from "../scan-secret-history.mjs";
+import { removeTestDirectory } from "../test-cleanup.ts";
 
 const directories: string[] = [];
 const script = fileURLToPath(new URL("../scan-secret-history.mjs", import.meta.url));
-afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+afterEach(async () => {
+  for (const directory of directories.splice(0)) await removeTestDirectory(directory);
 });
 function directory() {
   const path = mkdtempSync(join(tmpdir(), "clarkcant-secret-scan-"));

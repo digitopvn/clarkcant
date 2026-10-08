@@ -23,7 +23,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, screen, shell, session } from "electron";
 import { randomUUID } from "node:crypto";
 
-import { startSmokeNode } from "./smoke-node.mjs";
+import { SMOKE_FRAME_PATH, startSmokeNode } from "./smoke-node.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -49,14 +49,18 @@ import {
   reviewDevServerUrl,
   reviewIpcCall,
   reviewNotificationTarget,
+  withContentSecurityPolicy,
 } from "./security.mjs";
 import {
+  DETACHED_LEASE,
   detachedBootstrap,
   detachedWindowOptions,
+  keepDetachedLease,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
   reviewDetachedAppearance,
 } from "./detached-window.mjs";
+import { createNodeCaller } from "./node-call.mjs";
 import { COMPACT_MIN_SIZE } from "./window-mode.mjs";
 import { createElectronGeometryController, withFallbackController } from "./window-controller.mjs";
 import { createHyprlandWindowController } from "./hyprland-window-controller.mjs";
@@ -153,6 +157,14 @@ let nodeOriginUrl = rendererUrl;
  * whether it is real.
  */
 let nodeIdentityOverride;
+
+/**
+ * How often the detached window's lease is refreshed.
+ *
+ * The production value is `DETACHED_LEASE.refreshMs`; the smoke test shortens it so a real refresh, and a refused one,
+ * happen inside a run that lasts seconds rather than minutes.
+ */
+let detachedLeaseRefreshMs = DETACHED_LEASE.refreshMs;
 
 /** Closing the window stops the window, not the work. Default is to keep running. */
 let keepRunningOnWindowClose = true;
@@ -388,31 +400,25 @@ function readNodeSession() {
  *
  * The host holds the credential so the detached renderer never does: the window asks for an action, and this
  * performs it. That is the whole reason a window with no token can still act — and the reason the token must not
- * travel with the bootstrap.
+ * travel with the bootstrap. A refusal keeps the node's `code` and details (`node-call.mjs`).
  */
-async function callNode(path, init) {
-  const session = readNodeSession();
-  if (!session.ok) return { ok: false, refused: session.refused };
-  try {
-    const response = await fetch(`${session.baseUrl}${path}`, {
-      method: init?.method ?? "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${session.token}`,
-      },
-      ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-    });
-    const body = await response.json().catch(() => undefined);
-    if (!response.ok) {
-      const reason = typeof body?.error?.message === "string" ? body.error.message : `status ${response.status}`;
-      return { ok: false, refused: `the node refused: ${reason}` };
-    }
-    return { ok: true, body };
-  } catch (error) {
-    // Named rather than swallowed: "the node is not answering" and "the node said no" are different, and only
-    // one of them is worth retrying.
-    return { ok: false, refused: `the node could not be reached (${error?.code ?? "unreachable"})` };
-  }
+const callNode = createNodeCaller({ readSession: readNodeSession });
+
+/** The live-owner route of the instance a detached window shows. */
+function liveOwnerPath(open) {
+  return `/conversations/${open.conversationId}/widgets/${open.instanceId}/live-owner`;
+}
+
+/**
+ * Close the detached window, if one is open, and wait until its lease has been given back.
+ *
+ * Bounded: a node that does not answer the release must not hold the app open, and the lease lapses on its own.
+ */
+async function closeDetachedWindow() {
+  const open = detached;
+  if (open === undefined) return;
+  open.window.close();
+  await Promise.race([open.released, new Promise((resolve) => setTimeout(resolve, 2_000))]);
 }
 
 function registerHandlers() {
@@ -766,7 +772,26 @@ function registerHandlers() {
 `);
     });
 
-    detached = { window, url, bootstrap: reviewed.bootstrap, conversationId, instanceId, ownerToken: randomUUID() };
+    let markReleased;
+    const opened = {
+      window,
+      url,
+      bootstrap: reviewed.bootstrap,
+      conversationId,
+      instanceId,
+      ownerToken: randomUUID(),
+      lease: undefined,
+      // Settled once the lease is given back, so quitting can wait for it rather than cutting the release off.
+      released: new Promise((resolve) => {
+        markReleased = resolve;
+      }),
+    };
+    detached = opened;
+    const claimLease = () =>
+      callNode(liveOwnerPath(opened), {
+        method: "POST",
+        body: { ownerToken: opened.ownerToken, surface: "detached", leaseMs: DETACHED_LEASE.leaseMs },
+      });
 
     /*
      * Closing the window is a reattach whether or not anybody clicked anything.
@@ -775,26 +800,35 @@ function registerHandlers() {
      * the shell is told to take the instance back. The close path and the explicit attach path are the same path.
      */
     window.on("closed", () => {
-      const closed = detached;
-      detached = undefined;
-      if (closed !== undefined) {
-        void callNode(`/conversations/${closed.conversationId}/widgets/${closed.instanceId}/live-owner`, {
-          method: "DELETE",
-          body: { ownerToken: closed.ownerToken },
-        });
-      }
-      shellWindow?.webContents.send("desktop:widgetReattached", { instanceRef: closed?.instanceId ?? "" });
+      if (detached === opened) detached = undefined;
+      opened.lease?.stop();
+      void callNode(liveOwnerPath(opened), { method: "DELETE", body: { ownerToken: opened.ownerToken } }).finally(() =>
+        markReleased(),
+      );
+      // The conversation window may be the reason this one closed, and a destroyed window has no page to tell.
+      liveShellWindow()?.webContents.send("desktop:widgetReattached", { instanceRef: opened.instanceId });
     });
     window.once("ready-to-show", () => window.show());
     await window.loadURL(url);
 
-    const claimed = await callNode(`/conversations/${conversationId}/widgets/${instanceId}/live-owner`, {
-      method: "POST",
-      body: { ownerToken: detached.ownerToken, surface: "detached" },
-    });
+    const claimed = await claimLease();
     if (!claimed.ok) {
       window.close();
       return { ok: false, refused: claimed.refused };
+    }
+    /*
+     * Refreshed for as long as the window is open, with the conversation's own numbers. A refresh refused because
+     * another surface holds the instance now means this window shows something it no longer owns, so it closes and
+     * the conversation takes the widget back — and is told, by its own claim, where the widget is shown instead.
+     */
+    if (detached === opened) {
+      opened.lease = keepDetachedLease({
+        claim: claimLease,
+        refreshMs: detachedLeaseRefreshMs,
+        onLost: () => {
+          if (!window.isDestroyed()) window.close();
+        },
+      });
     }
     return { ok: true, detached: { instanceRef: instanceId, title: reviewed.bootstrap.title } };
   });
@@ -856,7 +890,7 @@ function registerHandlers() {
         invocationId: randomUUID(),
       },
     });
-    if (!result.ok) return { ok: false, refused: result.refused };
+    if (!result.ok) return { ok: false, refused: result.refused, code: result.code, details: result.details };
     return { ok: true, result: result.body };
   });
 
@@ -871,12 +905,10 @@ function registerHandlers() {
 function applyContentSecurityPolicy() {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        "Content-Security-Policy": [
-          contentSecurityPolicy({ appOrigin: rendererUrl, nodeOrigin: nodeUrl, devOrigin }),
-        ],
-      },
+      responseHeaders: withContentSecurityPolicy(
+        details,
+        contentSecurityPolicy({ appOrigin: rendererUrl, nodeOrigin: nodeUrl, devOrigin }),
+      ),
     });
   });
 }
@@ -927,6 +959,13 @@ async function createShellWindow({ show = true, url } = {}) {
 
   // The window the conversation is in, remembered so a detached view can open beside it and hand back to it.
   shellWindow = window;
+  /*
+   * A detached widget does not outlive the conversation it came from. With the conversation window gone there is no
+   * page left to hand the instance back to, so the widget window closes too and its lease is given back on the way.
+   */
+  window.on("closed", () => {
+    if (shellWindow === window) void closeDetachedWindow();
+  });
   // Recorded before the load resolves, so a call arriving with the first paint is reviewed against the document
   // this window actually loaded rather than against the previous one.
   shellDocumentUrl = document;
@@ -1122,31 +1161,55 @@ async function runSmokeTest() {
       "window.__reattached = []; window.clarkcant.onWidgetReattached((payload) => window.__reattached.push(payload)); true",
     );
 
+    /*
+     * An isolated widget is a document the node serves into a sandboxed frame. The window's policy has to let the node
+     * be framed, and has to leave the framed document's own policy alone; either mistake leaves the frame blank, and
+     * only a real Chromium applying the real headers can tell.
+     */
+    step = "frame a widget document the stand-in serves";
+    const framed = await detachShell.webContents.executeJavaScript(`new Promise((resolve) => {
+      const frame = document.createElement("iframe");
+      frame.setAttribute("sandbox", "allow-scripts");
+      const timer = setTimeout(() => resolve({ loaded: false }), 3000);
+      window.addEventListener("message", (event) => {
+        if (event.source !== frame.contentWindow || event.data?.smokeFrame !== "ready") return;
+        clearTimeout(timer);
+        resolve({ loaded: true });
+      });
+      frame.src = ${JSON.stringify(SMOKE_FRAME_PATH)};
+      document.body.append(frame);
+    })`);
+    checks.push(["an isolated widget document served by the node loads and runs in the window", framed?.loaded === true]);
+
+    // Seconds rather than the production half minute, so a refresh and a refused refresh both happen in this run.
+    detachedLeaseRefreshMs = 150;
     step = "ask the host to detach";
-    const asked = await detachShell.webContents.executeJavaScript(
-      `window.clarkcant.detachWidget(${JSON.stringify({
-        conversationId: "conv_smoke",
-        instanceId: "widget_smoke",
-        title: "Bang dieu khien",
-        appearance: appearance.initial,
-        live: {
-          compositionId: "comp_smoke",
-          readOnly: false,
-          revision: 1,
-          period: "week",
-          timezone: "Asia/Saigon",
-          state: {},
-          spec: { instanceId: "widget_smoke", catalogDigest: "sha256:smoke", sections: [], actions: [] },
-          bindings: [],
-          sections: [],
-          availability: {},
-        },
-      })})`,
-    );
+    const detachRequest = {
+      conversationId: "conv_smoke",
+      instanceId: "widget_smoke",
+      title: "Bang dieu khien",
+      appearance: appearance.initial,
+      live: {
+        compositionId: "comp_smoke",
+        readOnly: false,
+        revision: 1,
+        period: "week",
+        timezone: "Asia/Saigon",
+        state: {},
+        spec: { instanceId: "widget_smoke", catalogDigest: "sha256:smoke", sections: [], actions: [] },
+        bindings: [],
+        sections: [],
+        availability: {},
+      },
+    };
+    const askToDetach = () =>
+      detachShell.webContents.executeJavaScript(`window.clarkcant.detachWidget(${JSON.stringify(detachRequest)})`);
+    const asked = await askToDetach();
 
     step = "read the claim the node was asked for";
     const claim = node.calls.find((call) => call.method === "POST");
     const opened = detached?.window;
+    const ownerToken = detached?.ownerToken;
     step = "ask the detached window what it received";
     const bootstrap =
       opened === undefined
@@ -1221,6 +1284,14 @@ async function runSmokeTest() {
       ["unsubscribing also stops reference appearance events", JSON.stringify(events) === JSON.stringify(expectedEvents)],
     );
 
+    step = "wait for the host to refresh the detached lease";
+    const sameOwnerClaims = () =>
+      node.calls.filter((call) => call.method === "POST" && call.body["ownerToken"] === ownerToken && ownerToken !== undefined);
+    for (let attempt = 0; attempt < 40 && sameOwnerClaims().length < 3; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const refreshes = sameOwnerClaims();
+
     step = "close the detached window";
     opened?.close();
     // The close handler releases the lease and messages the shell; neither is synchronous with `close()`.
@@ -1250,7 +1321,51 @@ async function runSmokeTest() {
       ],
       ["closing the window gives the lease back", release !== undefined],
       ["and the shell is told to take the instance back", Array.isArray(reattached) && reattached.length === 1],
+      [
+        "the detached claim asks for the conversation's lease length",
+        claim !== undefined && claim.body["leaseMs"] === DETACHED_LEASE.leaseMs,
+      ],
+      [
+        "the host keeps refreshing the detached lease with the same owner while the window is open",
+        refreshes.length >= 3 && refreshes.every((call) => call.body["surface"] === "detached"),
+      ],
     );
+
+    /*
+     * A refresh the node refuses because another surface holds the instance now: the window no longer owns what it
+     * shows, so the host closes it and the conversation is told to take the widget back.
+     */
+    step = "detach again, then lose the lease to another surface";
+    const askedAgain = await askToDetach();
+    const second = detached?.window;
+    node.control.refuseClaims = true;
+    for (let attempt = 0; attempt < 40 && second !== undefined && !second.isDestroyed(); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    node.control.refuseClaims = false;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const reattachedAfterLoss = await detachShell.webContents.executeJavaScript("window.__reattached");
+    checks.push([
+      "a refresh refused as owned elsewhere closes the detached window and hands the widget back",
+      askedAgain?.ok === true && second !== undefined && second.isDestroyed() && detached === undefined &&
+        Array.isArray(reattachedAfterLoss) && reattachedAfterLoss.length === 2,
+    ]);
+
+    // The conversation window closing takes the detached window with it, and the lease is given back on the way.
+    step = "detach a third time, then close the conversation window";
+    const askedThird = await askToDetach();
+    const third = detached?.window;
+    const thirdOwner = detached?.ownerToken;
+    detachShell.close();
+    for (let attempt = 0; attempt < 40 && third !== undefined && !third.isDestroyed(); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    checks.push([
+      "closing the conversation window closes the detached window and gives its lease back",
+      askedThird?.ok === true && third !== undefined && third.isDestroyed() && detached === undefined &&
+        node.calls.some((call) => call.method === "DELETE" && call.body["ownerToken"] === thirdOwner),
+    ]);
   } catch (error) {
     checks.push([
       `the detached-window phase ran to the end (it threw while trying to ${step}: ${
@@ -1259,7 +1374,8 @@ async function runSmokeTest() {
       false,
     ]);
   } finally {
-    detachShell?.close();
+    if (detachShell !== undefined && !detachShell.isDestroyed()) detachShell.close();
+    detachedLeaseRefreshMs = DETACHED_LEASE.refreshMs;
     shellDocumentUrl = previousDocument;
     nodeOriginUrl = previousOrigin;
     nodeIdentityOverride = undefined;
@@ -1301,6 +1417,18 @@ app.whenReady().then(async () => {
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createShellWindow();
   });
+});
+
+/*
+ * Quitting closes the detached window first and waits (bounded) for its lease to be given back, so the instance is
+ * not left held by a window that no longer exists until the lease lapses.
+ */
+let quittingAfterDetachedRelease = false;
+app.on("before-quit", (event) => {
+  if (detached === undefined || quittingAfterDetachedRelease) return;
+  event.preventDefault();
+  quittingAfterDetachedRelease = true;
+  void closeDetachedWindow().finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {
