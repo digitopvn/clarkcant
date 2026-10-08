@@ -98,6 +98,8 @@ export interface TurnSendDeps {
   setDatasets: (datasets: Record<string, ResolvedDataset>) => void;
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
+  /** A short remark beside the composer, such as why a command typed during a reply has to wait for it. */
+  onNotice: (text: string) => void;
   /**
    * Empties the composer draft once a send is accepted, and on a restart.
    *
@@ -138,6 +140,7 @@ export function useTurnSend({
   setDatasets,
   setSnapshots,
   setPendingIntent,
+  onNotice,
   clearDraft,
   onSendFailed,
   t,
@@ -223,12 +226,29 @@ export function useTurnSend({
          * the answer is carried out by the one executor. Anything that is not a command keeps its text in the
          * composer as before: a second turn cannot start until this one ends.
          */
-        if (conversationId === undefined) return;
+        const slash = parseSlashCommand(trimmed);
+        if (conversationId === undefined) {
+          // The first message is still on its way, so there is no conversation yet to decide a command in: a slash
+          // command waits in the draft like any other, and the person is told so rather than Enter doing nothing.
+          if (slash !== undefined) onNotice(t("intents.commandWaits").replace("{command}", `/${slash.command}`));
+          return;
+        }
         const decision = await client
           .sendAppIntent({ text: trimmed, source: "chat", conversationId })
           .catch(() => undefined);
-        if (decision === undefined || decision.kind === "none") return;
+        /*
+         * `/settings` and `/new` are app intents and come back as one. Any other slash command is answered in the
+         * conversation, which has to wait for this reply: it stays in the draft, and the person is told why, rather than
+         * Enter seeming to do nothing.
+         */
+        if (decision === undefined || decision.kind === "none") {
+          if (slash !== undefined) onNotice(t(decision === undefined ? "intents.commandLookupFailed" : "intents.commandWaits").replace("{command}", `/${slash.command}`));
+          return;
+        }
         clearDraft();
+        // `/new` leaves a reply that is still being written. Nothing on the new start screen would say so, so the node's
+        // read-back does: the reply goes on in the conversation left behind, which /sessions reopens.
+        if (slash?.command === "new" && decision.kind === "intent") onNotice(decision.readBack);
         setPendingIntent(decision);
         return;
       }
@@ -353,6 +373,7 @@ export function useTurnSend({
       conversationId,
       dispatchChips,
       onConversationReady,
+      onNotice,
       onReferencesSent,
       onSendFailed,
       resetHero,

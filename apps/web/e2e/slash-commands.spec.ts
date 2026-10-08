@@ -287,6 +287,46 @@ test("/settings opens the one Settings dialog over the conversation, on a named 
   await expect(settings).toHaveCount(0);
 });
 
+test("/settings typed while a reply is written opens Settings on the tab its Vietnamese label names, and another command says it waits", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  // The fixture's slow reply, a piece every 150 ms, leaves time to type while it is written.
+  await send(page, "viết một câu trả lời thật dài");
+  await expect(page.locator("[data-stop]")).toBeVisible({ timeout: 15_000 });
+
+  await send(page, "/settings bộ nhớ");
+  const settings = page.getByRole("dialog", { name: "Cài đặt" });
+  await expect(settings.locator("[data-active-tab]")).toHaveAttribute("data-active-tab", "memory", { timeout: 20_000 });
+  await expect(composer).toHaveValue("");
+  // Closed with its own button rather than Escape, which would also stop the reply.
+  await settings.getByRole("button", { name: "Xong" }).click();
+  await expect(settings).toHaveCount(0);
+  await expect(page.locator("[data-stop]")).toBeVisible();
+
+  // A command answered in the conversation has to wait for this reply: it stays in the draft, and the page says why.
+  await send(page, "/thinking high");
+  await expect(page.locator("[data-intent-notice]")).toContainText("Gửi /thinking được khi Clark trả lời xong", { timeout: 15_000 });
+  await expect(composer).toHaveValue("/thinking high");
+
+  await page.locator("[data-stop]").click();
+  await expect(page.locator("[data-send]")).toBeVisible({ timeout: 15_000 });
+});
+
+test("/new typed while a reply is written starts a new conversation and says the reply goes on in the one left behind", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  await send(page, "viết một câu trả lời thật dài");
+  await expect(page.locator("[data-stop]")).toBeVisible({ timeout: 15_000 });
+
+  await send(page, "/new");
+  await expect(page.locator(".cc-empty[data-leaving='false']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-role="user"]')).toHaveCount(0);
+  await expect(page.locator("[data-intent-notice]")).toContainText("Clark vẫn đang viết nốt câu trả lời ở cuộc trước", { timeout: 15_000 });
+  await expect(page.locator("[data-intent-notice]")).toContainText("/sessions");
+  await expect(composer).toHaveValue("");
+  await expect(page.locator("[data-stop]")).toHaveCount(0);
+});
+
 test.describe("in English", () => {
   test.afterEach(async ({ request }) => resetLanguage(request));
 

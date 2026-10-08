@@ -1064,9 +1064,10 @@ export function indexHostReply(services: Pick<NodeServices, "search">, message: 
  *
  * Shared by both message routes. The composer uses the streaming one, and the plain route was wired first - which
  * meant a typed "mở settings" reached the model instead of the registry until this was found. One function is what
- * keeps the next route from being the one that forgot to record the audit event.
+ * keeps the next route from being the one that forgot to record the audit event. The slash commands that are app
+ * intents (`/settings`, `/new`) are decided through it too, for the same reason.
  */
-function typedAppIntent(
+export function typedAppIntent(
   services: Pick<NodeServices, "runtime" | "conductor" | "turnControl">,
   conversationId: string,
   text: string,
