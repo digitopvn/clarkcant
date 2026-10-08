@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 
 import type { ProviderAuthEntryView, ProviderSignInView } from "@clarkcant/contracts";
 
@@ -9,7 +9,7 @@ import type { MessageKey } from "../../i18n/messages.ts";
 import { AfterSignIn, type ModelPickerPort } from "../../model-picker.tsx";
 import { SignInPanel } from "../../provider-sign-in-panel.tsx";
 import { useModelPickerPort } from "../../use-model-picker-port.ts";
-import { useProviderSignIns } from "../../use-provider-sign-ins.ts";
+import { signInFailureReason, useProviderSignIns } from "../../use-provider-sign-ins.ts";
 
 export type ProviderListing =
   | { status: "loading" }
@@ -42,15 +42,54 @@ export function providerSourceNote(provider: ProviderAuthEntryView, t: (key: Mes
   return t(provider.source === undefined ? "settings.providers.source.unknown" : SOURCE_NOTE[provider.source]);
 }
 
-/** The node's own sentence for a refusal, without the code in front of it. */
-function reasonOf(error: unknown): string {
-  if (error instanceof GatewayError) return error.reason;
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** A listing the node refused: no pi to sign in through is said as such, anything else with the node's reason. */
 export function providerListingRefused(error: unknown): ProviderListing {
-  return error instanceof GatewayError && error.code === "PROVIDER_AUTH_UNAVAILABLE" ? { status: "unavailable" } : { status: "failed", reason: reasonOf(error) };
+  return error instanceof GatewayError && error.code === "PROVIDER_AUTH_UNAVAILABLE"
+    ? { status: "unavailable" }
+    : { status: "failed", reason: signInFailureReason(error) };
+}
+
+/**
+ * The section's reads of the provider list, of which only the latest is drawn.
+ *
+ * A sign-in elsewhere, a sign-out and "Try again" each read the list again, and those reads can overlap: an older
+ * answer arriving last must not replace a newer one, and nothing is drawn once the section is gone. "Try again" says
+ * it is reading; a refresh behind a list already shown keeps the list, so its rows and the focus in them stay put.
+ */
+export class ProviderListingReads {
+  readonly #read: () => Promise<{ providers: ProviderAuthEntryView[] }>;
+  readonly #apply: (listing: ProviderListing) => void;
+  #latest = 0;
+  #closed = false;
+
+  constructor(read: () => Promise<{ providers: ProviderAuthEntryView[] }>, apply: (listing: ProviderListing) => void) {
+    this.#read = read;
+    this.#apply = apply;
+  }
+
+  load({ showLoading = false }: { showLoading?: boolean } = {}): void {
+    if (this.#closed) return;
+    const reading = ++this.#latest;
+    if (showLoading) this.#apply({ status: "loading" });
+    const current = (): boolean => !this.#closed && reading === this.#latest;
+    this.#read().then(
+      (answer) => {
+        if (current()) this.#apply({ status: "ready", providers: answer.providers });
+      },
+      (error: unknown) => {
+        if (current()) this.#apply(providerListingRefused(error));
+      },
+    );
+  }
+
+  /** Open again after `close` — React runs a section's effects twice in development. */
+  open(): void {
+    this.#closed = false;
+  }
+
+  close(): void {
+    this.#closed = true;
+  }
 }
 
 /**
@@ -78,18 +117,21 @@ export function ProviderSignInSection({ client }: { client: GatewayClient }): Re
   // The step after a sign-in is the one a `/login` card offers: that provider's models in the same picker, or keeping the model in use.
   const modelPicker = useModelPickerPort(client, t);
 
-  const load = useCallback(() => {
-    client.providerAuth().then(
-      (answer) => setListing({ status: "ready", providers: answer.providers }),
-      (error: unknown) => setListing(providerListingRefused(error)),
-    );
-  }, [client]);
+  const reads = useMemo(() => new ProviderListingReads(() => client.providerAuth(), setListing), [client]);
+  const { reattach } = signIns;
 
   useEffect(() => {
-    load();
+    reads.open();
+    reads.load();
+    // A sign-in the node still runs — started here before the tab was left, or from a `/login` card — is shown in its row.
+    reattach((view) => view.providerId);
     // A sign-in or sign-out anywhere on this page — here, or a `/login` card — changes who is signed in.
-    return client.onModelChange(load);
-  }, [client, load]);
+    const stop = client.onModelChange(() => reads.load());
+    return () => {
+      stop();
+      reads.close();
+    };
+  }, [client, reads, reattach]);
 
   const settle = (providerId: string, outcome: ProviderRowOutcome | undefined): void =>
     setOutcomes((current) => {
@@ -105,14 +147,14 @@ export function ProviderSignInSection({ client }: { client: GatewayClient }): Re
       modelPicker={modelPicker}
       outcomes={outcomes}
       notice={notice}
-      onRetry={load}
+      onRetry={() => reads.load({ showLoading: true })}
       onStart={(provider, method) => {
         setNotice(undefined);
         settle(provider.providerId, { status: "pending" });
         signIns.start(provider.providerId, provider.providerId, method).then(
           () => settle(provider.providerId, undefined),
           (error: unknown) =>
-            settle(provider.providerId, { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: reasonOf(error) }) }),
+            settle(provider.providerId, { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: signInFailureReason(error) }) }),
         );
       }}
       onSignOut={(provider) => {
@@ -125,7 +167,7 @@ export function ProviderSignInSection({ client }: { client: GatewayClient }): Re
               message: t(result.signedOut ? "commandCard.signOut.done" : "settings.providers.signOutNothing"),
             }),
           (error: unknown) =>
-            settle(provider.providerId, { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: reasonOf(error) }) }),
+            settle(provider.providerId, { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: signInFailureReason(error) }) }),
         );
       }}
       onAnswer={(providerId, signInId, value) => signIns.answer({ key: providerId, signInId, value })}
@@ -196,6 +238,8 @@ export function ProviderSignInList({
             const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
             const outcome = outcomes[provider.providerId];
             const busy = signingIn || outcome?.status === "pending";
+            // aria-disabled, not disabled: a disabled button drops the focus that pressed it to the page.
+            const held = busy ? "true" : undefined;
             const removable = providerSignOutAvailable(provider);
             const note = providerSourceNote(provider, t);
             return (
@@ -226,8 +270,10 @@ export function ProviderSignInList({
                       className="cc-action"
                       data-emphasis="primary"
                       data-provider-method="oauth"
-                      disabled={busy}
-                      onClick={() => onStart(provider, "oauth")}
+                      aria-disabled={held}
+                      onClick={() => {
+                        if (!busy) onStart(provider, "oauth");
+                      }}
                     >
                       {t(
                         removable
@@ -244,8 +290,10 @@ export function ProviderSignInList({
                       className="cc-action"
                       data-emphasis={provider.oauth === undefined ? "primary" : undefined}
                       data-provider-method="api_key"
-                      disabled={busy}
-                      onClick={() => onStart(provider, "api_key")}
+                      aria-disabled={held}
+                      onClick={() => {
+                        if (!busy) onStart(provider, "api_key");
+                      }}
                     >
                       {t(removable ? "settings.providers.method.apiKeyReplace" : "settings.providers.method.apiKey")}
                     </button>
@@ -256,8 +304,10 @@ export function ProviderSignInList({
                       className="cc-action"
                       data-tone="danger"
                       data-provider-sign-out="true"
-                      disabled={busy}
-                      onClick={() => onSignOut(provider)}
+                      aria-disabled={held}
+                      onClick={() => {
+                        if (!busy) onSignOut(provider);
+                      }}
                     >
                       {t("settings.providers.signOut")}
                     </button>

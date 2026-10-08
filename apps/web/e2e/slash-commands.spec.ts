@@ -123,6 +123,34 @@ test("a provider is signed in to with a key from the /login card, and signed out
   await expect(stored.locator(".cc-command-status")).toContainText("Đã đăng xuất", { timeout: 10_000 });
 });
 
+test("a /login sign-in keeps the focus that started it, and is shown again on the card after a reload", async ({ page }) => {
+  await openApp(page);
+  await send(page, "/login");
+  const card = lastCard(page, "login");
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  const other = card.locator('[data-row-id="fake-other"]');
+
+  // Pressed from the keyboard; the field the provider asks with takes the focus, so typing goes straight there.
+  await other.getByRole("button", { name: "Dùng API key" }).focus();
+  await page.keyboard.press("Enter");
+  const field = other.locator('.cc-sign-in input[type="password"]');
+  await expect(field).toBeFocused({ timeout: 10_000 });
+
+  // The page reloads mid-sign-in: the node still runs it, so the newest card's row shows it rather than nothing.
+  await page.reload();
+  await expect(page.locator("[data-composer]")).toBeVisible();
+  const again = lastCard(page, "login").locator('[data-row-id="fake-other"]');
+  await expect(again.locator('.cc-sign-in input[type="password"]')).toBeVisible({ timeout: 20_000 });
+  await expect(again.getByRole("button", { name: "Dùng API key" })).toHaveAttribute("aria-disabled", "true");
+  // Shown in that one row only.
+  await expect(page.locator('[data-command="login"] [data-row-id="fake-other"] .cc-sign-in')).toHaveCount(1);
+  // And it does not pull the focus from where a page that just opened puts it.
+  await expect(again.locator('.cc-sign-in input[type="password"]')).not.toBeFocused();
+
+  await again.locator(".cc-sign-in").getByRole("button", { name: "Hủy" }).click();
+  await expect(again.locator(".cc-sign-in .cc-command-status")).toContainText("Đã hủy", { timeout: 10_000 });
+});
+
 /** A widget project folder of the test's own, outside the node's data folder, with a package id no other test uses. */
 function writeProject(): { root: string; packageId: string } {
   const unique = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
