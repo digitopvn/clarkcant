@@ -899,7 +899,7 @@ Các lần từ chối: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 R
   cũng vẫn đang chạy bản đã dựng. Các phiên đã dừng cũ hơn và không còn chạy gì sẽ bị quên trước để lấy chỗ.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` và `409 NOT_PLACED` dành cho lần đặt khi chưa có gì chạy, khi gói không khai báo
   widget đó, hoặc khi widget không đặt được.
-- `503 WIDGET_DEV_UNAVAILABLE` dành cho node không chạy phiên phát triển.
+- `503 WIDGET_DEV_UNAVAILABLE` dành cho node không chạy phiên phát triển, hoặc đang đóng.
 
 **Thư mục nào.** `root` được phân giải thành đường dẫn thật (đi theo liên kết tượng trưng và junction) trước khi kiểm:
 
