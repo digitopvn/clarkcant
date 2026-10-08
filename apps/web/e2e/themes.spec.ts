@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type BrowserContext, type Locator, type Page } from "@playwright/test";
 
 /**
  * Choosing a theme a package provides, in the browser.
@@ -56,8 +56,15 @@ async function prepare(request: APIRequestContext): Promise<void> {
   // Every run starts from Clark Default, whatever an earlier spec or run left chosen.
   const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } });
   expect(reset.ok(), `reset answered ${String(reset.status())}: ${await reset.text()}`).toBe(true);
-  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers })).json()) as { packages: { packageId: string }[] };
-  if (listed.packages.some((entry) => entry.packageId === PACKAGE)) return;
+  /*
+   * And from Dusk 1.0.0. Being installed is not enough: a run that failed after installing the unreadable update, or
+   * after removing the package, leaves it that way, and a retry that kept it would fail at the first stage instead of
+   * reporting the stage that really failed.
+   */
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers })).json()) as {
+    packages: { packageId: string; version: string }[];
+  };
+  if (listed.packages.some((entry) => entry.packageId === PACKAGE && entry.version === "1.0.0")) return;
   const installed = await request.post(`${GATEWAY}/packages/install`, {
     headers,
     data: { packageId: PACKAGE, version: "1.0.0", localDigest: DUSK_DIGEST },
@@ -96,22 +103,50 @@ const accent = (page: Page): Promise<string> =>
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
+/** Set only once the page is open, so cleanup after a failure to open one has nothing to close. */
+let context: BrowserContext | undefined;
 let clarkAccent = "";
 let pinId = "";
+/** The conversation the pin was made in, read from the page's own pin request so cleanup can remove it. */
+let pinConversationId = "";
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
+  context = page.context();
+  page.on("request", (request) => {
+    const match = /\/conversations\/([^/?]+)\/pins$/u.exec(request.url());
+    if (match !== null && request.method() === "POST") pinConversationId = decodeURIComponent(match[1] ?? "");
+  });
 });
 
-test.afterAll(async () => {
-  await page.context().close();
+/*
+ * Whatever stage the journey stopped at, the specs after this one find Clark Default chosen and no pin of this spec's
+ * on the shelf. The last stage does both through the page; this does them again through the node, which is a no-op
+ * after a pass and the only cleanup after a failure.
+ */
+test.afterAll(async ({ request }) => {
+  const headers = { authorization: `Bearer ${token()}` };
+  const reset = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } });
+  expect(reset.ok(), `reset answered ${String(reset.status())}: ${await reset.text()}`).toBe(true);
+  if (pinId !== "" && pinConversationId !== "") {
+    const unpinned = await request.delete(
+      `${GATEWAY}/conversations/${encodeURIComponent(pinConversationId)}/pins/${encodeURIComponent(pinId)}`,
+      { headers },
+    );
+    // 404 is the pass case: the last stage already unpinned it.
+    expect(unpinned.ok() || unpinned.status() === 404, `unpin answered ${String(unpinned.status())}: ${await unpinned.text()}`).toBe(true);
+  }
+  await context?.close();
 });
 
 const dusk = (): Locator => page.locator(`[data-theme-ref='${DUSK_REF}']`);
 const provenance = (): Locator => page.locator(`[data-theme-provenance='${DUSK_REF}']`);
 const unreadable = (): Locator => page.locator("[data-theme-fallback='THEME_LOW_CONTRAST']");
-const reloaded = async (): Promise<boolean> =>
-  (await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)) !== true;
+/** The page was restyled, not reloaded: the mark set on `window` before the first theme change is still there. */
+async function notReloaded(): Promise<void> {
+  const marked = await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark);
+  expect(marked, "the page was reloaded: the mark set on window before the first theme change is gone").toBe(true);
+}
 
 /** The pin this spec made is still on the shelf, and is the same element rather than one drawn again. */
 async function pinSurvived(): Promise<void> {
@@ -206,7 +241,7 @@ test("the colour scheme redraws the same theme, and a phone-width panel is no wi
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // The page was restyled, not reloaded: the mark, the draft and the pinned widget are all still there.
-  expect(await reloaded()).toBe(false);
+  await notReloaded();
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-composer]")).toHaveValue(DRAFT);
   await pinSurvived();
@@ -243,7 +278,7 @@ test("restoring the package brings the same theme back without choosing it again
   await page.locator("#cc-tab-experience").click();
   await expect(dusk()).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("[data-theme-fallback]")).toHaveCount(0);
-  expect(await reloaded()).toBe(false);
+  await notReloaded();
 });
 
 /*
@@ -317,7 +352,7 @@ test("rolling the update back draws the kept choice again, and the conversation 
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-composer]")).toHaveValue(DRAFT);
   await pinSurvived();
-  expect(await reloaded()).toBe(false);
+  await notReloaded();
 
   // Unpinned again, so a spec after this one finds the shelf as it was.
   await page.locator(`[data-unpin='${pinId}']`).click();
