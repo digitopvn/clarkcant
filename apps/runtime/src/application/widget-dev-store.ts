@@ -175,9 +175,12 @@ export function writeDevSessions(dataDir: string, sessions: readonly StoredDevSe
 /** The most snapshot digests the node keeps that no session lists any more (`readOrphanedSnapshots`). */
 export const WIDGET_DEV_ORPHANS_MAX = 1024;
 
+/** A snapshot's content digest, the only form that names a folder in the package cache (`cachedLocalSnapshotPath`). */
+const SNAPSHOT_DIGEST = /^sha256:[0-9a-f]{64}$/;
+
 const orphansSchema = z.strictObject({
   version: z.literal(1),
-  digests: z.array(z.string().min(1).max(120)).max(WIDGET_DEV_ORPHANS_MAX),
+  digests: z.array(z.string().regex(SNAPSHOT_DIGEST)).max(WIDGET_DEV_ORPHANS_MAX),
 });
 
 function orphansPath(dataDir: string): string {
@@ -207,9 +210,19 @@ export function readOrphanedSnapshots(dataDir: string): string[] {
   return [];
 }
 
-/** Keeps the newest `WIDGET_DEV_ORPHANS_MAX`, once each. */
+/**
+ * Keeps the newest `WIDGET_DEV_ORPHANS_MAX`, once each. A value that is not a snapshot digest names no folder, and is
+ * left out.
+ *
+ * Past the bound the oldest are dropped, whether or not something still uses them, and a dropped digest's folder is no
+ * longer removed by any boot. That leak is bounded. A digest stays listed while something uses it: a session runs or
+ * waits on it, or a generation still names it, as an installed package or the one a rollback returns to. Only more than
+ * `WIDGET_DEV_ORPHANS_MAX` such digests, or as many orphaned between two boots (each boot removes up to
+ * `WIDGET_DEV_SWEEP_MAX` unused ones), push any off. Each one pushed off leaves at most its own folder behind, and the
+ * list itself never grows past the bound.
+ */
 export function writeOrphanedSnapshots(dataDir: string, digests: readonly string[]): void {
-  const unique = [...new Set(digests)].slice(-WIDGET_DEV_ORPHANS_MAX);
+  const unique = [...new Set(digests.filter((digest) => SNAPSHOT_DIGEST.test(digest)))].slice(-WIDGET_DEV_ORPHANS_MAX);
   writeWhole(dataDir, orphansPath(dataDir), orphansSchema.parse({ version: 1, digests: unique }));
 }
 

@@ -1674,6 +1674,58 @@ describe("what widget dev sessions leave in the package cache", () => {
     expect(existsSync(folderOf(unused))).toBe(false);
   });
 
+  it("never removes at boot an orphaned snapshot that is still installed, though no session is left to name it", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const installed = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    expect(existsSync(folderOf(installed))).toBe(true);
+    // The session is forgotten while what it ran is still installed: only the generation names the snapshot now.
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    writeDevSessions(join(dir, "node"), []);
+    writeOrphanedSnapshots(join(dir, "node"), [installed]);
+    const active = (): string | undefined => {
+      const row = services.runtime.db
+        .prepare("SELECT document FROM package_generations WHERE package_id = ? AND superseded_at IS NULL")
+        .get(PACKAGE) as { document: string } | undefined;
+      return row === undefined ? undefined : (JSON.parse(row.document) as { snapshotDigest?: string }).snapshotDigest;
+    };
+    expect(active()).toBe(installed);
+
+    await restart();
+    expect(active()).toBe(installed);
+    expect(existsSync(folderOf(installed))).toBe(true);
+    expect(readdirSync(folderOf(installed))).toContain("clarkcant.json");
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([installed]);
+  });
+
+  it("never removes at boot the orphaned snapshot a rollback returns to, and keeps serving what runs", async () => {
+    const conversationId = await conversation();
+    const started = session(await call("POST", "/widget-dev/sessions", { root, conversationId }));
+    const instanceId = started.placed?.instanceId ?? "";
+    const first = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    writePackage("<!doctype html><p>second</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 2 });
+    // The generation a rollback returns to fell off the session's list: no session names it, only its generation does.
+    changeSession(started.sessionId, (stored) => ({ ...stored, snapshots: (stored.snapshots ?? []).filter((digest) => digest !== first) }));
+    writeOrphanedSnapshots(join(dir, "node"), [first]);
+
+    await restart();
+    expect(existsSync(folderOf(first))).toBe(true);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([first]);
+    expect(await served((await live(conversationId, instanceId)).frame.url)).toContain("second");
+  });
+
+  it("removes nothing at a boot resumed again while a session is watched", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+    const unused = madeSnapshot(1);
+    writeOrphanedSnapshots(join(dir, "node"), [unused]);
+    // A watched session's engine may be building the same bytes as a snapshot the tidying would remove.
+    await services.widgetDev?.resume();
+    expect(existsSync(folderOf(unused))).toBe(true);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([unused]);
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`)).status).toBe("live");
+  });
+
   it("removes nothing at a boot the node is already closing", async () => {
     await services.widgetDev?.close();
     const unused = madeSnapshot(1);
