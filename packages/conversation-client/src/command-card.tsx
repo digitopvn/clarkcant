@@ -4,6 +4,7 @@ import type { CommandCard } from "@clarkcant/contracts";
 
 import type { BlockActions, CommandActionState, FolderEntryReason } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
+import { AfterSignIn, ModelPicker } from "./model-picker.tsx";
 import { SignInPanel } from "./provider-sign-in-panel.tsx";
 
 /**
@@ -35,6 +36,8 @@ export function CommandCardBlock({
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const live = actions?.onCommandAction !== undefined;
+  // The picker is drawn from what the node holds now, so only a live card with the page's reads draws it.
+  const picker = block.picker !== undefined && live && actions?.readModelChoices !== undefined;
   return (
     <section className="cc-card" data-owner="host" data-command={block.command} aria-label={block.title}>
       <header className="cc-card-head">
@@ -42,7 +45,9 @@ export function CommandCardBlock({
       </header>
       <div className="cc-card-body">
         {block.detail === undefined ? null : <p className="cc-list-subtitle">{block.detail}</p>}
-        {block.rows.length === 0 ? (
+        {picker ? (
+          <ModelPicker t={t} pickerKey={`${block.cardId}/picker`} initialQuery={block.picker?.query ?? ""} port={actions} />
+        ) : block.rows.length === 0 ? (
           <p className="cc-list-subtitle">{block.empty ?? t("commandCard.empty")}</p>
         ) : (
           <ul className="cc-list">
@@ -130,9 +135,11 @@ function CommandRow({
       {signIn === undefined ? null : (
         <SignInPanel
           signIn={signIn}
+          providerName={row.label}
           t={t}
           onAnswer={(value) => actions?.onSignInAnswer?.({ key: rowKey, signInId: signIn.signInId, value })}
           onCancel={() => actions?.onSignInCancel?.({ key: rowKey, signInId: signIn.signInId })}
+          after={<AfterSignIn t={t} signInKey={rowKey} providerId={signIn.providerId} providerName={row.label} port={actions} />}
         />
       )}
       {live

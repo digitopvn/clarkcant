@@ -32,7 +32,7 @@ import { composeFeedback, feedbackComposeCard } from "./product-feedback.ts";
  */
 
 type Locale = "vi" | "en";
-type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub" | "widgetDev">;
+type SlashServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl" | "providerAuth" | "currentModel" | "feedbackGithub" | "widgetDev" | "model" | "modelCatalogue">;
 
 export interface SlashCommandAnswer {
   text: string;
@@ -53,6 +53,7 @@ const NOTES: Record<SlashCommand, Record<Locale, string>> = {
   changelog: { vi: "Phiên bản này của Clark có gì mới", en: "What this version of Clark changed" },
   report: { vi: "Báo lỗi hoặc đề xuất tính năng cho ClarkCant", en: "Report a bug or request a feature for ClarkCant" },
   develop: { vi: "Phát triển widget từ một thư mục bạn chọn", en: "Develop a widget from a folder you choose" },
+  model: { vi: "Chọn model trả lời từ tin nhắn sau", en: "Choose the model that answers from your next message" },
 };
 
 /** What the composer's picker says beside a command, in the person's language. */
@@ -195,7 +196,48 @@ export async function answerSlashCommand(
       return reportAnswer(services, input.conversationId, argument, input.at, say);
     case "develop":
       return developAnswer(services, argument, locale, say);
+    case "model":
+      return modelAnswer(services, argument, say, card);
   }
+}
+
+/**
+ * `/model` and `/model <words>`: the model picker, as a host-owned card. Nothing is chosen here, and opening the card
+ * changes nothing: the page draws the picker from the node's catalogue and sign-ins when it is shown, and a choice goes
+ * through `POST /model`, checked against the catalogue, only once the person confirms it.
+ */
+function modelAnswer(services: SlashServices, argument: string, say: Say, card: CardOf): SlashCommandAnswer {
+  if (services.modelCatalogue === undefined) {
+    return {
+      text: say(
+        "Node này không có danh sách model để chọn, nên chưa đổi được model ở đây. Không có gì bị thay đổi.",
+        "This node has no model catalogue to choose from, so the model cannot be changed here. Nothing was changed.",
+      ),
+    };
+  }
+  const current = services.currentModel?.() ?? services.model ?? undefined;
+  const query = argument.slice(0, 200);
+  return {
+    text:
+      current === undefined
+        ? say(
+            "Chưa có model nào chạy trên node này. Chọn một model bên dưới; không có gì thay đổi cho tới khi bạn xác nhận.",
+            "No model runs on this node yet. Choose one below; nothing changes until you confirm.",
+          )
+        : say(
+            `Model đang dùng: ${current.provider}/${current.id}. Chọn model khác bên dưới; không có gì thay đổi cho tới khi bạn xác nhận.`,
+            `Model in use: ${current.provider}/${current.id}. Choose another below; nothing changes until you confirm.`,
+          ),
+    card: card("model", {
+      title: say("Chọn model", "Choose a model"),
+      detail: say(
+        "Model bạn chọn trả lời từ tin nhắn tiếp theo. Model của provider chưa đăng nhập thì chưa dùng được: đăng nhập bằng /login trước.",
+        "The model you choose answers from your next message. A signed-out provider's models cannot be used yet: sign in with /login first.",
+      ),
+      rows: [],
+      picker: { kind: "model", ...(query === "" ? {} : { query }) },
+    }),
+  };
 }
 
 /**

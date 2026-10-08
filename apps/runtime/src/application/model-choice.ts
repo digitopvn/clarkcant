@@ -1,6 +1,6 @@
 import { nowInstant } from "@clarkcant/contracts";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
-import { putPreference } from "@clarkcant/storage";
+import { putPreference, readPreference } from "@clarkcant/storage";
 import type { Database } from "@clarkcant/storage";
 
 /**
@@ -35,6 +35,19 @@ export interface ModelChoice {
 export type ModelChoiceOutcome =
   | { ok: true; applies: "next-session" | "next-start" }
   | { ok: false; message: string };
+
+/**
+ * The model the person chose, as stored: what a turn reads each time it starts, or nothing when no choice is stored.
+ */
+export function readModelChoice(db: Database, ownerPrincipalId: string): ModelChoice | undefined {
+  const stored = readPreference(db, ownerPrincipalId, "model", "node") ?? "";
+  // Split at the first slash only: a model id may hold slashes of its own (`openrouter` serves `anthropic/claude-…`),
+  // and cutting it at the second would run a model nobody chose.
+  const slash = stored.indexOf("/");
+  const provider = slash < 0 ? "" : stored.slice(0, slash);
+  const id = slash < 0 ? "" : stored.slice(slash + 1);
+  return provider === "" || id === "" ? undefined : { provider, id };
+}
 
 /**
  * Check the choice against the catalogue, store it, and report the scope.
