@@ -123,6 +123,11 @@ test("a send from the conversation left behind does not end the reply running in
 
   await page.locator('[data-home="true"]').click();
   await expect(page.locator(".cc-empty")).toBeVisible({ timeout: 10_000 });
+  // The start screen never left: the held first message has not been answered, so it proves nothing about the restart.
+  // The logo goes home through the node's intent round trip, and only once that answers does the restart end the old
+  // send's busy state. A message typed before then is still a command check in the old conversation, and the restart
+  // that lands after it clears the draft, so the new reply would never start. Stop leaving is the restart itself.
+  await expect(page.locator("[data-stop]")).toHaveCount(0, { timeout: 10_000 });
 
   // A slow reply in the new conversation.
   await composer.fill("viết một câu trả lời thật dài");
