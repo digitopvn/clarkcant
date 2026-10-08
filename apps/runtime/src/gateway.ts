@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type Instant, nowInstant } from "@clarkcant/contracts";
+import { type Instant, isPersonOnlyRoute, machineSurfaceOf, nowInstant, personOnlyRefusal } from "@clarkcant/contracts";
 import { verifyFrameGrant } from "@clarkcant/core";
 
 import { peerDelegationHandlers, settleLostResults } from "./delegation-handlers.ts";
@@ -9,7 +9,7 @@ import { receivePeerNotice } from "./peer-notices.ts";
 import { receivePeerSkip } from "./peer-skip.ts";
 import { type PairingDeps } from "./peers.ts";
 import { type NodeServices } from "./services.ts";
-import { type GatewayRequest, type GatewayResponse, bearer, fail, tokenMatches } from "./routes/http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, bearer, fail, tokenMatches } from "./routes/http.ts";
 import { handlePairingRoutes, handlePeerUplinkRoutes } from "./routes/peers.ts";
 import { handlePublicRoutes } from "./routes/public.ts";
 import { handleNodeRoutes } from "./routes/node.ts";
@@ -349,6 +349,13 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  // Storing or removing a key is the person's (`isPersonOnlyRoute`). The relays and MCP refuse it before it gets here;
+  // a request a machine surface marked is refused here too, so the vault does not rely on every surface remembering.
+  const credentialSurface = segments[0] === "credentials" ? machineSurfaceOf(request.headers[SURFACE_HEADER]) : undefined;
+  if (credentialSurface !== undefined && isPersonOnlyRoute(request.method, request.path)) {
+    const refusal = personOnlyRefusal(credentialSurface, request.method, request.path);
+    return fail(403, refusal.code, refusal.message, { surface: refusal.surface });
+  }
   const credentialResponse = handleCredentialRoutes({ services, request, segments });
   if (credentialResponse !== undefined) return credentialResponse;
   // Who answers Clark's typed decisions, and its key. Writes are person-only: see `isPersonOnlyRoute`.

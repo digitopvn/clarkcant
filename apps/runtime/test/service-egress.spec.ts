@@ -222,7 +222,7 @@ describe("egress for a package service", () => {
     expect(seen).toEqual([]);
   });
 
-  it("says a secret was never provided, and that one taken back has no value, without reading either", () => {
+  it("says a secret was never provided, one taken back was never provided, and a description with no value has none, without reading either", () => {
     expect(egressSecretProblem({ db, principalId: OWNER }, PACKAGE, "SEARCH_API_KEY")).toBe(
       "the secret SEARCH_API_KEY has not been provided on this node",
     );
@@ -237,7 +237,14 @@ describe("egress for a package service", () => {
       "the secret SEARCH_API_KEY is not allowed to be sent as a request header",
     );
     storeSecret(packageConsumer(PACKAGE));
+    // Taking a secret back forgets the description written beside its value, so nothing still promises it.
     deleteCredential(db, OWNER, "SEARCH_API_KEY");
+    expect(egressSecretProblem({ db, principalId: OWNER }, PACKAGE, "SEARCH_API_KEY")).toBe(
+      "the secret SEARCH_API_KEY has not been provided on this node",
+    );
+    // A description whose value is gone (one an older node left behind) still says it has no value.
+    storeSecret(packageConsumer(PACKAGE));
+    db.prepare("DELETE FROM credentials WHERE principal_id = ? AND name = ?").run(OWNER, "SEARCH_API_KEY");
     expect(egressSecretProblem({ db, principalId: OWNER }, PACKAGE, "SEARCH_API_KEY")).toBe("the secret SEARCH_API_KEY has no value on this node");
   });
 

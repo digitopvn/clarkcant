@@ -11,7 +11,7 @@ import { WebSocket } from "ws";
 import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, createInstance, pinInstance, writeRegisteredPreference } from "@clarkcant/core";
 import { TABLE } from "@clarkcant/data-canvas";
-import { appendMessage, getNotification, listArtifactsForConversation, listAuditEvents, nextMessageSequence } from "@clarkcant/storage";
+import { appendMessage, getNotification, listArtifactsForConversation, listAuditEvents, nextMessageSequence, readCredential } from "@clarkcant/storage";
 
 import { readClarkVersion } from "../../../tools/release/clark-version.mjs";
 import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
@@ -627,6 +627,37 @@ describe("WebSocket gateway", () => {
     client.send({ type: "request", id: "key", method: "GET", path: "/map-tiles/key" });
     expect(await client.next()).toMatchObject({ type: "response", id: "key", status: 200, body: { key: null } });
     client.close();
+  });
+
+  it("does not relay storing or removing a credential, says it was the relay that refused, and leaves the key as it was", async () => {
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const saved = await fetch(`${base}/credentials`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
+      body: JSON.stringify({ fields: [{ name: "typesafe", value: "persons-key" }] }),
+    });
+    expect(saved.status).toBe(201);
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    const refused: [string, string, unknown][] = [
+      ["DELETE", "/credentials/typesafe", undefined],
+      ["DELETE", "//credentials//typesafe/", undefined],
+      ["POST", "/credentials", { fields: [{ name: "typesafe", value: "relayed-key" }] }],
+      ["PUT", "/credentials", { fields: [{ name: "gemini", value: "relayed-key" }] }],
+    ];
+    for (const [index, [method, path, body]] of refused.entries()) {
+      client.send({ type: "request", id: index, method, path, ...(body === undefined ? {} : { body }) });
+      const frame = await client.next();
+      expect(frame, `${method} ${path}`).toMatchObject({ type: "response", id: index, status: 403, body: { code: "PERSON_ONLY", surface: "relay" } });
+      const message = (frame.body as { message: string }).message;
+      expect(message).toContain("WebSocket relay");
+      expect(message).toContain("person");
+      expect(message).not.toContain("relayed-key");
+    }
+    client.close();
+    expect(readCredential(services.runtime.db, owner, "typesafe")).toBe("persons-key");
+    expect(readCredential(services.runtime.db, owner, "gemini")).toBeUndefined();
   });
 
   it("echoes a numeric id as a number", async () => {

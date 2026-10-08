@@ -6,6 +6,7 @@ import {
   messageBlocksAsText,
   NOTICE_UPDATE_PERSON_ONLY_MESSAGE,
   PERSON_ONLY_REFUSAL,
+  personOnlyRefusal,
 } from "@clarkcant/contracts";
 
 import { clarkVersion } from "../application/changelog.ts";
@@ -268,7 +269,7 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
   const call = (method: string, path: string, body?: unknown, query: Record<string, string> = {}): Promise<GatewayResponse> =>
     // No tool names a person-only route today; this keeps a future tool from becoming one.
     isPersonOnlyRoute(method, path)
-      ? Promise.resolve({ status: 403, body: PERSON_ONLY_REFUSAL })
+      ? Promise.resolve({ status: 403, body: personOnlyRefusal("mcp", method, path) })
       : deps.dispatch({
           method,
           path,

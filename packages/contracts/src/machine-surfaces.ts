@@ -52,6 +52,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
   // PUT /decision-provider and PUT or DELETE /decision-provider/credential[/:provider]: choosing the decision provider and
   // entering or removing its key. Reading the effective provider, its model and where its key comes from stays reachable.
   if (first === "decision-provider") return verb !== "GET";
+  // POST /credentials and DELETE /credentials/:name: storing or removing any key in the node's vault. A key decides whose
+  // account the node acts on (the TypeSafe key sends decisions to that account), so an AI client must not plant its own
+  // or take the person's away. Whether a key is set stays readable through `GET /readiness`.
+  if (first === "credentials") return verb !== "GET";
   // Signing in to and out of AI providers, and following a sign-in: whose account the node's models run on is the
   // person's to decide, and a sign-in's page and codes are theirs to see. Listing which providers are signed in stays
   // reachable, as the model picker's own catalogue is.
@@ -133,8 +137,39 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, which decision provider answers Clark's decisions and its key, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, which decision provider answers Clark's decisions and its key, storing or removing a stored credential, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
+
+/** How each machine surface is named in a refusal, so the caller knows which one turned the request away. */
+const MACHINE_SURFACE_NAMES: Readonly<Record<MachineSurface, string>> = Object.freeze({
+  mcp: "the node's MCP server",
+  relay: "the WebSocket relay",
+  "cli-api": "`clarkcant api`",
+});
+
+/** Why a credential route is the person's, said on its own rather than as one item in the general list. */
+const CREDENTIAL_REFUSAL_REASON =
+  "storing or removing a stored credential is the person's decision: a key decides whose account the node acts on, so it is entered or removed in Settings on the person's own surface, not through a machine interface";
+
+/**
+ * The refusal one machine surface gives for one person-only route: which surface refused it and why.
+ *
+ * The code stays `PERSON_ONLY`, so a client that matches on it keeps working; the message names the surface, and a
+ * credential route says why a key is the person's instead of repeating the whole list.
+ */
+export function personOnlyRefusal(
+  surface: MachineSurface,
+  method: string,
+  path: string,
+): { code: "PERSON_ONLY"; surface: MachineSurface; message: string } {
+  const first = (path.split("?")[0] ?? "").split("/").find((segment) => segment !== "");
+  const why = first === "credentials" ? CREDENTIAL_REFUSAL_REASON : PERSON_ONLY_REFUSAL.message;
+  return {
+    code: "PERSON_ONLY",
+    surface,
+    message: `${MACHINE_SURFACE_NAMES[surface]} refused ${method.toUpperCase()} ${path.split("?")[0] ?? ""}: ${why}`,
+  };
+}
 
 /**
  * The node's own machine surfaces, by the marker each puts on a request it carries: `mcp` from an MCP tool, `relay`
