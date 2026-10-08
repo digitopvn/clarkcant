@@ -1,5 +1,7 @@
 import { validateAttachmentCandidate } from "@clarkcant/contracts";
 
+import type { SendMessageResult } from "./api.ts";
+
 /**
  * The composer's attachment logic, with no DOM in it.
  *
@@ -87,28 +89,15 @@ export function readyAttachmentIds(chips: readonly AttachmentChip[]): string[] {
 }
 
 /**
- * The commands after which the files stay behind: one that leaves this conversation for another, and Stop.
- *
- * Kept for the next message, the files of a "new conversation" would ride into a conversation they were never attached
- * for, and a Stop is the person ending what is happening rather than starting the next message.
- */
-const COMMANDS_THAT_DROP_FILES: readonly string[] = ["nav.home", "conversation.delete", "turn.stop"];
-
-/**
  * What a send the node accepted does to the file chips.
  *
  * `sent`: the message was stored and carries them, so they are its now. `kept`: the host answered a command, which
  * carries no files (`resolution: "app-intent"`), so they stay in the composer for the next message instead of
- * vanishing without a word. A command that leaves the conversation or stops it is `sent` too: nothing carries them,
- * and there is no next message here for them to wait for.
+ * vanishing without a word. A command that then leaves the conversation drops them where every departure does, in
+ * `restartSession`; one that does not run (a declined delete, a Stop with nothing to stop) leaves them where they were.
  */
-export function chipsAfterAnswer(answer: {
-  resolution: string;
-  appIntent?: { kind: string; intent?: { kind: string } } | undefined;
-}): "sent" | "kept" {
-  if (answer.resolution !== "app-intent") return "sent";
-  const intentKind = answer.appIntent?.intent?.kind;
-  return intentKind !== undefined && COMMANDS_THAT_DROP_FILES.includes(intentKind) ? "sent" : "kept";
+export function chipsAfterAnswer(answer: Pick<SendMessageResult, "resolution">): "sent" | "kept" {
+  return answer.resolution === "app-intent" ? "kept" : "sent";
 }
 
 /**

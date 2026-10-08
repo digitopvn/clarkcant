@@ -190,9 +190,9 @@ The origin stays with the work it started:
   like a command that names none is answered "not understood" without attachments; with attachments it is stored with
   them and answered as a turn. A client tells the two apart from the stream's `done` frame: `resolution: "app-intent"`
   means the host answered a command and no file was attached; anything else means the message was stored with them.
-  The bundled composer keeps the file chips for the next message after a command, with a short note that commands
-  don't carry files, except after a command that leaves the conversation (`nav.home`, `conversation.delete`) or stops
-  the reply (`turn.stop`). Starting over never carries chips into the new conversation.
+  The bundled composer keeps the file chips for the next message after any command, with a short note that commands
+  don't carry files, including a command that is refused or declined. Starting over, by a command or the header's
+  button, drops them, so they never ride into the new conversation.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A

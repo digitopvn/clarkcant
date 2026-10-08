@@ -145,7 +145,7 @@ export function ConversationComposerBar({
               <button
                 type="button"
                 className="cc-chip-remove"
-                aria-label={`Bỏ ${chip.filename}`}
+                aria-label={t("composer.attachments.remove").replace("{name}", chip.filename)}
                 data-attachment-remove={chip.id}
                 onClick={() => onRemoveChip(chip.id)}
               >

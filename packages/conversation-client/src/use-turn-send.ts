@@ -312,9 +312,11 @@ export function useTurnSend({
         // Cleared only after the send succeeded: a failed send leaves the chips stored on the node,
         // so the person can press send again rather than attaching the same file a second time. A command the host
         // answered carries no files, so they stay for the next message, and the composer says why they are still there.
-        if (!standalone) {
+        // A reply from a session the person already restarted away from touches nothing here: the restart dropped that
+        // session's chips, and the ones on screen now belong to the new conversation.
+        if (!standalone && sessionGeneration.current === generation) {
           const keep = attachmentIds.length > 0 && answered !== undefined && chipsAfterAnswer(answered) === "kept";
-          if (keep && sessionGeneration.current === generation) setChipsKept(true);
+          if (keep) setChipsKept(true);
           else dispatchChips({ type: "sent" });
           onReferencesSent();
         }

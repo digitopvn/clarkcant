@@ -132,31 +132,18 @@ describe("the chip list", () => {
 });
 
 describe("the chips after the node answered", () => {
-  const intent = (kind: string) => ({ kind: "intent", intent: { kind } });
-
   it("a stored message carries its files, so they leave the composer", () => {
     expect(chipsAfterAnswer({ resolution: "model" })).toBe("sent");
     // `/background` with files, and a command-like sentence that names no command, are both stored as a turn.
-    expect(chipsAfterAnswer({ resolution: "model", appIntent: { kind: "none" } })).toBe("sent");
+    expect(chipsAfterAnswer({ resolution: "model-failed" })).toBe("sent");
   });
 
-  it("a command the host answered carries no files, so they are kept for the next message", () => {
-    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("settings.open") })).toBe("kept");
-    // `/thinking high` is answered by the host without a decision for the page to run.
+  it("any command the host answered carries no files, so they are kept for the next message", () => {
+    // Whatever the command: one that leaves the conversation drops them in `restartSession` when it actually runs, and
+    // one that does not run (a declined delete, a Stop with nothing to stop) leaves them where they were.
     expect(chipsAfterAnswer({ resolution: "app-intent" })).toBe("kept");
-    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: { kind: "refused" } })).toBe("kept");
-    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: { kind: "needs-confirmation", intent: { kind: "app.quit" } } })).toBe(
-      "kept",
-    );
-  });
-
-  it("a command that leaves the conversation or stops it does not keep them", () => {
-    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("nav.home") })).toBe("sent");
-    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("conversation.delete") })).toBe("sent");
-    expect(chipsAfterAnswer({ resolution: "app-intent", appIntent: intent("turn.stop") })).toBe("sent");
   });
 });
-
 describe("a file with no name", () => {
   it("a pasted file without a name gets one derived from its type", () => {
     const at = new Date("2026-09-19T05:30:00.000Z");

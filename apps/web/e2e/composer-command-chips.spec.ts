@@ -1,14 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Request } from "@playwright/test";
+
+import { DEFAULT_EXECUTION_POLICY_CONFIG } from "@clarkcant/contracts";
 
 /**
  * Files on the composer when a command answers instead of Clark.
  *
  * A command the host answers ("mở settings", `/thinking high`) carries no files, so the node attaches them to nothing.
  * The composer keeps them for the next message and says why they are still there, rather than clearing them as if
- * they had been sent. A command that leaves the conversation does not keep them: they belong to the one left behind.
+ * they had been sent. Leaving the conversation drops them, through the same restart the header's button runs: they belong
+ * to the conversation left behind. A command that does not run, such as a declined delete, leaves them where they were.
  */
 
 const NODE_PORT = process.env.CC_E2E_NODE_PORT;
@@ -122,4 +125,52 @@ test("starting over from the header does not carry kept files either", async ({ 
   await page.getByRole("button", { name: /Bắt đầu lại/u }).click();
   await expect(page.locator("[data-attachment-chip]")).toHaveCount(0);
   await expect(page.locator("[data-attachments-kept]")).toHaveCount(0);
+});
+
+async function setPolicy(request: APIRequestContext, mode: "guarded" | "autonomous"): Promise<void> {
+  const result = await request.put(`${GATEWAY}/preferences/execution.policy`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, mode } },
+  });
+  expect(result.ok()).toBe(true);
+}
+
+test("a slash command with a file keeps the chip, and the next message carries it", async ({ page }) => {
+  await openWithFile(page);
+  try {
+    const request = await say(page, "/thinking high");
+    expect(attachmentIds(request)).toHaveLength(1);
+    // The host answered it: the level changed, and no user message holds the file.
+    await expect(page.locator(".cc-row").filter({ hasText: /high/u }).last()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("[data-attachment-block]")).toHaveCount(0);
+    await expect(page.locator('[data-attachment-chip="ghi-chu.md"]')).toHaveAttribute("data-attachment-state", "ready");
+    await expect(page.locator("[data-attachments-kept]")).toHaveText(NOTE);
+
+    const next = await say(page, "đọc giúp tui tệp này");
+    expect(attachmentIds(next)).toHaveLength(1);
+    await expect(page.locator("[data-attachment-block]")).toHaveCount(1, { timeout: 20_000 });
+    await expect(page.locator("[data-attachment-chip]")).toHaveCount(0);
+  } finally {
+    // Back to the model's default, so the rest of the suite runs as it always has.
+    await say(page, "/thinking default");
+  }
+});
+
+test("a delete the person declines keeps the files on the composer", async ({ page, request }) => {
+  await setPolicy(request, "guarded");
+  try {
+    await openWithFile(page);
+    const sent = await say(page, "xoá hội thoại này");
+    expect(attachmentIds(sent)).toHaveLength(1);
+    const question = page.getByRole("region", { name: "Policy yêu cầu xác nhận xoá" });
+    await expect(question).toBeVisible();
+    await question.getByRole("button", { name: "Giữ hội thoại" }).click();
+    await expect(question).toHaveCount(0);
+
+    await expect(page.locator('[data-attachment-chip="ghi-chu.md"]')).toHaveAttribute("data-attachment-state", "ready");
+    await expect(page.locator("[data-attachments-kept]")).toHaveText(NOTE);
+    expect(await page.evaluate(() => sessionStorage.getItem("cc_conversation"))).not.toBeNull();
+  } finally {
+    await setPolicy(request, "autonomous");
+  }
 });
