@@ -134,6 +134,9 @@ test("a send from the conversation left behind does not end the reply running in
   const finished = page.waitForEvent("requestfinished", (request) => request === firstRequest);
   await held?.continue();
   await finished;
+  // The old send clears busy after its stream ends, in a later task than `requestfinished`, and nothing on screen
+  // marks the moment it would have. A short fixed wait gives it time to do so before Stop is checked; the new reply
+  // keeps writing for about a minute, so Stop vanishing in this window can only be the old send.
   await page.waitForTimeout(500);
   await expect(page.locator("[data-stop]")).toBeVisible();
   await expect(page.locator("[data-send]")).toHaveCount(0);

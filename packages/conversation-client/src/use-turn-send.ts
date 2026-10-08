@@ -8,7 +8,7 @@ import {
   type SnapshotPresentationResponse,
   type Timeline,
 } from "./api.ts";
-import { chipsAfterAnswer, readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
+import { chipsAfterAnswer, readyAttachmentIds, readyChipIds, type AttachmentChip } from "./attachments.ts";
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
@@ -85,7 +85,7 @@ export interface TurnSendDeps {
   timeline: Timeline | undefined;
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
-  dispatchChips: (action: { type: "sent"; attachmentIds: readonly string[] } | { type: "cleared" }) => void;
+  dispatchChips: (action: { type: "sent"; chipIds: readonly string[] } | { type: "cleared" }) => void;
   /**
    * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
    * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
@@ -174,6 +174,10 @@ export function useTurnSend({
    * Incremented by a restart, and captured by anything that is about to write a result back. A
    * reply that arrives after the user restarted belongs to a conversation they have left, so it is
    * dropped rather than drawn into the fresh start screen.
+   *
+   * Only `restartSession` increments it, and it clears `busy` as it does. The busy guard at the end of `send` depends on
+   * that: a send that finds the generation changed leaves `busy` alone because the restart already reset it. Anything
+   * else that increments the generation must reset `busy` too, or a stale send would leave Stop on screen for good.
    */
   const sessionGeneration = useRef(0);
 
@@ -254,6 +258,7 @@ export function useTurnSend({
       let answered: SendMessageResult | undefined;
       try {
         const attachmentIds = standalone ? [] : readyAttachmentIds(chips);
+        const sentChipIds = standalone ? [] : readyChipIds(chips);
         const references = options.references ?? liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
         // The user may have restarted while the conversation was being created or the model was
@@ -318,7 +323,7 @@ export function useTurnSend({
         if (!standalone && sessionGeneration.current === generation) {
           const keep = attachmentIds.length > 0 && answered !== undefined && chipsAfterAnswer(answered) === "kept";
           if (keep) setChipsKept(true);
-          else dispatchChips({ type: "sent", attachmentIds });
+          else dispatchChips({ type: "sent", chipIds: sentChipIds });
           onReferencesSent();
         }
       } catch (cause) {

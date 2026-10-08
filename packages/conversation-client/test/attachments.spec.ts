@@ -9,6 +9,7 @@ import {
   formatFileSize,
   nameForPastedFile,
   readyAttachmentIds,
+  readyChipIds,
   toBase64,
   type AttachmentChip,
 } from "../src/attachments.ts";
@@ -94,7 +95,7 @@ describe("the chip list", () => {
     });
     expect(failed[0]).toMatchObject({ state: "failed", reason: "đó là tệp 30 MB, quá trần 25 MB" });
     // Kept across a send, because nothing was sent for it and its reason is the only explanation there is.
-    expect(attachmentReducer(failed, { type: "sent", attachmentIds: [] })).toHaveLength(1);
+    expect(attachmentReducer(failed, { type: "sent", chipIds: [] })).toHaveLength(1);
   });
 
   it("an upload that finishes after its chip was removed does not bring it back", () => {
@@ -119,27 +120,40 @@ describe("the chip list", () => {
     let state = attachmentReducer([], { type: "add", chips: [chip(), chip({ id: "chip_2", filename: "b.txt" })] });
     state = attachmentReducer(state, { type: "stored", id: "chip_1", attachmentId: "att_1" });
     state = attachmentReducer(state, { type: "failed", id: "chip_2", reason: "bị từ chối" });
-    expect(attachmentReducer(state, { type: "sent", attachmentIds: ["att_1"] }).map((entry) => entry.id)).toEqual(["chip_2"]);
+    expect(attachmentReducer(state, { type: "sent", chipIds: readyChipIds(state) }).map((entry) => entry.id)).toEqual(["chip_2"]);
   });
 
   it("a send removes only the chips it carried, so a file attached while the reply ran stays", () => {
     let state = attachmentReducer([], { type: "add", chips: [chip()] });
     state = attachmentReducer(state, { type: "stored", id: "chip_1", attachmentId: "att_1" });
-    const carried = readyAttachmentIds(state);
+    const carried = readyChipIds(state);
+    expect(carried).toEqual(["chip_1"]);
     // Attached and stored while the reply to the first message was still being written.
     state = attachmentReducer(state, { type: "add", chips: [chip({ id: "chip_2", filename: "b.txt" })] });
     state = attachmentReducer(state, { type: "stored", id: "chip_2", attachmentId: "att_2" });
     // And one still uploading when the reply ended.
     state = attachmentReducer(state, { type: "add", chips: [chip({ id: "chip_3", filename: "c.txt" })] });
-    const after = attachmentReducer(state, { type: "sent", attachmentIds: carried });
+    const after = attachmentReducer(state, { type: "sent", chipIds: carried });
     expect(after.map((entry) => entry.id)).toEqual(["chip_2", "chip_3"]);
     expect(readyAttachmentIds(after)).toEqual(["att_2"]);
+  });
+
+  it("the same stored file attached again while the reply ran stays, though it shares the attachment id", () => {
+    let state = attachmentReducer([], { type: "add", chips: [chip()] });
+    state = attachmentReducer(state, { type: "stored", id: "chip_1", attachmentId: "att_1" });
+    const carried = readyChipIds(state);
+    // A widget artifact attached a second time reuses the stored id rather than uploading the bytes again.
+    state = attachmentReducer(state, { type: "add", chips: [chip({ id: "chip_2" })] });
+    state = attachmentReducer(state, { type: "stored", id: "chip_2", attachmentId: "att_1" });
+    const after = attachmentReducer(state, { type: "sent", chipIds: carried });
+    expect(after.map((entry) => entry.id)).toEqual(["chip_2"]);
+    expect(readyAttachmentIds(after)).toEqual(["att_1"]);
   });
 
   it("a send that carried no files leaves every chip where it was", () => {
     let state = attachmentReducer([], { type: "add", chips: [chip()] });
     state = attachmentReducer(state, { type: "stored", id: "chip_1", attachmentId: "att_1" });
-    expect(attachmentReducer(state, { type: "sent", attachmentIds: [] })).toEqual(state);
+    expect(attachmentReducer(state, { type: "sent", chipIds: [] })).toEqual(state);
   });
 
   it("leaving the conversation clears every chip, failed ones included", () => {
