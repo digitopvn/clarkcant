@@ -28,8 +28,10 @@ import {
   activeGenerations,
   cachedLocalSnapshotPath,
   customFeedId,
+  digestOfDirectory,
   listInstalledPackages,
   refreshDirectory,
+  removeLocalSnapshot,
   setPreference,
   writeRegisteredPreference,
 } from "@clarkcant/core";
@@ -1623,6 +1625,50 @@ describe("what widget dev sessions leave in the package cache", () => {
     );
   }
 
+  /** Whether a generation on this node names the snapshot, as the boot's sweep and a prune ask before a removal. */
+  const recordedOnNode = (digest: string): boolean =>
+    services.runtime.db
+      .prepare("SELECT 1 AS found FROM package_generations WHERE node_id = ? AND instr(document, ?) > 0")
+      .get(services.runtime.identity.nodeId, digest) !== undefined;
+
+  /** Run `use` while the project folder is listed as an ordinary local package with this digest, and nothing else is. */
+  async function withLocalListing(digest: string, use: () => Promise<void>): Promise<void> {
+    const indexPath = join(dir, "index.json");
+    writeFileSync(
+      indexPath,
+      JSON.stringify([
+        {
+          packageId: PACKAGE,
+          version: VERSION,
+          displayName: "Timer",
+          description: "A timer.",
+          source: { kind: "local", path: root },
+          publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+          preview: {},
+          facets: ["ui"],
+          isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
+          platforms: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64", "web"],
+          hostApi: { min: 1, max: 1 },
+          permissionsSummary: [],
+          riskTier: "isolated-ui",
+          sizeBytes: 1024,
+          digest,
+        },
+      ]),
+    );
+    const previous = { index: process.env["CC_DIRECTORY_INDEX"], official: process.env["CC_OFFICIAL_MARKETPLACE"] };
+    process.env["CC_DIRECTORY_INDEX"] = indexPath;
+    process.env["CC_OFFICIAL_MARKETPLACE"] = "off";
+    try {
+      await use();
+    } finally {
+      if (previous.index === undefined) delete process.env["CC_DIRECTORY_INDEX"];
+      else process.env["CC_DIRECTORY_INDEX"] = previous.index;
+      if (previous.official === undefined) delete process.env["CC_OFFICIAL_MARKETPLACE"];
+      else process.env["CC_OFFICIAL_MARKETPLACE"] = previous.official;
+    }
+  }
+
   /** A restart: a new registry over the same node, resumed from its store. */
   async function restart(): Promise<void> {
     await services.widgetDev?.close();
@@ -1818,33 +1864,7 @@ describe("what widget dev sessions leave in the package cache", () => {
     usePolicy({});
 
     // The folder is listed as an ordinary local package, and its install is held as it checks the snapshot it reuses.
-    const indexPath = join(dir, "index.json");
-    writeFileSync(
-      indexPath,
-      JSON.stringify([
-        {
-          packageId: PACKAGE,
-          version: VERSION,
-          displayName: "Timer",
-          description: "A timer.",
-          source: { kind: "local", path: root },
-          publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
-          preview: {},
-          facets: ["ui"],
-          isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
-          platforms: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64", "web"],
-          hostApi: { min: 1, max: 1 },
-          permissionsSummary: [],
-          riskTier: "isolated-ui",
-          sizeBytes: 1024,
-          digest: built,
-        },
-      ]),
-    );
-    const previous = { index: process.env["CC_DIRECTORY_INDEX"], official: process.env["CC_OFFICIAL_MARKETPLACE"] };
-    process.env["CC_DIRECTORY_INDEX"] = indexPath;
-    process.env["CC_OFFICIAL_MARKETPLACE"] = "off";
-    try {
+    await withLocalListing(built, async () => {
       const reuse = holdFirstRead(folderOf(built));
       const installing = call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION });
       await reuse.reading;
@@ -1858,12 +1878,89 @@ describe("what widget dev sessions leave in the package cache", () => {
       const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
       expect(running?.snapshotDigest).toBe(built);
       expect(readdirSync(folderOf(built))).toContain("clarkcant.json");
-    } finally {
-      if (previous.index === undefined) delete process.env["CC_DIRECTORY_INDEX"];
-      else process.env["CC_DIRECTORY_INDEX"] = previous.index;
-      if (previous.official === undefined) delete process.env["CC_OFFICIAL_MARKETPLACE"];
-      else process.env["CC_OFFICIAL_MARKETPLACE"] = previous.official;
-    }
+    });
+  });
+
+  it("keeps the snapshot an install placed until its generation is recorded, though a removal starts in between", async () => {
+    const digested = digestOfDirectory(root);
+    if (!digested.ok) throw new Error(digested.message);
+    const placed = digested.digest;
+    expect(existsSync(folderOf(placed))).toBe(false);
+    usePolicy({});
+
+    await withLocalListing(placed, async () => {
+      // A removal starts as the install names its generation, after it placed the snapshot and before it records it,
+      // asking what the boot's sweep and a prune ask: whether a generation on this node names the snapshot yet.
+      let removing: Promise<"removed" | "kept"> | undefined;
+      let window: { placed: boolean; recorded: boolean } | undefined;
+      const newId = services.conductor.newId;
+      const spied = vi.spyOn(services.conductor, "newId").mockImplementation((prefix: string) => {
+        if (prefix === "codegen" && removing === undefined) {
+          window = { placed: existsSync(folderOf(placed)), recorded: recordedOnNode(placed) };
+          removing = removeLocalSnapshot(folderOf(placed), { inUse: () => recordedOnNode(placed), options: SNAPSHOT_REMOVAL });
+        }
+        return newId(prefix);
+      });
+      try {
+        const installed = await call("POST", "/packages/install", { packageId: PACKAGE, version: VERSION });
+        expect(installed.status, JSON.stringify(installed.body)).toBe(200);
+      } finally {
+        spied.mockRestore();
+      }
+      expect(window).toEqual({ placed: true, recorded: false });
+      // Only the install's hold kept it: nothing recorded the generation yet when the removal looked.
+      expect(await removing).toBe("kept");
+      const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+      expect(running?.snapshotDigest).toBe(placed);
+      expect(readdirSync(folderOf(placed))).toContain("clarkcant.json");
+    });
+  });
+
+  it("keeps a superseded snapshot that another session starts to run while the prune removes the ones before it", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const first = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    const [held, taken, unused] = [1, 2, 3].map(madeSnapshot);
+    if (held === undefined || taken === undefined || unused === undefined) throw new Error("no snapshot was made");
+    changeSession(started.sessionId, (stored) => ({ ...stored, snapshots: [held, taken, unused, first] }));
+
+    // The prune after the next install reads what it keeps once, then removes the rest one at a time: the first removal
+    // is held until another session runs the second snapshot.
+    let removingStarted = (): void => undefined;
+    const removing = new Promise<void>((done) => (removingStarted = done));
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => (finish = done));
+    removal.starting = async (path) => {
+      if (path !== resolve(folderOf(held))) return;
+      removingStarted();
+      await gate;
+    };
+    writePackage("<!doctype html><p>second</p>\n");
+    const rebuilding = call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    await removing;
+
+    const [stored] = readDevSessions(join(dir, "node"));
+    if (stored?.running === undefined) throw new Error("the session runs nothing");
+    writeDevSessions(join(dir, "node"), [
+      stored,
+      {
+        sessionId: "wdev_other",
+        root: join(dir, "projects", "other"),
+        status: "stopped",
+        startedAt: stored.startedAt,
+        running: { ...stored.running, generation: { ...stored.running.generation, digest: taken } },
+      },
+    ]);
+    finish();
+    expect(session(await rebuilding).activation).toMatchObject({ state: "active", generation: 2 });
+
+    expect(existsSync(folderOf(held))).toBe(false);
+    expect(existsSync(folderOf(taken))).toBe(true);
+    expect(existsSync(folderOf(unused))).toBe(false);
+    // Still on the session's list, so a later prune removes it once nothing uses it.
+    const snapshots = readDevSessions(join(dir, "node")).find((current) => current.sessionId === started.sessionId)?.snapshots;
+    expect(snapshots).toContain(taken);
+    expect(snapshots).not.toContain(held);
+    expect(snapshots).not.toContain(unused);
   });
 
   it("never removes at boot an orphaned snapshot that is still installed, though no session is left to name it", async () => {

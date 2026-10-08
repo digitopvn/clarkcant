@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareDevReach, directoryEntrySchema, type PackageManifest, type WidgetDefinition } from "@clarkcant/contracts";
 
 import {
+  DEV_ENGINE_EXCLUDED_ROOT_NAMES,
   DEV_ENGINE_REARM_MAX,
   DEV_ENGINE_WATCH_CATCH_UP_MS,
   cachedLocalSnapshotPath,
@@ -266,6 +267,40 @@ describe("the dev engine", () => {
     engine.close();
     expect(await remove(second)).toBe("removed");
     expect(existsSync(second)).toBe(false);
+  });
+
+  it("lets go of a build's snapshot when the caller's baseline throws, keeping the newest generation's", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    let failing = false;
+    const engine = startDevEngine({
+      root,
+      watch: false,
+      cacheRoot,
+      now: () => "2026-10-06T00:00:00.000Z",
+      baseline: () => {
+        if (failing) throw new Error("the baseline could not be read");
+        return undefined;
+      },
+    });
+    engines.push(engine);
+    expect((await engine.ready).kind).toBe("generation");
+    const first = cachedLocalSnapshotPath(cacheRoot, engine.latest()?.generation.digest ?? "") ?? "";
+    const remove = (path: string) => removeLocalSnapshot(path, { inUse: () => false, options: { recursive: true, force: true } });
+
+    failing = true;
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>two</p>");
+    await expect(engine.rebuild("change")).rejects.toThrow("the baseline could not be read");
+    const digested = digestOfDirectory(root, { exclude: DEV_ENGINE_EXCLUDED_ROOT_NAMES, excludeAnyCase: true });
+    if (!digested.ok) throw new Error(digested.message);
+    const second = cachedLocalSnapshotPath(cacheRoot, digested.digest) ?? "";
+    expect(existsSync(second)).toBe(true);
+    // The build that threw is not the newest generation, so nothing holds its snapshot; the first one is still held.
+    expect(engine.latest()?.generation.generation).toBe(1);
+    expect(await remove(second)).toBe("removed");
+    expect(existsSync(second)).toBe(false);
+    expect(await remove(first)).toBe("kept");
   });
 
   it("leaves installed dependencies out of the digest, the snapshot and the watch, and keeps built output in", async () => {
