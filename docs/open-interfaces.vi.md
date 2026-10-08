@@ -970,12 +970,12 @@ vẫn hiện là đang chạy:
   không đổi; hoặc, sau một lần khởi động lại, thư mục không đọc được (`ROOT_UNREADABLE`). Nhật ký của node ghi rõ lỗi, ví
   dụ `EPERM`.
 - `folder-gone`: thư mục đã bị xoá hoặc đổi tên và không trở lại trong vòng 2 giây, đường dẫn không còn là một thư mục,
-  hoặc đường dẫn giờ dẫn tới một thư mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một thư mục phía trên nó). Node kiểm tra
-  thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì khi một thư mục đang được theo dõi bị
-  xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục không xem được vì lý do khác, chẳng hạn phần mềm diệt virus
-  hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy và được kiểm tra lại, tối đa 30 giây
-  lỗi liên tục; sau đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng khi thư mục không còn sau một lần khởi
-  động lại.
+  hoặc đường dẫn giờ dẫn tới một thư mục khác qua một liên kết tượng trưng hay junction (ở chính thư mục hoặc ở một
+  thư mục phía trên nó). Node kiểm tra thư mục ít nhất mỗi giây một lần và trước mỗi lần dựng, vì Windows không báo gì
+  khi một thư mục đang được theo dõi bị xoá. Chỉ lỗi "không tìm thấy" mới được tính: một thư mục không xem được vì lý
+  do khác, chẳng hạn phần mềm diệt virus hoặc trình lập chỉ mục đang giữ nó (`EPERM`, `EBUSY`), vẫn giữ phiên đang chạy
+  và được kiểm tra lại, tối đa 30 giây lỗi liên tục; sau đó phiên dừng với lý do `watch-failed`. Lý do này cũng dùng
+  khi thư mục không còn sau một lần khởi động lại.
 - `capacity`: node đã theo dõi tám thư mục lúc tiếp tục các phiên.
 - `root-refused`: sau một lần khởi động lại, thư mục không qua được bước kiểm mà một lần bắt đầu thực hiện. Ví dụ, một
   phiên do Clark bắt đầu có thư mục nằm ngoài không gian widget.
@@ -984,12 +984,18 @@ Một thư mục vẫn còn đó nhưng mang định danh khác không làm phi�
 những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mục đã được tạo lại ở cùng đường dẫn (chẳng hạn bởi
 `rm -rf out && build`), hoặc hệ thống tệp đã cấp cho nó một id mới (một số ổ FUSE và ổ mạng làm vậy). Node theo dõi thư
 mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu, và ghi id cũ lẫn id mới vào nhật ký.
-Một thư mục không có ở đó khi node xem, vì một lần dựng đã xoá nó mà chưa tạo lại, sẽ được tìm lại trong 2 giây trước khi
-phiên dừng; trong lúc đó không có gì được dựng. Một lần dựng cần lâu hơn thế để tạo lại thư mục sẽ làm phiên dừng với lý
-do `folder-gone`. Điều này chỉ đúng khi đường dẫn vẫn phân giải về đúng đường dẫn thật lúc phiên bắt đầu (so sánh không
-phân biệt hoa thường trên Windows và macOS): một liên kết được tráo vào ở thư mục hoặc phía trên nó dẫn tới một thư mục
-không ai chọn, nên phiên dừng với lý do `folder-gone`. Một lần dựng thấy đường dẫn dẫn tới nơi khác ngay trước hoặc ngay
-sau khi chép tệp sẽ thất bại với `FILES_LINK_REFUSED`.
+
+Một thư mục không có ở đó khi node xem, vì một lần dựng đã xoá nó mà chưa tạo lại, sẽ được tìm lại trong 2 giây trước
+khi phiên dừng. Trong lúc đó không có lần dựng mới nào bắt đầu. Một lần dựng đang chạy khi thư mục biến mất, hoặc một
+lần dựng lại được yêu cầu trong 2 giây đó, sẽ thất bại vì thiếu tệp và phiên vẫn chạy; thư mục được dựng lại khi nó trở
+lại. Một lần dựng cần lâu hơn 2 giây để tạo lại thư mục sẽ làm phiên dừng với lý do `folder-gone`.
+
+Một thư mục được chọn qua một liên kết hay junction được theo dõi ở đường dẫn thật mà nó dẫn tới lúc phiên bắt đầu. Một
+thư mục được tạo lại chỉ được tính khi đường dẫn của nó vẫn phân giải về đúng đường dẫn thật đó. Trên Windows và macOS,
+hai đường dẫn chỉ khác nhau về chữ hoa chữ thường được coi là một khi không có thư mục nào trên đường dẫn là liên kết.
+Một liên kết được tráo vào ở thư mục hoặc phía trên nó dẫn tới một thư mục không ai chọn, nên phiên dừng với lý do
+`folder-gone`. Một lần dựng thấy đường dẫn dẫn tới nơi khác ngay trước hoặc ngay sau khi chép tệp sẽ thất bại với
+`FILES_LINK_REFUSED`.
 
 Trong mọi trường hợp, generation đang chạy vẫn tiếp tục chạy.
 

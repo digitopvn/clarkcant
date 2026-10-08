@@ -1,6 +1,6 @@
 import type * as fs from "node:fs";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -585,6 +585,63 @@ describe("the dev engine", () => {
     expect(event.kind).toBe("failed");
     expect(event.build.diagnostics[0]?.code).toBe("FILES_LINK_REFUSED");
     expect(engine.latest()?.generation.packageId).toBe("com.example.dev");
+  });
+
+  it("builds a folder given through a link or junction, as the standalone dev host does, at the real path it leads to", async () => {
+    const base = tempDir("dev-engine-");
+    const real = join(base, "real");
+    const linked = join(base, "linked");
+    writePackage(real, "<p>one</p>");
+    linkFolder(real, linked);
+    const engine = startDevEngine({ root: linked, watch: false });
+    engines.push(engine);
+
+    expect((await engine.ready).kind).toBe("generation");
+    expect(engine.root).toBe(realpathSync.native(real));
+    writeFileSync(join(real, "widgets", "main", "index.html"), "<p>saved</p>");
+    const event = await engine.rebuild();
+    expect(event.kind).toBe("generation");
+    expect(engine.latest()?.generation.generation).toBe(2);
+  });
+
+  it("watches a folder given through a link or junction, and builds a save in it rather than refusing the link", async () => {
+    const base = tempDir("dev-engine-");
+    const real = join(base, "real");
+    const linked = join(base, "linked");
+    writePackage(real, "<p>one</p>");
+    linkFolder(real, linked);
+    let gone = 0;
+    const engine = startDevEngine({ root: linked, watch: true, debounceMs: 30, rootCheckMs: 20, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    expect((await engine.ready).kind).toBe("generation");
+
+    writeFileSync(join(linked, "widgets", "main", "index.html"), "<p>saved</p>");
+    const deadline = Date.now() + 5_000;
+    while (engine.latest()?.generation.generation !== 2 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    expect(engine.latest()?.generation.generation).toBe(2);
+    expect(engine.lastBuild()?.ok).toBe(true);
+    expect(gone).toBe(0);
+    expect(engine.rootGone()).toBe(false);
+  });
+
+  it("does not call a watched folder gone while it may still come back, and does once the grace is over", async () => {
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>");
+    let gone = 0;
+    const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 20, rootMissingGraceMs: 400, onRootGone: () => (gone += 1) });
+    engines.push(engine);
+    await engine.ready;
+
+    rmSync(root, { recursive: true, force: true });
+    // A build that overlaps the absence fails on the missing files, and the folder is not gone for that.
+    expect((await engine.rebuild()).kind).toBe("failed");
+    expect(engine.rootGone()).toBe(false);
+    expect(engine.watching()).toBe(true);
+
+    const deadline = Date.now() + 5_000;
+    while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    expect(gone).toBe(1);
+    expect(engine.rootGone()).toBe(true);
   });
 
   it("stops watching, and says why, a folder it has not been able to look at for the time bound", async () => {

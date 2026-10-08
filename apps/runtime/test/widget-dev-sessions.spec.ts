@@ -1063,6 +1063,36 @@ describe("a widget dev session", () => {
     expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
   });
 
+  it("keeps a watched session live when a build runs while another process makes its folder again, and builds it once back", async () => {
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20 });
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(started.status).toBe("live");
+
+    const source = join(dir, "source");
+    writePackage("<!doctype html><p>made again by another process</p>\n", [], source);
+    const script = [
+      "const fs = require('node:fs');",
+      "const [out, from] = process.argv.slice(1);",
+      "fs.rmSync(out, { recursive: true, force: true });",
+      "setTimeout(() => fs.cpSync(from, out, { recursive: true }), 800);",
+    ].join("\n");
+    const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
+    const exited = new Promise((done) => child.on("exit", done));
+
+    // A build that runs while no folder is at the path: it fails on the missing files, and the session stays live.
+    const deadline = Date.now() + 5_000;
+    while (existsSync(root) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 5));
+    expect(existsSync(root)).toBe(false);
+    const during = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
+    expect(during.status).toBe(200);
+    expect(session(during)).toMatchObject({ status: "live", lastBuild: { ok: false, trigger: "rebuild" }, activation: { state: "active", generation: 1 } });
+
+    expect(await exited).toBe(0);
+    const rebuilt = await eventually(started.sessionId, (view) => view.status === "stopped" || (view.activation.state === "active" && view.activation.generation === 2));
+    expect(rebuilt).toMatchObject({ status: "live", activation: { state: "active", generation: 2 } });
+  });
+
   it("stops a watched session as watch-failed when its folder cannot be looked at for the time bound, and keeps what runs", async () => {
     services.widgetDev?.close();
     services.widgetDev = createWidgetDevSessions(() => services, { watch: true, answerPollMs: 20, rootUnreadableMs: 300 });

@@ -966,12 +966,11 @@ reading as live:
   names the error, for example `EPERM`.
 - `folder-gone`: the folder was deleted or renamed and is not back within 2 seconds, the path no longer names a folder,
   or the path now leads to another folder through a symbolic link or junction (at the folder itself or at a folder
-  above it). The node checks for the
-  folder at least once a second and before each build, because Windows reports nothing when a watched folder is
-  deleted. Only "not found" counts: a folder that cannot be looked at for another reason, such as an antivirus or
-  indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again, for up to 30 seconds of
-  continuous failures; after that the session stops as `watch-failed`. The same reason applies when the folder is
-  missing after a restart.
+  above it). The node checks for the folder at least once a second and before each build, because Windows reports
+  nothing when a watched folder is deleted. Only "not found" counts: a folder that cannot be looked at for another
+  reason, such as an antivirus or indexer holding it (`EPERM`, `EBUSY`), keeps the session live and is checked again,
+  for up to 30 seconds of continuous failures; after that the session stops as `watch-failed`. The same reason applies
+  when the folder is missing after a restart.
 - `capacity`: the node is already watching eight folders as it resumes.
 - `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
   whose folder is outside the widget workspace.
@@ -979,11 +978,17 @@ reading as live:
 A folder that is still there with another identity does not stop the session. The node compares the folder's device and
 file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
 `rm -rf out && build`), or the filesystem gave it a new id (some FUSE mounts and network drives do). The node watches
-the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids. A folder that is
-missing when the node looks, because a build deleted it and has not made it again yet, is looked for again for 2
-seconds before the session stops; nothing is built meanwhile. A build that takes longer than that to make the folder
-again stops the session as `folder-gone`. This holds only while the path still resolves to the real path the session
-started from (compared without case on Windows and macOS): a link swapped in at the folder or above it leads to a
+the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids.
+
+A folder that is missing when the node looks, because a build deleted it and has not made it again yet, is looked for
+again for 2 seconds before the session stops. No build starts meanwhile. A build already running when the folder went,
+or a rebuild asked for in those 2 seconds, fails on the missing files and leaves the session live; the folder is built
+again once it is back. A build that takes longer than 2 seconds to make the folder again stops the session as
+`folder-gone`.
+
+A folder chosen through a link or junction is watched at the real path it led to when the session started. A folder
+made again counts only while its path still resolves to that real path. Paths that differ only in case count as the
+same on Windows and macOS when no folder on the path is a link. A link swapped in at the folder or above it leads to a
 folder nobody chose, so the session stops as `folder-gone` instead. A build that finds the path leading elsewhere just
 before or after it copies the files fails with `FILES_LINK_REFUSED`.
 

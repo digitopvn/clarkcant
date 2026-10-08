@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readdirSync, realpathSync, statSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
   WIDGET_DEV_DIAGNOSTICS_MAX,
@@ -146,6 +146,7 @@ export interface DevEngineOptions {
 }
 
 export interface DevEngine {
+  /** The folder's real path: `options.root` resolved once, through any link or junction it was given through. */
   readonly root: string;
   /** The first build, which runs before anything is watched. */
   readonly ready: Promise<DevEngineEvent>;
@@ -158,8 +159,9 @@ export interface DevEngine {
   watching(): boolean;
   /**
    * Whether the folder is gone (`devRootState`): deleted, no longer a folder, or another folder reached through a link or
-   * junction. False when another folder is at the path itself (the watcher moves to it) or when it could not be looked
-   * at for another reason.
+   * junction. False when another folder is at the path itself (the watcher moves to it), when it could not be looked at
+   * for another reason, or, while watching, when it has been missing for less than `rootMissingGraceMs` (a build that
+   * deletes and makes it again is not done yet).
    */
   rootGone(): boolean;
   close(): void;
@@ -291,12 +293,23 @@ type DevRootLook =
   | { state: "gone"; missing?: true }
   | { state: "unknown"; code: string };
 
+/** Whether a folder on `path`, or `path` itself, is a link or junction. */
+function linkOnPath(path: string): boolean {
+  for (let at = path; ; at = dirname(at)) {
+    if (lstatSync(at).isSymbolicLink()) return true;
+    if (dirname(at) === at) return false;
+  }
+}
+
 /**
- * Whether two canonical paths name the same place: compared without case where the filesystem usually ignores it
- * (Windows, macOS), as the runtime compares roots, so a folder made again as `Out` for `out` is the same folder.
+ * Whether `real` (where `root` resolves now) is `canonical`, the real path `root` was at the start. Where the filesystem
+ * usually ignores case (Windows, macOS), a real path that differs only in case is the same place when nothing on the
+ * path is a link: a folder made again as `Out` for `out` is the folder chosen, but a folder above it swapped for a link
+ * to a sibling named in another case (on a case-sensitive volume) is not.
  */
-const samePlace = (a: string, b: string): boolean =>
-  process.platform === "win32" || process.platform === "darwin" ? a.toLowerCase() === b.toLowerCase() : a === b;
+const samePlace = (root: string, real: string, canonical: string): boolean =>
+  real === canonical ||
+  ((process.platform === "win32" || process.platform === "darwin") && real.toLowerCase() === canonical.toLowerCase() && !linkOnPath(root));
 
 /**
  * Whether `root` still leads to `canonical`: it is not itself a link or junction, and it resolves there. When it could
@@ -305,7 +318,7 @@ const samePlace = (a: string, b: string): boolean =>
 function leadsTo(root: string, canonical: string | undefined): boolean | DevRootLook {
   if (canonical === undefined) return false;
   try {
-    return !lstatSync(root).isSymbolicLink() && samePlace(realpathSync.native(root), canonical);
+    return !lstatSync(root).isSymbolicLink() && samePlace(root, realpathSync.native(root), canonical);
   } catch (cause) {
     return lookFailed(cause);
   }
@@ -349,8 +362,9 @@ function lookAtDevRoot(root: string, identity?: DevRootIdentity, canonical?: str
  * - `gone`: nothing is at the path, or something other than a folder is.
  * - `replaced`: given the `identity` it was watched with, a different folder is at the path. A folder deleted and made
  *   again (`rm -rf out && build`) keeps its path but not its identity, and a watcher on the old one hears nothing from the
- *   new one (a watching engine waits `DEV_ENGINE_ROOT_MISSING_GRACE_MS` for a missing folder to come back); some filesystems (FUSE mounts without stable inode numbers, some network drives) also give a folder that
- *   is still there a new id. Either way there is a folder to watch, so the watcher moves to it. A different folder
+ *   new one (a watching engine waits `DEV_ENGINE_ROOT_MISSING_GRACE_MS` for a missing folder to come back); some
+ *   filesystems (FUSE mounts without stable inode numbers, some network drives) also give a folder that is still there a
+ *   new id. Either way there is a folder to watch, so the watcher moves to it. A different folder
  *   reached through a link or junction (at the path or at a folder above it), so that the path no longer resolves to
  *   the canonical path watching started from, is `gone` instead: it is not the folder that was chosen.
  * - `unknown`: the folder could not be looked at for another reason (`EPERM`, `EBUSY` while an antivirus or indexer holds
@@ -377,9 +391,14 @@ const devFilesCodeOf = (code: string): "FILES_TOO_LARGE" | "FILES_LINK_REFUSED" 
   code === "ARTIFACT_TOO_LARGE" ? "FILES_TOO_LARGE" : code === "ARTIFACT_SYMLINK_ESCAPE" ? "FILES_LINK_REFUSED" : "FILES_UNREADABLE";
 
 export function startDevEngine(options: DevEngineOptions): DevEngine {
-  const root = resolve(options.root);
-  /** Where the folder's path resolved when the engine started: a folder at the path that resolves elsewhere is not it. */
-  const canonical = canonicalPathOf(root);
+  const given = resolve(options.root);
+  /**
+   * Where the folder's path resolved when the engine started: a folder at the path that resolves elsewhere is not it. A
+   * folder given through a link or junction (a symlinked projects folder, a junctioned workspace) is watched and built at
+   * this real path, so the link it was given through is not taken for a swap.
+   */
+  const canonical = canonicalPathOf(given);
+  const root = canonical ?? given;
   const limits = options.limits ?? DEV_ENGINE_LIMITS;
   const now = options.now ?? (() => new Date().toISOString());
   // Only the newest generation is kept: older ones are named in their build records and the caller's own state.
@@ -627,12 +646,23 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    *   link or junction is `gone`. More than `DEV_ENGINE_REARM_MAX` of these in a row, with no look between them finding
    *   the folder unchanged, stops watching as a watch failure.
    * - A folder missing from the path (`gone`, not found) counts as gone only once it has been missing for
-   *   `rootMissingGraceMs`: until then nothing is built and the path is looked at again, and a folder back at the same
-   *   real path is watched anew (`replaced`). Anything else that is `gone` (not a folder, or reached through a link) is
+   *   `rootMissingGraceMs`: until then no build starts (`rootGone` says not gone either, so a build already running that
+   *   fails on the missing files leaves the caller's session live) and the path is looked at again, and a folder back at
+   *   the same real path is watched anew (`replaced`) and built. Anything else that is `gone` (not a folder, or reached through a link) is
    *   gone at once.
    * - A folder that could not be looked at this time (`unknown`) is looked at again on the next tick rather than taken as
    *   gone, until it has failed for `rootUnreadableMs` in a row: then watching stops as a watch failure that says why.
    */
+  /**
+   * Whether `look` found the watched folder missing for less than `rootMissingGraceMs` so far: it may be on its way back,
+   * so it is not gone yet. The absence is timed from the first look that found it, whichever asked.
+   */
+  const stillAwaited = (look: DevRootLook): boolean => {
+    if (look.state !== "gone" || look.missing !== true || closed || watcher === undefined) return false;
+    const at = performance.now();
+    missingSince ??= at;
+    return at - missingSince < missingGraceMs;
+  };
   const rootStillThere = (): boolean => {
     if (closed || watcher === undefined) return !closed;
     const look = lookAtDevRoot(root, identity, canonical);
@@ -648,11 +678,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       return false;
     }
     unreadableSince = undefined;
-    if (look.state === "gone" && look.missing === true) {
-      const at = performance.now();
-      missingSince ??= at;
-      if (at - missingSince < missingGraceMs) return false;
-    }
+    if (stillAwaited(look)) return false;
     missingSince = undefined;
     if (look.state === "present") {
       rearmsInARow = 0;
@@ -747,7 +773,11 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       return event;
     },
     watching: () => watcher !== undefined && !closed,
-    rootGone: () => lookAtDevRoot(root, identity, canonical).state === "gone",
+    rootGone: () => {
+      // A build that overlaps a folder being made again fails on its missing files; the folder is not gone for that.
+      const look = lookAtDevRoot(root, identity, canonical);
+      return look.state === "gone" && !stillAwaited(look);
+    },
     close: () => {
       closed = true;
       stopWatching();
