@@ -23,6 +23,8 @@ Luật sản phẩm quan trọng nhất:
 
 Nếu một tác vụ có thể được diễn đạt bằng chat hoặc voice thì user không nên phải tìm đúng tab, đúng tool hoặc đúng node trước.
 
+AI phải làm ClarkCant đơn giản hơn theo thời gian, không phải phức tạp hơn: đơn giản đến mức ai cũng mở lên dùng được ngay mà không phải học thêm bất kỳ khái niệm hay thuật ngữ mới nào. Một tính năng cần thêm một từ mới mới hiểu được thì chưa hoàn thiện. Khi model và công cụ tốt lên, bề mặt sản phẩm phải gọn lại, không phải phình ra.
+
 ---
 
 ## 1. Design principles bắt buộc

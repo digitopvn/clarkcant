@@ -23,6 +23,8 @@ The most important product rule:
 
 If a task can be expressed in chat or voice, the user should not have to find the right tab, the right tool or the right node first.
 
+AI should make ClarkCant simpler over time, not more complex: simple enough that anyone can open it and use it without learning a single new concept or term. A feature that needs a new word to be understood is not finished. As models and tools get better, the surface should shrink, not grow.
+
 ---
 
 ## 1. Mandatory design principles

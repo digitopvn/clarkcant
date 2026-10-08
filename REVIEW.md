@@ -18,6 +18,8 @@ issue literally. Review whether it solves the user problem while preserving:
 - ClarkCant's product philosophy;
 - radical UX simplicity and useful autonomy;
 - open/community extensibility;
+- room for stronger models and better tools to take over, beside or instead of
+  what we build;
 - cross-platform behavior;
 - architecture and trust boundaries;
 - correctness and recoverability;
@@ -51,9 +53,17 @@ Check the change against `AGENTS.md`.
 
 Watch especially for:
 
-- unnecessary user-facing concepts or technical machinery;
+- unnecessary user-facing concepts or technical machinery, including any new
+  term the user must learn to use the feature;
 - ad-hoc confirmation instead of Jev/policy escalation;
 - first-party-only special cases where an extension primitive is reasonable;
+- behavior hard-coded around today's model limits, where a capability, context
+  or contract would let a stronger model do it, or scaffolding with no clear way
+  to remove it later;
+- a design tied to one model, vendor or tool where a typed capability or adapter
+  would let a better solution run beside it or replace it;
+- "everything app" growth: building and owning what could be integrated or
+  left to an extension;
 - silent platform assumptions;
 - architectural exceptions that conflict with product philosophy.
 
@@ -139,7 +149,9 @@ Use severity for impact, not tone.
   failure, broken core flow, material philosophy conflict, irreversible migration
   risk, invalid source of truth, or supported-platform breakage.
 - **Major** — normally resolve before merge: incomplete journey, substantial UX
-  regression, missing recovery path, significant architectural coupling, missing
+  regression, missing recovery path, significant architectural coupling
+  (including a new capability locked to one model, vendor or tool with no
+  replaceable boundary), missing
   important evidence, or stale required docs.
 - **Minor** — worthwhile but non-blocking improvement.
 - **Nit** — optional polish; never block approval.
