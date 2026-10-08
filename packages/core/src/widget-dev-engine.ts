@@ -594,46 +594,55 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       return fail(trigger, copy.diagnostics);
     }
 
-    const manifest = copy.manifest;
-    const publisher = manifest.publisher;
-    const generation: WidgetDevGeneration = Object.freeze({
-      generation: (previous?.generation.generation ?? options.generationsBefore ?? 0) + 1,
-      packageId: manifest.id,
-      version: manifest.version,
-      digest,
-      builtAt: now(),
-      trigger,
-      widgetIds: copy.widgetIds,
-      delta: compareDevReach(options.baseline === undefined ? previous?.manifest : options.baseline(), manifest),
-      warnings: [],
-    });
-    let sizeBytes = 0;
+    let record: DevGenerationRecord;
     try {
-      sizeBytes = sizeOf(folder);
-    } catch {
-      // Descriptive only; a listing whose size could not be summed still names its bytes by digest.
-    }
-    const record: DevGenerationRecord = Object.freeze({
-      generation,
-      manifest,
-      skippedFacets: copy.skippedFacets,
-      listing: directoryEntryOf(
+      const manifest = copy.manifest;
+      const publisher = manifest.publisher;
+      const generation: WidgetDevGeneration = Object.freeze({
+        generation: (previous?.generation.generation ?? options.generationsBefore ?? 0) + 1,
+        packageId: manifest.id,
+        version: manifest.version,
+        digest,
+        builtAt: now(),
+        trigger,
+        widgetIds: copy.widgetIds,
+        // The caller's own callback, which may throw: the build then rejects, and lets go of its hold below.
+        delta: compareDevReach(options.baseline === undefined ? previous?.manifest : options.baseline(), manifest),
+        warnings: [],
+      });
+      let sizeBytes = 0;
+      try {
+        sizeBytes = sizeOf(folder);
+      } catch {
+        // Descriptive only; a listing whose size could not be summed still names its bytes by digest.
+      }
+      record = Object.freeze({
+        generation,
         manifest,
-        {
-          source: { kind: "local", path: folder },
-          publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
-          sizeBytes,
-          digest,
-        },
-        copy.skippedFacets,
-      ),
-    });
-    newest = record;
-    newestHold?.();
-    newestHold = hold;
+        skippedFacets: copy.skippedFacets,
+        listing: directoryEntryOf(
+          manifest,
+          {
+            source: { kind: "local", path: folder },
+            publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
+            sizeBytes,
+            digest,
+          },
+          copy.skippedFacets,
+        ),
+      });
+      newest = record;
+      newestHold?.();
+      newestHold = hold;
+      // The newest generation keeps the hold from here on.
+      hold = undefined;
+    } finally {
+      // A build that threw before it became the newest generation keeps nothing held.
+      hold?.();
+    }
     // A build that ends after the engine closed keeps nothing held: the caller follows no build of a closed engine.
     if (closed) releaseNewest();
-    last = { ok: true, at: generation.builtAt, trigger, generation: generation.generation, diagnostics: [] };
+    last = { ok: true, at: record.generation.builtAt, trigger, generation: record.generation.generation, diagnostics: [] };
     return { kind: "generation", record, build: last };
   };
 

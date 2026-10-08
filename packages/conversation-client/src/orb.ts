@@ -277,9 +277,28 @@ export interface OrbRenderer {
   dispose(): void;
 }
 
+/**
+ * A failed creation says whether WebGL itself was missing (`noWebgl`), rather than the orb's own shader or a lost
+ * context: only that case tells the page there is no WebGL to draw with at all.
+ */
 export type OrbCreation =
   | { ok: true; renderer: OrbRenderer }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; noWebgl?: true };
+
+/** What draws the orb, as the canvas publishes it on `data-orb-renderer`. */
+export type OrbRendererKind = "gpu" | "software" | "none";
+
+/**
+ * The renderer kind a creation reports.
+ *
+ * `none` is a browser with no WebGL context at all, where the orb shows its still gradient; that is as much a machine
+ * without a GPU as a software rasteriser is, and the composer glow reads it the same way. A failure with WebGL present
+ * (a shader that did not compile, a lost context) says nothing about the machine, so it reports no kind.
+ */
+export function orbRendererKind(creation: OrbCreation): OrbRendererKind | undefined {
+  if (creation.ok) return creation.renderer.software ? "software" : "gpu";
+  return creation.noWebgl === true ? "none" : undefined;
+}
 
 const UNIFORM_NAMES = [
   "u_resolution",
@@ -356,6 +375,7 @@ export function createOrbRenderer(
     return {
       ok: false,
       reason: "this browser did not provide a WebGL context, so the orb cannot be drawn",
+      noWebgl: true,
     };
   }
   // Rebound after the check so the type is non-null by construction rather than by control-flow

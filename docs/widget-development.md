@@ -3640,10 +3640,11 @@ reading its path until it is installed again. A snapshot sweeps `.tmp-*` and `.s
 the cache. Widget dev sessions remove the snapshots they made once nothing runs, waits on or can roll back to them:
 after each install, and at boot before any folder is watched again, including snapshots that fell off a session's
 list (`orphaned-snapshots.json` in the session store's folder). A snapshot is never removed while a build or an
-install is placing or reusing it: the snapshot holds it until its generation is recorded, or, for a session's newest
-build, until a newer build replaces it (`removeLocalSnapshot`); a snapshot taken while a removal runs waits for it and
-then copies the files again. Nothing else collects unused cache entries yet: a snapshot an ordinary install took, and
-git and npm artifacts, stay.
+install is placing or reusing it (`removeLocalSnapshot`). An install holds it until its generation is recorded, or
+until the install ends without one: it failed, was refused, or asks the person first. A session's newest build holds
+it until a newer build replaces it, the session stops, or the node closes. A snapshot taken while a removal runs waits
+for that removal to end, then puts its staged copy in place. Nothing else collects unused cache entries yet: a
+snapshot an ordinary install took, and git and npm artifacts, stay.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws
