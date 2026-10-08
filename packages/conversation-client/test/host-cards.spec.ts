@@ -144,7 +144,9 @@ describe("a reconnect card", () => {
     const attempts = findAll(element, "data-reconnect-attempts");
     expect(attempts[0]!.props["data-reconnect-attempts"]).toBe(3);
     expect(textOf(element)).toContain("2026-09-16T09:55:00.000Z");
-    expect(textOf(element)).toContain("reconnecting");
+    // In the reader's language, not the wire value.
+    expect(textOf(element)).toContain("đang kết nối lại");
+    expect(textOf(element)).not.toContain("reconnecting");
   });
 
   it("shows the reason when there is one", () => {

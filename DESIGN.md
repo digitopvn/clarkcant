@@ -835,6 +835,39 @@ Every widget must define:
 - read-only snapshot;
 - disabled action reason.
 
+Built-in miniapps read their own state machines through one shared status
+contract (`packages/contracts/src/surface-status.ts`). Each domain keeps its
+machine; the contract only decides how a state looks, whether it is said aloud,
+whether it can be retried, and whether it is still current.
+
+- **Phases.** `loading`, `empty`, `pending`, `needs-action`, `success`,
+  `partial`, `error`, `unavailable`, `cancelled`. One tone and one text mark per
+  phase, so `partial` is never green on one card and amber on the next, and no
+  state is told by colour alone. The mark is drawn by the stylesheet with an
+  empty alternative text; the badge's text is only the domain's own words.
+- **Never a failure as a success.** A task that reports success against
+  contradicting evidence is `error`; success without verified evidence is
+  `partial`. A state this build does not know is drawn plain, never guessed.
+- **Missing is not zero.** A value is `reported` (with its source, `official` or
+  `inferred`, and an as-of time), `unknown`, `unavailable` (with a reason) or
+  `unsupported`. A missing duration or metric is left out or said as unknown.
+- **Snapshot or live.** A host card is a snapshot and is never stale. A live
+  view carries `observedAt` and a stale window, and past it keeps what it showed
+  and says how old it is.
+- **Announcements.** What a press answered goes in a live region that exists
+  before the answer arrives: `error` is assertive, any other change of phase is
+  polite, and the same phase again, `loading`, or anything already on screen at
+  mount (a reload, a scroll back) is not announced.
+- **Late answers and retry (contract helpers, adopted surface by surface).**
+  The contract's `settleSurfaceStatus` drops an answer for an earlier attempt
+  and keeps the first outcome of an attempt, so neither a late "still working"
+  nor a later outcome replaces it; its `canRetry` offers a retry only for
+  `error` or `partial` when the domain names `retry` or `check-again`. No
+  built-in miniapp calls them yet: today's retries (press again on a task stop,
+  try again on a credential) and late answers on command-card rows still follow
+  each surface's own rules, and move onto these helpers as those surfaces are
+  reworked.
+
 ### 8.4 Local vs effect actions
 
 Local view actions don't need to ask:

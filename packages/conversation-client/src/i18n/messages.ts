@@ -21,6 +21,7 @@ import { MESSAGES_INTENTS_EN, MESSAGES_INTENTS_VI } from "./messages-intents.ts"
 import { MESSAGES_PROVIDERS_EN, MESSAGES_PROVIDERS_VI } from "./messages-providers.ts";
 import { MESSAGES_SETTINGS_VI, MESSAGES_SETTINGS_EN } from "./messages-settings.ts";
 import { MESSAGES_SHELL_EN, MESSAGES_SHELL_VI } from "./messages-shell.ts";
+import { MESSAGES_SURFACE_STATUS_EN, MESSAGES_SURFACE_STATUS_VI } from "./messages-surface-status.ts";
 import { MESSAGES_TIMELINE_EN, MESSAGES_TIMELINE_VI } from "./messages-timeline.ts";
 
 export const MESSAGES_VI = {
@@ -33,6 +34,7 @@ export const MESSAGES_VI = {
   ...MESSAGES_SETTINGS_VI,
   ...MESSAGES_SHELL_VI,
   ...MESSAGES_TIMELINE_VI,
+  ...MESSAGES_SURFACE_STATUS_VI,
   "settings.title": "Cài đặt",
   "settings.description": "Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại.",
   "settings.done": "Xong",
@@ -78,6 +80,7 @@ export const MESSAGES_EN = {
   ...MESSAGES_SETTINGS_EN,
   ...MESSAGES_SHELL_EN,
   ...MESSAGES_TIMELINE_EN,
+  ...MESSAGES_SURFACE_STATUS_EN,
   "settings.title": "Settings",
   "settings.description": "A few preferences. Everything else lives in the conversation.",
   "settings.done": "Done",

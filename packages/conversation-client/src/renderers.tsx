@@ -1639,7 +1639,15 @@ function Metrics({ props, dataset }: RendererProps): ReactElement {
               <li key={String(row.id ?? index)} className="cc-metric" data-metric={String(row.id ?? index)}>
                 <span className="cc-metric-label">{String(row.label ?? "")}</span>
                 <span className="cc-metric-value">
-                  {typeof value === "number" ? value : "—"}
+                  {/* The dash is for the eye; a screen reader hears that the figure is unknown, not a bare dash. */}
+                  {typeof value === "number" ? (
+                    value
+                  ) : (
+                    <span data-metric-unknown="true">
+                      <span aria-hidden="true">—</span>
+                      <span className="cc-sr-only">{t("widgets.metrics.unknown")}</span>
+                    </span>
+                  )}
                   {unit !== "" && typeof value === "number" ? <span className="cc-metric-unit">{unit}</span> : null}
                 </span>
                 {hint !== undefined && <span className="cc-metric-hint">{hint}</span>}
