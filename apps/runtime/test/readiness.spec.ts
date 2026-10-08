@@ -20,7 +20,8 @@ describe("what a node already has", () => {
   });
 
   it("does not count another provider's key as the TypeSafe key, because Jev cannot use it", () => {
-    expect(availableCredentials({ env: { OPENROUTER_API_KEY: "set" }, vault: [] })).toEqual([]);
+    // It may count as the OpenRouter decision provider's key, which is what that variable is; never as TypeSafe's.
+    expect(availableCredentials({ env: { OPENROUTER_API_KEY: "set" }, vault: [] })).not.toContain("typesafe");
   });
 
   it("reports names only, and only ones it knows how to look for", () => {

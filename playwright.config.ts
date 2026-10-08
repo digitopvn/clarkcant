@@ -165,6 +165,16 @@ export default defineConfig({
               GEMINI_API_KEY: "",
               TYPESAFE_API_KEY: "",
               OPENROUTER_API_KEY: "",
+              /*
+               * The decision provider's environment, blanked for the same reason: the decision provider journey asserts
+               * what the card says on a node that follows an environment naming no provider, no account id and no token.
+               * `CLARKCANT_JEV_ENABLED` is left alone, because a blank value there reads as switched off.
+               */
+              CLOUDFLARE_API_TOKEN: "",
+              CLOUDFLARE_ACCOUNT_ID: "",
+              CLARKCANT_DECISION_PROVIDER: "",
+              CLARKCANT_DECISION_MODEL: "",
+              CLARKCANT_JEV_LOCAL_ONLY: "",
             }),
         // Pass through the live-provider test flag if set, so the test endpoint is available.
         ...(process.env.CC_LIVE_PROVIDER_TEST === "1" ? { CC_LIVE_PROVIDER_TEST: "1" } : {}),

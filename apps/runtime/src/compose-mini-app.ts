@@ -30,7 +30,8 @@ import {
   listSnapshotsForMessage,
 } from "@clarkcant/storage";
 
-import { type DecisionProviderId, recordedDecisionProvider } from "./decision-provider.ts";
+import { currentDecisionConfig } from "./decision-config.ts";
+import type { DecisionProviderId } from "./decision-provider.ts";
 import {
   type DefinitionCandidate,
   type MiniAppCandidateSet,
@@ -43,6 +44,7 @@ import { type MiniAppDataDeps, type PublishedMiniAppData, publishMiniAppData } f
 import {
   type JevBudget,
   type JevDeps,
+  decidedByOf,
   selectSections,
   selectTemplate,
 } from "./jev-selector.ts";
@@ -764,8 +766,8 @@ async function chooseTemplate(
         ok: true,
         template: selected,
         mode: "jev",
-        model: jev.deps.config.model,
-        ...providerField(jev.deps.config),
+        // The provider and model the call itself used; with one candidate no call was made, and one reading names both.
+        ...(outcome.decidedBy ?? decidedByOf(currentDecisionConfig(jev.deps.config))),
         ...(outcome.confidence === undefined ? {} : { confidence: outcome.confidence }),
         ...(outcome.margin === undefined ? {} : { margin: outcome.margin }),
       };
@@ -930,10 +932,4 @@ function compileBindings(
 export function describeComposeOutcome(outcome: ComposeOutcome): string {
   if (!outcome.ok) return `${outcome.code}: ${outcome.message}`;
   return `${outcome.templateId} via ${outcome.selectorMode} (bundle ${outcome.bundleId})`;
-}
-
-/** The decision provider as a provenance field: present only when it is not the default. */
-function providerField(config: { provider?: DecisionProviderId | undefined }): { provider?: DecisionProviderId } {
-  const provider = recordedDecisionProvider(config);
-  return provider === undefined ? {} : { provider };
 }

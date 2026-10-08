@@ -1,4 +1,14 @@
-import { MAP_TILE_SECRET_CONSUMER, MAP_TILE_SECRET_NAME, mapTileKeyConsumer, mapTileOriginSchema, nowInstant } from "@clarkcant/contracts";
+import {
+  DECISION_CREDENTIAL_NAMES,
+  type DecisionProviderId,
+  HOST_OWNED_DECISION_CREDENTIALS,
+  MAP_TILE_SECRET_CONSUMER,
+  MAP_TILE_SECRET_NAME,
+  decisionCredentialConsumer,
+  mapTileKeyConsumer,
+  mapTileOriginSchema,
+  nowInstant,
+} from "@clarkcant/contracts";
 import {
   credentialNames,
   deleteCredential,
@@ -100,6 +110,14 @@ export function storeCredentialFields(
     if (name === MAP_TILE_SECRET_NAME || consumersOf(field.consumer).some(isMapTileConsumer)) {
       return { ok: false, code: "MAP_TILE_KEY_IN_SETTINGS", message: MAP_TILE_KEY_IN_SETTINGS };
     }
+    /*
+     * A decision provider's key under a host-owned name is entered on the decision provider's own card
+     * (`storeDecisionCredential`), which records the one consumer allowed to use it. A generic store could otherwise
+     * replace it, or plant a value there for the node to send as a bearer.
+     */
+    if (HOST_OWNED_DECISION_CREDENTIALS.includes(name)) {
+      return { ok: false, code: "DECISION_KEY_IN_SETTINGS", message: DECISION_KEY_IN_SETTINGS };
+    }
   }
   const at = nowInstant();
   for (const field of fields as CredentialFieldInput[]) {
@@ -180,5 +198,59 @@ export function removeMapTileKey(deps: Pick<CredentialVaultDeps, "db" | "ownerPr
     const value = deleteCredential(deps.db, deps.ownerPrincipalId, MAP_TILE_SECRET_NAME);
     const metadata = deleteSecretMetadata(deps.db, deps.ownerPrincipalId, MAP_TILE_SECRET_NAME);
     return { removed: value || metadata };
+  });
+}
+
+const DECISION_KEY_IN_SETTINGS =
+  "a decision provider's key is saved in its own card under Settings → AI & Routing → Decision provider (the node route PUT /decision-provider/credential), which records the one consumer allowed to use it; it is not stored here";
+
+/** The longest key a decision provider card accepts; every real provider key is far shorter. */
+const MAX_DECISION_KEY_LENGTH = 4_096;
+
+/**
+ * Store a decision provider's key a person typed, under that provider's own vault name.
+ *
+ * The name comes from the provider id, never from the request, so this can only ever write one of the three names the
+ * decision layer reads. The value is never echoed, counted or logged; the answer names the credential.
+ */
+export function storeDecisionCredential(
+  deps: CredentialVaultDeps,
+  input: { provider: DecisionProviderId; value: unknown },
+): { ok: true; name: string } | { ok: false; code: string; message: string } {
+  const value = typeof input.value === "string" ? input.value.trim() : "";
+  if (value === "" || value.length > MAX_DECISION_KEY_LENGTH) {
+    return { ok: false, code: "INVALID_SCHEMA", message: `the key must be between 1 and ${MAX_DECISION_KEY_LENGTH} characters` };
+  }
+  const name = DECISION_CREDENTIAL_NAMES[input.provider];
+  const at = nowInstant();
+  transaction(deps.db, () => {
+    putCredential(deps.db, { principalId: deps.ownerPrincipalId, name, value, at });
+    putSecretMetadata(deps.db, {
+      secretId: deps.newId("secret"),
+      principalId: deps.ownerPrincipalId,
+      name,
+      description: `Decision provider key (${input.provider}), sent only to that provider's fixed endpoint`,
+      kind: "api-key",
+      backend: "node-store",
+      backendRef: name,
+      allowedConsumers: [decisionCredentialConsumer(input.provider)],
+      injectionPolicy: "tool-only",
+      nodeId: deps.nodeId,
+      at,
+    });
+  });
+  return { ok: true, name };
+}
+
+/** Remove a decision provider's stored key, value and description together. Whether there was one is the answer. */
+export function removeDecisionCredential(
+  deps: Pick<CredentialVaultDeps, "db" | "ownerPrincipalId">,
+  provider: DecisionProviderId,
+): { removed: boolean; name: string } {
+  const name = DECISION_CREDENTIAL_NAMES[provider];
+  return transaction(deps.db, () => {
+    const value = deleteCredential(deps.db, deps.ownerPrincipalId, name);
+    const metadata = deleteSecretMetadata(deps.db, deps.ownerPrincipalId, name);
+    return { removed: value || metadata, name };
   });
 }

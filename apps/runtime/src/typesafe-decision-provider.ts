@@ -15,18 +15,20 @@ import { systemOneResponseSchema } from "./system-one-wire.ts";
 export const JEV_EXACT_MODEL = "jev-1.13.0";
 export const JEV_DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 
-/** Whether a model id is one of Cloudflare's, by name or by its Workers AI namespace. */
-function namesCloudflareModel(model: string): boolean {
-  return (CLOUDFLARE_DECISION_MODELS as readonly string[]).includes(model) || model.startsWith("@cf/");
+/** Whether a model id belongs to another provider: one of Cloudflare's, by name or namespace, or an OpenRouter slug. */
+function otherProviderOf(model: string): "cloudflare" | "openrouter" | undefined {
+  if ((CLOUDFLARE_DECISION_MODELS as readonly string[]).includes(model) || model.startsWith("@cf/")) return "cloudflare";
+  return model.includes("/") ? "openrouter" : undefined;
 }
 
 export const typesafeDecisionProvider: DecisionProvider = {
   id: "typesafe",
+  models: Object.freeze([JEV_EXACT_MODEL]),
   connection(env, stored) {
     // The key typed into the card wins when both exist, the rule every provider credential follows
     // (`provider-credential.ts`); the environment is the default for a node whose vault holds none.
     const apiKey = resolveProviderCredential({
-      stored: stored?.(),
+      stored: stored?.("typesafe"),
       env,
       variables: CREDENTIAL_VARIABLES["typesafe"] ?? [],
     }).value;
@@ -34,13 +36,14 @@ export const typesafeDecisionProvider: DecisionProvider = {
     const model = env.CLARKCANT_DECISION_MODEL?.trim() || env.CLARKCANT_JEV_MODEL?.trim() || JEV_EXACT_MODEL;
     const endpointCheck = validateProviderEndpoint(env.CLARKCANT_JEV_ENDPOINT?.trim() || JEV_DEFAULT_ENDPOINT);
     const endpoint = endpointCheck.ok ? endpointCheck.url : JEV_DEFAULT_ENDPOINT;
-    if (namesCloudflareModel(model)) {
+    const owner = otherProviderOf(model);
+    if (owner !== undefined) {
       // A model setting left over from selecting Cloudflare. Sending it would hand TypeSafe a request it can only
       // reject, so it is refused here, before anything leaves the node, naming the setting that caused it.
       return {
         apiKey,
         endpoint,
-        endpointRefusal: `the decision model ${model.slice(0, 64)} is a Cloudflare model, which TypeSafe does not serve; set CLARKCANT_DECISION_PROVIDER=cloudflare or unset CLARKCANT_DECISION_MODEL`,
+        endpointRefusal: `the decision model ${model.slice(0, 64)} is ${owner === "cloudflare" ? "a Cloudflare model" : "an OpenRouter model slug"}, which TypeSafe does not serve; set CLARKCANT_DECISION_PROVIDER=${owner} or unset CLARKCANT_DECISION_MODEL`,
         model,
       };
     }

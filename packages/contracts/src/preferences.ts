@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 
+import { DECISION_PROVIDER_PREFERENCE, decisionProviderPreferenceSchema } from "./decision-provider.ts";
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
 import { MAP_TILE_POLICY_PREFERENCE, mapTilePolicySchema } from "./map-view.ts";
 import { orbPalettePreferenceSchema } from "./orb-palette.ts";
@@ -765,6 +766,19 @@ export const PREFERENCE_REGISTRY = {
     default: { enabled: false, text: "" },
     schema: personalInstructionsPreferenceSchema,
     normalize: normalizePersonalInstructions,
+  },
+  /*
+   * Who fills the decision role on this node (`decision-provider.ts`), separate from the conversation model. `null`
+   * follows the node's environment (`CLARKCANT_DECISION_PROVIDER`). Read again for every decision, so a change applies
+   * from the next decision without a restart. Per node, because the credential it needs lives on the node. Written only
+   * by the person (`isPersonOnlyRoute`): it decides which third party a redacted intent is sent to.
+   */
+  [DECISION_PROVIDER_PREFERENCE]: {
+    key: DECISION_PROVIDER_PREFERENCE,
+    scope: "node",
+    applies: "immediate",
+    default: null,
+    schema: decisionProviderPreferenceSchema,
   },
   "voice.provider": {
     key: "voice.provider",

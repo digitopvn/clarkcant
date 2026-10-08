@@ -1,3 +1,5 @@
+import type { DecisionProviderId, DecisionProviderStatus } from "@clarkcant/contracts";
+
 /**
  * What a node says it already has.
  *
@@ -23,10 +25,17 @@ export type FirstRunStep = "welcome" | "provider" | "model" | "key";
  * The key step is about the TypeSafe key in particular, because that is the credential the interface itself can store.
  * If the node reports it, the step is skipped; a step that asked for something already present would be teaching people
  * to ignore the steps.
+ *
+ * The TypeSafe key is only needed while TypeSafe decides. When the node's decision provider (`GET /decision-provider`)
+ * is another provider and is ready, the key step is not asked: it would ask for a key nothing on this node would use.
  */
-export function firstRunSteps(readiness: NodeReadiness): FirstRunStep[] {
+export function firstRunSteps(
+  readiness: NodeReadiness,
+  decision?: { readonly provider: DecisionProviderId; readonly status: DecisionProviderStatus },
+): FirstRunStep[] {
   const steps: FirstRunStep[] = ["welcome"];
   if (!readiness.model) steps.push("provider", "model");
-  if (!readiness.credentials.includes("typesafe")) steps.push("key");
+  const anotherProviderDecides = decision !== undefined && decision.provider !== "typesafe" && decision.status === "ready";
+  if (!readiness.credentials.includes("typesafe") && !anotherProviderDecides) steps.push("key");
   return steps;
 }

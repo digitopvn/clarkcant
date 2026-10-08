@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { decisionConfigFromEnv } from "../src/decision-config.ts";
+import type { DecisionProviderSelection } from "@clarkcant/contracts";
+
+import { decisionConfigFromEnv, liveDecisionConfig } from "../src/decision-config.ts";
 import type { DecisionTransport } from "../src/decision-transport.ts";
 import {
   type DecideDeps,
@@ -20,8 +22,8 @@ import type { MiniAppCandidateSet } from "../src/mini-app-candidates.ts";
 /**
  * Changing the provider changes who answers, and nothing else.
  *
- * Each decision consumer is run twice with the same System One answer - once from TypeSafe, once from Cloudflare in
- * its envelope - and once more with each provider failing. The outcomes must match apart from the model id they name,
+ * Each decision consumer is run with the same System One answer from each provider - TypeSafe bare, Cloudflare in its
+ * envelope, OpenRouter with its own extra fields and a dated snapshot id - and once more with each provider failing. The outcomes must match apart from the model id they name,
  * and the request each provider received must carry the same redacted state and the same offered options. That is
  * the property that keeps a second provider from widening authority or skipping a redaction step: the policy and the
  * payload are built once, before any adapter sees them.
@@ -34,8 +36,15 @@ const CLOUDFLARE_ENV: NodeJS.ProcessEnv = {
   CLOUDFLARE_API_TOKEN: "cf-test-token-not-a-real-one",
   CLARKCANT_DECISION_MODEL: "clef-flash",
 };
+const OPENROUTER_ENV: NodeJS.ProcessEnv = {
+  CLARKCANT_DECISION_PROVIDER: "openrouter",
+  CLARKCANT_DECISION_MODEL: "typesafe/jev-1.13",
+  OPENROUTER_API_KEY: "or-test-key-not-a-real-one",
+};
 
-type Provider = "typesafe" | "cloudflare";
+const ACCOUNT = "0123456789abcdef0123456789abcdef";
+
+type Provider = "typesafe" | "cloudflare" | "openrouter";
 
 interface Seen {
   state: unknown;
@@ -63,13 +72,19 @@ function answering(provider: Provider, model: string, seen: Seen[], status = 200
       const probabilities = Object.fromEntries([[chosen, 0.95], ...rest.map((option) => [option, 0.05 / rest.length])]);
       answers[id] = { type: "choice", choice: chosen, probabilities, confidence: 0.95 };
     }
-    const result = { model, answers, usage: { input_tokens: 10, output_tokens: 2 } };
+    // OpenRouter answers an unversioned slug with the dated snapshot that served it, and adds fields of its own.
+    const result =
+      provider === "openrouter"
+        ? { id: "gen-dec-test", model: `${model}-20260917`, provider: "TypeSafe", answers, usage: { input_tokens: 10, output_tokens: 2, cost: 0 } }
+        : { model, answers, usage: { input_tokens: 10, output_tokens: 2 } };
     return { status: 200, body: provider === "cloudflare" ? { success: true, errors: [], messages: [], result } : result };
   };
 }
 
 function depsFor(provider: Provider, seen: Seen[], status?: number): DecideDeps {
-  const config = decisionConfigFromEnv(provider === "cloudflare" ? CLOUDFLARE_ENV : TYPESAFE_ENV);
+  const config = decisionConfigFromEnv(
+    provider === "cloudflare" ? CLOUDFLARE_ENV : provider === "openrouter" ? OPENROUTER_ENV : TYPESAFE_ENV,
+  );
   return { jev: { config, transport: answering(provider, config.model, seen, status) }, budget: () => createJevBudget(config) };
 }
 
@@ -143,10 +158,10 @@ const CONSUMERS: Record<string, (deps: DecideDeps) => Promise<unknown>> = {
     }),
 };
 
-/** The outcome without the model id, which is the one field that is supposed to differ. */
+/** The outcome without who answered (model and provider), which is the one thing that is supposed to differ. */
 function withoutModel(outcome: unknown): unknown {
   if (outcome === null || typeof outcome !== "object") return outcome;
-  const { model: _model, probedAt: _probedAt, ...rest } = outcome as Record<string, unknown>;
+  const { model: _model, provider: _provider, decidedBy: _decidedBy, probedAt: _probedAt, ...rest } = outcome as Record<string, unknown>;
   return rest;
 }
 
@@ -155,20 +170,51 @@ describe("decision consumers behave the same whichever provider answers", () => 
     it(`${name}: same outcome and same redacted payload`, async () => {
       const typesafeSeen: Seen[] = [];
       const cloudflareSeen: Seen[] = [];
+      const openrouterSeen: Seen[] = [];
       const typesafe = await run(depsFor("typesafe", typesafeSeen));
       const cloudflare = await run(depsFor("cloudflare", cloudflareSeen));
+      const openrouter = await run(depsFor("openrouter", openrouterSeen));
 
       expect(typesafeSeen.length).toBeGreaterThan(0);
       expect(withoutModel(cloudflare)).toEqual(withoutModel(typesafe));
+      expect(withoutModel(openrouter)).toEqual(withoutModel(typesafe));
       expect(cloudflareSeen).toEqual(typesafeSeen);
-      expect(JSON.stringify(cloudflareSeen)).not.toContain("sk-live-abcdef1234567890");
-      expect(JSON.stringify(cloudflareSeen)).not.toContain("an.nguyen@example.com");
+      expect(openrouterSeen).toEqual(typesafeSeen);
+      for (const seen of [cloudflareSeen, openrouterSeen]) {
+        expect(JSON.stringify(seen)).not.toContain("sk-live-abcdef1234567890");
+        expect(JSON.stringify(seen)).not.toContain("an.nguyen@example.com");
+      }
+    });
+
+    it(`${name}: names the provider that answered when the person switches during the decision`, async () => {
+      // Cloudflare is chosen when the decision starts; the person switches to TypeSafe while the first call is in flight.
+      let selection: DecisionProviderSelection | null = { provider: "cloudflare", model: "clef-flash", accountId: ACCOUNT };
+      const config = liveDecisionConfig({ TYPESAFE_API_KEY: "ts-key", CLOUDFLARE_API_TOKEN: "cf-key" }, undefined, {}, () => selection);
+      const hosts: string[] = [];
+      const cloudflare = answering("cloudflare", "clef-flash", []);
+      const typesafe = answering("typesafe", "jev-1.13.0", []);
+      const transport: DecisionTransport = async (request) => {
+        hosts.push(new URL(request.url).host);
+        selection = { provider: "typesafe" };
+        return new URL(request.url).host === "api.cloudflare.com" ? cloudflare(request) : typesafe(request);
+      };
+      const outcome = await run({ jev: { config, transport }, budget: () => createJevBudget(config) });
+
+      expect(hosts[0]).toBe("api.cloudflare.com");
+      if (typeof outcome !== "object" || outcome === null) return;
+      const recorded = outcome as { model?: string; provider?: string; decidedBy?: { model: string; provider?: string } };
+      const named = recorded.decidedBy ?? (recorded.model === undefined ? undefined : recorded);
+      // Every consumer that names who decided names the provider whose call decided, never the one chosen afterwards.
+      if (named !== undefined) expect(named).toMatchObject({ model: "clef-flash", provider: "cloudflare" });
+      expect(JSON.stringify(outcome)).not.toContain("jev-1.13.0");
     });
 
     it(`${name}: same fallback when the provider fails`, async () => {
       const typesafe = await run(depsFor("typesafe", [], 503));
       const cloudflare = await run(depsFor("cloudflare", [], 503));
+      const openrouter = await run(depsFor("openrouter", [], 503));
       expect(withoutModel(cloudflare)).toEqual(withoutModel(typesafe));
+      expect(withoutModel(openrouter)).toEqual(withoutModel(typesafe));
     });
   }
 });
