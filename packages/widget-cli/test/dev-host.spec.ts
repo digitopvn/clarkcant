@@ -9,13 +9,14 @@ import { catalogEntry } from "@clarkcant/widget-catalog";
 
 import { runCli } from "../src/cli.ts";
 import { createDevArtifactBroker, readFixtureFiles, type DevFixtureFile } from "../src/dev-artifacts.ts";
-import { startDevHost } from "../src/dev-host.ts";
+import { refusedRequest, startDevHost } from "../src/dev-host.ts";
 import { serviceStatus } from "../src/service-simulator.ts";
 import {
   DEV_VIEWPORTS,
   applyShellAction,
   auditFrame,
   initialState,
+  parseShellAction,
   renderShell,
   shellAttributes,
   type DevShellState,
@@ -448,6 +449,40 @@ describe("the dev host server", () => {
     }
   });
 
+  it("refuses JSON that names no shell control, and keeps answering for the state", async () => {
+    const { url, stop, host } = await started();
+    try {
+      host.apply({ kind: "viewport", value: "compact" });
+      const bodies = [{}, null, [], { kind: "not-a-control", value: "x" }, { kind: "viewport", value: { nested: true } }, { kind: "fixture", value: "default", reason: 3 }];
+      for (const body of bodies) {
+        const response = await fetch(`${url}dev/api/action`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        expect(response.status, JSON.stringify(body)).toBe(400);
+      }
+      // A bad action once left no state behind, and the next read of it took the whole dev host down.
+      expect(host.state().viewport).toBe("compact");
+      const state = await fetch(`${url}dev/api/state`);
+      expect(state.status).toBe(200);
+      expect(((await state.json()) as DevShellState).viewport).toBe("compact");
+    } finally {
+      await stop();
+    }
+  });
+
+  it("parses a shell control without a value, as the service-readiness control sends it", () => {
+    expect(parseShellAction({ kind: "service-readiness", capabilityRef: "x@1", status: "ready", reason: "" })).toEqual({
+      kind: "service-readiness",
+      value: "",
+      capabilityRef: "x@1",
+      status: "ready",
+      reason: "",
+    });
+    expect(parseShellAction({ kind: "service-restart", value: true })).toEqual({ kind: "service-restart", value: true });
+  });
+
   it("inspects bounded semantic proposals and refuses a forged frame nonce", async () => {
     const { url, stop } = await started();
     try {
@@ -665,6 +700,60 @@ describe("the dev host server", () => {
     }
   });
 
+  it("answers to the bare loopback names on port 80, where a browser leaves the port out", () => {
+    const at = (port: number, headers: Record<string, string>, method = "GET") => refusedRequest({ headers, method, socket: { localPort: port } });
+    expect(at(80, { host: "127.0.0.1" })).toBeUndefined();
+    expect(at(80, { host: "localhost" })).toBeUndefined();
+    expect(at(80, { host: "127.0.0.1:80" })).toBeUndefined();
+    expect(at(80, { host: "localhost", origin: "http://localhost" }, "POST")).toBeUndefined();
+    expect(at(80, { host: "attacker.test" })).toBeDefined();
+    expect(at(80, { host: "localhost", origin: "http://attacker.test" }, "POST")).toBeDefined();
+    // Any other port still has to be named: a bare name is the default port, which is another server's.
+    expect(at(5173, { host: "127.0.0.1" })).toBeDefined();
+    expect(at(5173, { host: "127.0.0.1:5173" })).toBeUndefined();
+  });
+
+  /*
+   * The frame is sandboxed, so its module requests carry `Origin: null`, and so does a website's own sandboxed
+   * iframe: the origin cannot tell them apart. The nonce in the path can. Each answer below is what a page that does
+   * not know the nonce gets, with the headers a browser's module request carries.
+   */
+  it("serves Vite's modules only under the frame's nonce, so another website reads no file through them", async () => {
+    const { url, stop } = await started();
+    try {
+      const nonce = ((await (await fetch(`${url}dev/api/state`)).json()) as { bridgeNonce: string }).bridgeNonce;
+      const frame = { origin: "null", "sec-fetch-dest": "script" };
+      // The frame's own runtime, which also starts Vite: its imports are rewritten under the nonce prefix.
+      const runtime = await fetch(`${url}dev/frame/${nonce}/widget-runtime.js`, { headers: frame });
+      const code = await runtime.text();
+      expect(runtime.status).toBe(200);
+      expect(runtime.headers.get("access-control-allow-origin")).toBe("null");
+      const imported = [...code.matchAll(/from\s+["'](\/[^"']+)["']/g)].map((match) => match[1] ?? "");
+      expect(imported.length).toBeGreaterThan(0);
+      for (const path of imported) expect(path.startsWith(`/dev/modules/${nonce}/`), path).toBe(true);
+      const dependency = await fetch(new URL(imported[0] ?? "", url), { headers: frame });
+      expect(dependency.status).toBe(200);
+      expect(dependency.headers.get("access-control-allow-origin")).toBe("null");
+
+      const repository = process.cwd().replaceAll("\\", "/");
+      for (const origin of ["https://attacker.test", "null"]) {
+        for (const path of [`/@fs/${repository}/pnpm-workspace.yaml`, "/@id/@vite/client", "/@vite/client", "/src/dev-frame-runtime.ts"]) {
+          const answer = await fetch(new URL(path, url), { headers: { origin, "sec-fetch-dest": "script" } });
+          const body = await answer.text();
+          expect(answer.headers.get("access-control-allow-origin"), `${origin} ${path}`).toBeNull();
+          expect(answer.status, `${origin} ${path}`).not.toBe(200);
+          expect(body, `${origin} ${path}`).not.toContain("wsToken");
+        }
+      }
+
+      // Under the nonce, Vite still reads only what a frame imports: the workspace packages, not the repository.
+      const outside = await fetch(new URL(`/dev/modules/${nonce}/@fs/${repository}/AGENTS.md`, url), { headers: frame });
+      expect(outside.status).toBe(403);
+    } finally {
+      await stop();
+    }
+  });
+
   it("refuses to start for a directory that is not a widget package", async () => {
     const empty = mkdtempSync(join(tmpdir(), "clark-devhost-empty-"));
     created.push(empty);
@@ -735,12 +824,33 @@ describe("the dev host serving a catalog widget", () => {
       // The module the frame loads. Serving it is what makes the preview the production renderer rather than a
       // second implementation of it, so this is the assertion the option rests on. `Sec-Fetch-Dest` is what a
       // browser's own module request carries and a bare fetch does not, and Vite answers only the former.
-      const response = await fetch(`${url}src/catalog-runtime.tsx`, { headers: { "sec-fetch-dest": "script" } });
+      const page = await (await fetch(`${url}catalog-runtime.html`)).text();
+      const moduleUrl = /<script type="module" src="([^"]+)"><\/script>/.exec(page)?.[1] ?? "";
+      expect(moduleUrl).toMatch(/^\/dev\/modules\/[0-9a-f]{32}\/src\/catalog-runtime\.tsx$/);
+      const response = await fetch(new URL(moduleUrl, url), { headers: { origin: "null", "sec-fetch-dest": "script" } });
       const code = await response.text();
 
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toContain("javascript");
+      expect(response.headers.get("access-control-allow-origin")).toBe("null");
       expect(code).toContain("WidgetPreview");
+    } finally {
+      await stop();
+    }
+  });
+
+  it("hands Vite no module path without the frame's nonce, so another website reads no source", async () => {
+    const { url, stop } = await started("canvas.note@1");
+    try {
+      const repository = process.cwd().replaceAll("\\", "/");
+      for (const origin of ["https://attacker.test", "null"]) {
+        for (const path of ["/src/catalog-runtime.tsx", `/@fs/${repository}/pnpm-workspace.yaml`, "/@vite/client"]) {
+          const answer = await fetch(new URL(path, url), { headers: { origin, "sec-fetch-dest": "script" } });
+          await answer.text();
+          expect(answer.headers.get("access-control-allow-origin"), `${origin} ${path}`).toBeNull();
+          expect(answer.status, `${origin} ${path}`).toBe(404);
+        }
+      }
     } finally {
       await stop();
     }
