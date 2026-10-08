@@ -12,7 +12,7 @@ import { chipsAfterAnswer, readyAttachmentIds, readyChipIds, type AttachmentChip
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
-import { followScrollBehavior, followsBottom, stillFollowsBottom } from "./follow-bottom.ts";
+import { followScrollBehavior, followsBottom, reportScroll, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -162,10 +162,10 @@ export function useTurnSend({
    */
   const followBottom = useRef(true);
   /** Where the view was when the last scroll event was read, so a scroll not yet reported is not overruled. */
-  const reportedTop = useRef(0);
+  const reported = useRef<ScrollReport>({ top: 0, layout: 0 });
   const followsBottomNow = useCallback((): boolean => {
     const node = scroller.current;
-    if (node !== null && !stillFollowsBottom(followBottom.current, reportedTop.current, node.scrollTop)) followBottom.current = false;
+    if (node !== null && !stillFollowsBottom(followBottom.current, reported.current, node)) followBottom.current = false;
     return followBottom.current;
   }, []);
   /**
@@ -197,7 +197,7 @@ export function useTurnSend({
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
-      reportedTop.current = node.scrollTop;
+      reported.current = reportScroll(node);
       followBottom.current = followsBottom({
         scrollHeight: node.scrollHeight,
         scrollTop: node.scrollTop,
@@ -250,7 +250,7 @@ export function useTurnSend({
       setPendingUser({ text: trimmed });
       // Sending is a decision to be at the newest turn, whatever the view was doing before it.
       followBottom.current = true;
-      reportedTop.current = scroller.current?.scrollTop ?? 0;
+      if (scroller.current !== null) reported.current = reportScroll(scroller.current);
       setLive([]);
       beginHeroExit();
       const generation = sessionGeneration.current;

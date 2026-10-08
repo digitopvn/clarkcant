@@ -596,7 +596,31 @@ test("an answer drawn before the browser reports a scroll up does not take the r
   // A browser reports a scroll on its next frame, so an answer can be drawn between a scroll and its report: what a
   // reader's scroll up, or a `scrollIntoView` before a press, looks like when the answer lands in that gap. The report
   // is held back here until the answer is drawn.
-  await scroller(page).evaluate((node) => {
+  await holdScrollReports(page);
+  await scroller(page).evaluate((node) => node.scrollTo({ top: node.scrollTop - 900, behavior: "instant" }));
+  const reading = await rowBeingRead(page);
+  release();
+  await expect.poll(() => answered).toBe(true);
+  await expect(page.locator('[data-tool-name="decide_approval"]').last()).toBeAttached({ timeout: 20_000 });
+  await settle(page);
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+
+  // Once the scroll is reported, the answer counts as arrived below the reader, so the way back to it is offered.
+  await releaseScrollReports(page);
+  await expect(page.locator("[data-jump-latest]")).toBeVisible();
+});
+
+/** How far the view is above the bottom of the transcript. */
+async function distanceToBottom(page: Page): Promise<number> {
+  return scroller(page).evaluate((node) => Math.max(0, node.scrollHeight - node.scrollTop - node.clientHeight));
+}
+
+/**
+ * Hold back every scroll report until `releaseScrollReports`: a browser reports a scroll on its next frame, and this is
+ * what a page looks like when something is drawn inside that gap.
+ */
+async function holdScrollReports(page: Page): Promise<void> {
+  await page.evaluate(() => {
     // SAFETY: a switch this spec reads; nothing in the application reads it.
     const holder = window as unknown as { __holdScrollReports?: boolean };
     holder.__holdScrollReports = true;
@@ -607,22 +631,106 @@ test("an answer drawn before the browser reports a scroll up does not take the r
       },
       { capture: true },
     );
-    node.scrollTo({ top: node.scrollTop - 900, behavior: "instant" });
   });
-  const reading = await rowBeingRead(page);
-  release();
-  await expect.poll(() => answered).toBe(true);
-  await expect(page.locator('[data-tool-name="decide_approval"]').last()).toBeAttached({ timeout: 20_000 });
-  await settle(page);
-  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+}
 
-  // Once the scroll is reported, the answer counts as arrived below the reader, so the way back to it is offered.
+async function releaseScrollReports(page: Page): Promise<void> {
   await scroller(page).evaluate((node) => {
     (window as unknown as { __holdScrollReports?: boolean }).__holdScrollReports = false;
     node.dispatchEvent(new Event("scroll"));
   });
-  await expect(page.locator("[data-jump-latest]")).toBeVisible();
+}
+
+/**
+ * Collapse the rows just above the screen, at least 200px of them, as folds closing or pictures failing to load would,
+ * and return how far that moved the view up: the transcript keeps the row being read in place, so the view goes up with
+ * what shrank.
+ */
+async function collapseRowsAbove(page: Page): Promise<number> {
+  const before = await scroller(page).evaluate((node) => node.scrollTop);
+  const collapsed = await scroller(page).evaluate((node) => {
+    const top = node.getBoundingClientRect().top;
+    const above = [...node.querySelectorAll<HTMLElement>("[data-row-id]")].filter((slot) => slot.getBoundingClientRect().bottom <= top);
+    let height = 0;
+    for (const slot of above.reverse()) {
+      const content = slot.querySelector<HTMLElement>(".cc-row");
+      if (content === null) continue;
+      height += content.getBoundingClientRect().height;
+      content.style.display = "none";
+      if (height >= 200) break;
+    }
+    return height;
+  });
+  expect(collapsed).toBeGreaterThanOrEqual(200);
+  await settle(page);
+  return before - (await scroller(page).evaluate((node) => node.scrollTop));
+}
+
+test("rows above the screen collapsing while a reply arrives do not stop the transcript following it", async ({ page }) => {
+  const { conversationId } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  await startReply(page);
+
+  // The rows above collapse, and the reply goes on, before the browser reports the moves that kept the row being read in
+  // place. Those moves are the transcript's, not the reader's: the reader never left the bottom.
+  await holdScrollReports(page);
+  expect(await collapseRowsAbove(page)).toBeGreaterThan(48);
+  await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  for (const marker of ["đoạn một", "đoạn hai", "đoạn ba", "đoạn bốn"]) {
+    await growReply(page, marker);
+    await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  }
+
+  // Once the moves are reported, the reader is still following: the reply keeps being followed as it grows.
+  await releaseScrollReports(page);
+  await growReply(page, "đoạn năm");
+  await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
 });
+
+test("a reader who scrolls up while rows above collapse is not taken back down", async ({ page }) => {
+  const { conversationId } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  await startReply(page);
+
+  // The same layout moves, then the reader's own scroll up on top of them, none of it reported when the reply grows.
+  await holdScrollReports(page);
+  expect(await collapseRowsAbove(page)).toBeGreaterThan(48);
+  for (const marker of ["đoạn một", "đoạn hai", "đoạn ba"]) {
+    await growReply(page, marker);
+    await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+  }
+  await scroller(page).evaluate((node) => node.scrollTo({ top: node.scrollTop - 300, behavior: "instant" }));
+  const reading = await rowBeingRead(page);
+  await growReply(page, "đoạn bốn");
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+
+  // Reported, the scroll up still stands: more of the reply does not take the reader down either.
+  await releaseScrollReports(page);
+  await growReply(page, "đoạn năm");
+  expect(Math.abs((await topOf(page, reading.id)) - reading.top)).toBeLessThanOrEqual(2);
+});
+
+/** Send a question and let the reply start, with the reader following it at the bottom. */
+async function startReply(page: Page): Promise<void> {
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await composer.fill("một câu hỏi mới");
+  await composer.press("Enter");
+  await frame(page, "delta", { text: "Bắt đầu trả lời." });
+  await expect(page.locator("[data-live]")).toBeVisible();
+  await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+}
+
+/** Several lines more of the streamed reply, drawn. */
+async function growReply(page: Page, marker: string): Promise<void> {
+  await frame(page, "delta", { text: ` ${marker}: ${"Một dòng nữa của câu trả lời đang được viết ra. ".repeat(12)}` });
+  await expect(page.locator("[data-live]")).toContainText(marker);
+  await settle(page);
+}
 
 /*
  * Pictures in a long conversation.
