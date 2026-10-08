@@ -868,7 +868,7 @@ describe("a widget dev session", () => {
     await services.widgetDev.resume();
 
     const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
-    expect(views.find((view) => view.sessionId === chosen.sessionId)).toMatchObject({ status: "stopped", stopReason: "root-refused" });
+    expect(views.find((view) => view.sessionId === chosen.sessionId)).toMatchObject({ status: "stopped", stopReason: "root-refused", stopCode: "ROOT_NOT_OWNED" });
     const card = services.widgetDev.folderCard({ locale: "en" });
     const row = card.rows.find((candidate) => candidate.rowId === `session:${chosen.sessionId}`);
     expect(row?.note).toContain("Press Develop again to choose the folder again");
@@ -877,8 +877,14 @@ describe("a widget dev session", () => {
       "Bấm Phát triển lại để chọn lại thư mục",
     );
 
-    // That press, the person's own start, chooses the folder now at the path.
-    session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    // That press, the person's own start, chooses the folder now at the path, and the stop and its code are gone.
+    const again = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    expect(again).toMatchObject({ sessionId: chosen.sessionId, status: "live" });
+    expect(again.stopReason).toBeUndefined();
+    expect(again.stopCode).toBeUndefined();
+    const restarted = readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === chosen.sessionId);
+    expect(restarted?.stopReason).toBeUndefined();
+    expect(restarted?.stopCode).toBeUndefined();
     expect(services.widgetDev.chosen()).toEqual([elsewhere]);
   });
 
@@ -1345,9 +1351,15 @@ describe("a widget dev session", () => {
     await services.widgetDev.resume();
 
     const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
-    expect(views.find((view) => view.sessionId === "wdev_clark")).toMatchObject({ status: "stopped", stopReason: "root-refused" });
-    expect(views.find((view) => view.sessionId === "wdev_data")).toMatchObject({ status: "stopped", stopReason: "root-refused" });
+    expect(views.find((view) => view.sessionId === "wdev_clark")).toMatchObject({ status: "stopped", stopReason: "root-refused", stopCode: "ROOT_NOT_OWNED" });
+    expect(views.find((view) => view.sessionId === "wdev_data")).toMatchObject({ status: "stopped", stopReason: "root-refused", stopCode: "ROOT_IN_DATA_FOLDER" });
     expect(views.find((view) => view.sessionId === "wdev_person")).toMatchObject({ status: "live" });
+    // Choosing the data folder again is refused too, so its row says to copy the project and offers no button that could only fail.
+    const rows = services.widgetDev.folderCard({ locale: "en" }).rows;
+    const dataRow = rows.find((row) => row.rowId === "session:wdev_data");
+    expect(dataRow?.note).toContain("choosing it again is refused too");
+    expect(dataRow?.actions).toEqual([]);
+    expect(rows.find((row) => row.rowId === "session:wdev_clark")?.note).toContain("Press Develop again to choose the folder again");
   });
 
   it("stops as folder-gone, rather than building again, when the folder is deleted before a rebuild", async () => {

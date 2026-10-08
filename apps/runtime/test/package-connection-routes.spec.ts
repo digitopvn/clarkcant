@@ -220,6 +220,45 @@ describe("the connection routes", () => {
     expect(rows("package_connections").n).toBe(0);
   });
 
+  it("revoke the account at the provider on uninstall even when the package's record of skipped facets cannot be read", async () => {
+    const started = await call("POST", CONNECTION, { headers: { host: "127.0.0.1:7777" } });
+    const consent = await fetch(String(body(started)["authorizationUrl"]), { redirect: "manual" });
+    const query = Object.fromEntries(new URL(consent.headers.get("location") ?? "").searchParams.entries());
+    expect((await call("GET", CALLBACK, { query, token: false })).status).toBe(200);
+    // The tokens the provider still accepts.
+    const accepted = async () => {
+      const live: string[] = [];
+      for (const secret of connector.secrets()) {
+        const me = await fetch(`${connector.origin}/api/me`, { headers: { authorization: `Bearer ${secret}` } });
+        if (me.status === 200) live.push(secret);
+      }
+      return live;
+    };
+    expect(await accepted()).not.toEqual([]);
+
+    services.runtime.db.prepare("UPDATE package_generations SET document = json_set(document, '$.skippedFacets', 'tools')").run();
+    // Every other reader still holds the package back: no status, no new connection.
+    const unread = await call("GET", CONNECTION);
+    expect(unread.status).toBe(409);
+    expect(body(unread)["code"]).toBe("MANIFEST_UNREADABLE");
+    expect((await call("POST", CONNECTION, { headers: { host: "127.0.0.1:7777" } })).status).toBe(409);
+    const listed = (await call("GET", "/packages")).body as { packages: { packageId: string; skippedFacets?: unknown }[] };
+    expect(listed.packages.find((entry) => entry.packageId === PACKAGE_ID)?.skippedFacets).toBe("unreadable");
+
+    const tool = createManagePackageTool({
+      packages: packageInstallDepsOf(services),
+      connections: services.connections,
+      conversationId: "conv_connection_routes",
+      channel: () => "chat",
+    });
+    const answer = await tool.execute({ action: "uninstall", packageId: PACKAGE_ID });
+    expect(answer.text).toContain(`Đã gỡ ${PACKAGE_ID}`);
+    expect(await accepted()).toEqual([]);
+    const rows = (table: string) => services.runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+    expect(rows("package_connection_tokens").n).toBe(0);
+    expect(rows("package_connections").n).toBe(0);
+  });
+
   it("keep status and revoke behind the node's token", async () => {
     expect((await call("GET", CONNECTION, { token: false })).status).toBe(401);
     expect((await call("POST", `${CONNECTION}/revoke`, { token: false })).status).toBe(401);

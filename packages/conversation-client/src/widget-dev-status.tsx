@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 
-import { WIDGET_DEV_DIAGNOSTIC_CODES, type WidgetDevSessionView } from "@clarkcant/contracts";
+import { WIDGET_DEV_DIAGNOSTIC_CODES, widgetDevRootRefusedCode, type WidgetDevSessionView } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
@@ -62,7 +62,14 @@ export function widgetDevStatusLine(view: WidgetDevSessionView, t: Translate): {
   const latest = view.latest?.generation ?? running ?? 0;
   if (view.status === "stopped") {
     const base = running === undefined ? t("shell.dev.stoppedNothing") : fill(t("shell.dev.stopped"), { generation: running });
-    const reason = view.stopReason === undefined || view.stopReason === "requested" ? undefined : t(`shell.dev.stopReason.${view.stopReason}`);
+    // A folder refused at a restart says which check refused it, since that decides whether choosing it again helps.
+    const refusedCode = widgetDevRootRefusedCode(view);
+    const reason =
+      view.stopReason === undefined || view.stopReason === "requested"
+        ? undefined
+        : refusedCode === undefined
+          ? t(`shell.dev.stopReason.${view.stopReason}`)
+          : t(`shell.dev.stopReason.root-refused.${refusedCode}`);
     return reason === undefined ? { text: base, notice: false } : { text: `${base} ${reason}`, notice: true };
   }
   const shown = running ?? "—";

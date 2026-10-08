@@ -891,7 +891,7 @@ and shown in the conversation in the production widget frame. Shapes are `widget
 |---|---|
 | `POST /widget-dev/sessions` `{ "root", "conversationId"?, "widgetId"? }` | Start watching `root` (an absolute path on the node). Answers `201` with the session once its first build ran and was activated as far as the policy allows. With `conversationId`, the widget is placed there (pinned open) once a generation runs. Starting a folder that has a stopped session picks that session up again. |
 | `GET /widget-dev/sessions` | `{ sessions: [...] }`. |
-| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` or `root-refused`). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
+| `GET /widget-dev/sessions/:id` | One session: `latest` (newest good build), `running` (the generation the node runs), `activation` (`active`, `awaiting-approval` with `approvalId`, `refused` with `code` and `message`, or `none`), `lastBuild` (with `diagnostics` when it failed), `showingLastKnownGood`, `placed`, and for a stopped session `stopReason` (`requested`, `watch-failed`, `folder-gone`, `capacity` or `root-refused`, which may carry `stopCode`; see below). Reading changes nothing: it neither builds, installs nor follows an answer. The session follows an answer from the inbox on its own within about two seconds. |
 | `DELETE /widget-dev/sessions/:id` | Stop watching (`stopReason: "requested"`). The running generation stays installed and keeps rendering where it was placed. |
 | `POST /widget-dev/sessions/:id/rebuild` | Build the folder now. `409 SESSION_STOPPED` for a stopped session. |
 | `POST /widget-dev/sessions/:id/place` `{ "conversationId", "widgetId"? }` | Place the running widget in a conversation. |
@@ -926,19 +926,24 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   file id (`chosenFolderId` in the session store). If that path later leads somewhere else (the folder was replaced by
   a link or junction, moved or removed), or holds another folder (one made there after the chosen one went), the choice
   no longer counts, so neither a swapped link nor a folder made in its place can widen it (within the limit of the
-  folder id, below). It is still listed, as not
-  found, so the person can forget it; if that same folder comes back at that path (moved back), the choice counts
-  again. A choice stored before folder ids were kept has none: it takes the id of the folder found at its path the
-  first time one is, and from then on is held to that folder. A new folder at the path is chosen when the person starts
-  it themselves, which records its id (also for a session still live there).
+  folder id, below). It is still listed, as not found, so the person can forget it; if that same folder comes back at
+  that path (moved back), the choice counts again. A choice stored before folder ids were kept has none: it takes the
+  id of the folder found at its path the first time one is, and from then on is held to that folder. A new folder at
+  the path is chosen when the person starts it themselves, which records its id (also for a session still live there).
 - **Limit of the folder id.** The id tells folders apart only while the filesystem does not give a later folder the
-  same one. NTFS (Windows) gives a folder made again a new id. Linux filesystems such as ext4 can give a folder deleted
-  (not moved) and made again at once at the same path the id the deleted one had, and then it counts as the chosen
-  folder. The node holds a watched folder open on Linux and macOS, so this cannot happen while a session watches it;
-  it can between sessions or while the node is stopped. No second signal is added: a folder's birth time is no finer
-  than the filesystem's clock tick (on ext4 a folder deleted and made again within one tick has the same id and birth
-  time), and where it cannot be read Node reports the change time, which moves with every file added or removed. Forget
-  a folder before deleting it if another folder made there must not inherit the choice.
+  same one. NTFS (Windows) gives a folder made again a new id. Some filesystems can give a folder deleted (not moved)
+  and made again at the same path the id the deleted one had, and then it counts as the chosen folder:
+  - Linux filesystems such as ext4 can hand a freed file id back at any later time, not only at once: for example to a
+    fresh `git clone` into the same path the next day. The node holds a watched folder open on Linux and macOS, so this
+    cannot happen while a session watches it; it can between sessions or while the node is stopped.
+  - On Windows, FAT32 and exFAT drives (such as USB sticks) keep no lasting file id, so a folder made again at the same
+    path can get the same id. Nothing holds a folder open on Windows, so this can happen even while a session watches
+    it.
+
+  No second signal is added: a folder's birth time is no finer than the filesystem's clock tick (on ext4 a folder
+  deleted and made again within one tick has the same id and birth time), and where it cannot be read Node reports the
+  change time, which moves with every file added or removed. Forget a folder before deleting it if another folder made
+  there must not inherit the choice.
 - The person takes a choice back with `POST /widget-dev/chosen-folders/forget`, the **Forget** button on the card
   `/develop forget` answers with, or the same card Clark shows when asked in words (`develop_widget` action
   `folders`). Forgetting does not stop a running session. A folder inside another chosen folder, or inside a
@@ -1012,11 +1017,30 @@ reading as live:
   for up to 30 seconds of continuous failures; after that the session stops as `watch-failed`. The same reason applies
   when the folder is missing after a restart.
 - `capacity`: the node is already watching eight folders as it resumes.
-- `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
-  whose folder is outside the widget workspace, or in a chosen folder that was deleted (or moved away) and made again
-  at the same path while the node was stopped: the folder there is not the one chosen, so Clark may not watch it on its
-  own. What the session ran keeps running. The status line and the session's row on the `develop` card tell the person
-  to choose the folder again; their own start (**Develop again**) chooses the folder now at the path.
+- `root-refused`: after a restart, the folder fails the same check a start makes. What the session ran keeps running.
+  The session view's `stopCode` names the check, and the status line, the session's row on the `develop` card and what
+  Clark is told say what helps for each:
+  - `ROOT_NOT_OWNED`: a session Clark started whose folder is outside the widget workspace and every folder the person
+    chose, for example a chosen folder deleted (or moved away) and made again at the same path while the node was
+    stopped. The folder there is not the one chosen, so Clark is not allowed to watch it on its own. The person's own
+    start (**Develop again**) chooses the folder now at the path; copying the project into the widget workspace also
+    works.
+  - `ROOT_NOT_LOCAL` or `ROOT_IN_DATA_FOLDER`: the folder now resolves to a network share or device path, or holds or
+    lies inside the node's data folder. Nobody's start may watch it, so choosing it again is refused too and the row
+    offers no **Develop again**; the person copies the project into the widget workspace or another local project
+    folder and develops it from there.
+
+  `stopCode` is optional. A session stopped before nodes kept it has none, and a code the client does not know gets
+  the reason alone, with advice that holds for every case. The session view is parsed with a strict schema, so the
+  client and the node ship as one build rather than tolerating each other's unknown fields. The code is what the check
+  found at that restart and is not checked again while the session stays stopped; a start checks the folder as it is
+  then.
+
+  **Downgrade.** `sessions.json` is read with a strict schema too. A build older than a field the store holds, such as
+  `stopCode` or `chosenFolderId`, finds the whole file does not match, moves it aside as
+  `sessions.json.unreadable-<time>` and starts with no sessions (see **The store** above). Nothing is lost from the
+  file, but the sessions, and the folders the person chose, are not seen until a build that knows those fields reads
+  the file again (move it back by hand).
 
 A folder that is still there with another identity does not stop the session. The node compares the folder's device and
 file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
