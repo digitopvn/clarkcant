@@ -23,6 +23,8 @@ The most important product rule:
 
 If a task can be expressed in chat or voice, the user should not have to find the right tab, the right tool or the right node first.
 
+AI should make ClarkCant simpler over time, not more complex: simple enough that anyone can open it and use it without learning a single new concept or term. A feature that needs a new word to be understood is not finished. As models and tools get better, the surface should shrink, not grow.
+
 ---
 
 ## 1. Mandatory design principles
@@ -434,10 +436,11 @@ Required:
   the textarea drives as a combobox (arrows move, Enter adds, Tab opens a project or folder, Escape closes the list and
   keeps the draft; pointer and touch choose too). A choice writes its token into the draft and shows as a chip beside
   the file chips; deleting the token or the chip drops the reference, so a message never carries one the person cannot
-  see. A reference is a pointer, not a permission: the node checks it again at send time and refuses the send by name,
-  keeping the draft, when it has gone stale. While an input method is composing a word, its Enter finishes the word:
-  it neither chooses a row nor sends. Shift+Enter starts a new line with the list open or closed. This is an
-  enhancement, not the primary navigation.
+  see. A skill whose name is also a slash command's is written `/skill:<name>`, in its row and in the draft, so choosing
+  it always invokes the skill and a typed `/new` always runs the command. A reference is a pointer, not a permission:
+  the node checks it again at send time and refuses the send by name, keeping the draft, when it has gone stale. While
+  an input method is composing a word, its Enter finishes the word: it neither chooses a row nor sends. Shift+Enter
+  starts a new line with the list open or closed. This is an enhancement, not the primary navigation.
 - basic Markdown is marked while it is typed — strong, emphasis, strike, inline code, fenced code, headings, lists,
   quotes and links — with its syntax kept visible but quiet, so what is sent is what is seen and still edited as plain
   text. The field stays a native textarea (caret, selection, undo, spell-check and input methods unchanged) over a

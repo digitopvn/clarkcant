@@ -499,8 +499,10 @@ services, conversations (by title, or by the start of the first message when the
 background work after `@`; one directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix,
 then substring, then by kind (commands, skills; or projects, services, conversations, work), recently used first, with
 diacritics optional when typing. With nothing typed after `/` or `@`, each kind gets its share of the rows, and a share
-one kind cannot fill goes to the others, so a bare `/` always lists skills however many commands there are. A row that
-cannot be chosen says why in `disabledReason`. A
+one kind cannot fill goes to the others, so a bare `/` always lists skills however many commands there are. A skill is
+written into the draft as `/<name>`, or as `/skill:<name>` when `/<name>` would be read as one of the node's slash
+commands, so a message that carries a skill named `new` is that skill and never the `/new` command; `/skill:` typed
+after the slash lists skills only. A row that cannot be chosen says why in `disabledReason`. A
 service is labelled with the id its package gave it and carries only its state (running, failed, not running), never
 what it was started with or why it failed; its `serviceKey` also names the package generation running it, so an update
 makes an earlier reference stale.

@@ -291,6 +291,92 @@ describe("words that run together into a longer term than a form starting the sa
     expect(normalizeTranscript("sửa clark cant trước", session).text).toBe("sửa ClarkCant trước");
     expect(normalizeTranscript("sửa clark cant web trước", session).text).toBe("sửa clarkcant-web trước");
   });
+
+  describe("still counts the words a run-together term absorbed as evidence for the rest of the sentence", () => {
+    // `web` and `Web` are both real names, so "web" heard exactly is a known term and says the sentence is about code.
+    // Folded into `webapp`, it says so still: the run-together match is no weaker evidence than the words it took in.
+    const SESSION = buildRecognitionContext({
+      symbols: ["UserService", "userService", "Web", "web", "userserviceApi"],
+      packages: ["userservice-api", "webapp"],
+    });
+
+    it("restores ClarkCant beside a run-together web app, and leaves web app as heard", () => {
+      const result = normalizeTranscript("fix the clark cant web app now", SESSION);
+      expect(result.text).toBe("fix the ClarkCant web app now");
+      expect(result.changes).toEqual([{ from: "clark cant", to: "ClarkCant", rule: "spacing", kind: "repository" }]);
+      expect(result.abstained).toEqual([]);
+    });
+
+    it("restores React after a run-together web app", () => {
+      const result = normalizeTranscript("fix the web app react now", SESSION);
+      expect(result.text).toBe("fix the web app React now");
+      expect(result.changes).toEqual([{ from: "react", to: "React", rule: "casing", kind: "glossary" }]);
+    });
+
+    it("abstains on user service api, which reads as either run-together term", () => {
+      const result = normalizeTranscript("fix the user service api now", SESSION);
+      expect(result.text).toBe("fix the user service api now");
+      expect(result.changes).toEqual([]);
+      expect(result.abstained).toEqual([
+        { start: 8, end: 24, text: "user service api", candidates: ["userservice-api", "userserviceApi"] },
+      ]);
+    });
+
+    // A span rewritten into a run-together term would take its absorbed word with it, so that word never vouches for
+    // another span rewritten the same way: two guesses must not support each other.
+    it("leaves two run-together spans as heard when only each other's absorbed words support them", () => {
+      const session = buildRecognitionContext({ tools: ["web"], packages: ["webapp"] });
+      const result = normalizeTranscript("the web app and the web app", session);
+      expect(result.text).toBe("the web app and the web app");
+      expect(result.changes).toEqual([]);
+    });
+
+    it("leaves set up the web app for grandma as heard", () => {
+      const session = buildRecognitionContext({ tools: ["set", "web"], packages: ["setup", "webapp"] });
+      const result = normalizeTranscript("set up the web app for grandma", session);
+      expect(result.text).toBe("set up the web app for grandma");
+      expect(result.changes).toEqual([]);
+    });
+
+    it("leaves the front end of the web app as heard", () => {
+      const session = buildRecognitionContext({ tools: ["front", "web"], packages: ["frontend", "webapp"] });
+      const result = normalizeTranscript("the front end of the web app", session);
+      expect(result.text).toBe("the front end of the web app");
+      expect(result.changes).toEqual([]);
+    });
+
+    // A capitalised hyphenated or digit tool name is evidence, yet lowering it needs evidence too: the word a
+    // run-together span absorbed on its strength is not that evidence, or each change would rest only on the other.
+    it("keeps Follow-up when the only support for lowering it is the web that webapp absorbed", () => {
+      const session = buildRecognitionContext({ tools: ["follow-up", "web"], packages: ["webapp"] }, { glossary: false });
+      const result = normalizeTranscript("Follow-up on the web app", session);
+      expect(result.text).toBe("Follow-up on the webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+
+    // A cue inside a span works the same way: "code" makes "web app" read as `webapp`, so the "web" it absorbed cannot
+    // in turn support "code review" becoming `codeReview`.
+    it("does not rewrite code review on the web that webapp absorbed after the cue in code review turned it", () => {
+      const session = buildRecognitionContext({ tools: ["web"], packages: ["webapp"], symbols: ["codeReview"] }, { glossary: false });
+      const result = normalizeTranscript("the code review of the web app", session);
+      expect(result.text).toBe("the code review of the webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+
+    it("does not join type script on the web that webapp absorbed after the cue in type script turned it", () => {
+      const session = buildRecognitionContext({ tools: ["web"], packages: ["webapp"] });
+      const result = normalizeTranscript("type script web app", session);
+      expect(result.text).toBe("type script webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+
+    it("keeps S3 when the only support for lowering it is the web that webapp absorbed", () => {
+      const session = buildRecognitionContext({ tools: ["s3", "web"], packages: ["webapp"] }, { glossary: false });
+      const result = normalizeTranscript("S3 is on the web app", session);
+      expect(result.text).toBe("S3 is on the webapp");
+      expect(result.changes).toEqual([{ from: "web app", to: "webapp", rule: "spacing", kind: "package" }]);
+    });
+  });
 });
 
 describe("a session term spelled one way beside the glossary's spelling", () => {
