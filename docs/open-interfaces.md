@@ -894,7 +894,7 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
   does not declare, or a widget that cannot be placed.
-- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions.
+- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions, or is closing.
 
 **Which folders.** `root` is resolved to its real path (symbolic links and junctions followed) before it is checked:
 
