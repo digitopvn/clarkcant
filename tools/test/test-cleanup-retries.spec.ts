@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { isTestPath, retryingRmSyncLines } from "../invariants/test-cleanup-retries-asynchronously.mjs";
+import { repoRelativePath, walk } from "../invariants/context.mjs";
+import runCheck, { isTestPath, retryingRmSyncLines } from "../invariants/test-cleanup-retries-asynchronously.mjs";
 import { removeTestDirectory } from "../test-cleanup.ts";
 
 // The sources below are strings, which the check blanks before it reads a file, so this file does not read as the calls
@@ -85,6 +86,70 @@ describe("the check on retrying synchronous removal in test code", () => {
     expect(retryingRmSyncLines(source)).toEqual([5]);
   });
 
+  it("finds rmSync taken from require under another name", () => {
+    const source = [
+      'const wipe = require("node:fs").rmSync;',
+      "const erase = require('fs').rmSync",
+      "wipe(dir, { maxRetries: 3 });",
+      "erase(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([3, 4]);
+  });
+
+  it("finds an optional call", () => {
+    const source = ["fs.rmSync?.(dir, { maxRetries: 3 });", "rmSync ?. (dir, { maxRetries: 3 });", "fs.rmSync?.(dir, { recursive: true });"].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2]);
+  });
+
+  it("finds a call by bracket access, and an alias taken that way", () => {
+    const source = [
+      'fs["rmSync"](dir, { maxRetries: 3 });',
+      "fs[ 'rmSync' ](dir, {",
+      "  maxRetries: 3 });",
+      'const wipe = fs["rmSync"];',
+      "wipe(dir, { maxRetries: 3 });",
+      'fs["rmSync"](dir, { recursive: true });',
+      'const text = \'fs["rmSync"](dir, { maxRetries: 3 })\';',
+      '// fs["rmSync"](dir, { maxRetries: 3 })',
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2, 5]);
+  });
+
+  it("counts the marker only in a comment, not in a string", () => {
+    const source = [
+      'const note = "invariant-allow: sync-rm-retries";',
+      "rmSync(dir, { maxRetries: 3 });",
+      "rmSync(dir, { maxRetries: 3, label: 'invariant-allow: sync-rm-retries' });",
+      "/* invariant-allow: sync-rm-retries */ rmSync(dir, { maxRetries: 3 });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([2, 3]);
+  });
+
+  it("does not let an apostrophe in JSX text hide a call later on its line", () => {
+    const source = [
+      "const view = <p>Don't</p>; rmSync(dir, { maxRetries: 3 });",
+      'const size = <p>6" wide</p>; rmSync(dir, { maxRetries: 3 });',
+      "const name = 'it\\'s'; rmSync(dir, { recursive: true });",
+    ].join("\n");
+    expect(retryingRmSyncLines(source)).toEqual([1, 2]);
+  });
+
+  it("reads every file it counts as test code, a .jsx spec included", async () => {
+    const root = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-check-"));
+    try {
+      const call = "rmSync(dir, { maxRetries: 3 });\n";
+      for (const path of ["apps/web/src/view.spec.jsx", "apps/web/test/helper.jsx", "apps/web/src/view.jsx", "apps/web/test/notes.md"]) {
+        mkdirSync(dirname(join(root, path)), { recursive: true });
+        writeFileSync(join(root, path), call);
+      }
+      const result = { failures: [] as string[], notes: [] as string[] };
+      runCheck({ repoRoot: root, walk, relative: (target: string) => repoRelativePath(root, target), check: () => result });
+      expect(result.failures.map((failure) => failure.split(":")[0]).sort()).toEqual(["apps/web/src/view.spec.jsx", "apps/web/test/helper.jsx"]);
+    } finally {
+      await removeTestDirectory(root);
+    }
+  });
+
   it("covers specs, the helpers in test and e2e folders and CI's widget tooling smoke, not product code", () => {
     expect(isTestPath("apps/runtime/test/live-nodes.ts")).toBe(true);
     expect(isTestPath("apps/web/e2e/fixtures/server.mjs")).toBe(true);
@@ -124,20 +189,21 @@ async function holdAsWorkingDirectory(dir: string): Promise<{ release: () => Pro
  * say anything.
  */
 describe.runIf(process.platform === "win32")("removing a directory Windows still holds", () => {
-  it("fails at once in the synchronous form, though it asks for retries", async () => {
+  // Node 22 and Node 24 before 24.21 fail at once without retrying; from 24.21 the retries run but sleep the main thread.
+  // Either way the release the test schedules cannot happen during the call, so the outcome is the same on every version.
+  it("fails in the synchronous form though it asks for retries, because the release it waits for cannot run", async () => {
     const dir = mkdtempSync(join(tmpdir(), "clarkcant-cleanup-retry-"));
     writeFileSync(join(dir, "file.txt"), "held");
     const held = await holdAsWorkingDirectory(dir);
+    // Let go 100 ms in, well within the retry budget below (100 + 200 + 300 + 400 ms), as removeTestDirectory's test does.
+    const released = new Promise<void>((done) => setTimeout(() => void held.release().then(done), 100));
     try {
-      const started = Date.now();
       // The failing form, on purpose: the check this file tests would otherwise flag it as test cleanup.
       // invariant-allow: sync-rm-retries
-      expect(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })).toThrow(/EPERM|EBUSY/);
-      // Ten retries 100 ms apart and longer each time would take seconds; none ran.
-      expect(Date.now() - started).toBeLessThan(500);
+      expect(() => rmSync(dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 })).toThrow(/EPERM|EBUSY/);
       expect(existsSync(dir)).toBe(true);
     } finally {
-      await held.release();
+      await released;
       await removeTestDirectory(dir);
     }
   });
