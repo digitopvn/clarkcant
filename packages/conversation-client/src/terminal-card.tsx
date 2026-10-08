@@ -242,6 +242,16 @@ function LiveTerminal({
   const [killing, setKilling] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
+  /**
+   * True until the card first settles after it mounts. Whatever the shell is in then — gone, exited, unreachable, the
+   * terminal code that failed to load — was already true before this card was drawn (a reload, a scroll back), so it
+   * is shown and not announced. Every later change is announced, a load that fails after Reconnect included.
+   */
+  const [restoring, setRestoring] = useState(true);
+  const settling = phase.kind === "loading" || phase.kind === "connecting";
+  useEffect(() => {
+    if (!settling) setRestoring(false);
+  }, [settling]);
 
   driverRef.current = driver;
   viewingRef.current = viewing;
@@ -623,10 +633,13 @@ function LiveTerminal({
 
       {/*
         The terminal's state and a failed kill, each in live regions mounted with the card: losing the shell or failing
-        to stop it interrupts, anything else waits its turn, and what was already true when the card mounted is not said.
+        to stop it interrupts, and anything else waits its turn. The state is read from the node after the card mounts,
+        so the state it first settles on (`restoring`) is shown without being said: it was already true before the card
+        was drawn. A kill only fails after a press, so its failure is always said.
       */}
       <div className="cc-terminal-status">
         <LiveNote
+          restored={restoring}
           phase={shownNotice === undefined ? undefined : TERMINAL_NOTICE_PHASE[shownNotice]}
           {...(shownNotice === undefined ? {} : { "data-terminal-notice": shownNotice })}
         >

@@ -437,18 +437,20 @@ export const SIGN_IN_PHASE: Record<SignInState, SurfacePhase> = {
 
 type CommandBadgeTone = NonNullable<z.infer<typeof commandCardSchema>["rows"][number]["badge"]>["tone"];
 /**
- * A command card row's badge, read as a phase where its tone claims one. The node writes the tone, not a phase, so
- * the reading keeps each tone's colour and adds the phase's mark. `neutral` claims nothing — a queued job, a plain
- * label — and is left out, so the badge is drawn plain rather than guessed into a phase.
+ * A command card row's badge, read as a phase where its tone claims exactly one. The node writes the tone, not a
+ * phase, so only a tone every badge that carries it means the same way is read as a phase: `active` is work under way,
+ * `success` a kept outcome, `danger` a failure. `neutral` claims nothing — a queued job, a plain label — and `warning`
+ * names no single phase: a folder not found now is unavailable, while a task the person stopped or one that was
+ * interrupted ended early. Both are left out, so those badges are drawn plain, with their own words, rather than
+ * guessed into a phase that says something that did not happen.
  */
-export const COMMAND_BADGE_PHASE: Record<Exclude<CommandBadgeTone, "neutral">, SurfacePhase> = {
+export const COMMAND_BADGE_PHASE: Record<Exclude<CommandBadgeTone, "neutral" | "warning">, SurfacePhase> = {
   active: "pending",
   success: "success",
-  warning: "partial",
   danger: "error",
 };
 
-type FeedbackPublication =NonNullable<z.infer<typeof feedbackCardSchema>["publication"]>["status"];
+type FeedbackPublication = NonNullable<z.infer<typeof feedbackCardSchema>["publication"]>["status"];
 /** A filed report: `unknown` means GitHub did not answer, which is not a failure and not a success. */
 export const FEEDBACK_PUBLICATION_PHASE: Record<FeedbackPublication, SurfacePhase> = {
   published: "success",

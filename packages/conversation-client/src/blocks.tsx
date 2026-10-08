@@ -568,11 +568,12 @@ export interface BlockActions extends ModelPickerPort {
     fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
   }) => void;
   /**
-   * Where the last submission for one request stands, in words a reader can act on. The phase is carried rather than
-   * read back from the words, so a failure stays a failure in any language; `attempt` counts submissions, so a save
-   * that fails twice is said twice and an answer for an earlier submission never replaces a newer one.
+   * Where the last submission for each request stands, keyed by request id, in words a reader can act on. The phase is
+   * carried rather than read back from the words, so a failure stays a failure in any language; `attempt` counts
+   * submissions, so a save that fails twice is said twice and an answer for an earlier submission of the same card never
+   * replaces a newer one. One entry per card, so two cards saving at once each keep their own answer.
    */
-  credentialStatus?: CredentialSaveStatus;
+  credentialStatus?: Readonly<Record<string, CredentialSaveStatus>>;
   /** Which approval is waiting on the node, so its own card says so rather than all of them. */
   decidingApprovalId?: string;
   /**
@@ -1254,7 +1255,8 @@ export function CredentialCardBlock({
   // store, so a credential card scrolled far enough away to be unmounted forgets what was typed into it.
   const [values, setValues] = useState<Record<string, string>>({});
   const complete = fields.length > 0 && fields.every((field) => (values[field.name] ?? "") !== "");
-  const status = actions?.credentialStatus?.requestId === requestId ? actions.credentialStatus : undefined;
+  const saves = actions?.credentialStatus;
+  const status = saves !== undefined && Object.hasOwn(saves, requestId) ? saves[requestId] : undefined;
 
   return (
     <section className="cc-card" data-host-card="credential" data-owner="host">

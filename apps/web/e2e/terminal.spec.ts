@@ -104,6 +104,25 @@ test("closing the terminal says the shell ended instead of leaving a dead prompt
   await expect(card.locator("[data-terminal-kill='true']")).toHaveCount(0);
 });
 
+test("a shell ended by a press is said aloud, and the same card after a reload shows it without saying it again", async ({ page }) => {
+  await openApp(page);
+  const card = await openTerminal(page);
+  const terminalId = (await card.getAttribute("data-terminal-id")) ?? "";
+  // The terminal's own state note is the first live note in its status line; the second is for a kill that failed.
+  const stateNote = (of: typeof card) => of.locator(".cc-terminal-status .cc-live-note").first();
+  await card.locator("[data-terminal-kill='true']").click();
+  await expect(card.locator("[data-terminal-notice='exited']")).toBeVisible({ timeout: 10_000 });
+  await expect(stateNote(card)).toHaveAttribute("data-surface-live", "polite");
+
+  await page.reload();
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  const again = page.locator(`[data-host-card='terminal-session'][data-terminal-id='${terminalId}']`);
+  await expect(again).toBeVisible({ timeout: 20_000 });
+  // Exited, or gone once the node let it go: either way it was true before the card was drawn again.
+  await expect(again.locator("[data-terminal-notice='exited'], [data-terminal-notice='gone']")).toBeVisible({ timeout: 15_000 });
+  await expect(stateNote(again)).toHaveAttribute("data-surface-live", "off");
+});
+
 test("the card fits a narrow window without scrolling the page sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "reduce" });

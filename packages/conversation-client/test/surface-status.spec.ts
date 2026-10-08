@@ -81,6 +81,17 @@ describe("where a live note is placed", () => {
     expect(nextLivePlacement(pending, "pending")).toBe(pending);
   });
 
+  it("shows a state the surface reads back after mounting without announcing it, and announces what changes after", () => {
+    // A terminal mounts with nothing to say and then learns its shell is gone: true before the card was drawn.
+    const mounted = nextLivePlacement(undefined, undefined);
+    const restored = nextLivePlacement(mounted, "unavailable", true);
+    expect(restored).toEqual({ phase: "unavailable", politeness: "off" });
+    expect(nextLivePlacement(mounted, "error", true).politeness).toBe("off");
+    // Once restored, a later failure (a Reconnect that cannot load) interrupts as any other would.
+    const reloading = nextLivePlacement(restored, undefined);
+    expect(nextLivePlacement(reloading, "error").politeness).toBe("assertive");
+  });
+
   it("renders both regions empty at mount and keeps the restored note outside them", () => {
     const html = renderToStaticMarkup(createElement(LiveNote, { phase: "error", children: "Không dừng được." }));
     expect(html).toContain('data-surface-live="off"');

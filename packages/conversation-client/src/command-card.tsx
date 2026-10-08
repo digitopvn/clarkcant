@@ -101,6 +101,12 @@ function CommandRow({
   const rowKey = `${cardId}/${row.rowId}`;
   const signIn = actions?.signIns?.[rowKey];
   const states = row.actions.map((entry) => actions?.commandAction?.[`${rowKey}/${entry.actionId}`]);
+  /*
+   * `pending` covers the whole row (any button still waiting), while the outcome shown is the latest press. The two agree
+   * only because a busy row is `aria-disabled` and refuses every press until it settles, so no sibling press can start
+   * behind a pending one. If that guard ever changes, compute `pending` from the latest press too, or an older sibling's
+   * failure would hide behind a newer success.
+   */
   const pending = states.some((state) => state?.status === "pending");
   const latest = latestCommandAction(states);
   const settled = latest === undefined || latest.status === "pending" ? undefined : latest;

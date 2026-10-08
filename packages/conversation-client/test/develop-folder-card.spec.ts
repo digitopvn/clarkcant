@@ -110,8 +110,8 @@ describe("the /develop card", () => {
       message: `${en("shell.nodeView.answered")} ${en("shell.nodeView.newer").replace("{node}", "0.3.0").replace("{app}", "0.2.1")}`,
     });
     expect(forgetRefused(cause, vi)).toMatchObject({ status: "unknown", message: expect.stringMatching(/^Node đã trả lời, /u) as string });
-    // Any other error is the node's reason, said as a failure.
-    expect(forgetRefused(new Error("offline"), en)).toEqual({ status: "failed", message: "offline" });
+    // Any other error is the node's reason, said as a failure in the reader's words.
+    expect(forgetRefused(new Error("offline"), en)).toEqual({ status: "failed", message: en("commandCard.develop.forgetFailed").replace("{reason}", "offline") });
 
     // Neither forgotten nor kept is claimed: the row keeps the badge it was drawn with, and the line is not a success.
     const chosen: CommandCard = {

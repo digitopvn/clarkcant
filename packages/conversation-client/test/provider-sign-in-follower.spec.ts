@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSignInView } from "@clarkcant/contracts";
 
 import { GatewayError } from "../src/api.ts";
-import { ProviderSignInFollower, type ProviderSignInPort, signInFailureReason } from "../src/use-provider-sign-ins.ts";
+import { refusalReason } from "../src/node-view-refusal.ts";
+import { ProviderSignInFollower, type ProviderSignInPort } from "../src/use-provider-sign-ins.ts";
 
 /**
  * How a surface follows a provider sign-in: the path the `/login` card and Settings → AI & Routing share.
@@ -155,9 +156,9 @@ describe("following a provider sign-in", () => {
   });
 
   it("reads a refusal as the node's sentence, and anything else as its message", () => {
-    expect(signInFailureReason(new GatewayError(409, "SIGN_IN_METHOD_UNAVAILABLE", "Fake has no sign-in of its own; use an API key."))).toBe(
+    expect(refusalReason(new GatewayError(409, "SIGN_IN_METHOD_UNAVAILABLE", "Fake has no sign-in of its own; use an API key."))).toBe(
       "Fake has no sign-in of its own; use an API key.",
     );
-    expect(signInFailureReason(new Error("offline"))).toBe("offline");
+    expect(refusalReason(new Error("offline"))).toBe("offline");
   });
 });

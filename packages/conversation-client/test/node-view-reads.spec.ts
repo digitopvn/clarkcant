@@ -7,7 +7,7 @@ import {
 } from "@clarkcant/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CLARK_VERSION_MAX, GatewayClient, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
+import { CLARK_VERSION_MAX, GatewayClient, GatewayError, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
 import { nodeViewRefusalText } from "../src/node-view-refusal.ts";
 import { developStartRefused } from "../src/use-block-actions.ts";
@@ -273,6 +273,10 @@ describe("the /develop card after a start this app cannot read", () => {
   });
 
   it("still reports a start the node refused as failed", () => {
-    expect(developStartRefused(new Error("FOLDER_NOT_CHOSEN: choose the folder first"), en)).toEqual({ status: "failed", message: "FOLDER_NOT_CHOSEN: choose the folder first" });
+    // The node's reason in the reader's words, never its code.
+    expect(developStartRefused(new GatewayError(409, "FOLDER_NOT_CHOSEN", "choose the folder first"), en)).toEqual({
+      status: "failed",
+      message: en("commandCard.develop.startFailed").replace("{reason}", "choose the folder first"),
+    });
   });
 });

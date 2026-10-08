@@ -9,8 +9,8 @@ import type { MessageKey } from "../../i18n/messages.ts";
 import { AfterSignIn, type ModelPickerPort } from "../../model-picker.tsx";
 import { SignInPanel } from "../../provider-sign-in-panel.tsx";
 import { useModelPickerPort } from "../../use-model-picker-port.ts";
+import { refusalReason } from "../../node-view-refusal.ts";
 import {
-  signInFailureReason,
   signInStartRefused,
   signOutRefused,
   signOutSettled,
@@ -52,7 +52,7 @@ export function providerSourceNote(provider: ProviderAuthEntryView, t: (key: Mes
 export function providerListingRefused(error: unknown): ProviderListing {
   return error instanceof GatewayError && error.code === "PROVIDER_AUTH_UNAVAILABLE"
     ? { status: "unavailable" }
-    : { status: "failed", reason: signInFailureReason(error) };
+    : { status: "failed", reason: refusalReason(error) };
 }
 
 /**

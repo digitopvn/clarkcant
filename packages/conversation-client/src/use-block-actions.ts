@@ -15,7 +15,7 @@ import { settleCommandAction } from "./command-card.tsx";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
-import { nodeViewRefusalText } from "./node-view-refusal.ts";
+import { nodeViewRefusalText, refusalReason } from "./node-view-refusal.ts";
 import { signInStartRefused, signOutRefused, signOutSettled, useProviderSignIns } from "./use-provider-sign-ins.ts";
 import { useModelPickerPort } from "./use-model-picker-port.ts";
 import type {
@@ -113,7 +113,7 @@ export function developOutcomeMessage(view: WidgetDevSessionRead, t: (key: Messa
 export function developStartRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
   const unread = nodeViewRefusalText(error, t, "commandCard.develop.startedUnread");
   if (unread !== undefined) return { status: "done", message: unread };
-  return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
+  return { status: "failed", message: fillMessage(t("commandCard.develop.startFailed"), { reason: refusalReason(error) }) };
 }
 
 /**
@@ -126,7 +126,7 @@ export function developStartRefused(error: unknown, t: (key: MessageKey) => stri
 export function forgetRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
   const unread = nodeViewRefusalText(error, t, "shell.nodeView.answered");
   if (unread !== undefined) return { status: "unknown", message: unread };
-  return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
+  return { status: "failed", message: fillMessage(t("commandCard.develop.forgetFailed"), { reason: refusalReason(error) }) };
 }
 
 /** What a Forget press did, saying so when the folder stays reachable through a folder that holds it. */
@@ -147,6 +147,183 @@ export function settleCredentialSave(current: CredentialSaveStatus | undefined, 
   const read = (status: CredentialSaveStatus): SurfaceStatus => ({ phase: status.phase, attempt: status.attempt, freshness: { kind: "snapshot" } });
   const shown = read(current);
   return settleSurfaceStatus(shown, read(incoming)) === shown ? current : incoming;
+}
+
+type RowStates<T> = Readonly<Record<string, T>>;
+
+/**
+ * Save the secrets typed on one credential card, saying "saving" first so the answer is a change the card says even
+ * when it is the same answer as last time. Each card's status is settled on its own entry (keyed by request id), so a
+ * save on one card never drops another card's answer as an earlier attempt.
+ */
+export function submitCredentialSave(
+  deps: {
+    client: Pick<GatewayClient, "putCredential">;
+    t: (key: MessageKey) => string;
+    nextAttempt: () => number;
+    update: (update: (current: RowStates<CredentialSaveStatus>) => RowStates<CredentialSaveStatus>) => void;
+  },
+  input: { requestId: string; fields: { name: string; value: string; description?: string; consumer?: string }[] },
+): void {
+  const { t, update } = deps;
+  const { requestId } = input;
+  const attempt = deps.nextAttempt();
+  const settle = (next: Omit<CredentialSaveStatus, "requestId" | "attempt">): void =>
+    update((current) => ({
+      ...current,
+      [requestId]: settleCredentialSave(Object.hasOwn(current, requestId) ? current[requestId] : undefined, { ...next, requestId, attempt }),
+    }));
+  settle({ phase: "pending", message: t("shell.credential.saving") });
+  deps.client
+    .putCredential({ fields: input.fields })
+    .then((result) =>
+      settle({
+        phase: "success",
+        message: result.names.length === 0 ? t("shell.credential.sentNoName") : t("shell.credential.saved").replace("{names}", result.names.join(", ")),
+      }),
+    )
+    .catch(() =>
+      // The failure message says nothing about what was typed. An error that repeated the
+      // value would be the leak this card exists to prevent.
+      settle({ phase: "error", message: t("shell.credential.saveFailed") }),
+    );
+}
+
+/** What a press on a command card needs, without React: `useBlockActions` wires it to its state. */
+export interface CommandPressDeps {
+  client: Pick<GatewayClient, "writePreference" | "startWidgetDevSession" | "forgetWidgetDevFolder" | "nodeOnThisMachine">;
+  conversationId: string | undefined;
+  t: (key: MessageKey) => string;
+  /** The next attempt: one count for every press on every card, so a later press is always a later attempt. */
+  nextAttempt: () => number;
+  /** Applies a change to what each press came to, keyed `cardId/rowId/actionId`. */
+  updateActions: (update: (current: RowStates<CommandActionState>) => RowStates<CommandActionState>) => void;
+  /** Applies a change to the rows asking for a folder's path in words. */
+  updateFolderEntries: (update: (current: RowStates<FolderEntryReason>) => RowStates<FolderEntryReason>) => void;
+  startSignIn: (key: string, providerId: string, method: "oauth" | "api_key") => Promise<void>;
+  signOut: (providerId: string) => Promise<{ signedOut: boolean }>;
+  openConversation?: (conversationId: string) => void;
+  newConversation?: () => void;
+}
+
+export interface CommandPresses {
+  press: (input: { cardId: string; rowId: string; actionId: string; action: CommandCardAction }) => void;
+  /** A folder path typed on a row: a press of its own, so a new attempt for the row. */
+  developTyped: (input: { cardId: string; rowId: string; actionId: string; root: string }) => void;
+}
+
+/**
+ * What the buttons on a command card do. Each press is an attempt of its own and every answer is settled against the
+ * press it belongs to (`settleCommandAction`), so a late answer for an earlier press never replaces a newer one, and a
+ * press that ends without an outcome of its own (a sign-in the panel takes over, a dialog closed) clears only itself.
+ * A refusal is said in the reader's language with the node's reason, never as `CODE: message`.
+ *
+ * Plain functions rather than hooks, so these rules are testable without rendering.
+ */
+export function commandPresses(deps: CommandPressDeps): CommandPresses {
+  const { client, t } = deps;
+  const settle = (key: string, attempt: number, state: CommandActionState): void =>
+    deps.updateActions((current) => ({ ...current, [key]: settleCommandAction(current[key], { ...state, attempt }) }));
+  /** Clears `key` when it still holds `attempt`: a newer press keeps what it says. */
+  const clear = (key: string, attempt: number): void =>
+    deps.updateActions((current) => {
+      if (current[key]?.attempt !== attempt) return current;
+      const { [key]: _cleared, ...rest } = current;
+      return rest;
+    });
+
+  /**
+   * Start a widget dev session for a folder the person named on a card: on the person-only route, as them, placing the
+   * widget in this conversation. What the node answered is said beside the button; the node's own reason when it refused.
+   */
+  const develop = (key: string, root: string, attempt: number): void => {
+    deps.updateFolderEntries((current) => {
+      const { [key]: _answered, ...rest } = current;
+      return rest;
+    });
+    const { conversationId } = deps;
+    if (conversationId === undefined) {
+      settle(key, attempt, { status: "failed", message: t("commandCard.failed") });
+      return;
+    }
+    settle(key, attempt, { status: "pending" });
+    void client.startWidgetDevSession({ root, conversationId }).then(
+      (view) => settle(key, attempt, { status: "done", message: developOutcomeMessage(view, t, root) }),
+      (error: unknown) => settle(key, attempt, developStartRefused(error, t)),
+    );
+  };
+
+  const press: CommandPresses["press"] = ({ cardId, rowId, actionId, action }) => {
+    const key = `${cardId}/${rowId}/${actionId}`;
+    const attempt = deps.nextAttempt();
+    const settleThis = (state: CommandActionState): void => settle(key, attempt, state);
+    switch (action.kind) {
+      case "open-conversation":
+        deps.openConversation?.(action.conversationId);
+        return;
+      case "new-conversation":
+        deps.newConversation?.();
+        return;
+      case "set-thinking":
+        settleThis({ status: "pending" });
+        void client.writePreference("ai.thinkingLevel", action.level).then(
+          () => settleThis({ status: "done", message: t("commandCard.thinking.set") }),
+          (error: unknown) =>
+            settleThis({ status: "failed", message: fillMessage(t("commandCard.thinking.failed"), { reason: refusalReason(error) }) }),
+        );
+        return;
+      case "provider-sign-in":
+        settleThis({ status: "pending" });
+        // Once started, the sign-in panel says where it stands; a start that failed says why, in the person's words.
+        void deps.startSignIn(`${cardId}/${rowId}`, action.providerId, action.method).then(
+          () => clear(key, attempt),
+          (error: unknown) => settleThis(signInStartRefused(error, t)),
+        );
+        return;
+      case "provider-sign-out":
+        settleThis({ status: "pending" });
+        // The same words Settings says for the same answer: what changed, or that the credential is still there and why.
+        void deps.signOut(action.providerId).then(
+          (result) => settleThis(signOutSettled(result, t)),
+          (error: unknown) => settleThis(signOutRefused(error, t)),
+        );
+        return;
+      case "develop-folder": {
+        if (action.root !== undefined) {
+          develop(key, action.root, attempt);
+          return;
+        }
+        // The OS dialog when it names a folder on the node; the path in words otherwise, and said why.
+        const reason: FolderEntryReason | undefined = !canPickFolder() ? "browser" : !client.nodeOnThisMachine() ? "remote-node" : undefined;
+        if (reason !== undefined) {
+          deps.updateFolderEntries((current) => ({ ...current, [key]: reason }));
+          return;
+        }
+        settleThis({ status: "pending" });
+        void pickFolderOnDesktop(t("commandCard.develop.dialogTitle")).then((picked) => {
+          if (picked.kind === "picked") {
+            develop(key, picked.path, attempt);
+            return;
+          }
+          clear(key, attempt);
+          if (picked.kind === "failed") deps.updateFolderEntries((current) => ({ ...current, [key]: "dialog-failed" }));
+        });
+        return;
+      }
+      case "develop-folder-forget":
+        settleThis({ status: "pending" });
+        void client.forgetWidgetDevFolder(action.root).then(
+          (result) => settleThis({ status: "done", message: forgetOutcomeMessage(result, t) }),
+          (error: unknown) => settleThis(forgetRefused(error, t)),
+        );
+        return;
+    }
+  };
+
+  return {
+    press,
+    developTyped: ({ cardId, rowId, actionId, root }) => develop(`${cardId}/${rowId}/${actionId}`, root, deps.nextAttempt()),
+  };
 }
 
 function sessionOutcome(view: WidgetDevSessionView, t: (key: MessageKey) => string): string {
@@ -286,45 +463,24 @@ export function useBlockActions({
   }, [answeredQuestions, questionPendingId]);
 
   /**
-   * What the node said about the last secret submitted through a card.
+   * What the node said about the last secret submitted through each card, keyed by the card's request id.
    *
    * Held here rather than in the card because the card is a message in a transcript: it is
    * re-rendered from stored blocks on every load, and a status that lived inside it would change
-   * what history says. This is a fact about now, so it lives with the other facts about now.
+   * what history says. This is a fact about now, so it lives with the other facts about now. One
+   * entry per card, so two cards saving at once each say what became of their own save.
    */
-  const [credentialStatus, setCredentialStatus] = useState<CredentialSaveStatus | undefined>(undefined);
+  const [credentialStatus, setCredentialStatus] = useState<Readonly<Record<string, CredentialSaveStatus>>>({});
   const credentialAttempts = useRef(0);
 
   const submitCredential = useCallback(
     (input: {
       requestId: string;
       fields: { name: string; value: string; description?: string; consumer?: string }[];
-    }): void => {
-      const attempt = ++credentialAttempts.current;
-      const settle = (next: Omit<CredentialSaveStatus, "requestId" | "attempt">) =>
-        setCredentialStatus((current) => settleCredentialSave(current, { ...next, requestId: input.requestId, attempt }));
-      // Saving first, so the answer is a change the card says even when it is the same answer as last time.
-      settle({ phase: "pending", message: t("shell.credential.saving") });
-      client
-        .putCredential({ fields: input.fields })
-        .then((result) =>
-          settle({
-            phase: "success",
-            message:
-              result.names.length === 0
-                ? t("shell.credential.sentNoName")
-                : t("shell.credential.saved").replace("{names}", result.names.join(", ")),
-          }),
-        )
-        .catch(() =>
-          // The failure message says nothing about what was typed. An error that repeated the
-          // value would be the leak this card exists to prevent.
-          settle({ phase: "error", message: t("shell.credential.saveFailed") }),
-        );
-    },
+    }): void =>
+      submitCredentialSave({ client, t, nextAttempt: () => ++credentialAttempts.current, update: setCredentialStatus }, input),
     [client, t],
   );
-
   /**
    * Cards that may still be answered: a question's or a form's id, while nothing has come after
    * the message that asked. Derived from the transcript rather than tracked as state, because the
@@ -519,24 +675,12 @@ export function useBlockActions({
    * browser page finishing, a code arriving — so the card asks rather than guesses.
    */
   const [commandAction, setCommandAction] = useState<Record<string, CommandActionState>>({});
-  /** Counts presses, so each one is an attempt of its own and an answer is settled against the press it belongs to. */
+  /**
+   * Counts presses, so each one is an attempt of its own and an answer is settled against the press it belongs to. Kept
+   * here rather than in `commandPresses`, so a runner made again (a new language, a new conversation) keeps counting
+   * above the attempts already shown instead of starting below them.
+   */
   const commandAttempts = useRef(0);
-  /** Settles `state` on `key` for `attempt`, by the contract's rule for late answers. */
-  const settleCommand = useCallback(
-    (key: string, attempt: number, state: CommandActionState) =>
-      setCommandAction((current) => ({ ...current, [key]: settleCommandAction(current[key], { ...state, attempt }) })),
-    [],
-  );
-  /** Clears `key` when it still holds `attempt`: a newer press keeps what it says. */
-  const clearCommand = useCallback(
-    (key: string, attempt: number) =>
-      setCommandAction((current) => {
-        if (current[key]?.attempt !== attempt) return current;
-        const { [key]: _cleared, ...rest } = current;
-        return rest;
-      }),
-    [],
-  );
   const {
     signIns,
     start: startSignIn,
@@ -558,103 +702,21 @@ export function useBlockActions({
   /** Rows of a `/develop` card asking for a folder's path in words, and why (`FolderEntryReason`). */
   const [folderEntries, setFolderEntries] = useState<Record<string, FolderEntryReason>>({});
 
-  /**
-   * Start a widget dev session for a folder the person named on a card: on the person-only route, as them, placing the
-   * widget in this conversation. What the node answered is said beside the button; the node's own reason when it refused.
-   */
-  const developFolder = useCallback(
-    (key: string, root: string, attempt: number) => {
-      setFolderEntries((current) => {
-        const { [key]: _answered, ...rest } = current;
-        return rest;
-      });
-      const settle = (state: CommandActionState) => settleCommand(key, attempt, state);
-      if (conversationId === undefined) {
-        settle({ status: "failed", message: t("commandCard.failed") });
-        return;
-      }
-      settle({ status: "pending" });
-      void client.startWidgetDevSession({ root, conversationId }).then(
-        (view) => settle({ status: "done", message: developOutcomeMessage(view, t, root) }),
-        (error: unknown) => settle(developStartRefused(error, t)),
-      );
-    },
-    [client, conversationId, settleCommand, t],
-  );
-
-  const runCommandAction = useCallback(
-    ({ cardId, rowId, actionId, action }: { cardId: string; rowId: string; actionId: string; action: CommandCardAction }) => {
-      const key = `${cardId}/${rowId}/${actionId}`;
-      const attempt = ++commandAttempts.current;
-      const settle = (state: CommandActionState) => settleCommand(key, attempt, state);
-      const fail = (error: unknown) =>
-        settle({ status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") });
-      switch (action.kind) {
-        case "open-conversation":
-          openConversation?.(action.conversationId);
-          return;
-        case "new-conversation":
-          newConversation?.();
-          return;
-        case "set-thinking":
-          settle({ status: "pending" });
-          void client.writePreference("ai.thinkingLevel", action.level).then(
-            () => settle({ status: "done", message: t("commandCard.thinking.set") }),
-            fail,
-          );
-          return;
-        case "provider-sign-in":
-          settle({ status: "pending" });
-          // Once started, the sign-in panel says where it stands; a start that failed says why, in the person's words.
-          void startSignIn(`${cardId}/${rowId}`, action.providerId, action.method).then(
-            () => clearCommand(key, attempt),
-            (error: unknown) => settle(signInStartRefused(error, t)),
-          );
-          return;
-        case "provider-sign-out":
-          settle({ status: "pending" });
-          // The same words Settings says for the same answer: what changed, or that the credential is still there and why.
-          void signOutProvider(action.providerId).then(
-            (result) => settle(signOutSettled(result, t)),
-            (error: unknown) => settle(signOutRefused(error, t)),
-          );
-          return;
-        case "develop-folder": {
-          if (action.root !== undefined) {
-            developFolder(key, action.root, attempt);
-            return;
-          }
-          // The OS dialog when it names a folder on the node; the path in words otherwise, and said why.
-          const reason: FolderEntryReason | undefined = !canPickFolder() ? "browser" : !client.nodeOnThisMachine() ? "remote-node" : undefined;
-          if (reason !== undefined) {
-            setFolderEntries((current) => ({ ...current, [key]: reason }));
-            return;
-          }
-          settle({ status: "pending" });
-          void pickFolderOnDesktop(t("commandCard.develop.dialogTitle")).then((picked) => {
-            if (picked.kind === "picked") {
-              developFolder(key, picked.path, attempt);
-              return;
-            }
-            clearCommand(key, attempt);
-            if (picked.kind === "failed") setFolderEntries((current) => ({ ...current, [key]: "dialog-failed" }));
-          });
-          return;
-        }
-        case "develop-folder-forget":
-          settle({ status: "pending" });
-          void client.forgetWidgetDevFolder(action.root).then(
-            (result) =>
-              settle({
-                status: "done",
-                message: forgetOutcomeMessage(result, t),
-              }),
-            (error: unknown) => settle(forgetRefused(error, t)),
-          );
-          return;
-      }
-    },
-    [clearCommand, client, developFolder, newConversation, openConversation, settleCommand, signOutProvider, startSignIn, t],
+  const presses = useMemo(
+    () =>
+      commandPresses({
+        client,
+        conversationId,
+        t,
+        nextAttempt: () => ++commandAttempts.current,
+        updateActions: setCommandAction,
+        updateFolderEntries: setFolderEntries,
+        startSignIn,
+        signOut: signOutProvider,
+        ...(openConversation === undefined ? {} : { openConversation }),
+        ...(newConversation === undefined ? {} : { newConversation }),
+      }),
+    [client, conversationId, newConversation, openConversation, signOutProvider, startSignIn, t],
   );
 
   /**
@@ -756,7 +818,7 @@ export function useBlockActions({
       ...(questionPendingId === undefined ? {} : { questionPendingId }),
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
-      ...(credentialStatus === undefined ? {} : { credentialStatus }),
+      credentialStatus,
       /*
        * A chosen answer is sent as the user's own message — the same call the composer makes — so a
        * click and a typed reply are one act. Nothing here invents a second route into the agent for
@@ -778,7 +840,7 @@ export function useBlockActions({
       controlSession,
       // A terminal's result goes back the way a typed reply does, for the reason forms do.
       onTerminalShare: ({ text }) => void send(text),
-      onCommandAction: runCommandAction,
+      onCommandAction: presses.press,
       commandAction,
       signIns,
       onSignInAnswer: answerSignIn,
@@ -788,9 +850,7 @@ export function useBlockActions({
       feedback,
       answeredFeedbackCards,
       folderEntries,
-      // A typed path is a press of its own: it starts a new attempt for the row.
-      onFolderEntrySubmit: ({ cardId, rowId, actionId, root }) =>
-        developFolder(`${cardId}/${rowId}/${actionId}`, root, ++commandAttempts.current),
+      onFolderEntrySubmit: presses.developTyped,
       onFolderEntryCancel: ({ key }) =>
         setFolderEntries((current) => {
           const { [key]: _closed, ...rest } = current;
@@ -808,10 +868,9 @@ export function useBlockActions({
       answerSignIn,
       cancelSignIn,
       reattachSignIn,
-      developFolder,
       folderEntries,
       commandAction,
-      runCommandAction,
+      presses,
       signIns,
       artifactOpen,
       controlSession,

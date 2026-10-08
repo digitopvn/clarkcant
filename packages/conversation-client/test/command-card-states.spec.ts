@@ -5,14 +5,21 @@ import { describe, expect, it } from "vitest";
 import { COMMAND_BADGE_PHASE, type CommandCard, type ProviderSignInView, SIGN_IN_PHASE, instantSchema } from "@clarkcant/contracts";
 
 import { GatewayError } from "../src/api.ts";
-import { type BlockActions, type CommandActionState, CredentialCardBlock } from "../src/blocks.tsx";
+import { type BlockActions, type CommandActionState, CredentialCardBlock, type CredentialSaveStatus, type FolderEntryReason } from "../src/blocks.tsx";
 import { COMMAND_ACTION_PHASE, CommandCardBlock, latestCommandAction, settleCommandAction } from "../src/command-card.tsx";
 import { LocaleProvider } from "../src/i18n/locale-context.tsx";
 import type { LocaleChoice } from "../src/i18n/locale.ts";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import { SignInPanel, signInStatusText } from "../src/provider-sign-in-panel.tsx";
 import { TERMINAL_NOTICE_PHASE, TERMINAL_SHELL_PHASE, terminalNotice } from "../src/terminal-card.tsx";
-import { settleCredentialSave } from "../src/use-block-actions.ts";
+import {
+  type CommandPressDeps,
+  commandPresses,
+  developStartRefused,
+  forgetRefused,
+  settleCredentialSave,
+  submitCredentialSave,
+} from "../src/use-block-actions.ts";
 import { signInStartRefused, signOutRefused, signOutSettled } from "../src/use-provider-sign-ins.ts";
 
 /**
@@ -100,7 +107,7 @@ describe("a command card row's outcome", () => {
   });
 
   it("draws the node's badge with the mark its tone claims, and a neutral badge plain", () => {
-    expect(COMMAND_BADGE_PHASE).toEqual({ active: "pending", success: "success", warning: "partial", danger: "error" });
+    expect(COMMAND_BADGE_PHASE).toEqual({ active: "pending", success: "success", danger: "error" });
     expect(drawCard(live)).toContain('<span class="cc-badge" data-tone="ok" data-surface-phase="success">signed in</span>');
     const neutral = renderToStaticMarkup(
       createElement(CommandCardBlock, {
@@ -110,6 +117,21 @@ describe("a command card row's outcome", () => {
       }),
     );
     expect(neutral).toContain('data-surface-phase="unknown">queued</span>');
+  });
+
+  it("draws a warning badge plain: a folder not found now or a stopped task is not a half-done outcome", () => {
+    // The node writes `warning` for "not found now", "stopped" and "interrupted": no one phase is true of all three.
+    for (const text of ["not found now", "stopped", "interrupted"]) {
+      const markup = renderToStaticMarkup(
+        createElement(CommandCardBlock, {
+          block: { ...CARD, rows: [{ ...CARD.rows[0]!, badge: { text, tone: "warning" } }] },
+          t: en,
+          actions: live,
+        }),
+      );
+      expect(markup).toContain(`<span class="cc-badge" data-tone="" data-surface-phase="unknown">${text}</span>`);
+      expect(markup).not.toContain('data-surface-phase="partial"');
+    }
   });
 });
 
@@ -154,6 +176,176 @@ describe("the /logout card's sign-out", () => {
   it("says a sign-in that could not start with the node's reason, never its code", () => {
     const settled = signInStartRefused(new GatewayError(400, "PROVIDER_UNKNOWN", "no such provider"), en);
     expect(settled).toEqual({ status: "failed", message: en("settings.providers.startFailed").replace("{reason}", "no such provider") });
+  });
+});
+
+describe("a refused /develop start or folder Forget", () => {
+  it("says the node's reason in the reader's language, never 'CODE: message'", () => {
+    const refusal = new GatewayError(403, "WIDGET_DEV_ROOT_REFUSED", "that folder is outside what Clark may use");
+    for (const t of [en, vi]) {
+      expect(developStartRefused(refusal, t)).toEqual({
+        status: "failed",
+        message: t("commandCard.develop.startFailed").replace("{reason}", "that folder is outside what Clark may use"),
+      });
+      expect(forgetRefused(refusal, t)).toEqual({
+        status: "failed",
+        message: t("commandCard.develop.forgetFailed").replace("{reason}", "that folder is outside what Clark may use"),
+      });
+    }
+  });
+});
+
+/** A promise settled from outside, so a test decides the order answers arrive in. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (cause: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Lets every answer already given reach its handler. */
+const answered = (): Promise<void> => new Promise((done) => setTimeout(done, 0));
+
+/** A state the runner updates the way React's `setState` does, read back by the test. */
+function stateOf<T>(): { current: () => Readonly<Record<string, T>>; update: (change: (current: Readonly<Record<string, T>>) => Readonly<Record<string, T>>) => void } {
+  let state: Readonly<Record<string, T>> = {};
+  return { current: () => state, update: (change) => (state = change(state)) };
+}
+
+describe("presses on a command card (the runner useBlockActions wires)", () => {
+  type Client = CommandPressDeps["client"];
+
+  function runner(over: Partial<Omit<CommandPressDeps, "client">> & { client?: Partial<Client> } = {}, t = en) {
+    let attempts = 0;
+    const actions = stateOf<CommandActionState>();
+    const entries = stateOf<FolderEntryReason>();
+    const presses = commandPresses({
+      conversationId: "c1",
+      t,
+      nextAttempt: () => ++attempts,
+      updateActions: actions.update,
+      updateFolderEntries: entries.update,
+      startSignIn: () => Promise.resolve(),
+      signOut: () => Promise.resolve({ signedOut: true }),
+      ...over,
+      client: { nodeOnThisMachine: () => true, ...over.client } as Client,
+    });
+    return { presses, actions: actions.current, entries: entries.current };
+  }
+
+  const thinking = (level: "high" | "low") => ({ kind: "set-thinking", level }) as const;
+
+  it("says a refused /thinking press in the reader's language with the node's reason, never 'CODE: message'", async () => {
+    for (const t of [en, vi]) {
+      const { presses, actions } = runner(
+        { client: { writePreference: () => Promise.reject(new GatewayError(409, "PREFERENCE_REFUSED", "the level is locked by policy")) } },
+        t,
+      );
+      presses.press({ cardId: "card_1", rowId: "high", actionId: "set", action: thinking("high") });
+      expect(actions()["card_1/high/set"]).toEqual({ status: "pending", attempt: 1 });
+      await answered();
+      expect(actions()["card_1/high/set"]).toEqual({
+        status: "failed",
+        message: t("commandCard.thinking.failed").replace("{reason}", "the level is locked by policy"),
+        attempt: 1,
+      });
+    }
+  });
+
+  it("keeps a newer press's answer when an earlier press on the same button answers late", async () => {
+    const writes = [deferred<never>(), deferred<never>()];
+    let call = 0;
+    const { presses, actions } = runner({ client: { writePreference: () => writes[call++]!.promise } });
+    presses.press({ cardId: "card_1", rowId: "high", actionId: "set", action: thinking("high") });
+    presses.press({ cardId: "card_1", rowId: "high", actionId: "set", action: thinking("high") });
+    writes[1]!.resolve(undefined as never);
+    await answered();
+    writes[0]!.reject(new GatewayError(500, "BUSY", "late"));
+    await answered();
+    expect(actions()["card_1/high/set"]).toEqual({ status: "done", message: en("commandCard.thinking.set"), attempt: 2 });
+  });
+
+  it("numbers presses across buttons, so the row shows the latest even when an older sibling answers last", async () => {
+    const writes = [deferred<never>(), deferred<never>()];
+    let call = 0;
+    const { presses, actions } = runner({ client: { writePreference: () => writes[call++]!.promise } });
+    presses.press({ cardId: "card_1", rowId: "high", actionId: "set", action: thinking("high") });
+    presses.press({ cardId: "card_1", rowId: "high", actionId: "other", action: thinking("low") });
+    writes[1]!.resolve(undefined as never);
+    await answered();
+    writes[0]!.reject(new GatewayError(500, "BUSY", "older"));
+    await answered();
+    const states = actions();
+    expect(states["card_1/high/set"]?.attempt).toBe(1);
+    expect(latestCommandAction([states["card_1/high/set"], states["card_1/high/other"]])).toEqual({
+      status: "done",
+      message: en("commandCard.thinking.set"),
+      attempt: 2,
+    });
+  });
+
+  it("clears only its own press once a sign-in starts, never a newer press on the same button", async () => {
+    const starts = [deferred<void>(), deferred<void>()];
+    let call = 0;
+    const { presses, actions } = runner({ startSignIn: () => starts[call++]!.promise });
+    const signIn = { kind: "provider-sign-in", providerId: "fake", method: "oauth" } as const;
+    presses.press({ cardId: "card_1", rowId: "fake", actionId: "sign-in", action: signIn });
+    presses.press({ cardId: "card_1", rowId: "fake", actionId: "sign-in", action: signIn });
+    starts[0]!.resolve();
+    await answered();
+    expect(actions()["card_1/fake/sign-in"]).toEqual({ status: "pending", attempt: 2 });
+    starts[1]!.resolve();
+    await answered();
+    expect(actions()["card_1/fake/sign-in"]).toBeUndefined();
+  });
+
+  it("says a /logout with nothing to remove as Settings does, and a refused one without its code", async () => {
+    const signOut = { kind: "provider-sign-out", providerId: "fake" } as const;
+    const nothing = runner({ signOut: () => Promise.resolve({ signedOut: false }) }, vi);
+    nothing.presses.press({ cardId: "card_1", rowId: "fake", actionId: "sign-out", action: signOut });
+    await answered();
+    expect(nothing.actions()["card_1/fake/sign-out"]).toEqual({ status: "done", message: vi("settings.providers.signOutNothing"), attempt: 1 });
+
+    const refused = runner({ signOut: () => Promise.reject(new GatewayError(409, "SIGN_OUT_NOT_HERE", "the key comes from the environment")) });
+    refused.presses.press({ cardId: "card_1", rowId: "fake", actionId: "sign-out", action: signOut });
+    await answered();
+    expect(refused.actions()["card_1/fake/sign-out"]).toEqual({
+      status: "failed",
+      message: en("settings.providers.signOutFailed").replace("{reason}", "the key comes from the environment"),
+      attempt: 1,
+    });
+  });
+
+  it("asks for a folder in words where no dialog can name one, and a typed path is a new attempt that closes the field", async () => {
+    const start = deferred<never>();
+    const { presses, actions, entries } = runner({ client: { startWidgetDevSession: () => start.promise } });
+    presses.press({ cardId: "card_1", rowId: "dev", actionId: "pick", action: { kind: "develop-folder" } });
+    // No desktop bridge in this test, as in a browser.
+    expect(entries()).toEqual({ "card_1/dev/pick": "browser" });
+    presses.developTyped({ cardId: "card_1", rowId: "dev", actionId: "pick", root: "/work/widget" });
+    expect(entries()).toEqual({});
+    expect(actions()["card_1/dev/pick"]).toEqual({ status: "pending", attempt: 2 });
+    start.reject(new GatewayError(403, "WIDGET_DEV_ROOT_REFUSED", "outside what Clark may use"));
+    await answered();
+    expect(actions()["card_1/dev/pick"]).toEqual({
+      status: "failed",
+      message: en("commandCard.develop.startFailed").replace("{reason}", "outside what Clark may use"),
+      attempt: 2,
+    });
+  });
+
+  it("says a refused Forget with the node's reason", async () => {
+    const { presses, actions } = runner({ client: { forgetWidgetDevFolder: () => Promise.reject(new GatewayError(404, "NOT_CHOSEN", "not a folder you chose")) } });
+    presses.press({ cardId: "card_1", rowId: "dev", actionId: "forget", action: { kind: "develop-folder-forget", root: "/work" } });
+    await answered();
+    expect(actions()["card_1/dev/forget"]).toEqual({
+      status: "failed",
+      message: en("commandCard.develop.forgetFailed").replace("{reason}", "not a folder you chose"),
+      attempt: 1,
+    });
   });
 });
 
@@ -214,7 +406,7 @@ describe("the credential card's save", () => {
 
   it("stays a failure when the language changes after it, because the phase is carried, not read from the words", () => {
     // The failure was written in Vietnamese; the page is now English. The old card compared words and read "success".
-    const actions: BlockActions = { credentialStatus: { requestId: "r1", phase: "error", message: vi("shell.credential.saveFailed"), attempt: 1 } };
+    const actions: BlockActions = { credentialStatus: { r1: { requestId: "r1", phase: "error", message: vi("shell.credential.saveFailed"), attempt: 1 } } };
     const markup = inLocale("en", createElement(CredentialCardBlock, { block, actions }));
     expect(markup).toContain('data-surface-phase="error"');
     expect(markup).not.toContain('data-surface-phase="success"');
@@ -223,7 +415,7 @@ describe("the credential card's save", () => {
   it("says saving while a save is on its way, in both languages", () => {
     for (const locale of ["en", "vi"] as const) {
       const t = locale === "en" ? en : vi;
-      const actions: BlockActions = { credentialStatus: { requestId: "r1", phase: "pending", message: t("shell.credential.saving"), attempt: 2 } };
+      const actions: BlockActions = { credentialStatus: { r1: { requestId: "r1", phase: "pending", message: t("shell.credential.saving"), attempt: 2 } } };
       const markup = inLocale(locale, createElement(CredentialCardBlock, { block, actions }));
       expect(markup).toContain('data-surface-phase="pending"');
       expect(markup).toContain(t("shell.credential.saving"));
@@ -237,6 +429,37 @@ describe("the credential card's save", () => {
     expect(settleCredentialSave(failedSave, { requestId: "r1", phase: "success", message: "saved", attempt: 2 })).toBe(failedSave);
     // A second submission starts with saving, so the same failure again is a change of phase and is said again.
     expect(settleCredentialSave(failedSave, { requestId: "r1", phase: "pending", message: "saving", attempt: 3 }).phase).toBe("pending");
+  });
+
+  it("keeps each card's own answer when two cards save at once", async () => {
+    const saves = [deferred<{ names: string[] }>(), deferred<{ names: string[] }>()];
+    let call = 0;
+    let attempts = 0;
+    const status = stateOf<CredentialSaveStatus>();
+    const deps = {
+      client: { putCredential: () => saves[call++]!.promise },
+      t: en,
+      nextAttempt: () => ++attempts,
+      update: status.update,
+    };
+    submitCredentialSave(deps, { requestId: "x", fields: [{ name: "X_KEY", value: "placeholder" }] });
+    submitCredentialSave(deps, { requestId: "y", fields: [{ name: "Y_KEY", value: "placeholder" }] });
+    // X answers after Y's save began: a later attempt on another card, which must not drop X's answer.
+    saves[0]!.resolve({ names: ["X_KEY"] });
+    await answered();
+    saves[1]!.reject(new Error("offline"));
+    await answered();
+    expect(status.current()).toEqual({
+      x: { requestId: "x", phase: "success", message: en("shell.credential.saved").replace("{names}", "X_KEY"), attempt: 1 },
+      y: { requestId: "y", phase: "error", message: en("shell.credential.saveFailed"), attempt: 2 },
+    });
+  });
+
+  it("draws only the card's own save", () => {
+    const actions: BlockActions = {
+      credentialStatus: { other: { requestId: "other", phase: "error", message: "someone else's", attempt: 1 } },
+    };
+    expect(inLocale("en", createElement(CredentialCardBlock, { block, actions }))).not.toContain("someone else's");
   });
 });
 

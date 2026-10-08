@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProviderSignInView } from "@clarkcant/contracts";
 
-import { GatewayError, type GatewayClient } from "./api.ts";
+import type { GatewayClient } from "./api.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { refusalReason } from "./node-view-refusal.ts";
 
 /** Often enough that a finished browser sign-in shows within a moment, rarely enough to stay quiet. */
 const SIGN_IN_POLL_MS = 1500;
@@ -27,12 +28,6 @@ export interface ProviderSignIns {
   signOut: (providerId: string) => Promise<{ providerId: string; signedOut: boolean }>;
 }
 
-/** The node's own sentence for a refusal, without the code in front of it: what a person reads, not a log. */
-export function signInFailureReason(error: unknown): string {
-  if (error instanceof GatewayError) return error.reason;
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * What a sign-in, sign-out press settles on, in the same words wherever it was pressed: a `/login` or `/logout` card
  * row and a Settings provider row say the same thing about the same answer.
@@ -41,7 +36,7 @@ export type ProviderPressOutcome = { status: "done" | "failed"; message: string 
 
 /** A sign-in that could not start, with the node's own reason and never its code. */
 export function signInStartRefused(error: unknown, t: (key: MessageKey) => string): ProviderPressOutcome {
-  return { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: signInFailureReason(error) }) };
+  return { status: "failed", message: fillMessage(t("settings.providers.startFailed"), { reason: refusalReason(error) }) };
 }
 
 /** A sign-out the node answered: removed, or nothing to remove. */
@@ -51,7 +46,7 @@ export function signOutSettled(result: { signedOut: boolean }, t: (key: MessageK
 
 /** A sign-out that did not happen: the credential is still there, with the node's reason and never its code. */
 export function signOutRefused(error: unknown, t: (key: MessageKey) => string): ProviderPressOutcome {
-  return { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: signInFailureReason(error) }) };
+  return { status: "failed", message: fillMessage(t("settings.providers.signOutFailed"), { reason: refusalReason(error) }) };
 }
 
 export type ProviderSignInPort = Pick<
@@ -125,7 +120,7 @@ export class ProviderSignInFollower {
           (next) => this.follow(key, next),
           (error: unknown) => {
             if (this.#closed) return;
-            this.#show(key, { ...view, state: "failed", prompt: undefined, error: signInFailureReason(error) });
+            this.#show(key, { ...view, state: "failed", prompt: undefined, error: refusalReason(error) });
           },
         );
       }, this.#pollMs),
@@ -172,7 +167,7 @@ export class ProviderSignInFollower {
     void this.#port.answerProviderSignIn(signInId, value).then(
       (view) => this.follow(key, view),
       (error: unknown) => {
-        if (!this.#closed) this.#onError(signInFailureReason(error));
+        if (!this.#closed) this.#onError(refusalReason(error));
       },
     );
   }
@@ -181,7 +176,7 @@ export class ProviderSignInFollower {
     void this.#port.cancelProviderSignIn(signInId).then(
       (view) => this.follow(key, view),
       (error: unknown) => {
-        if (!this.#closed) this.#onError(signInFailureReason(error));
+        if (!this.#closed) this.#onError(refusalReason(error));
       },
     );
   }
