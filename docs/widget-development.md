@@ -2293,8 +2293,10 @@ and with its own token:
   own newest read.
 
 The window names neither the conversation nor the instance. Its relays are bounded, and a frame that asks too fast is
-refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A widget dev session's build status is shown in the
-window without the folder path. While the widget is detached, the conversation shows a note instead of a second frame,
+refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A relay the node does not answer within 30 seconds
+(10 seconds for a semantic publish) ends with `NODE_TIMEOUT` and frees its place. A widget dev session's build status
+is shown in the window without the folder path, inside build messages too: the folder is replaced by `.`, so a file
+under it reads relative to the package. While the widget is detached, the conversation shows a note instead of a second frame,
 and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached.
 
 Not yet in a detached window: files (`artifacts@1`), jobs (`jobs@1`), browser tokens (`tokens@1`) and the actions

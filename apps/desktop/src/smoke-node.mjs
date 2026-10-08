@@ -143,6 +143,15 @@ export async function startSmokeNode() {
           root: "/home/someone/private-widget",
           placed: { conversationId: "conv_smoke", instanceId: "widget_frame_smoke" },
           running: { generation: control.build, digest: `sha256:build-${String(control.build)}` },
+          // A bundler names the file it failed on absolutely, so the folder path is inside a message too.
+          lastBuild: {
+            ok: false,
+            at: "2026-01-01T00:00:00.000Z",
+            trigger: "change",
+            diagnostics: [
+              { severity: "error", path: "src/main.ts", message: "/home/someone/private-widget/src/main.ts:3:7: Expected \";\"" },
+            ],
+          },
         });
         return;
       }
