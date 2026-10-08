@@ -66,18 +66,42 @@ interface Session {
 interface Harness {
   /** What each provider request added after the last answer, as JSON, in order. */
   sent: string[];
+  /** Every text the extension's input handler was given, in order. */
+  inputs: string[];
   session?: Session;
 }
+
+/** What the extension's input handler adds to every text it is given, so the text it made can be told apart. */
+const HANDLED = " [handled]";
 
 /**
  * The real SDK, with the model catalogue read without a network refresh and each session's stream function replaced by
  * one that records the request and answers at once. The session is kept, so a test can queue on it as Pi does.
+ *
+ * Every session also loads an inline extension with an input handler, as a Pi extension registers one: it records the
+ * text it is given and hands it on with a marker added.
  */
 async function realSdk(harness: Harness): Promise<NonNullable<RealPiAdapterOptions["sdk"]>> {
   const sdk = (await import(SDK_PACKAGE)) as unknown as Record<string, unknown> & {
     ModelRuntime: { create: (options: Record<string, unknown>) => Promise<unknown> };
     createAgentSession: (options: unknown) => Promise<{ session: Session }>;
+    DefaultResourceLoader: new (options: Record<string, unknown>) => object;
   };
+  const inputCounter = {
+    name: "late-steer-input-counter",
+    factory: (api: { on: (event: string, handler: (event: { text: string }) => unknown) => void }) => {
+      api.on("input", (event) => {
+        harness.inputs.push(event.text);
+        return { action: "transform", text: `${event.text}${HANDLED}` };
+      });
+    },
+  };
+  class CountingLoader extends sdk.DefaultResourceLoader {
+    constructor(options: Record<string, unknown>) {
+      const factories = (options.extensionFactories as unknown[] | undefined) ?? [];
+      super({ ...options, extensionFactories: [...factories, inputCounter] });
+    }
+  }
   const stream = (model: { api: string; provider: string; id: string }, context: { messages: { role?: string }[] }) => {
     const lastAnswer = context.messages.findLastIndex((message) => message.role === "assistant");
     harness.sent.push(JSON.stringify(context.messages.slice(lastAnswer + 1)));
@@ -107,6 +131,7 @@ async function realSdk(harness: Harness): Promise<NonNullable<RealPiAdapterOptio
   };
   return {
     ...sdk,
+    DefaultResourceLoader: CountingLoader,
     ModelRuntime: {
       create: (options: Record<string, unknown>) =>
         sdk.ModelRuntime.create({ ...options, modelsPath: null, refreshOnCreate: false }),
@@ -154,7 +179,7 @@ function positionOf(harness: Harness, from: number, text: string): number {
 }
 
 async function answeredSession(): Promise<{ adapter: RealPiAdapter; sessionId: string; harness: Harness; session: Session }> {
-  const harness: Harness = { sent: [] };
+  const harness: Harness = { sent: [], inputs: [] };
   const sdk = await realSdk(harness);
   const model = await catalogueModel(sdk);
   const adapter = new RealPiAdapter({ cwd, agentDir, model, apiKey: "test-only-key", sdk });
@@ -312,6 +337,32 @@ describe("late steers with pictures sent again after a turn", () => {
 
     await adapter.continueQueued(sessionId);
 
+    expect(picturesSent(harness, before)).toBe(1);
+    expect(session.agent.hasQueuedMessages()).toBe(false);
+    await adapter.dispose(sessionId);
+  }, 60_000);
+});
+
+describe("late steers sent again after a turn, with an extension's input handler", () => {
+  it("run the handler once per steer, when it was steered, and send the text it made", async () => {
+    const { adapter, sessionId, harness, session } = await answeredSession();
+    const before = harness.sent.length;
+    const steers = ["late steer one", "late steer two", "late steer with a picture"];
+
+    await adapter.steer(sessionId, "late steer one");
+    await adapter.steer(sessionId, "late steer two");
+    await session.steer("late steer with a picture", [PIXEL]);
+    const handledWhenSteered = harness.inputs.slice(1);
+
+    await adapter.continueQueued(sessionId);
+
+    // The first question went through the handler when it was prompted; each steer once more, and only then.
+    expect(handledWhenSteered).toEqual(steers);
+    expect(harness.inputs.slice(1)).toEqual(steers);
+    for (const text of steers) {
+      expect(timesSent(harness, before, `${text}${HANDLED}`), text).toBe(1);
+      expect(timesSent(harness, before, `${text}${HANDLED}${HANDLED}`), text).toBe(0);
+    }
     expect(picturesSent(harness, before)).toBe(1);
     expect(session.agent.hasQueuedMessages()).toBe(false);
     await adapter.dispose(sessionId);

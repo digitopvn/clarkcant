@@ -90,6 +90,25 @@ function canStartRun(message: SdkQueuedMessage): boolean {
 }
 
 /**
+ * The session's own run on messages that are ready to send: the run `prompt` starts once its input handlers, expansion
+ * and `before_agent_start` are done, with its retry, compaction, streaming flag and settle events.
+ *
+ * SAFETY: `_runAgentPrompt` is private in SDK 1.0.2. The public ways in each fall short for a steer sent again:
+ * `prompt` and `sendUserMessage` run the extensions' input handlers a second time on text they already handled when it
+ * was steered, `sendCustomMessage` sends an extension's message rather than the person's, and the agent's own `prompt`
+ * or `continue` skip the session's run, so no retry, compaction or settle event. It is the same run `sendCustomMessage`
+ * starts with `triggerTurn`. Looked up at call time and checked, so an SDK that renames it fails loudly here instead of
+ * quietly running the input handlers twice; the late-steer tests drive it through the real SDK.
+ */
+function sessionRun(session: SdkSession): (messages: SdkQueuedMessage[]) => Promise<void> {
+  const run = (session as unknown as { _runAgentPrompt?: unknown })._runAgentPrompt;
+  if (typeof run !== "function") {
+    throw new Error("the Pi SDK's session has no _runAgentPrompt, so a queued steer cannot be sent without its input handlers running again");
+  }
+  return (messages) => (run as (messages: SdkQueuedMessage[]) => Promise<void>).call(session, messages);
+}
+
+/**
  * Convert one of our tool definitions into the SDK's shape.
  *
  * SAFETY: `defineTool` is an identity function at runtime, and the SDK accepts the result in
@@ -1046,15 +1065,15 @@ export class RealPiAdapter implements PiAdapter {
    * Run again on a steer the last run did not take. Pi's agent loop reads its steering queue between model calls; a
    * steer that lands after its last read stays queued once the run settles.
    *
-   * Answered through the session rather than the agent underneath it: the queue is taken off and its sentences are sent
-   * as one prompt, so the session's own run applies — retry on a transient provider error, compaction, the streaming
-   * flag and its settle events — which a bare `agent.continue()` skips. The sentences were already expanded when they
-   * were steered, so they are not expanded again. Bounded and checked exactly as a prompt is.
+   * Answered through the session's own run rather than the agent underneath it, so retry on a transient provider error,
+   * compaction, the streaming flag and its settle events apply, which a bare `agent.continue()` skips. The person's
+   * messages are sent as they were queued, not through `prompt` again: they already went through the extensions' input
+   * handlers and were expanded when they were steered, so neither runs a second time. Bounded as a prompt is.
    *
    * The agent's queue also holds what a Pi extension queued, interleaved with the person's steers. Clearing the
    * session's queue clears the agent's too, so the whole queue is taken off, in the order Pi would deliver it: every
    * steer, then every follow-up. The run starts from its head. When the head is the person's, it and the person's
-   * messages straight after it in the same queue are joined into one prompt, their pictures kept; when it is an
+   * messages straight after it in the same queue start the run together, each with its text and pictures; when it is an
    * extension's message, that message starts the run itself. Everything after the head is put back in the queue it came
    * from, in its order, so a steer stays a steer and a follow-up a follow-up, and the run takes it from there exactly as
    * Pi takes any queued message — in the default one-at-a-time mode, one steer per model call. Each message is sent
@@ -1069,6 +1088,8 @@ export class RealPiAdapter implements PiAdapter {
     const entry = this.#require(sessionId);
     const { session } = entry;
     if (!session.agent.hasQueuedMessages()) return;
+    // Looked up before the queue is taken off, so an SDK without it fails with nothing lost.
+    const run = sessionRun(session);
     const queued = takeAgentQueues(session.agent);
     // The session's own text copies of the person's messages; the agent's messages carry the same text and pictures.
     session.clearQueue();
@@ -1101,15 +1122,7 @@ export class RealPiAdapter implements PiAdapter {
       await this.#bounded(sessionId, () => session.sendCustomMessage({ customType, content, display, details }, { triggerTurn: true }));
       return;
     }
-    const parts = joined.flatMap((message) => {
-      const part = queuedUserParts(message);
-      return part === undefined ? [] : [part];
-    });
-    const text = parts.map((part) => part.text).filter((sentence) => sentence !== "").join("\n\n");
-    const images = parts.flatMap((part) => part.images);
-    await this.#bounded(sessionId, () =>
-      session.prompt(text, { expandPromptTemplates: false, ...(images.length === 0 ? {} : { images }) }),
-    );
+    await this.#bounded(sessionId, () => run(joined.filter(canStartRun)));
   }
 
   async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
