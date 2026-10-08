@@ -1197,7 +1197,17 @@ này, và `clarkcant instructions check` cũng dùng đúng schema đó để ki
   thường, chữ số và `-`, tối đa 64 ký tự), và `pin` không bắt buộc. `when` có thể nêu `project`, `path`, `operation`
   (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) và `skill`.
   Mỗi trường nhận một giá trị hoặc một danh sách tối đa 16 giá trị. Một glob `path` có tối đa 200 ký tự, 16 ký tự đại
-  diện và 32 thư mục. Tệp lớn hơn 64 KB không được đọc.
+  diện và 32 thư mục, và mọi glob `path` của một tệp cộng lại có tối đa 4.000 ký tự: node bỏ qua, theo thứ tự trong
+  tệp, quy tắc làm tệp vượt mức này, và lệnh kiểm tra báo quy tắc đó. Tệp lớn hơn 64 KB không được đọc.
+- Việc so khớp luôn có giới hạn, dù tệp viết gì. Một đường dẫn tốn tối đa 200.000 bước so khớp với các quy tắc của một
+  tệp; đường dẫn cần nhiều hơn, hoặc đường dẫn tương đối với dự án dài quá 4.096 ký tự, không thỏa điều kiện `path` nào:
+  hướng dẫn có thể bị thiếu, nhưng không bao giờ được nêu cho một đường dẫn mà nó không nói tới. Mỗi lần hỏi chỉ kiểm
+  tra tối đa 96 đường dẫn được chạm: 64 đường dẫn gần nhất của session và tối đa 32 chỗ mà tin nhắn trỏ tới, và kết quả
+  cho một đường dẫn được giữ lại khi tệp không đổi, nên một tool call chỉ so khớp những gì nó mới chạm tới. Chữ hoa
+  thường được gộp trên Windows và macOS và giữ nguyên trên Linux và mọi nền tảng khác, cả trong glob `path` lẫn khi node
+  tìm root đã cấp chứa dự án. Việc một đường dẫn có nằm trong một dự án hay không, và đó là dự án nào, được quyết định
+  theo đường dẫn thật trên ổ đĩa, nên trên một ổ phân biệt chữ hoa thường, hai thư mục có tên chỉ khác nhau về chữ hoa
+  thường vẫn là hai dự án.
 - Khóa lạ: ở cấp cao nhất chỉ cho phép `$schema` (một chuỗi, dành cho JSON schema của trình soạn thảo), và mọi khóa lạ
   khác ở cấp cao nhất khiến node không đọc gì từ tệp. Một khóa lạ bên trong một quy tắc hoặc bên trong `when` của nó chỉ
   làm bỏ qua quy tắc đó. Lệnh kiểm tra báo cả hai trường hợp.
