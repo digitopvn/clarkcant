@@ -25,7 +25,8 @@
  * third-party dependencies, so it is not part of `pnpm test`; CI and the release workflow run it on every OS.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -329,7 +330,8 @@ async function cleanUp() {
   }
   if (scratchDir === undefined) return;
   if (keepScratch) log(`  kept ${scratchDir}`);
-  else rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  // The promise form: on Windows `rmSync` fails at once on a folder a stopped process still holds, whatever its retries.
+  else await rm(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   scratchDir = undefined;
 }
 

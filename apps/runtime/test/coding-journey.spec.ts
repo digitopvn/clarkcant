@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -30,6 +30,7 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createTaskDispatcher, type TaskDispatcher } from "../src/task-dispatch.ts";
 import { taskDispatchReports } from "../src/task-reporting.ts";
 import { runWorkerProcess } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A labelled issue, all the way to a draft pull request.
@@ -402,7 +403,7 @@ afterEach(async () => {
   } finally {
     process.env.PATH = originalPath;
     services.runtime.close();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await removeTestDirectory(dir);
   }
 }, 40_000);
 

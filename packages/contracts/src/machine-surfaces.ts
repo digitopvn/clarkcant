@@ -75,6 +75,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "effects" && third === "reconcile") ||
         // POST /artifacts/:id/export: Save As, the bytes of an artifact written to a file on the person's machine.
         (first === "artifacts" && third === "export") ||
+        // POST /widget-dev/chosen-folders/forget: taking back which folders Clark may develop in is the person's, as
+        // choosing them is.
+        (first === "widget-dev" && second === "chosen-folders" && third === "forget") ||
         // POST /packages/:id/connection: connecting a package's service to the person's account. Consent is the host's
         // and the person's; an AI client that could start it could grant a package an account nobody chose to give it.
         (first === "packages" && third === "connection")

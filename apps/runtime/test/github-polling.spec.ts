@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService } from "../src/automation-service.ts";
 import { GITHUB_POLL_INTERVAL_MS, createGithubPolling, type GithubPolling } from "../src/github-polling.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A node GitHub cannot deliver to, reading its repositories' events instead.
@@ -151,9 +152,9 @@ beforeEach(() => {
   createConversation(services.runtime.db, { conversationId: CONVERSATION_ID, homeNodeId: services.runtime.identity.nodeId, at: now() });
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 describe("which repositories a node polls", () => {

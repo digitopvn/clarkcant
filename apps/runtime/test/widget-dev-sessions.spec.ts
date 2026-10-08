@@ -1,14 +1,18 @@
 import type * as fs from "node:fs";
 import type * as fsPromises from "node:fs/promises";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import type * as os from "node:os";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, parse, resolve, sep } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  TURN_ORIGINS,
+  messageBlockSchema,
+  type CommandCard,
   type ExecutionPolicyConfig,
   type Instant,
   type TurnOrigin,
@@ -32,6 +36,7 @@ import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 import { holdDirectory } from "./hold-directory.ts";
 
 /** A folder whose `stat` fails with `EPERM`, as an antivirus or indexer holding it on Windows makes it fail. */
@@ -62,6 +67,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     await actual.rm(path, options);
   }) as typeof actual.rm;
   return { ...actual, rm, default: { ...actual, rm } };
+});
+
+/** The home folder the node sees, when a test needs it to be one of the test's own folders. */
+const homeOverride = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof os>();
+  const homedir = (): string => homeOverride.path ?? actual.homedir();
+  return { ...actual, homedir, default: { ...actual, homedir } };
 });
 
 /**
@@ -206,7 +220,8 @@ const served = async (url: string): Promise<string> => {
 };
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "clarkcant-widget-dev-"));
+  // Canonical, so a path the test builds is the folder itself (macOS reaches its temp folder through a link).
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), "clarkcant-widget-dev-")));
   root = join(dir, "projects", "timer");
   writePackage("<!doctype html><p>first</p>\n");
   services = bootNodeServices({ dataDir: join(dir, "node"), label: "widget dev test node" });
@@ -221,6 +236,7 @@ beforeEach(() => {
 
 afterEach(() => {
   statFailure.path = undefined;
+  homeOverride.path = undefined;
   services.widgetDev?.close();
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true });
@@ -467,15 +483,14 @@ describe("a widget dev session", () => {
     const unset = await toolFor(conversationId).execute({ action: "start", root });
     expect(unset.text).toContain("Not started");
     expect(unset.text).toContain("widget-workspace");
-    // Said in the owner's language (Vietnamese by default), with only what works today: copy the project into the
-    // widget workspace. Choosing another folder is not offered, since nothing lets the person choose one yet.
-    expect(unset.text).toContain("hãy chép thư mục của nó vào không gian widget");
-    expect(unset.text).toContain("digitopvn/clarkcant#538");
-    expect(unset.text).not.toContain("workspace.roots");
+    // Said in the owner's language (Vietnamese by default), with what the person can do: choose the folder themselves,
+    // on the card the answer carries or with /develop. A preference they have no way to write is never offered.
+    expect(unset.text).toContain("“Phát triển thư mục này”");
+    expect(unset.text).toContain("/develop");
+    expect(unset.text).not.toMatch(/workspace\.roots|#538/);
     const english = hostText("en").approvals.devSessionRootNotOwned("/x", "/w");
-    expect(english).toContain("copy its folder into the widget workspace");
-    expect(english).toContain("not available yet");
-    expect(english).not.toMatch(/workspace\.roots|yourself|from the app/);
+    expect(english).toContain('press "Develop this folder" on the card, or type /develop');
+    expect(english).not.toMatch(/workspace\.roots|#538|not available yet|copy its folder/);
 
     setRoots("agent");
     expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Not started");
@@ -483,6 +498,290 @@ describe("a widget dev session", () => {
 
     setRoots("user");
     expect((await toolFor(conversationId).execute({ action: "start", root })).text).toContain("Running generation 1.");
+  });
+
+  it("offers the person a card for a folder Clark may not watch, and lets Clark work there once the person starts it", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+
+    const offered = await toolFor(conversationId).execute({ action: "start", root: elsewhere });
+    expect(offered.text).toContain("Not started");
+    expect(offered.text).toContain("card offering to develop");
+    // The card is the host's, valid as a message block, and names the folder Clark asked for; nothing started.
+    const card = messageBlockSchema.parse(offered.hostBlocks?.[0]) as CommandCard;
+    expect(card).toMatchObject({ type: "command-card", owner: "host", command: "develop" });
+    expect(card.rows[0]).toMatchObject({ rowId: "proposed", label: elsewhere, actions: [{ action: { kind: "develop-folder", root: elsewhere } }] });
+    expect(card.rows[1]?.actions[0]?.action).toEqual({ kind: "develop-folder" });
+    expect((await call("GET", "/widget-dev/sessions")).body).toEqual({ sessions: [] });
+
+    // The press on the card is the person's own start, on the person-only route: it marks the folder as theirs.
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    expect(started.activation).toMatchObject({ state: "active", generation: 1 });
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)?.chosenByPerson).toBe(true);
+    expect((await call("DELETE", `/widget-dev/sessions/${started.sessionId}`)).status).toBe(200);
+
+    // Clark may now pick that folder up again, keeping the mark, and develop a folder inside it.
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Running generation 1.");
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)).toMatchObject({
+      status: "live",
+      chosenByPerson: true,
+      initiative: { kind: "clark" },
+    });
+    const inner = join(elsewhere, "inner");
+    writePackage("<!doctype html><p>inner</p>\n", [], inner, { id: "com.example.inner" });
+    expect((await toolFor(conversationId).execute({ action: "start", root: inner })).text).toContain("Running generation 1.");
+
+    // A restart checks the folder again for whoever started the session, and Clark's session in the chosen folder stays live.
+    services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false });
+    await services.widgetDev.resume();
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`))).toMatchObject({ status: "live" });
+  });
+
+  it("never lets a session Clark starts mark its folder as chosen", async () => {
+    const conversationId = await conversation();
+    // Allowed by the person's project root only.
+    const started = await toolFor(conversationId).execute({ action: "start", root });
+    expect(started.text).toContain("Running generation 1.");
+    const stored = readDevSessions(join(dir, "node"));
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.chosenByPerson).toBeUndefined();
+
+    // Without that root, the folder Clark watched before is not one it may watch again: the person is asked to choose it.
+    services.runtime.db.prepare("DELETE FROM preferences WHERE key = ?").run("workspace.roots");
+    await call("DELETE", `/widget-dev/sessions/${stored[0]?.sessionId ?? ""}`);
+    const again = await toolFor(conversationId).execute({ action: "start", root });
+    expect(again.text).toContain("Not started");
+    expect((again.hostBlocks?.[0] as CommandCard | undefined)?.command).toBe("develop");
+  });
+
+  it("does not follow a chosen folder swapped for a link to somewhere else", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    expect(services.widgetDev?.chosen()).toEqual([realpathSync.native(elsewhere)]);
+    expect((await call("DELETE", `/widget-dev/sessions/${started.sessionId}`)).status).toBe(200);
+
+    // The chosen folder is moved aside and a link to an unrelated folder takes its place.
+    const unrelated = join(dir, "unrelated");
+    writePackage("<!doctype html><p>unrelated</p>\n", [], join(unrelated, "inner"), { id: "com.example.unrelated" });
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+    symlinkSync(unrelated, elsewhere, process.platform === "win32" ? "junction" : "dir");
+
+    // The stored choice no longer names the folder its path leads to, so it grants nothing, there or inside it.
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    const through = await toolFor(conversationId).execute({ action: "start", root: join(elsewhere, "inner") });
+    expect(through.text).toContain("Not started");
+    expect((await toolFor(conversationId).execute({ action: "start", root: elsewhere })).text).toContain("Not started");
+    expect((await call("GET", "/widget-dev/sessions")).body).toMatchObject({ sessions: [{ sessionId: started.sessionId, status: "stopped" }] });
+  });
+
+  it("names and starts the folder a path resolves to, and says so when it differs from the words given", () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const real = realpathSync.native(elsewhere);
+    const given = `${join(dir, "elsewhere", "timer")}${sep}..${sep}timer`;
+    const card = services.widgetDev?.folderCard({ proposed: given, locale: "en" });
+    const proposed = card?.rows.find((row) => row.rowId === "proposed");
+    expect(proposed).toMatchObject({ label: real, actions: [{ action: { kind: "develop-folder", root: real } }] });
+    expect(proposed?.note).toContain(`The path given was ${given}`);
+    expect(proposed?.note).toContain("every folder inside it");
+    expect(card?.detail).toContain("every folder inside it");
+
+    // Through a link, the card shows where the link leads.
+    const link = join(dir, "link");
+    symlinkSync(elsewhere, link, process.platform === "win32" ? "junction" : "dir");
+    const linked = services.widgetDev?.folderCard({ proposed: link, locale: "en" }).rows.find((row) => row.rowId === "proposed");
+    expect(linked).toMatchObject({ label: real, actions: [{ action: { kind: "develop-folder", root: real } }] });
+    expect(linked?.note).toContain(`The path given was ${link}`);
+
+    // A path that names nothing now gets no button, and no promise about whatever may appear there later.
+    const missing = join(dir, "missing");
+    const nothing = services.widgetDev?.folderCard({ proposed: missing, locale: "en" }).rows[0];
+    expect(nothing).toMatchObject({ rowId: "proposed", label: missing, actions: [] });
+    expect(nothing?.note).toContain("not found on the node now");
+    expect(nothing?.note).not.toContain("Afterwards Clark may also develop");
+    // Nor does a relative path, or a network share or device path, which a press could only fail on.
+    expect(services.widgetDev?.folderCard({ proposed: "projects/timer", locale: "en" }).rows[0]).toMatchObject({ actions: [], note: expect.stringContaining("not a full path") });
+    if (process.platform === "win32") {
+      for (const remote of ["\\\\host\\share\\timer", "\\\\?\\C:\\timer"]) {
+        const row = services.widgetDev?.folderCard({ proposed: remote, locale: "en" }).rows[0];
+        expect(row, remote).toMatchObject({ label: remote, actions: [], note: expect.stringContaining("network share or device path") });
+      }
+    }
+    // With nothing to press on the offered row, choosing another folder is the card's first action.
+    expect(services.widgetDev?.folderCard({ proposed: missing, locale: "en" }).rows[1]?.actions[0]).toMatchObject({ tone: "primary" });
+  });
+
+  it("keeps no choice when the folder the card showed has been swapped for a link before the press", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const card = services.widgetDev?.folderCard({ proposed: elsewhere, locale: "en" });
+    const pressed = card?.rows[0]?.actions[0]?.action;
+    expect(pressed).toEqual({ kind: "develop-folder", root: elsewhere });
+
+    // Before the press, the folder is moved aside and a link to a wider folder takes its place.
+    const wide = join(dir, "wide");
+    writePackage("<!doctype html><p>wide</p>\n", [], wide, { id: "com.example.wide" });
+    writePackage("<!doctype html><p>secret</p>\n", [], join(wide, "secret"), { id: "com.example.secret" });
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+    symlinkSync(wide, elsewhere, process.platform === "win32" ? "junction" : "dir");
+
+    // The press still starts what the path leads to, as the person asked, but keeps nothing: the person saw another folder.
+    const started = await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId });
+    expect(started.status).toBe(201);
+    expect(session(started)).toMatchObject({ root: wide });
+    expect(session(started).chosenByPerson).toBeUndefined();
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    expect((await toolFor(conversationId).execute({ action: "start", root: join(wide, "secret") })).text).toContain("Not started");
+
+    // Pressing the folder by its own path is the person choosing it.
+    const again = session(await call("POST", "/widget-dev/sessions", { root: wide, conversationId }));
+    expect(again.chosenByPerson).toBe(true);
+    expect(services.widgetDev?.chosen()).toEqual([wide]);
+  });
+
+  it("keeps no choice when a folder missing from the card appears there later as a link", async () => {
+    const conversationId = await conversation();
+    const later = join(dir, "elsewhere", "later");
+    const card = services.widgetDev?.folderCard({ proposed: later, locale: "en" });
+    expect(card?.rows[0]).toMatchObject({ rowId: "proposed", actions: [] });
+
+    const wide = join(dir, "wide");
+    writePackage("<!doctype html><p>wide</p>\n", [], wide, { id: "com.example.wide" });
+    mkdirSync(join(dir, "elsewhere"), { recursive: true });
+    symlinkSync(wide, later, process.platform === "win32" ? "junction" : "dir");
+
+    // A path typed through the link starts the folder it leads to, without making it a choice.
+    const started = await call("POST", "/widget-dev/sessions", { root: later, conversationId });
+    expect(started.status).toBe(201);
+    expect(session(started).chosenByPerson).toBeUndefined();
+    expect(services.widgetDev?.chosen()).toEqual([]);
+  });
+
+  it("refuses to offer a folder to choose from a turn the person did not send, and still lists the chosen ones", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    for (const origin of TURN_ORIGINS.filter((candidate) => candidate !== "person")) {
+      for (const params of [{ action: "choose", root: elsewhere }, { action: "choose" }]) {
+        const refused = await toolFor(conversationId, origin).execute(params);
+        expect(refused.hostBlocks, origin).toBeUndefined();
+        expect(refused.text, origin).toContain("only a turn the person sent");
+      }
+      expect((await toolFor(conversationId, origin).execute({ action: "folders" })).hostBlocks, origin).toHaveLength(1);
+    }
+    expect((await toolFor(conversationId, "person").execute({ action: "choose", root: elsewhere })).hostBlocks).toHaveLength(1);
+  });
+
+  it("says a forgotten folder stays reachable through a chosen folder that holds it", async () => {
+    const outer = join(dir, "elsewhere", "outer");
+    const inner = join(outer, "inner");
+    writePackage("<!doctype html><p>outer</p>\n", [], outer, { id: "com.example.outer" });
+    writePackage("<!doctype html><p>inner</p>\n", [], inner, { id: "com.example.inner" });
+    await call("POST", "/widget-dev/sessions", { root: outer });
+    await call("POST", "/widget-dev/sessions", { root: inner });
+    expect(services.widgetDev?.chosen()).toEqual([outer, inner]);
+
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: inner })).body).toEqual({ root: inner, forgotten: true, stillCoveredBy: outer });
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: inner })).body).toEqual({ root: inner, forgotten: false, stillCoveredBy: outer });
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: outer })).body).toEqual({ root: outer, forgotten: true });
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: inner })).body).toEqual({ root: inner, forgotten: false });
+  });
+
+  it("lists a chosen folder that is not found now, so the person can still forget it", async () => {
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    renameSync(elsewhere, join(dir, "elsewhere", "moved"));
+
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    expect(services.widgetDev?.marked()).toEqual([{ root: elsewhere, found: false }]);
+    const row = services.widgetDev?.folderCard({ locale: "en", only: "chosen" }).rows[0];
+    expect(row).toMatchObject({ label: elsewhere, badge: { text: "not found now", tone: "warning" }, actions: [{ action: { kind: "develop-folder-forget", root: elsewhere } }] });
+    expect(row?.note).toContain("not found at this path now");
+
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: elsewhere })).body).toEqual({ root: elsewhere, forgotten: true });
+    expect(services.widgetDev?.marked()).toEqual([]);
+  });
+
+  it("warns that a whole drive or the home folder is watched for the session only, and keeps no choice of it", async () => {
+    const drive = parse(dir).root;
+    const driveRow = services.widgetDev?.folderCard({ proposed: drive, locale: "en" }).rows[0];
+    expect(driveRow?.note).toContain("whole drive");
+    expect(driveRow?.note).not.toContain("Afterwards Clark may also develop");
+
+    // The home folder is the test's own folder here, so a session can start in it.
+    const home = join(dir, "home");
+    writePackage("<!doctype html><p>home</p>\n", [], home, { id: "com.example.home" });
+    homeOverride.path = home;
+    const homeRow = services.widgetDev?.folderCard({ proposed: home, locale: "en" }).rows[0];
+    expect(homeRow?.note).toContain("your home folder");
+    const started = session(await call("POST", "/widget-dev/sessions", { root: home }));
+    expect(started.activation).toMatchObject({ state: "active", generation: 1 });
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)?.chosenByPerson).toBeUndefined();
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    // Started again by the person, it is still not kept.
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    await call("POST", "/widget-dev/sessions", { root: home });
+    expect(services.widgetDev?.chosen()).toEqual([]);
+  });
+
+  it("lets the person forget a folder they chose, and nothing else forget it for them", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+    const started = session(await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId }));
+    await call("DELETE", `/widget-dev/sessions/${started.sessionId}`);
+    const real = realpathSync.native(elsewhere);
+
+    // The card lists the chosen folder, with what it covers and a way to take it back.
+    const listed = services.widgetDev?.folderCard({ locale: "en", only: "chosen" });
+    expect(listed).toMatchObject({ command: "develop", title: "Folders Clark may develop in" });
+    expect(listed?.rows).toEqual([
+      expect.objectContaining({ label: real, note: expect.stringContaining("every folder inside it"), actions: [expect.objectContaining({ action: { kind: "develop-folder-forget", root: real } })] }),
+    ]);
+
+    for (const surface of ["mcp", "relay", "cli-api"]) {
+      const refused = await call("POST", "/widget-dev/chosen-folders/forget", { root: real }, { "x-clarkcant-surface": surface });
+      expect(refused.status, surface).toBe(403);
+      expect(refused.body, surface).toMatchObject({ code: "PERSON_ONLY" });
+    }
+    expect(services.widgetDev?.chosen()).toEqual([real]);
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: "relative" })).status).toBe(400);
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: real, extra: 1 })).status).toBe(400);
+    expect((await call("GET", "/widget-dev/chosen-folders/forget")).status).toBe(405);
+
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: elsewhere })).body).toEqual({ root: real, forgotten: true });
+    expect(services.widgetDev?.chosen()).toEqual([]);
+    expect(readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === started.sessionId)?.chosenByPerson).toBeUndefined();
+    const refused = await toolFor(conversationId).execute({ action: "start", root: elsewhere });
+    expect(refused.text).toContain("Not started");
+    // Forgetting is idempotent, and leaves the empty list saying so.
+    expect((await call("POST", "/widget-dev/chosen-folders/forget", { root: real })).body).toEqual({ root: real, forgotten: false });
+    expect(services.widgetDev?.folderCard({ locale: "en", only: "chosen" })).toMatchObject({ rows: [], empty: "You have not chosen any folder for Clark." });
+  });
+
+  it("shows the person the folder card and the chosen folders when asked in words", async () => {
+    const conversationId = await conversation();
+    const elsewhere = join(dir, "elsewhere", "timer");
+    writePackage("<!doctype html><p>elsewhere</p>\n", [], elsewhere, { id: "com.example.elsewhere" });
+
+    const offered = await toolFor(conversationId).execute({ action: "choose", root: elsewhere });
+    const card = messageBlockSchema.parse(offered.hostBlocks?.[0]) as CommandCard;
+    expect(card.rows[0]).toMatchObject({ rowId: "proposed", actions: [{ action: { kind: "develop-folder", root: realpathSync.native(elsewhere) } }] });
+    const blank = messageBlockSchema.parse((await toolFor(conversationId).execute({ action: "choose" })).hostBlocks?.[0]) as CommandCard;
+    expect(blank.rows[0]).toMatchObject({ rowId: "choose", actions: [{ action: { kind: "develop-folder" } }] });
+    // Showing a card starts nothing.
+    expect((await call("GET", "/widget-dev/sessions")).body).toEqual({ sessions: [] });
+
+    await call("POST", "/widget-dev/sessions", { root: elsewhere, conversationId });
+    const folders = messageBlockSchema.parse((await toolFor(conversationId).execute({ action: "folders" })).hostBlocks?.[0]) as CommandCard;
+    expect(folders.rows.map((row) => row.actions[0]?.action)).toEqual([{ kind: "develop-folder-forget", root: realpathSync.native(elsewhere) }]);
   });
 
   it("decides a session Clark started as Clark's own proposal, so guarded mode asks", async () => {
@@ -704,7 +1003,7 @@ describe("a widget dev session", () => {
 
   it("stops as folder-gone, rather than building again, when the folder is deleted before a rebuild", async () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    await removeTestDirectory(root);
     const rebuilt = await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`);
     expect(rebuilt.status).toBe(200);
     expect(session(rebuilt)).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
@@ -716,7 +1015,7 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    await removeTestDirectory(root);
     // Bounded: the node looks for the folder at least once a second (`DEV_ENGINE_ROOT_CHECK_MS`), and on every change.
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });
@@ -728,8 +1027,9 @@ describe("a widget dev session", () => {
     const started = session(await call("POST", "/widget-dev/sessions", { root }));
     expect(started.status).toBe("live");
 
-    // In one turn of the event loop: the path names a folder again, but not the one being watched.
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    // In one turn of the event loop: the path names a folder again, but not the one being watched. Synchronous on purpose,
+    // so nothing looks between the delete and the new folder; no retries are asked for, since `rmSync` would not run them.
+    rmSync(root, { recursive: true, force: true });
     writePackage("<!doctype html><p>a new folder</p>\n");
     const stopped = await eventually(started.sessionId, (view) => view.status === "stopped");
     expect(stopped).toMatchObject({ status: "stopped", stopReason: "folder-gone", activation: { state: "active", generation: 1 } });

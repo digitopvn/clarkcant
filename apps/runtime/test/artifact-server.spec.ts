@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { TABLE } from "@clarkcant/data-canvas";
 import { contentDisposition } from "../src/routes/content-disposition.ts";
 import { createNodeServer, type NodeServerOptions } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * File names people actually use, through the server the node boots.
@@ -93,7 +94,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const close of servers) await close();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 describe("a Vietnamese file name over the wire", () => {

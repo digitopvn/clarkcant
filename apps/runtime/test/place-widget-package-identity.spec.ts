@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,7 @@ import { locateIsolatedFrame } from "../src/routes/conversations.ts";
 import type { ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { listPlaceableWidgets, placeWidget } from "../src/widget-perform-tool.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Whose widget a placed button belongs to, read through the node's own frame lookup and a real directory listing.
@@ -170,11 +171,11 @@ beforeEach(() => {
   services.serviceHost = { serves: (ref: CapabilityRef) => served.get(ref) } as unknown as ServiceHost;
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (previousIndex === undefined) delete process.env["CC_DIRECTORY_INDEX"];
   else process.env["CC_DIRECTORY_INDEX"] = previousIndex;
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("a widget id two active packages declare", () => {

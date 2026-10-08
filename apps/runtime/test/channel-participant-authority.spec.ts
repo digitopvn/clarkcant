@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,7 @@ import { ownedResources } from "../src/preflight.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { type FakeChannelAdapter, createFakeChannelAdapter, fakeDelivery } from "./fake-channel-adapter.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Whose authority a channel message acts with, on the real model turn and the real command tool.
@@ -140,7 +141,7 @@ beforeEach(() => {
 afterEach(async () => {
   await channels.stop();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 const askToRead: ScriptedTurn = {

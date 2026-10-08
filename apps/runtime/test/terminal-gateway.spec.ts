@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import { WebSocket } from "ws";
 import { createPiSessionWatcher } from "../src/pi-session-watch.ts";
 import { attachTerminalGateway, type TerminalGateway } from "../src/terminal-gateway.ts";
 import { createTerminalRegistry, type TerminalRegistry } from "../src/terminal-sessions.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The live terminal socket: authenticated in its first frame, and one driver per terminal.
@@ -49,7 +50,7 @@ afterEach(async () => {
   await gateway.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   // A killed shell's children can still be letting go of the directory for a moment on macOS.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 /** Kill every shell and wait until each has exited, so nothing is still writing into the directory being removed. */

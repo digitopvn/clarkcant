@@ -698,6 +698,14 @@ export interface BlockActions {
   onSignInAnswer?: (input: { key: string; signInId: string; value: string }) => void;
   onSignInCancel?: (input: { key: string; signInId: string }) => void;
   /**
+   * Rows of a `/develop` card that ask for a folder's path in words, keyed `cardId/rowId/actionId`: in a browser, for a
+   * node on another machine, or when the folder dialog did not open. The value says why, so the card can say it.
+   */
+  folderEntries?: Readonly<Record<string, FolderEntryReason>>;
+  /** The path the person typed for such a row: starts the session as theirs, as the dialog's answer would. */
+  onFolderEntrySubmit?: (input: { cardId: string; rowId: string; actionId: string; root: string }) => void;
+  onFolderEntryCancel?: (input: { key: string }) => void;
+  /**
    * The Feedback Composer's Preview (`feedback-card`): prepare the report and show the issue exactly as it would be
    * filed. Nothing is filed. Absent in a snapshot, where the composer is drawn as a record.
    */
@@ -727,6 +735,9 @@ export type FeedbackCardState =
   | { status: "done"; publication: FeedbackPublication }
   /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
   | { status: "failed"; message: string; reportId?: string; requestKey?: string };
+
+/** Why a row asks for a folder's path in words rather than in the OS dialog. */
+export type FolderEntryReason = "browser" | "remote-node" | "dialog-failed";
 
 /** What one press on a command card came to. */
 export type CommandActionState =

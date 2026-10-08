@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -46,6 +46,7 @@ import { ServiceCallError, type ServiceCallOptions, type ServiceHost } from "../
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 import type { ViewDescriptor } from "../src/model-turn.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The generic action button: what a model may bind it to, what the host says about whether it can run, and what a
@@ -305,10 +306,10 @@ beforeEach(() => {
     .run(conversationId, services.runtime.identity.nodeId, AT, AT);
 });
 
-afterEach(() => {
+afterEach(async () => {
   for (const id of leftRunning) endActionRun(id);
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 const REF = { id: ACTION.id, version: ACTION.version, packageDigest: definitionDigest(ACTION) };

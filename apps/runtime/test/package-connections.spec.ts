@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,6 +17,7 @@ import { type ConnectionAuditEvent, createPackageConnectionBroker, type PackageC
 import { type EgressAuditEvent, egressRequestHandler } from "../src/service-egress.ts";
 import { createServiceHost, type ServiceHost, type ServiceLauncher } from "../src/service-host.ts";
 import { startFakeConnector } from "../../../examples/reference-apps/connected-app/dev/fake-connector.mjs";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A package's account connection on the node, against the reference app's fake connector (a test fixture with real
@@ -58,7 +59,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await connector.close();
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 /** The reference package's connection, pointed at the fake connector's real port. */

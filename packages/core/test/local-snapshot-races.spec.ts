@@ -1,10 +1,11 @@
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cachedLocalSnapshotPath, digestOfDirectory, snapshotLocalPackage } from "../src/package-fetch.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The moments of a snapshot a real filesystem cannot be asked to produce on demand: a file replaced or grown between
@@ -53,10 +54,10 @@ beforeEach(() => {
   writeFileSync(join(source, "assets", "icon.svg"), "<svg></svg>");
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete hooks.beforeOpen;
   delete hooks.rename;
-  rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  await removeTestDirectory(dir);
 });
 
 function digestOf(path: string): string {

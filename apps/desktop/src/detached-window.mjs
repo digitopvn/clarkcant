@@ -167,6 +167,59 @@ export function reviewDetachedIntent(payload) {
   return { ok: true, intent: payload };
 }
 
+/**
+ * The detached window's lease on the instance it shows.
+ *
+ * The same numbers as the conversation's own surface (`CLAIM_REFRESH_MS` in `DesktopSurfaces.tsx`): refreshed well
+ * inside its lifetime, so one missed refresh does not hand the instance to somebody else.
+ */
+export const DETACHED_LEASE = Object.freeze({ refreshMs: 30_000, leaseMs: 90_000 });
+
+/**
+ * Keep the detached window's claim alive while it is open.
+ *
+ * A claim made once lapses, and after that any surface can claim the instance while this window still shows it: two
+ * live owners, which is what the lease exists to prevent. So the host re-claims on a timer with the same owner token.
+ *
+ * A refusal that says somebody else holds the instance now (`ALREADY_OWNED`) means this window is no longer the owner,
+ * and `onLost` is told once so the host can close it. Any other failure — the node restarting, a network blip — is
+ * retried on the next tick: the lease outlives a missed refresh on purpose.
+ *
+ * @param {{
+ *   claim: () => Promise<{ ok: boolean, code?: string }>,
+ *   onLost: (answer: { ok: false, code?: string, refused?: string }) => void,
+ *   refreshMs?: number,
+ *   timers?: { setInterval: typeof setInterval, clearInterval: typeof clearInterval },
+ * }} input
+ * @returns {{ stop: () => void }}
+ */
+export function keepDetachedLease(input) {
+  const timers = input.timers ?? globalThis;
+  let stopped = false;
+  let refreshing = false;
+  const stop = () => {
+    stopped = true;
+    timers.clearInterval(timer);
+  };
+  const timer = timers.setInterval(() => {
+    // One refresh at a time: a node slow to answer must not collect a queue of claims behind it.
+    if (stopped || refreshing) return;
+    refreshing = true;
+    void input
+      .claim()
+      .then((answer) => {
+        if (stopped || answer.ok || answer.code !== "ALREADY_OWNED") return;
+        stop();
+        input.onLost(answer);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        refreshing = false;
+      });
+  }, input.refreshMs ?? DETACHED_LEASE.refreshMs);
+  return { stop };
+}
+
 /** Where a detached window opens: beside its parent, and inside the work area the parent is already in. */
 export function detachedBounds(parentBounds, workArea) {
   const width = Math.max(320, Math.min(560, Math.round((parentBounds?.width ?? 900) * 0.5)));
