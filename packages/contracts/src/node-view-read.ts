@@ -21,7 +21,10 @@ import { UNREAD_FIELD_PATH_PATTERN, unreadListingFields, type UnreadEntryFields,
  *
  * Only a view whose top level binds nothing is read this way. A view that carries an approval, a confirmation or what
  * something may reach at its top level (an inbox approval, an app intent decision, a folder-forget answer) stays strict:
- * dropping one of its fields could change what the person approves or what they are told Clark can still reach.
+ * dropping one of its fields could change what the person approves or what they are told Clark can still reach. A
+ * notice action's answer is read tolerantly although it may name an approval (`approvalId`, with the pending and denied
+ * capability counts): nothing is approved from it, since it only points at a waiting item, and the person decides on
+ * that item, which the inbox reads strictly.
  * `docs/open-interfaces.md` ("Reading a node's answers") lists each read and which way it goes.
  */
 export function readNodeView<Schema extends z.ZodObject>(

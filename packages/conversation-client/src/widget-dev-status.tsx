@@ -94,6 +94,14 @@ export interface WidgetDevStatusProps {
   onRunningChange: () => void;
 }
 
+/**
+ * What the line says when the session's status could not be read. A view this app does not read names which Clark each
+ * side runs; anything else is the node not answering. The widget keeps running what it shows either way.
+ */
+export function widgetDevUnreachableText(cause: unknown, t: Translate): string {
+  return nodeViewRefusalText(cause, t, "shell.dev.viewUnreadable") ?? t("shell.dev.unreachable");
+}
+
 export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDevStatusProps): ReactElement | null {
   const t = useT();
   const [view, setView] = useState<WidgetDevSessionRead | undefined>(undefined);
@@ -123,7 +131,7 @@ export function WidgetDevStatus({ client, sessionId, onRunningChange }: WidgetDe
         if (cancelled) return;
         // The widget keeps running what it shows; only the status is unknown, and said so. A view this app does not read
         // says which version is newer instead of only that it could not be read.
-        setUnreachable(nodeViewRefusalText(cause, words.current, "shell.dev.viewUnreadable") ?? words.current("shell.dev.unreachable"));
+        setUnreachable(widgetDevUnreachableText(cause, words.current));
         timer = setTimeout(() => void read(), RETRY_MS);
       }
     };

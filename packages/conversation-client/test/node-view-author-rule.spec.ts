@@ -26,6 +26,9 @@ import { describe, expect, it } from "vitest";
  * the rule. And every top-level field of those schemas whose name speaks of binding state is listed with why it is
  * allowed there, so adding one fails until someone decides it may. `docs/open-interfaces.md` ("Reading a node's
  * answers") is the prose of the same list.
+ *
+ * It is a heuristic, not a proof: it goes by field names, so a binding field named in words it does not look for passes.
+ * It catches the usual mistake and makes the reviewer look; it does not replace the review.
  */
 
 const TOLERANT: Record<string, { shape: Record<string, unknown> }> = {

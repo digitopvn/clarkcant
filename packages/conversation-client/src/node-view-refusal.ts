@@ -7,8 +7,9 @@ import type { MessageKey } from "./i18n/messages.ts";
  * undefined for any other failure.
  *
  * `lead` says what failed and what was preserved, which only the surface knows: a read changed nothing
- * (`shell.nodeView.read`), an action the node answered had already been carried out (`shell.nodeView.acted`), and a
- * `/develop` start had already started the session. The version sentence after it says what happens next: the node
+ * (`shell.nodeView.read`); an action the node answered did something this app cannot read (`shell.nodeView.answered`),
+ * which claims neither success nor failure, since a value newer than the app may mean it waits on something; a reconcile
+ * the node answered was recorded (`shell.nodeView.recorded`); and a `/develop` start had already started the session. The version sentence after it says what happens next: the node
  * runs a newer Clark, so update the app; or it does not, so this is not a version difference; or a version is not
  * known, so the node is probably newer. Never the schema's own text, which is the contract's words and not the person's.
  */

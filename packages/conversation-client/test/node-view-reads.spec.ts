@@ -7,7 +7,7 @@ import {
 } from "@clarkcant/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GatewayClient, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
+import { CLARK_VERSION_MAX, GatewayClient, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
 import { nodeViewRefusalText } from "../src/node-view-refusal.ts";
 import { developStartRefused } from "../src/use-block-actions.ts";
@@ -185,8 +185,8 @@ describe("a refused answer says which Clark each side runs", () => {
     expect(error.code).toBe(NODE_VIEW_UNREADABLE);
     expect(error).toMatchObject({ nodeVersion: "0.3.0", appVersion: "0.2.1", nodeNewer: true });
     expect(error.message).not.toMatch(/invalid|expected|zod/i);
-    expect(nodeViewRefusalText(error, en, "shell.nodeView.acted")).toBe(
-      "The node carried it out, but this app can't read its answer. The node runs Clark 0.3.0, which is newer than this app (Clark 0.2.1). Update the app to read it.",
+    expect(nodeViewRefusalText(error, en, "shell.nodeView.answered")).toBe(
+      "The node answered, but this app can't read what it did. The node runs Clark 0.3.0, which is newer than this app (Clark 0.2.1). Update the app to read it.",
     );
     expect(nodeViewRefusalText(error, vi_, "shell.nodeView.read")).toBe(
       "Ứng dụng này không đọc được câu trả lời của node; chưa có gì thay đổi. Node đang chạy Clark 0.3.0, mới hơn ứng dụng này (Clark 0.2.1). Hãy cập nhật ứng dụng để đọc được.",
@@ -209,7 +209,8 @@ describe("a refused answer says which Clark each side runs", () => {
     }
   });
 
-  it("asks the node for its version once", async () => {
+  /** A client whose node answers `/node` with each of `versions` in turn (a number is that status), and refuses the rest. */
+  function nodeRunning(versions: (string | number)[]): { client: GatewayClient; asked: () => number } {
     let asked = 0;
     const client = new GatewayClient({
       baseUrl: "http://127.0.0.1:8765",
@@ -217,15 +218,44 @@ describe("a refused answer says which Clark each side runs", () => {
       appVersion: "0.2.1",
       fetchImpl: (async (input: string | URL | Request) => {
         if (new URL(String(input)).pathname !== "/node") return Response.json({ waiting: "1", unread: 0 });
+        const answer = versions[Math.min(asked, versions.length - 1)];
         asked += 1;
-        return Response.json({ clarkVersion: "0.3.0" });
+        return typeof answer === "number" ? Response.json({ code: "BUSY", message: "busy" }, { status: answer }) : Response.json({ clarkVersion: answer });
       }) as typeof fetch,
     });
-    await refusal(client.inboxSummary());
-    await refusal(client.inboxSummary());
-    expect(asked).toBe(1);
+    return { client, asked: () => asked };
+  }
+
+  it("asks again on a later refusal, so a node that updated itself at the same address is named as it is now", async () => {
+    const node = nodeRunning(["0.2.1", "0.3.0"]);
+    expect((await refusal(node.client.inboxSummary())).nodeNewer).toBe(false);
+    expect((await refusal(node.client.inboxSummary())).nodeNewer).toBe(true);
+    expect(node.asked()).toBe(2);
   });
 
+  it("does not keep a failed lookup", async () => {
+    const node = nodeRunning([503, "0.3.0"]);
+    expect(await node.client.nodeVersion()).toBeUndefined();
+    expect(await node.client.nodeVersion()).toBe("0.3.0");
+    // A version that read is kept for whoever asks without a refusal.
+    expect(await node.client.nodeVersion()).toBe("0.3.0");
+    expect(node.asked()).toBe(2);
+  });
+
+  it("shares one lookup between refusals that arrive together", async () => {
+    const node = nodeRunning(["0.3.0"]);
+    const errors = await Promise.all([refusal(node.client.inboxSummary()), refusal(node.client.inboxSummary())]);
+    expect(errors.map((error) => error.nodeNewer)).toEqual([true, true]);
+    expect(node.asked()).toBe(1);
+  });
+
+  it("treats a version longer than it would put into a sentence as not known", async () => {
+    const long = `1.0.0-${"a".repeat(CLARK_VERSION_MAX)}`;
+    const error = await refusal(nodeRunning([long]).client.inboxSummary());
+    expect(error.nodeNewer).toBeUndefined();
+    expect(error.nodeVersion).toBeUndefined();
+    expect(nodeViewRefusalText(error, en, "shell.nodeView.read")).not.toContain(long);
+  });
   it("leaves every other failure to its own words", () => {
     expect(nodeViewRefusalText(new Error("offline"), en, "shell.nodeView.read")).toBeUndefined();
   });

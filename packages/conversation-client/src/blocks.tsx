@@ -743,7 +743,9 @@ export type FolderEntryReason = "browser" | "remote-node" | "dialog-failed";
 export type CommandActionState =
   | { status: "pending" }
   | { status: "done"; message: string }
-  | { status: "failed"; message: string };
+  | { status: "failed"; message: string }
+  /** The node answered, but this app cannot read what it did: neither success nor failure is claimed. */
+  | { status: "unknown"; message: string };
 
 /**
  * What the node said about a browser session after a verb was applied to it.

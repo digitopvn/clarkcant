@@ -812,7 +812,7 @@ export class NodeViewUnreadable extends GatewayError {
 
   constructor(versions: { node: string | undefined; app: string | undefined }, cause: unknown) {
     const nodeNewer =
-      versions.node === undefined || versions.app === undefined || !semverSchema.safeParse(versions.node).success || !semverSchema.safeParse(versions.app).success
+      !isClarkVersion(versions.node) || !isClarkVersion(versions.app)
         ? undefined
         : compareReleaseVersions(versions.node, versions.app) > 0;
     super(
@@ -828,6 +828,14 @@ export class NodeViewUnreadable extends GatewayError {
     this.appVersion = versions.app;
     this.nodeNewer = nodeNewer;
   }
+}
+
+/** The longest Clark version this app puts into a sentence; a longer one is treated as not known. */
+export const CLARK_VERSION_MAX = 64;
+
+/** A Clark version this app can name: a release version of bounded length. */
+function isClarkVersion(value: unknown): value is string {
+  return typeof value === "string" && value.length <= CLARK_VERSION_MAX && semverSchema.safeParse(value).success;
 }
 
 /** An answer the node gave as a JSON object, as opposed to a list, a value or nothing. */
@@ -942,7 +950,8 @@ export class GatewayClient {
   readonly #modelListeners = new Set<() => void>();
 
   readonly #appVersion: string | undefined;
-  #nodeVersion: Promise<string | undefined> | undefined;
+  /** The node's version as last asked: a lookup in flight, or one that answered. A failed lookup is never kept. */
+  #nodeVersion: { answer: Promise<string | undefined>; settled: boolean } | undefined;
 
   constructor(options: GatewayClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -953,15 +962,25 @@ export class GatewayClient {
 
   /**
    * The Clark version the node runs (`clarkVersion` on `GET /node`), or undefined when it does not say (a node from
-   * before it did, or a build that cannot read its own record) or cannot be asked. Asked once: a node changes version
-   * only by restarting, which a client re-created for the new connection asks again.
+   * before it did, or a build that cannot read its own record), says something that is not a version of at most
+   * `CLARK_VERSION_MAX` characters, or cannot be asked. Only a version is kept, and concurrent askers share one lookup;
+   * a failed lookup is asked again next time, so one network blip does not pin "probably newer".
    */
   nodeVersion(): Promise<string | undefined> {
-    this.#nodeVersion ??= this.#call<{ clarkVersion?: unknown }>("GET", "/node").then(
-      (node) => (typeof node.clarkVersion === "string" && semverSchema.safeParse(node.clarkVersion).success ? node.clarkVersion : undefined),
-      () => undefined,
-    );
-    return this.#nodeVersion;
+    if (this.#nodeVersion !== undefined) return this.#nodeVersion.answer;
+    const entry: { answer: Promise<string | undefined>; settled: boolean } = { answer: Promise.resolve(undefined), settled: false };
+    entry.answer = this.#call<{ clarkVersion?: unknown }>("GET", "/node")
+      .then(
+        (node) => (isClarkVersion(node.clarkVersion) ? node.clarkVersion : undefined),
+        () => undefined,
+      )
+      .then((version) => {
+        entry.settled = true;
+        if (version === undefined && this.#nodeVersion === entry) this.#nodeVersion = undefined;
+        return version;
+      });
+    this.#nodeVersion = entry;
+    return entry.answer;
   }
 
   /**
@@ -970,6 +989,9 @@ export class GatewayClient {
    */
   async #unreadable(cause: unknown): Promise<NodeViewUnreadable> {
     console.error("the node's answer does not match this app's contract", cause);
+    // Asked again on every refusal, unless a lookup is in flight: the node may have updated itself at the same address
+    // since it was last asked, and a stale version would tell the person the wrong thing. Refusals are rare.
+    if (this.#nodeVersion?.settled === true) this.#nodeVersion = undefined;
     return new NodeViewUnreadable({ node: await this.nodeVersion(), app: this.#appVersion }, cause);
   }
 

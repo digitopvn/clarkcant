@@ -615,11 +615,12 @@ export function useBlockActions({
                 status: "done",
                 message: forgetOutcomeMessage(result, t),
               }),
-            // The node answered, so the folder was taken back; only what it said about it cannot be read.
+            // The node answered, but what it said cannot be read: it may not have forgotten the folder, or Clark may still
+            // reach it through another. Neither is claimed, and the row keeps the badge it was drawn with.
             (error: unknown) => {
-              const unread = nodeViewRefusalText(error, t, "shell.nodeView.acted");
+              const unread = nodeViewRefusalText(error, t, "shell.nodeView.answered");
               if (unread === undefined) fail(error);
-              else settle({ status: "done", message: unread });
+              else settle({ status: "unknown", message: unread });
             },
           );
           return;
