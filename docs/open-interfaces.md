@@ -838,6 +838,15 @@ again; nothing is migrated or deleted. Temporary folders a stopped install left 
 install once they are an hour old; otherwise the package cache has no garbage collection, for snapshots as for git and
 npm artifacts, so a snapshot no generation uses any more stays on disk until the cache is cleared by hand.
 
+A package whose manifest declares a facet of a kind this node does not know installs without that facet
+([widget development §4](widget-development.md#4-package-manifest)). Its generation records the facet as
+`skippedFacets` (`[{ kind, id?, isolation? }]`), which `GET /packages` repeats on the package, and the package's `lane`
+there counts the facet's declared lane, or `trusted-native` when it names none, as the capability grants did. Every
+reader of the installed package leaves a recorded facet out for that generation, also on a node updated later to
+understand its kind, until the package is installed or updated again. The install refuses with `400 HOST_API_MISMATCH`
+a manifest whose own `hostApi` leaves this node out, and its `409 DECLARED_REACH_MISMATCH` message says when a listed
+reach may count facets the node could not read.
+
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,

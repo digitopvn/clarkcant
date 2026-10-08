@@ -3,8 +3,10 @@ import {
   declaredReachIsEmpty,
   declaredReachOf,
   riskLaneFor,
+  skippedFacetLane,
   type DirectoryEntry,
   type PackageManifest,
+  type RecordedSkippedFacet,
 } from "@clarkcant/contracts";
 
 /**
@@ -38,6 +40,12 @@ export function directoryEntryOf(
     sizeBytes: number;
     digest: string;
   },
+  /**
+   * Facets of a kind this node does not know, which the reader left out of `manifest`. A listing can name only kinds it
+   * knows, so they are not in `facets` or `isolations`, but their lanes count in `riskTier`, as they do in the lane an
+   * install grants in, so the listing never shows a lower lane than the one that decides.
+   */
+  skippedFacets: readonly RecordedSkippedFacet[] = [],
 ): DirectoryEntry {
   const reach = declaredReachOf(manifest);
   return {
@@ -65,7 +73,7 @@ export function directoryEntryOf(
     // index holding an entry field it does not know, so a default request stays readable by it.
     ...(requestsMoreThanDefault(manifest.resources) ? { resources: manifest.resources } : {}),
     // From the isolation the facets declare, never from what the publisher says about their own package.
-    riskTier: riskLaneFor(manifest.facets.map((facet) => facet.isolation)),
+    riskTier: riskLaneFor([...manifest.facets.map((facet) => facet.isolation), ...skippedFacets.map(skippedFacetLane)]),
     sizeBytes: listing.sizeBytes,
     digest: listing.digest,
   };

@@ -7,7 +7,10 @@ import {
   canonicalReach,
   compareDevReach,
   type DirectoryEntry,
+  recordSkippedFacets,
+  skippedFacetLane,
   type PackageManifest,
+  type RecordedSkippedFacet,
   type WidgetDevBuild,
   type WidgetDevDiagnostic,
   type WidgetDevGeneration,
@@ -88,6 +91,11 @@ const LOCAL_PUBLISHER = { id: "local-development", sourceUrl: "local", license: 
 export interface DevGenerationRecord {
   generation: WidgetDevGeneration;
   manifest: PackageManifest;
+  /**
+   * The facets of a kind this node does not know, which the reader left out of `manifest`: never run, but their lanes
+   * count in the listing's risk lane and they are part of the consent scope, as they are for an install.
+   */
+  skippedFacets: RecordedSkippedFacet[];
   /** The directory entry that lists this generation's files by their digest, as `clark widget publish` would. */
   listing: DirectoryEntry;
 }
@@ -173,7 +181,9 @@ export interface DevEngine {
 }
 
 /** What a scope reads from the manifest, beyond the listing. */
-type ScopeManifest = Pick<PackageManifest, "requestedCapabilities" | "facets">;
+type ScopeManifest = Pick<PackageManifest, "requestedCapabilities" | "facets"> & {
+  skippedFacets?: readonly RecordedSkippedFacet[] | undefined;
+};
 
 /** Manifests of snapshots already read, by snapshot path. A snapshot is content-addressed, so its manifest never changes. */
 const scopeManifests = new Map<string, ScopeManifest>();
@@ -187,7 +197,10 @@ function scopeManifestOf(listing: DirectoryEntry): ScopeManifest | null {
   let read: ScopeManifest | null;
   try {
     const pkg = readPackage(path);
-    read = pkg.problems.length === 0 ? pkg.manifest : null;
+    read =
+      pkg.problems.length === 0
+        ? { requestedCapabilities: pkg.manifest.requestedCapabilities, facets: pkg.manifest.facets, skippedFacets: recordSkippedFacets(pkg.skippedFacets) }
+        : null;
   } catch {
     read = null;
   }
@@ -219,6 +232,15 @@ export function devConsentScopeOf(listing: DirectoryEntry, manifest?: ScopeManif
     permissions: [...listing.permissionsSummary].sort(),
     requestedCapabilities: read === null ? null : [...new Set(read.requestedCapabilities)].sort(),
     facets: read === null ? null : read.facets.map((facet) => `${facet.kind}:${facet.id}:${facet.isolation}`).sort(),
+    /*
+     * A facet of a kind this node does not know is bound too, by kind, id and the lane it counts in, so adding or
+     * removing one is a new question. Only when there is one, so a scope without any reads as it always has.
+     */
+    ...(read === null || (read.skippedFacets ?? []).length === 0
+      ? {}
+      : {
+          skippedFacets: (read.skippedFacets ?? []).map((facet) => `${facet.kind}:${facet.id ?? ""}:${skippedFacetLane(facet)}`).sort(),
+        }),
   };
   return `widget-dev-scope:sha256:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -431,7 +453,11 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   };
 
   /** Read a folder as a package: its manifest and widget ids, or what is wrong with it. */
-  const read = (folder: string): { ok: true; manifest: PackageManifest; widgetIds: string[] } | { ok: false; diagnostics: WidgetDevDiagnostic[] } => {
+  const read = (
+    folder: string,
+  ):
+    | { ok: true; manifest: PackageManifest; skippedFacets: RecordedSkippedFacet[]; widgetIds: string[] }
+    | { ok: false; diagnostics: WidgetDevDiagnostic[] } => {
     let pkg: ReturnType<typeof readPackage>;
     try {
       pkg = readPackage(folder);
@@ -443,7 +469,11 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     }
     const allowed = options.allowedIsolations;
     if (allowed !== undefined) {
-      const outside = pkg.manifest.facets.filter((facet) => !allowed.includes(facet.isolation));
+      // A facet of a kind this node does not know counts in its lane too, and in the strongest when it names none.
+      const outside = [
+        ...pkg.manifest.facets.map((facet) => ({ kind: facet.kind, id: facet.id, lane: facet.isolation, known: true })),
+        ...pkg.skippedFacets.map((facet) => ({ kind: facet.kind, id: facet.id ?? `#${String(facet.index)}`, lane: skippedFacetLane(facet), known: false })),
+      ].filter((facet) => !allowed.includes(facet.lane));
       if (outside.length > 0) {
         return {
           ok: false,
@@ -451,7 +481,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
             severity: "error" as const,
             path: "clarkcant.json",
             code: "FACET_LANE_UNSUPPORTED",
-            message: `facet ${facet.kind}:${facet.id} runs as ${facet.isolation}, outside the widget frame; a widget dev session runs only ${allowed.join(" and ")} facets, so install this package the ordinary way`,
+            message: `facet ${facet.kind}:${facet.id} ${facet.known ? "runs" : "is of a kind this version of ClarkCant does not understand, and counts"} as ${facet.lane}, outside the widget frame; a widget dev session runs only ${allowed.join(" and ")} facets, so install this package the ordinary way`,
           })),
         };
       }
@@ -463,7 +493,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         diagnostics: [{ severity: "error", path: "clarkcant.json", message: "the package declares no widget facet, so there is nothing to show" }],
       };
     }
-    return { ok: true, manifest: pkg.manifest, widgetIds };
+    return { ok: true, manifest: pkg.manifest, skippedFacets: recordSkippedFacets(pkg.skippedFacets), widgetIds };
   };
 
   /**
@@ -552,12 +582,17 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     const record: DevGenerationRecord = Object.freeze({
       generation,
       manifest,
-      listing: directoryEntryOf(manifest, {
-        source: { kind: "local", path: folder },
-        publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
-        sizeBytes,
-        digest,
-      }),
+      skippedFacets: copy.skippedFacets,
+      listing: directoryEntryOf(
+        manifest,
+        {
+          source: { kind: "local", path: folder },
+          publisher: publisher === undefined ? { ...LOCAL_PUBLISHER } : { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
+          sizeBytes,
+          digest,
+        },
+        copy.skippedFacets,
+      ),
     });
     newest = record;
     last = { ok: true, at: generation.builtAt, trigger, generation: generation.generation, diagnostics: [] };

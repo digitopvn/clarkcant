@@ -12,7 +12,9 @@ import {
   unsafeSchemaPattern,
   widgetDefinitionSchema,
   type FixtureDataset,
+  withoutFacetsSkippedAtInstall,
   type PackageManifest,
+  type RecordedSkippedFacet,
   type SkippedFacet,
   type WidgetDefinition,
 } from "@clarkcant/contracts";
@@ -166,6 +168,7 @@ function firstIssue(error: z.ZodError, fallback: string): string {
  */
 export function parseManifest(
   value: unknown,
+  options: InstalledReadOptions = {},
 ): { ok: true; manifest: PackageManifest; skippedFacets: SkippedFacet[] } | { ok: false; problems: string[] } {
   const schemaVersion = typeof value === "object" && value !== null ? (value as { schemaVersion?: unknown }).schemaVersion : undefined;
   let candidate = value;
@@ -191,10 +194,21 @@ export function parseManifest(
     return { ok: false, problems: [schemaVersion === 1 ? `${problem} (a schemaVersion 1 value the canonical manifest does not accept)` : problem] };
   }
   const problems = manifestProblems(parsed.data);
-  return problems.length === 0 ? { ok: true, manifest: parsed.data, skippedFacets: parsed.skippedFacets } : { ok: false, problems };
+  if (problems.length > 0) return { ok: false, problems };
+  return { ok: true, manifest: withoutFacetsSkippedAtInstall(parsed.data, options.skippedAtInstall), skippedFacets: parsed.skippedFacets };
 }
 
-export function readPackage(root: string): WidgetPackage {
+/**
+ * How an installed package is read: without the facets its generation's install skipped
+ * (`PackageGeneration.skippedFacets`), which stay inert for that generation even once this build understands their
+ * kind. A reader of an installed package passes its generation's record; an author's tool, which reads a folder rather
+ * than an install, passes nothing.
+ */
+export interface InstalledReadOptions {
+  skippedAtInstall?: readonly RecordedSkippedFacet[] | undefined;
+}
+
+export function readPackage(root: string, options: InstalledReadOptions = {}): WidgetPackage {
   const problems: string[] = [];
   const manifestPath = join(root, "clarkcant.json");
   const unread = (reasons: string[]): WidgetPackage => ({
@@ -209,7 +223,7 @@ export function readPackage(root: string): WidgetPackage {
   const read = readJson(manifestPath);
   // Nothing else can be read without a manifest, and guessing at one would validate the wrong package.
   if (!read.ok) return unread([read.problem]);
-  const parsed = parseManifest(read.value);
+  const parsed = parseManifest(read.value, options);
   if (!parsed.ok) return unread(parsed.problems.map((problem) => `${manifestPath}: ${problem.trim()}`));
   const manifest = parsed.manifest;
 

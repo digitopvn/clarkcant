@@ -1,10 +1,12 @@
 import {
   compareReach,
+  packageGenerationSchema,
   reachSnapshotOfListing,
   reachSnapshotOfManifest,
   type DirectoryEntry,
   type Notice,
   type ReachChangeView,
+  type RecordedSkippedFacet,
   type UnreadListingFields,
 } from "@clarkcant/contracts";
 import { unreadFieldsOf, type DirectoryIndexState } from "@clarkcant/core";
@@ -39,13 +41,20 @@ export function noticeUnreadFields(notice: Notice, index: DirectoryIndexState): 
   return entry === undefined ? undefined : unreadFieldsOf(index, entry);
 }
 
-function installedVersion(runtime: Runtime, packageId: string): { package_id: string; version: string; digest: string } | undefined {
-  return oneRow<{ package_id: string; version: string; digest: string }>(
+function installedVersion(
+  runtime: Runtime,
+  packageId: string,
+): { package_id: string; version: string; digest: string; skippedFacets: RecordedSkippedFacet[] | undefined } | undefined {
+  const row = oneRow<{ package_id: string; version: string; digest: string; skipped: string | null }>(
     runtime.db,
-    "SELECT package_id, version, digest FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+    "SELECT package_id, version, digest, json_extract(document, '$.skippedFacets') AS skipped FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
     packageId,
     runtime.identity.nodeId,
   );
+  if (row === undefined) return undefined;
+  // What the install skipped stays out of what it is compared as reaching, as it stays out of what runs.
+  const skipped = row.skipped === null ? undefined : packageGenerationSchema.shape.skippedFacets.safeParse(JSON.parse(row.skipped));
+  return { package_id: row.package_id, version: row.version, digest: row.digest, skippedFacets: skipped?.success === true ? skipped.data : undefined };
 }
 
 /**
@@ -68,7 +77,7 @@ export function reachChangeAgainstInstalled(
   const installed = installedVersion(runtime, entry.packageId);
   if (installed === undefined || installed.version === entry.version) return undefined;
   const manifest = installedManifest(
-    { packageId: installed.package_id, version: installed.version, digest: installed.digest },
+    { packageId: installed.package_id, version: installed.version, digest: installed.digest, skippedFacets: installed.skippedFacets },
     runtime.dataDir,
     index,
   );

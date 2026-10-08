@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_PACKAGE_FACETS, describeSkippedFacet, manifestProblems, packageManifestSchema, readPackageManifest } from "../src/index.ts";
+import {
+  MAX_PACKAGE_FACETS,
+  describeSkippedFacet,
+  manifestProblems,
+  packageGenerationSchema,
+  packageManifestSchema,
+  readPackageManifest,
+  recordSkippedFacets,
+  recordedSkippedFacetSchema,
+  skippedFacetLane,
+  withoutFacetsSkippedAtInstall,
+} from "../src/index.ts";
 
 /**
  * How a host reads a package manifest: a facet kind it does not know is skipped and reported, never refused, while
@@ -88,5 +99,77 @@ describe("readPackageManifest", () => {
 
   it("leaves the writer's schema strict: an unknown kind is still refused there", () => {
     expect(packageManifestSchema.safeParse(manifest([UI, NEWER])).success).toBe(false);
+  });
+
+  it("treats only a lowercase name as a possible newer kind, so a mistyped known kind is refused rather than skipped", () => {
+    for (const kind of ["UI", "Tools", "Agents", "agents_v2"]) {
+      const read = readPackageManifest(manifest([UI, { ...NEWER, kind }]));
+      expect(read.success, kind).toBe(false);
+    }
+    expect(readPackageManifest(manifest([UI, { ...NEWER, kind: "agents-v2" }])).success).toBe(true);
+  });
+
+  it("refuses the schemaVersion 1 kind widget in a later manifest, saying what to write instead", () => {
+    const read = readPackageManifest(manifest([UI, { ...NEWER, kind: "widget" }]));
+    expect(read.success).toBe(false);
+    if (read.success) return;
+    expect(read.error.issues[0]?.path).toEqual(["facets", 1, "kind"]);
+    expect(read.error.issues[0]?.message).toBe('kind "widget" is the schemaVersion 1 name of a ui facet; a schemaVersion 2 or 3 manifest names it "ui"');
+    // Alone, too: an update would never make it readable, so it is not reported as a version gap.
+    const alone = readPackageManifest(manifest([{ ...NEWER, kind: "widget" }]));
+    expect(alone.success).toBe(false);
+    if (alone.success) return;
+    expect(alone.error.issues[0]?.message).toContain("schemaVersion 1 name");
+  });
+
+  it("refuses a skipped facet whose id repeats another facet's, which a host that understands both would refuse", () => {
+    const clash = readPackageManifest(manifest([UI, { ...NEWER, id: UI.id }]));
+    expect(clash.success).toBe(false);
+    if (clash.success) return;
+    expect(clash.error.issues[0]?.path).toEqual(["facets", 1, "id"]);
+    expect(readPackageManifest(manifest([UI, NEWER, { ...NEWER, kind: "planners" }])).success).toBe(false);
+  });
+});
+
+describe("facets skipped at install", () => {
+  const TOOLS = { kind: "tools", id: "com.example.board.agents", isolation: "service" };
+  const THEME = { kind: "themes", id: "com.example.board.dusk", isolation: "declarative" };
+
+  it("records what a generation keeps of a skipped facet: everything but its position", () => {
+    expect(recordSkippedFacets([{ index: 1, kind: "agents", id: "a", isolation: "service" }, { index: 3, kind: "planners" }])).toEqual([
+      { kind: "agents", id: "a", isolation: "service" },
+      { kind: "planners" },
+    ]);
+    expect(recordedSkippedFacetSchema.safeParse({ kind: "Agents" }).success).toBe(false);
+  });
+
+  it("keeps a facet skipped at install out of a later reading that understands it, by kind or by id", () => {
+    const read = { facets: [UI, TOOLS, THEME] };
+    // A newer host reads the same facet with a kind it knows: still left out, for the id it had.
+    expect(withoutFacetsSkippedAtInstall(read, [{ kind: "agents", id: "com.example.board.agents" }]).facets).toEqual([UI, THEME]);
+    // Every facet of a kind the installing host did not know was skipped, whatever its id.
+    expect(withoutFacetsSkippedAtInstall(read, [{ kind: "themes" }]).facets).toEqual([UI, TOOLS]);
+    expect(withoutFacetsSkippedAtInstall(read, undefined)).toBe(read);
+  });
+
+  it("counts a skipped facet in its declared lane, or the strongest when it declares none", () => {
+    expect(skippedFacetLane({ isolation: "declarative" })).toBe("declarative");
+    expect(skippedFacetLane({})).toBe("trusted-native");
+  });
+
+  it("is kept on a generation, and only in its recorded shape", () => {
+    const generation = {
+      generationId: "g",
+      packageId: "com.example.board",
+      version: "1.0.0",
+      digest: "sha256:x",
+      nodeId: "n",
+      codeGeneration: "c",
+      activatedAt: "2026-10-08T03:00:00.000Z",
+      uiOnlyFacets: [],
+      grantedCapabilities: [],
+    };
+    expect(packageGenerationSchema.safeParse({ ...generation, skippedFacets: [{ kind: "agents", isolation: "service" }] }).success).toBe(true);
+    expect(packageGenerationSchema.safeParse({ ...generation, skippedFacets: [{ kind: "agents", index: 1 }] }).success).toBe(false);
   });
 });

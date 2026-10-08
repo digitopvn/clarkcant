@@ -271,6 +271,33 @@ describe("the dev engine", () => {
     expect((await anyLane.ready).kind).toBe("generation");
   });
 
+  it("counts a facet of a kind it does not know in its declared lane, or as native when it declares none", async () => {
+    const later = (isolation?: string) =>
+      ({ kind: "agents", id: "com.example.dev.agents", entry: "agents/index.json", ...(isolation === undefined ? {} : { isolation }) }) as unknown as PackageManifest["facets"][number];
+    for (const isolation of ["trusted-native", undefined]) {
+      const root = tempDir("dev-engine-");
+      writePackage(root, "<p>one</p>", { facets: [...manifest().facets, later(isolation)] });
+      const engine = startDevEngine({ root, watch: false, allowedIsolations: ["isolated-ui", "declarative"] });
+      engines.push(engine);
+      expect((await engine.ready).kind, String(isolation)).toBe("failed");
+      const diagnostic = engine.lastBuild()?.diagnostics[0];
+      expect(diagnostic?.code).toBe("FACET_LANE_UNSUPPORTED");
+      expect(diagnostic?.message).toContain("does not understand");
+    }
+    // A declarative one fits the allowed lanes, and the listing's tier still counts it.
+    const root = tempDir("dev-engine-");
+    writePackage(root, "<p>one</p>", { facets: [...manifest().facets, later("declarative")] });
+    const engine = startDevEngine({ root, watch: false, allowedIsolations: ["isolated-ui", "declarative"] });
+    engines.push(engine);
+    expect((await engine.ready).kind).toBe("generation");
+    expect(engine.latest()?.skippedFacets).toEqual([{ kind: "agents", id: "com.example.dev.agents", isolation: "declarative" }]);
+    const native = tempDir("dev-engine-");
+    writePackage(native, "<p>one</p>", { facets: [...manifest().facets, later("service")] });
+    const anyLane = engineFor(native);
+    await anyLane.ready;
+    expect(anyLane.latest()?.listing.riskTier).toBe("service");
+  });
+
   it("watches the folder for real, builds a saved change, and lets go of the folder when closed", async () => {
     const root = tempDir("dev-engine-");
     writePackage(root, "<p>one</p>");
@@ -1067,6 +1094,25 @@ describe("the dev consent scope", () => {
     expect(devConsentScopeOf(second.listing)).toBe(devConsentScopeOf(second.listing, second.manifest));
     const moved = manifest({ facets: [{ ...manifest().facets[0], isolation: "declarative" } as PackageManifest["facets"][number]] });
     expect(devConsentScopeOf(first.listing, moved)).not.toBe(devConsentScopeOf(first.listing, first.manifest));
+  });
+
+  it("changes when the package adds a facet of a kind this host does not know, read from the snapshot too", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    const engine = engineFor(root, cacheRoot);
+    await engine.ready;
+    const first = engine.latest();
+    const later = { kind: "agents", id: "com.example.dev.agents", entry: "agents/index.json", isolation: "isolated-ui" };
+    writePackage(root, "<p>one</p>", { facets: [...manifest().facets, later as unknown as PackageManifest["facets"][number]] });
+    await engine.rebuild("change");
+    const second = engine.latest();
+
+    if (first === undefined || second === undefined) throw new Error("expected two generations");
+    // Same listed lanes and reach: only the skipped facet tells the two apart.
+    expect(second.listing.riskTier).toBe(first.listing.riskTier);
+    expect(devConsentScopeOf(second.listing)).not.toBe(devConsentScopeOf(first.listing));
+    expect(devConsentScopeOf(second.listing)).toBe(devConsentScopeOf(second.listing, { ...second.manifest, skippedFacets: second.skippedFacets }));
   });
 });
 

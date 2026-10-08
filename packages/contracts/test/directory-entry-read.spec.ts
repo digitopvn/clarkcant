@@ -94,6 +94,15 @@ describe("readDirectoryEntry", () => {
     const empty = readDirectoryEntry({ ...ENTRY, facets: [] });
     expect(empty.success === false && empty.onlyUnknownFacets).toBeFalsy();
   });
+
+  it("marks an entry whose isolations name only kinds it does not know, rather than failing on the list skipping emptied", () => {
+    const read = readDirectoryEntry({ ...ENTRY, isolations: [{ facetKind: "agents", isolation: "declarative" }] });
+    expect(read.success).toBe(false);
+    if (read.success) return;
+    expect(read.onlyUnknownFacets).toBe(true);
+    expect(read.error.issues[0]?.path).toEqual(["isolations"]);
+    expect(read.error.issues[0]?.message).toContain("lists no facet isolation this node understands (agents)");
+  });
 });
 
 describe("unreadListingFields", () => {

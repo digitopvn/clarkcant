@@ -10,12 +10,15 @@ import {
   instantSchema,
   nowInstant,
   platformForHost,
+  recordSkippedFacets,
   riskLaneFor,
+  skippedFacetLane,
   type CapabilityRef,
   type DirectoryEntry,
   type DirectorySourceRef,
   type EffectCategory,
   type PackageGeneration,
+  type PackageManifest,
   type Principal,
 } from "@clarkcant/contracts";
 import {
@@ -876,15 +879,39 @@ export async function installPackage(
    */
   const fetchedPackage = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path) : undefined;
   const fetchedManifest = fetchedPackage?.manifest;
+  const skippedFacets = fetchedPackage?.skippedFacets ?? [];
+
+  /*
+   * The listing's host API range was checked above; the package's own manifest says it too, and a listing written by
+   * hand can say less. A package whose manifest needs a newer host than this one is refused here, before anything is
+   * recorded, the same way a listing that says so is.
+   */
+  const manifestHostApi = (fetchedManifest as Partial<PackageManifest> | undefined)?.hostApi;
+  if (manifestHostApi !== undefined && (manifestHostApi.min > HOST_API_VERSION || manifestHostApi.max < HOST_API_VERSION)) {
+    return {
+      kind: "refused",
+      status: 400,
+      code: "HOST_API_MISMATCH",
+      message: `${entry.packageId}@${entry.version} was not installed: its manifest needs host API ${String(manifestHostApi.min)}–${String(manifestHostApi.max)}, this host is ${String(HOST_API_VERSION)}`,
+    };
+  }
 
   /*
    * What the person was shown is what they agree to. The listing and the install question show the entry's declared
    * reach (the origins, secrets and browser-token providers), so an artifact that declares a different one is refused
    * before anything is recorded or installed, rather than installed on a consent given for something else. A listing
    * that says nothing claims the package reaches nothing.
+   *
+   * The reach compared is what this node can read: a skipped facet's reach is never read, so it is never in the
+   * package's side. A listing is one list for the whole package and cannot say which facet reaches what, so its side
+   * cannot be narrowed the same way; a listing that counts a skipped facet's reach is refused, and the message says
+   * that may be why, so the fix (update ClarkCant) is named rather than the publisher blamed.
    */
+  const reachRefusal = declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] }));
   const reachMismatch =
-    declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] })) ??
+    (reachRefusal === undefined || skippedFacets.length === 0
+      ? reachRefusal
+      : `${reachRefusal}. The package also declares facets of a kind this version of ClarkCant does not understand (${[...new Set(skippedFacets.map((facet) => facet.kind))].join(", ")}), whose reach this node cannot read or check; if the listing counts their reach, update ClarkCant to install this package`) ??
     // The resource profile is shown the same way (an update notice compares it before anything is fetched), so it binds too.
     declaredResourcesMismatch(entry.resources, fetchedManifest?.resources);
   if (reachMismatch !== undefined) {
@@ -967,7 +994,7 @@ export async function installPackage(
     ...(fetchedManifest?.facets ?? []).map((facet) => facet.isolation),
     // A facet of a kind this node does not know is never run here, but its lane still counts, so a skipped facet can
     // only raise the lane; one that names no lane this node knows counts as the strongest.
-    ...(fetchedPackage?.skippedFacets ?? []).map((facet) => facet.isolation ?? "trusted-native"),
+    ...skippedFacets.map(skippedFacetLane),
   ]);
 
   /*
@@ -1077,6 +1104,8 @@ export async function installPackage(
     ...(resolvedEntry.source.kind === "local" ? { widgetIds: declaredWidgetIds(resolvedEntry.source.path) } : {}),
     // Recorded on the generation, so every later read of this package finds the snapshot rather than the path.
     ...(snapshot === undefined ? {} : { snapshotDigest: snapshot.digest }),
+    // What it left out, so those facets stay inert for this generation even on a host that understands them later.
+    ...(skippedFacets.length === 0 ? {} : { skippedFacets: recordSkippedFacets(skippedFacets) }),
     // Where it came from, so its updates are taken from that source only. A long index path keeps its end, the file name.
     ...(origin === undefined
       ? {}
@@ -1617,7 +1646,7 @@ export function resolveGenerationGrantedCapabilities(
   const resolvedSource = resolveLocalSource(entry, cacheRoot, generation);
   if (resolvedSource.kind !== "local") return []; // Not fetched onto this node (yet); nothing to read a manifest from.
 
-  const requested = readPackage(resolvedSource.path)
+  const requested = readPackage(resolvedSource.path, { skippedAtInstall: generation.skippedFacets })
     .manifest.requestedCapabilities?.map((ref) => capabilityRefSchema.safeParse(ref))
     .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed?.success === true)
     .map((parsed) => parsed.data);

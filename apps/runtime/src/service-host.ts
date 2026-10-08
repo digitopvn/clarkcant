@@ -896,7 +896,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       }
       let manifest;
       try {
-        manifest = readPackage(root).manifest;
+        // Without what this generation's install skipped: a service nobody consented to is never started for it.
+        manifest = readPackage(root, { skippedAtInstall: generation.skippedFacets }).manifest;
       } catch (cause) {
         const why = cause instanceof Error ? cause.message : String(cause);
         markGeneration(generation.generationId, `the package's manifest could not be read: ${why}`);

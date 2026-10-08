@@ -165,20 +165,34 @@ luôn ghi version thấp nhất mà package cần, nên package không có facet
 như vậy từ chối toàn bộ package version 3, kèm thông báo nêu rõ version, chứ không cài nó mà bỏ qua facet. Host đọc được
 version 3 kiểm tra facet này như mọi facet khác.
 
-**Loại facet mà host không biết.** Kể từ host có quy tắc này, host đọc lướt qua facet có `kind` là một tên đơn mà nó
-không biết (`readPackageManifest` trong `packages/contracts/src/install.ts`). Host cài các facet nó biết, để riêng facet
-đó ra và báo là đã khai báo nhưng không hiểu. Host không bao giờ chạy, liệt kê hay cấp gì cho facet đó. `isolation` mà
-facet khai báo vẫn được tính vào lane dùng để quyết định các capability package yêu cầu, và facet không nêu lane nào host
-biết thì được tính là `trusted-native`, nên facet này chỉ có thể làm việc cấp quyền khó hơn. Listing nêu loại như vậy
-trong `facets` hoặc `isolations` cũng được đọc theo cách đó, và loại ấy được nêu trong các trường chưa đọc của listing;
-listing không có loại nào host biết sẽ bị để ra ngoài directory, chứ không làm cả directory không đọc được. Các host có
-trước quy tắc này từ chối toàn bộ package như vậy.
+**Loại facet mà host không biết.** Kể từ host có quy tắc này, host đọc lướt qua facet có `kind` là một tên viết thường
+(chữ cái, chữ số và dấu gạch nối) mà nó không biết (`readPackageManifest` trong `packages/contracts/src/install.ts`).
+Host cài các facet nó biết và để riêng facet đó ra. Facet được báo là đã khai báo nhưng không hiểu trong công cụ của tác
+giả (bên dưới), trong `clarkcant instructions check`, trong các trường chưa đọc của listing, và dưới dạng `skippedFacets`
+của package trong `GET /packages`; câu trả lời khi cài và thẻ cài đặt hiện chưa hiển thị nó. Node không bao giờ chạy,
+liệt kê hay cấp gì cho facet đó. Generation ghi lại facet (loại, id và isolation đã khai báo), và mọi nơi đọc một package
+đã cài đều để facet đó ra ngoài trong generation ấy, nên một host sau này được cập nhật để hiểu loại đó vẫn giữ facet
+không hoạt động cho tới khi package được cài lại hoặc cập nhật với sự đồng ý mới.
+
+`isolation` mà facet khai báo được tính vào lane dùng để cấp các capability package yêu cầu, và facet không nêu lane nào
+host biết thì được tính là `trusted-native`, nên facet này chỉ có thể làm việc cấp quyền khó hơn. Lane quyết định cách
+cấp capability, không quyết định package có được cài hay không. Lane của package trong `GET /packages`, cùng bước kiểm
+tra lane, listing và phạm vi đồng ý của một phiên phát triển widget, đều tính facet theo cùng cách.
+
+Listing nêu loại như vậy trong `facets` hoặc `isolations` cũng được đọc theo cách đó, và loại ấy được nêu trong các
+trường chưa đọc của listing. Listing không còn loại nào host biết, ở một trong hai danh sách, sẽ bị để ra ngoài
+directory, chứ không làm cả directory không đọc được. `declaredReach` của listing không thể được đối chiếu với facet mà
+host không đọc được: khi nó khác với phạm vi tiếp cận của các facet host biết, việc cài bị từ chối với
+`DECLARED_REACH_MISMATCH`, và thông báo nói package còn khai báo facet mà phiên bản này không hiểu, nên cập nhật ClarkCant
+có thể là cách khắc phục. Bước cài kiểm tra cả `hostApi` của chính manifest chứ không chỉ của listing. Các host có trước
+quy tắc này từ chối toàn bộ package như vậy.
 
 Chỉ loại facet được bỏ qua. Loại đã biết mà có trường hoặc giá trị host không chấp nhận, trường cấp cao nhất mà host
 không biết, `schemaVersion` mà host không đọc, và manifest mà mọi facet đều thuộc loại không biết thì vẫn bị từ chối.
-Trường cấp cao nhất có thể chi phối mọi facet (package chạm tới đâu, chạy với tài nguyên nào), nên host không thể biết
-bỏ qua nó có an toàn hay không; còn một facet là một phần mà host có thể từ chối trọn vẹn. Từ đó có quy tắc thay đổi
-định dạng:
+Cũng bị từ chối: loại có chữ hoa hoặc dấu gạch dưới, loại `widget` của version 1 trong manifest version 2 hoặc 3 (thông
+báo bảo đặt tên là `ui`), và facet bị bỏ qua có `id` trùng với `id` của facet khác. Trường cấp cao nhất có thể chi phối
+mọi facet (package chạm tới đâu, chạy với tài nguyên nào), nên host không thể biết bỏ qua nó có an toàn hay không; còn
+một facet là một phần mà host có thể từ chối trọn vẹn. Từ đó có quy tắc thay đổi định dạng:
 
 - loại facet mới được thêm trong `schemaVersion` hiện tại, và các host từ quy tắc này trở đi bỏ qua nó;
 - trường mới trong một facet đã có hoặc ở cấp cao nhất cần `schemaVersion` mới, mà host cũ từ chối kèm thông báo bảo
@@ -187,7 +201,8 @@ bỏ qua nó có an toàn hay không; còn một facet là một phần mà host
 
 Công cụ của tác giả vẫn nghiêm ngặt: `clark widget test`, `clark theme test`, `pack` và `publish` đánh lỗi loại facet
 mà chúng không biết, vì với tác giả đó thường là gõ sai hơn là một loại mới, và listing tạo ra khi thiếu facet đó sẽ mô
-tả ít hơn những gì package có. `clarkcant instructions check` thì cảnh báo về nó.
+tả ít hơn những gì package có. Các bước kiểm tra này bắt được loại gõ sai trước khi xuất bản; manifest được viết hoặc
+đóng gói bằng cách khác vẫn có thể mang một loại mà host bỏ qua. `clarkcant instructions check` thì cảnh báo về nó.
 
 Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ
 đoạn code nào của package chạy. Việc cài package chính là sự đồng ý với những gì package khai báo; mỗi lời gọi vẫn do

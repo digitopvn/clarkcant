@@ -277,16 +277,25 @@ export function readDirectoryEntry(
       : { success: false, error: result.error };
   }
   const { known, unread, skippedKinds } = splitKnownFields(candidate);
-  if (skippedKinds.length > 0 && Array.isArray(known["facets"]) && known["facets"].length === 0) {
+  /*
+   * Skipping can leave either list empty: the facets, or (in a listing whose isolations name only kinds this node does
+   * not know) the isolations. Either way nothing of the listing can be told apart here, and it is left out on its own
+   * rather than failing the whole index on a bound the skipping caused.
+   */
+  const emptied = (["facets", "isolations"] as const).find((field) => {
+    const list = known[field];
+    return Array.isArray(list) && list.length === 0;
+  });
+  if (skippedKinds.length > 0 && emptied !== undefined) {
     return {
       success: false,
       onlyUnknownFacets: true,
       error: new z.ZodError([
         {
           code: "custom",
-          path: ["facets"],
-          message: `lists no facet kind this node understands (${skippedKinds.join(", ")})`,
-          input: candidate["facets"],
+          path: [emptied],
+          message: `lists no ${emptied === "facets" ? "facet kind" : "facet isolation"} this node understands (${skippedKinds.join(", ")})`,
+          input: candidate[emptied],
         },
       ]),
     };

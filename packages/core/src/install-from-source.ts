@@ -16,6 +16,7 @@ import {
   type IsolationClass,
   type PackageSource,
   type Platform,
+  type RecordedSkippedFacet,
 } from "@clarkcant/contracts";
 
 import {
@@ -88,6 +89,12 @@ export interface InstallFromSourceInput {
   snapshotDigest?: string;
   /** The directory source the listing came from, recorded on the generation; see `PackageGeneration.directorySource`. */
   directorySource?: DirectorySourceRef;
+  /**
+   * The facets of the package being installed that the caller skipped because this node does not know their kind,
+   * read from the bytes it is installing. Recorded on the generation, so they stay inert for it on every later host
+   * (`PackageGeneration.skippedFacets`).
+   */
+  skippedFacets?: readonly RecordedSkippedFacet[];
 }
 
 export type InstallOutcome =
@@ -278,6 +285,7 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
     ...(input.widgetIds === undefined ? {} : { widgetIds: input.widgetIds }),
     ...(input.snapshotDigest === undefined ? {} : { snapshotDigest: input.snapshotDigest }),
     ...(input.directorySource === undefined ? {} : { directorySource: input.directorySource }),
+    ...(input.skippedFacets === undefined || input.skippedFacets.length === 0 ? {} : { skippedFacets: input.skippedFacets }),
     nativeExtensionChanged: input.isolationPlan.some((facet) => facet.isolation === "trusted-native"),
     skillOrPromptChanged: input.isolationPlan.some((facet) => facet.facetKind === "skills" || facet.facetKind === "prompts"),
   });

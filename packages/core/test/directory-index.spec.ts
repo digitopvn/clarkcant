@@ -138,7 +138,9 @@ describe("readDirectoryIndex", () => {
       riskTier: "service",
     };
     const only = { ...entry({ packageId: "com.acme.later" }), facets: ["agents"], isolations: [{ facetKind: "agents", isolation: "service" }] };
-    const state = readDirectoryIndex(writeIndex(JSON.stringify([entry({ packageId: "com.acme.ok" }), mixed, only])));
+    // Known facets, but isolations that name only an unknown kind: left out on its own too, not the whole index.
+    const unlaned = { ...entry({ packageId: "com.acme.unlaned" }), isolations: [{ facetKind: "agents", isolation: "service" }] };
+    const state = readDirectoryIndex(writeIndex(JSON.stringify([entry({ packageId: "com.acme.ok" }), mixed, only, unlaned])));
     expect(state.kind).toBe("configured");
     if (state.kind !== "configured") return;
     expect(state.entries.map((listed) => listed.packageId)).toEqual(["com.acme.ok", "com.acme.mixed"]);

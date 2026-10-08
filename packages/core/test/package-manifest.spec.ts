@@ -255,6 +255,16 @@ describe("reading a package", () => {
     expect(pkg.skippedFacets).toEqual([{ index: 3, kind: "agents", id: "com.example.board.agents", isolation: "trusted-native" }]);
   });
 
+  it("keeps a facet the installing host skipped out of the reading, even once this host understands its kind", () => {
+    // The generation recorded the ui facet as skipped: a host that reads it now still neither exposes nor runs it.
+    const pkg = readPackage(writePackage(canonical()), { skippedAtInstall: [{ kind: "widgets-v2", id: WIDGET_ID, isolation: "isolated-ui" }] });
+    expect(pkg.problems).toEqual([]);
+    expect(pkg.manifest.facets.map((facet) => facet.kind)).toEqual(["tools", "skills"]);
+    expect(pkg.facets).toEqual([]);
+    const byKind = readPackage(writePackage(canonical()), { skippedAtInstall: [{ kind: "tools" }] });
+    expect(byKind.manifest.facets.map((facet) => facet.kind)).toEqual(["ui", "skills"]);
+  });
+
   it("still refuses the package when a known facet kind has a bad body beside an unknown one", () => {
     const [ui] = canonical().facets;
     const later = { kind: "agents", id: "com.example.board.agents", entry: "agents/index.json", isolation: "declarative" };

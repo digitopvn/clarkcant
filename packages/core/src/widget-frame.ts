@@ -1,4 +1,11 @@
-import type { BrowserTokenDeclaration, DirectoryEntry, IsolationClass, ResourceRequest, WidgetDefinition } from "@clarkcant/contracts";
+import type {
+  BrowserTokenDeclaration,
+  DirectoryEntry,
+  IsolationClass,
+  RecordedSkippedFacet,
+  ResourceRequest,
+  WidgetDefinition,
+} from "@clarkcant/contracts";
 
 import { resolveLocalSource } from "./package-fetch.ts";
 import { readPackage } from "./widget-package.ts";
@@ -110,6 +117,11 @@ export function findIsolatedFrame(input: {
    * the bytes against the directory's published digest, so there is nothing more to check here.
    */
   cacheRoot?: string;
+  /**
+   * The facets an entry's installed generation skipped at install (`PackageGeneration.skippedFacets`), which stay inert
+   * for that generation: a widget among them is not served or given tokens even once this build understands its kind.
+   */
+  skippedAtInstallOf?: (entry: DirectoryEntry) => readonly RecordedSkippedFacet[] | undefined;
 }): IsolatedFrameLookup {
   let unreadable = 0;
 
@@ -122,7 +134,7 @@ export function findIsolatedFrame(input: {
 
     let pkg;
     try {
-      pkg = readPackage(source.path);
+      pkg = readPackage(source.path, { skippedAtInstall: input.skippedAtInstallOf?.(entry) });
     } catch {
       unreadable += 1;
       continue;

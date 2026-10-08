@@ -8,6 +8,7 @@ import {
   describeResourceProfile,
   type DeclaredReach,
   type PackageManifest,
+  type RecordedSkippedFacet,
   type ResourceGrant,
   type ResourceProfile,
   type ResourceProfileName,
@@ -95,7 +96,14 @@ export function packageResourcesView(grant: ResourceGrant): PackageResourcesView
  * The caller reads the directory index once and passes it, so listing N packages is not N reads of the index.
  */
 export function installedManifest(
-  installed: { packageId: string; version: string; digest: string; snapshotDigest?: string | undefined },
+  installed: {
+    packageId: string;
+    version: string;
+    digest: string;
+    snapshotDigest?: string | undefined;
+    /** What its generation's install skipped, which stays out of the manifest read here (`InstalledReadOptions`). */
+    skippedFacets?: readonly RecordedSkippedFacet[] | undefined;
+  },
   dataDir: string,
   index: DirectoryIndexState,
 ): PackageManifest | "unreadable" {
@@ -103,7 +111,7 @@ export function installedManifest(
   const root = packageRootFrom(index.entries, join(dataDir, "package-cache"))(installed);
   if (root === undefined) return "unreadable";
   try {
-    const pkg = readPackage(root);
+    const pkg = readPackage(root, { skippedAtInstall: installed.skippedFacets });
     // A manifest the reader could not read at all comes back empty, with its problems, not as an empty manifest.
     if (!("id" in pkg.manifest)) return "unreadable";
     return pkg.manifest;
