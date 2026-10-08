@@ -102,6 +102,19 @@ const bridge = {
     return () => ipcRenderer.removeListener("desktop:widgetReattached", listener);
   },
   /**
+   * Told when a widget in a detached window attached a file to the conversation, so the chip appears in the composer
+   * where the person decides whether to send it. Carries the conversation it belongs to and the attachment's reference.
+   */
+  onArtifactAttached(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("desktop:artifactAttached", listener);
+    return () => ipcRenderer.removeListener("desktop:artifactAttached", listener);
+  },
+  /** Say the installed packages changed, so a detached widget window re-reads the frame it runs. */
+  notifyPackagesChanged() {
+    return ipcRenderer.invoke("desktop:notifyPackagesChanged");
+  },
+  /**
    * Shrink the window to the voice bar, grow it back, or pin it above other windows.
    *
    * Answers with the bounds and the pin state the window actually has afterwards, not with what was asked for,

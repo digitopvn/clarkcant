@@ -163,7 +163,41 @@ export const RELAY_LIMITS = Object.freeze({
   "semantic.publish": Object.freeze({ maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 }),
   intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 }),
   "dev.session": Object.freeze({ burst: 5, refillPerSecond: 1, timeoutMs: 30_000 }),
+  artifacts: Object.freeze({ burst: 300, refillPerSecond: 10, timeoutMs: 30_000 }),
+  "artifacts.dialog": Object.freeze({ burst: 5, refillPerSecond: 0.1, inFlight: 1, timeoutMs: 30_000 }),
+  jobs: Object.freeze({ burst: 60, refillPerSecond: 5, timeoutMs: 30_000 }),
+  tokens: Object.freeze({ burst: 10, refillPerSecond: 0.2, inFlight: 2, timeoutMs: 30_000 }),
 });
+
+/**
+ * Which buckets each relayed verb spends from, when it is not the verb's own.
+ *
+ * The file, job and token verbs share a bucket per capability, as the frame session's do (`FRAME_BROKER_LIMITS` in
+ * `@clarkcant/widget-host`). A pick and an export open an OS dialog the person answers, so they spend from the dialog
+ * bucket as well: one dialog at a time, and a few in a row before the window has to wait. The first bucket named is
+ * the one whose time limit the verb's node calls get.
+ */
+export const RELAY_BUCKETS = Object.freeze({
+  "artifacts.pick": Object.freeze(["artifacts", "artifacts.dialog"]),
+  "artifacts.describe": Object.freeze(["artifacts"]),
+  "artifacts.create": Object.freeze(["artifacts"]),
+  "artifacts.read": Object.freeze(["artifacts"]),
+  "artifacts.write": Object.freeze(["artifacts"]),
+  "artifacts.finalize": Object.freeze(["artifacts"]),
+  "artifacts.export": Object.freeze(["artifacts", "artifacts.dialog"]),
+  "artifacts.attach": Object.freeze(["artifacts"]),
+  "artifacts.discard": Object.freeze(["artifacts"]),
+  "jobs.get": Object.freeze(["jobs"]),
+  "jobs.list": Object.freeze(["jobs"]),
+  "jobs.cancel": Object.freeze(["jobs"]),
+  "tokens.request": Object.freeze(["tokens"]),
+  "tokens.end": Object.freeze(["tokens"]),
+});
+
+/** The buckets a verb spends from: those `RELAY_BUCKETS` names, or the verb's own. */
+export function relayBucketsFor(verb) {
+  return RELAY_BUCKETS[verb] ?? [verb];
+}
 
 /**
  * The header a relayed press carries, the same one the conversation's own presses do (`COMPOSER_SURFACE_HEADER` in
@@ -297,6 +331,212 @@ export function reviewDetachedSemanticPublish(payload) {
   return { ok: true, proposal: checked.data };
 }
 
+/*
+ * The file, job and token relays.
+ *
+ * Each payload is the frame's request as the widget SDK words it (`artifactRequestSchema`, `jobRequestSchema`,
+ * `tokenRequestSchema` in `@clarkcant/widget-sdk`), checked again here with the same patterns and bounds, because the
+ * window that sends it is a renderer the host cannot tell from an honest one. None of them takes a conversation or an
+ * instance: the host performs each against the instance it opened the window for, and the node re-checks the grant.
+ */
+
+/** The SDK's own patterns and bounds, repeated: the Electron host cannot load TypeScript. */
+export const ARTIFACT_RELAY_LIMITS = Object.freeze({
+  chunkBytes: 262_144,
+  chunkBase64Chars: Math.ceil(262_144 / 3) * 4,
+  maxAccept: 16,
+  nameMaxChars: 200,
+});
+const ARTIFACT_ID = /^art_[A-Za-z0-9_-]{1,120}$/;
+const JOB_ID = /^job_[A-Za-z0-9_-]{1,120}$/;
+const ACCEPT_TYPE = /^[a-z][a-z0-9.+-]*\/(\*|[a-z0-9][a-z0-9.+-]*)$/;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+/** A frame's token session: minted by the frame host, one per mounted frame. */
+export const TOKEN_SESSION = /^[A-Za-z0-9_-]{16,128}$/;
+const TOKEN_PROVIDER = /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*$/;
+const TOKEN_SCOPE = /^[A-Za-z0-9][A-Za-z0-9:._/-]*$/;
+/** The words the host's dialogs are drawn in, in the person's language (`desktopDialogLabels`). */
+const DIALOG_LABELS = Object.freeze(["filterName", "replaceTitle", "replaceMessage", "replace", "cancel"]);
+
+const isArtifactId = (value) => typeof value === "string" && ARTIFACT_ID.test(value);
+const isName = (value) => typeof value === "string" && value.length >= 1 && value.length <= ARTIFACT_RELAY_LIMITS.nameMaxChars;
+const isOffset = (value) => Number.isSafeInteger(value) && value >= 0;
+const isShortText = (value, max) => typeof value === "string" && value.length <= max;
+
+function reviewDialogLabels(labels) {
+  if (labels === undefined) return true;
+  if (!isPlainObject(labels)) return false;
+  return Object.entries(labels).every(([key, value]) => DIALOG_LABELS.includes(key) && isShortText(value, 200));
+}
+
+/**
+ * What each relayed verb takes, and the check its payload passes. A verb that takes nothing takes no fields at all.
+ *
+ * @type {Readonly<Record<string, { fields: readonly string[], check: (payload: Record<string, any>) => string | undefined }>>}
+ */
+const RELAY_REQUESTS = Object.freeze({
+  "artifacts.pick": {
+    fields: ["accept", "title", "filterName"],
+    check: (payload) => {
+      const accept = payload.accept ?? [];
+      if (!Array.isArray(accept) || accept.length > ARTIFACT_RELAY_LIMITS.maxAccept) {
+        return `a pick accepts at most ${String(ARTIFACT_RELAY_LIMITS.maxAccept)} types`;
+      }
+      if (!accept.every((entry) => typeof entry === "string" && entry.length <= 120 && ACCEPT_TYPE.test(entry))) {
+        return "a pick's accepted types are MIME types such as text/plain or image/*";
+      }
+      if (payload.title !== undefined && !isShortText(payload.title, 120)) return "a pick's title is a short string";
+      if (payload.filterName !== undefined && !isShortText(payload.filterName, 200)) return "a pick's filter name is a short string";
+      return undefined;
+    },
+  },
+  "artifacts.describe": {
+    fields: ["artifactId"],
+    check: (payload) => (isArtifactId(payload.artifactId) ? undefined : "a request names an artifact by its id"),
+  },
+  "artifacts.create": {
+    fields: ["mimeType", "name"],
+    check: (payload) => {
+      if (typeof payload.mimeType !== "string" || payload.mimeType.length < 3 || payload.mimeType.length > 120) {
+        return "a new file names its type";
+      }
+      if (payload.name !== undefined && !isName(payload.name)) return "a file's name is 1 to 200 characters";
+      return undefined;
+    },
+  },
+  "artifacts.read": {
+    fields: ["artifactId", "offset", "length"],
+    check: (payload) => {
+      if (!isArtifactId(payload.artifactId)) return "a request names an artifact by its id";
+      if (!isOffset(payload.offset)) return "a read starts at a whole, non-negative offset";
+      if (!Number.isSafeInteger(payload.length) || payload.length < 1 || payload.length > ARTIFACT_RELAY_LIMITS.chunkBytes) {
+        return `a read is 1 to ${String(ARTIFACT_RELAY_LIMITS.chunkBytes)} bytes`;
+      }
+      return undefined;
+    },
+  },
+  "artifacts.write": {
+    fields: ["artifactId", "offset", "chunkBase64"],
+    check: (payload) => {
+      if (!isArtifactId(payload.artifactId)) return "a request names an artifact by its id";
+      if (!isOffset(payload.offset)) return "a write starts at a whole, non-negative offset";
+      if (!isShortText(payload.chunkBase64, ARTIFACT_RELAY_LIMITS.chunkBase64Chars) || !BASE64.test(payload.chunkBase64)) {
+        return `a write is base64 of at most ${String(ARTIFACT_RELAY_LIMITS.chunkBytes)} bytes`;
+      }
+      return undefined;
+    },
+  },
+  "artifacts.finalize": {
+    fields: ["artifactId"],
+    check: (payload) => (isArtifactId(payload.artifactId) ? undefined : "a request names an artifact by its id"),
+  },
+  "artifacts.export": {
+    fields: ["artifactId", "suggestedName", "replace", "labels"],
+    check: (payload) => {
+      if (!isArtifactId(payload.artifactId)) return "a request names an artifact by its id";
+      if (!isName(payload.suggestedName)) return "a save suggests a name of 1 to 200 characters";
+      if (payload.replace !== undefined && typeof payload.replace !== "boolean") return "replace is true or false";
+      if (!reviewDialogLabels(payload.labels)) return "a save's dialog words are short strings the host knows";
+      return undefined;
+    },
+  },
+  "artifacts.attach": {
+    fields: ["artifactId", "name"],
+    check: (payload) => {
+      if (!isArtifactId(payload.artifactId)) return "a request names an artifact by its id";
+      if (payload.name !== undefined && !isName(payload.name)) return "a file's name is 1 to 200 characters";
+      return undefined;
+    },
+  },
+  "artifacts.discard": {
+    fields: ["artifactId"],
+    check: (payload) => (isArtifactId(payload.artifactId) ? undefined : "a request names an artifact by its id"),
+  },
+  "jobs.get": {
+    fields: ["jobId"],
+    check: (payload) => (typeof payload.jobId === "string" && JOB_ID.test(payload.jobId) ? undefined : "a request names a job by its id"),
+  },
+  "jobs.list": { fields: [], check: () => undefined },
+  "jobs.cancel": {
+    fields: ["jobId"],
+    check: (payload) => (typeof payload.jobId === "string" && JOB_ID.test(payload.jobId) ? undefined : "a request names a job by its id"),
+  },
+  "tokens.request": {
+    fields: ["session", "request"],
+    check: (payload) => {
+      if (typeof payload.session !== "string" || !TOKEN_SESSION.test(payload.session)) return "a token request names its frame's session";
+      const request = payload.request;
+      if (!isPlainObject(request)) return "a token request is an object";
+      const unknown = Object.keys(request).filter((key) => !["provider", "scopes", "ttlSeconds"].includes(key));
+      if (unknown.length > 0) return `a token request carries fields the host does not accept: ${unknown.join(", ")}`;
+      if (!isShortText(request.provider, 64) || !TOKEN_PROVIDER.test(request.provider)) return "a token request names its provider";
+      if (
+        !Array.isArray(request.scopes) ||
+        request.scopes.length < 1 ||
+        request.scopes.length > 16 ||
+        !request.scopes.every((scope) => isShortText(scope, 128) && TOKEN_SCOPE.test(scope))
+      ) {
+        return "a token request names 1 to 16 scopes";
+      }
+      if (request.ttlSeconds !== undefined && (!Number.isInteger(request.ttlSeconds) || request.ttlSeconds < 30 || request.ttlSeconds > 3_600)) {
+        return "a token lives 30 to 3600 seconds";
+      }
+      return undefined;
+    },
+  },
+  "tokens.end": {
+    fields: ["session"],
+    check: (payload) => (typeof payload.session === "string" && TOKEN_SESSION.test(payload.session) ? undefined : "an end names its frame's session"),
+  },
+});
+
+/** The file, job and token verbs the host relays, by the name their channel carries after `detached:`. */
+export const BROKER_RELAY_VERBS = Object.freeze(Object.keys(RELAY_REQUESTS));
+
+/**
+ * A file, job or token request from the detached window, checked before the host acts on it.
+ *
+ * @returns {{ ok: true, payload: Record<string, any> } | { ok: false, reason: string }}
+ */
+export function reviewDetachedBrokerRequest(verb, raw) {
+  const spec = RELAY_REQUESTS[verb];
+  if (spec === undefined) return { ok: false, reason: `the host relays no verb called ${String(verb)}` };
+  const fields = reviewRelayFields(raw, spec.fields, `a ${verb} request`);
+  if (!fields.ok) return fields;
+  const refused = spec.check(fields.payload);
+  return refused === undefined ? { ok: true, payload: fields.payload } : { ok: false, reason: refused };
+}
+
+/**
+ * The token sessions a detached window's frames were issued tokens under, so the host can end every one of them when the
+ * window goes, or when the frame it ran is replaced, whether or not the renderer said so. Bounded: past `limit` a new
+ * session is not recorded, and the host refuses to issue under it rather than issue a token it could not end.
+ */
+export function tokenSessions(limit = 64) {
+  const sessions = new Set();
+  return {
+    /** Whether `session` is recorded (or may be): false only for a new session past the bound. */
+    admits(session) {
+      return sessions.has(session) || sessions.size < limit;
+    },
+    record(session) {
+      if (sessions.has(session) || sessions.size < limit) sessions.add(session);
+    },
+    forget(session) {
+      sessions.delete(session);
+    },
+    /** Every recorded session, and the record emptied: each is ended once. */
+    drain() {
+      const all = [...sessions];
+      sessions.clear();
+      return all;
+    },
+    list() {
+      return [...sessions];
+    },
+  };
+}
+
 /**
  * The node's answer to a frame read, checked before the window sees it.
  *
@@ -343,27 +583,35 @@ export function relayBudget(input = {}) {
   const buckets = new Map();
   let inFlight = 0;
   const take = (verb) => {
-    const limit = limits[verb];
-    if (limit === undefined || typeof limit !== "object") {
+    const names = relayBucketsFor(verb);
+    if (names.some((name) => limits[name] === undefined || typeof limits[name] !== "object")) {
       return { ok: false, refused: `the host relays no verb called ${String(verb)}`, code: "RELAY_UNKNOWN" };
     }
     const at = now();
-    const bucket = buckets.get(verb) ?? { tokens: limit.burst, at, inFlight: 0 };
-    bucket.tokens = Math.min(limit.burst, bucket.tokens + (Math.max(0, at - bucket.at) / 1000) * limit.refillPerSecond);
-    bucket.at = at;
-    buckets.set(verb, bucket);
-    if (inFlight >= limits.inFlight || (limit.inFlight !== undefined && bucket.inFlight >= limit.inFlight)) {
+    const held = names.map((name) => {
+      const limit = limits[name];
+      const bucket = buckets.get(name) ?? { tokens: limit.burst, at, inFlight: 0 };
+      bucket.tokens = Math.min(limit.burst, bucket.tokens + (Math.max(0, at - bucket.at) / 1000) * limit.refillPerSecond);
+      bucket.at = at;
+      buckets.set(name, bucket);
+      return { name, limit, bucket };
+    });
+    if (inFlight >= limits.inFlight || held.some(({ limit, bucket }) => limit.inFlight !== undefined && bucket.inFlight >= limit.inFlight)) {
       return { ok: false, refused: "the host is still relaying earlier calls; try again shortly", code: "RELAY_BUSY" };
     }
-    if (bucket.tokens < 1) {
+    // Every bucket is checked before any is spent, so a refusal costs none of them.
+    const empty = held.find(({ bucket }) => bucket.tokens < 1);
+    if (empty !== undefined) {
       return {
         ok: false,
-        refused: `at most ${String(limit.refillPerSecond)} ${verb} calls a second, after a burst of ${String(limit.burst)}`,
+        refused: `at most ${String(empty.limit.refillPerSecond)} ${empty.name} calls a second, after a burst of ${String(empty.limit.burst)}`,
         code: "RELAY_RATE_LIMITED",
       };
     }
-    bucket.tokens -= 1;
-    bucket.inFlight += 1;
+    for (const { bucket } of held) {
+      bucket.tokens -= 1;
+      bucket.inFlight += 1;
+    }
     inFlight += 1;
     let settled = false;
     return {
@@ -371,7 +619,7 @@ export function relayBudget(input = {}) {
       done: () => {
         if (settled) return;
         settled = true;
-        bucket.inFlight -= 1;
+        for (const { bucket } of held) bucket.inFlight -= 1;
         inFlight -= 1;
       },
     };
@@ -394,7 +642,7 @@ export function relayBudget(input = {}) {
 export async function runRelay(budget, verb, callNode, run) {
   const taken = budget.take(verb);
   if (!taken.ok) return { ok: false, refused: taken.refused, code: taken.code, details: {} };
-  const timeoutMs = RELAY_LIMITS[verb]?.timeoutMs;
+  const timeoutMs = RELAY_LIMITS[relayBucketsFor(verb)[0]]?.timeoutMs;
   try {
     return await run((path, init) => callNode(path, { ...init, timeoutMs }));
   } finally {
@@ -604,15 +852,16 @@ export function holdDetachedLease(input) {
  * - the window counts as open only while it is still the detached window and not destroyed;
  * - a refresh refused because somebody else holds the instance closes the window;
  * - a first claim that is refused closes the window, and `begin()` answers with the refusal;
- * - closing the window, for whatever reason, ends the lease, and the conversation is told to take the widget back only
- *   once that has settled or its bound has passed (`onEnded`). `released` settles at the same moment, so quitting can
- *   wait for it.
+ * - closing the window, for whatever reason, ends the lease, then runs `afterRelease` (the host ends the token sessions
+ *   the window's frames were issued under), and the conversation is told to take the widget back only once both have
+ *   settled or their bounds have passed (`onEnded`). `released` settles at the same moment, so quitting can wait for it.
  *
  * @param {{
  *   window: { on: (event: "closed", listener: () => void) => unknown, close: () => void, isDestroyed: () => boolean },
  *   isCurrent: () => boolean,
  *   claim: () => Promise<{ ok: boolean, code?: string, refused?: string }>,
  *   release: () => Promise<unknown>,
+ *   afterRelease?: () => Promise<unknown>,
  *   onClosed?: () => void,
  *   onEnded: () => void,
  *   refreshMs?: number,
@@ -642,7 +891,26 @@ export function superviseDetachedWindow(input) {
   });
   window.on("closed", () => {
     input.onClosed?.();
-    void lease.end().then(() => {
+    void lease.end().then(async () => {
+      /*
+       * Then what the window's frames were given is revoked, before the conversation is told to take the widget back:
+       * the frame it mounts there asks for its own tokens under a session of its own. Bounded like the release, so a
+       * node that never answers cannot keep the widget from going back; a token not revoked lapses at its expiry.
+       */
+      if (input.afterRelease !== undefined) {
+        const setTimer = input.timers?.setTimeout ?? globalThis.setTimeout;
+        const clearTimer = input.timers?.clearTimeout ?? globalThis.clearTimeout;
+        let bound;
+        await Promise.race([
+          Promise.resolve()
+            .then(input.afterRelease)
+            .catch(() => undefined),
+          new Promise((resolve) => {
+            bound = setTimer(resolve, input.endWithinMs ?? DETACHED_LEASE.endWithinMs);
+          }),
+        ]);
+        clearTimer(bound);
+      }
       markReleased();
       try {
         input.onEnded();

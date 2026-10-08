@@ -48,7 +48,7 @@ export interface AppearanceRead {
 }
 
 interface DesktopAppearanceBridge {
-  clarkcant?: { updateAppearance?: (snapshot: unknown) => Promise<unknown> };
+  clarkcant?: { updateAppearance?: (snapshot: unknown) => Promise<unknown>; notifyPackagesChanged?: () => Promise<unknown> };
 }
 
 export function useAppearance(client: GatewayClient): AppearanceState {
@@ -92,7 +92,12 @@ export function useAppearance(client: GatewayClient): AppearanceState {
 
   useEffect(() => {
     void refresh();
-    const stopPackages = client.onPackagesChanged(() => void refresh());
+    const stopPackages = client.onPackagesChanged(() => {
+      void refresh();
+      // A detached widget window holds no client to hear this itself: the desktop tells it, and it re-reads its frame.
+      const bridge = (window as unknown as DesktopAppearanceBridge).clarkcant;
+      if (typeof bridge?.notifyPackagesChanged === "function") void bridge.notifyPackagesChanged().catch(() => undefined);
+    });
     const onVisible = (): void => {
       if (document.visibilityState === "visible") void refresh();
     };

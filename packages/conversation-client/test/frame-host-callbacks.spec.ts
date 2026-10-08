@@ -1,16 +1,27 @@
 import { createElement } from "react";
+import { artifactRefSchema } from "@clarkcant/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { GatewayError, type IsolatedFrameLiveResponse } from "../src/api.ts";
 import { DetachedFrameView } from "../src/DetachedWidgetSurface.tsx";
 import {
+  type DetachedArtifactBridge,
   type DetachedFrameBridge,
   type FrameHostTransport,
+  detachedArtifactFiles,
   detachedDevStatusClient,
   detachedFrameTransport,
+  detachedJobTransport,
+  detachedTokenTransport,
   frameHostCallbacks,
+  frameJobBroker,
+  frameTokenBroker,
+  offersBrowserTokens,
+  shellJobTransport,
+  shellTokenTransport,
 } from "../src/frame-host-callbacks.ts";
+import { DesktopFileError } from "../src/artifact-messages.ts";
 import { readStoredLocale } from "../src/i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
 
@@ -67,6 +78,25 @@ function bridge(answers: Partial<DetachedFrameBridge>): DetachedFrameBridge & { 
       return (answers.intent ?? refuse)(input);
     },
     devSession: answers.devSession ?? refuse,
+    artifacts: answers.artifacts ?? artifactRelays({}),
+    jobs: answers.jobs ?? { get: refuse, list: refuse, cancel: refuse },
+    tokens: answers.tokens ?? { request: refuse, end: refuse },
+  };
+}
+
+/** The artifact relays, each answering as told and refusing otherwise. */
+function artifactRelays(answers: Partial<DetachedArtifactBridge>): DetachedArtifactBridge {
+  const refuse = async (): Promise<{ ok: false; refused: string }> => ({ ok: false, refused: "not stubbed" });
+  return {
+    pick: answers.pick ?? refuse,
+    describe: answers.describe ?? refuse,
+    create: answers.create ?? refuse,
+    read: answers.read ?? refuse,
+    write: answers.write ?? refuse,
+    finalize: answers.finalize ?? refuse,
+    export: answers.export ?? refuse,
+    attach: answers.attach ?? refuse,
+    discard: answers.discard ?? refuse,
   };
 }
 
@@ -290,6 +320,12 @@ describe("the detached window's frame", () => {
     expect(html).toContain('data-detached-release="true"');
   });
 
+  it("draws the host's file panel beside the frame, as the conversation does", () => {
+    const html = view({});
+    expect(html).toContain('data-artifact-announce="true"');
+    expect(html.indexOf("<iframe")).toBeLessThan(html.indexOf('data-artifact-announce="true"'));
+  });
+
   it("shows the widget's text alternative when its package is gone", () => {
     const html = view({ live: { ...LIVE, frame: null, textFallback: "A timer, at 3 minutes" } });
     expect(html).toContain('data-widget-text-fallback="true"');
@@ -308,5 +344,166 @@ describe("the detached window's frame", () => {
     const html = view({ live: undefined, problem: "the node did not answer in time" });
     expect(html).toContain('data-detached-error="true"');
     expect(html).toContain("the node did not answer in time");
+  });
+});
+
+const REF = artifactRefSchema.parse({ v: 1, artifactId: "art_1", kind: "working", mimeType: "text/plain", sizeBytes: 5, name: "notes.txt" });
+const DIGEST = `sha256:${"5".repeat(64)}`;
+const ATTACHMENT = { attachmentId: "att_1", filename: "notes.txt", mime: "text/plain", kind: "text", sizeBytes: 5, sha256: DIGEST, blobRef: `${"a".repeat(32)}.txt` };
+const LABELS = { filterName: "Files", replaceTitle: "Replace?", replaceMessage: "Replace it?", replace: "Replace", cancel: "Cancel" };
+
+describe("a widget's files in a detached window", () => {
+  it("reads every answer as the conversation's client reads the node's", async () => {
+    const asked: unknown[] = [];
+    const files = detachedArtifactFiles(
+      artifactRelays({
+        describe: async (input) => (asked.push({ describe: input }), { ok: true, artifactRef: REF }),
+        create: async (input) => (asked.push({ create: input }), { ok: true, artifactRef: REF }),
+        read: async (input) => (asked.push({ read: input }), { ok: true, artifactRef: REF, contentBase64: "aGVsbG8=", eof: true }),
+        write: async (input) => (asked.push({ write: input }), { ok: true, artifactRef: REF }),
+        finalize: async (input) => (asked.push({ finalize: input }), { ok: true, artifactRef: REF }),
+        attach: async (input) => (
+          asked.push({ attach: input }),
+          { ok: true, artifactRef: { ...REF, kind: "finalized", digest: DIGEST }, attachmentRef: ATTACHMENT }
+        ),
+        discard: async (input) => (asked.push({ discard: input }), { ok: true }),
+      }),
+    );
+    expect(files.desktop).toBe(true);
+    expect(await files.describe("art_1")).toEqual(REF);
+    expect(await files.create({ mimeType: "text/plain", name: "n.txt" })).toEqual(REF);
+    expect(await files.read("art_1", { offset: 0, length: 5 })).toEqual({ artifactRef: REF, contentBase64: "aGVsbG8=", eof: true });
+    expect(await files.write("art_1", { offset: 0, contentBase64: "aGk=" })).toEqual(REF);
+    expect(await files.finalize("art_1")).toEqual(REF);
+    expect((await files.attach("art_1", { name: "x.txt" })).attachmentRef).toEqual(ATTACHMENT);
+    await files.discard("art_1");
+    // The frame's own request and nothing else: no conversation, no instance.
+    expect(asked).toEqual([
+      { describe: { artifactId: "art_1" } },
+      { create: { mimeType: "text/plain", name: "n.txt" } },
+      { read: { artifactId: "art_1", offset: 0, length: 5 } },
+      { write: { artifactId: "art_1", offset: 0, chunkBase64: "aGk=" } },
+      { finalize: { artifactId: "art_1" } },
+      { attach: { artifactId: "art_1", name: "x.txt" } },
+      { discard: { artifactId: "art_1" } },
+    ]);
+  });
+
+  it("refuses a malformed answer, passes the node's refusal on, and words a dialog's refusal as the desktop's", async () => {
+    const malformed = detachedArtifactFiles(artifactRelays({ describe: async () => ({ ok: true, artifactRef: { artifactId: 3 } }) }));
+    await expect(malformed.describe("art_1")).rejects.toMatchObject({ code: "MALFORMED_RESPONSE" });
+
+    const refused = detachedArtifactFiles(
+      artifactRelays({ describe: async () => ({ ok: false, code: "ARTIFACT_NOT_GRANTED", refused: "not this widget's" }) }),
+    );
+    await expect(refused.describe("art_1")).rejects.toMatchObject({ code: "ARTIFACT_NOT_GRANTED", reason: "not this widget's" });
+
+    const dialog = detachedArtifactFiles(artifactRelays({ pick: async () => ({ ok: false, desktop: true, refused: "READ_FAILED", errorCode: "EACCES" }) }));
+    const error = await dialog.pickOnDesktop?.({ accept: ["text/plain"], title: "t", filterName: "f" }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(DesktopFileError);
+    expect(error).toMatchObject({ code: "READ_FAILED", errorCode: "EACCES" });
+  });
+
+  it("picks in the host: the window learns the reference and the bare name, never a path or a handle", async () => {
+    const files = detachedArtifactFiles(
+      artifactRelays({ pick: async () => ({ ok: true, canceled: false, artifactRef: { ...REF, kind: "attachment", digest: DIGEST }, original: { name: "notes.txt" } }) }),
+    );
+    expect(files.storePicked).toBeUndefined();
+    const picked = await files.pickOnDesktop?.({ accept: ["text/plain"], title: "t", filterName: "f" });
+    expect(picked).toEqual({ canceled: false, ref: { ...REF, kind: "attachment", digest: DIGEST }, original: { name: "notes.txt", mimeType: "text/plain" } });
+    const cancelled = detachedArtifactFiles(artifactRelays({ pick: async () => ({ ok: true, canceled: true }) }));
+    expect(await cancelled.pickOnDesktop?.({ accept: [], title: "t", filterName: "f" })).toEqual({ canceled: true });
+  });
+
+  it("saves in the host, asking to replace only for the picked file, and says what became of it", async () => {
+    const asked: unknown[] = [];
+    const files = detachedArtifactFiles(
+      artifactRelays({ export: async (input) => (asked.push(input), { ok: true, saved: true, name: "notes.txt" }) }),
+    );
+    expect(await files.save({ ref: REF, suggestedName: "notes.txt", original: undefined, labels: LABELS })).toEqual({ outcome: "saved", name: "notes.txt" });
+    await files.save({ ref: REF, suggestedName: "notes.txt", original: { name: "a.txt", mimeType: "text/plain" }, labels: LABELS });
+    expect(asked).toEqual([
+      { artifactId: "art_1", suggestedName: "notes.txt", labels: LABELS },
+      { artifactId: "art_1", suggestedName: "notes.txt", replace: true, labels: LABELS },
+    ]);
+    const cancelled = detachedArtifactFiles(artifactRelays({ export: async () => ({ ok: true, canceled: true }) }));
+    expect(await cancelled.save({ ref: REF, suggestedName: "n.txt", original: undefined, labels: LABELS })).toEqual({ outcome: "cancelled", name: "n.txt" });
+  });
+});
+
+const JOB = { jobId: "job_1", status: "running", resultRefs: [], createdAt: "2026-01-01T00:00:00.000Z" };
+const TOKEN_REQUEST = { provider: "example.maps", scopes: ["tiles:read"] } as never;
+
+describe("a widget's jobs and browser tokens, in either window", () => {
+  it("answers a job the same through the conversation's client and through the host's relays", async () => {
+    const client = {
+      getWidgetJob: async () => JOB,
+      listWidgetJobs: async () => [JOB],
+      cancelWidgetJob: async () => undefined,
+    };
+    const conversation = frameJobBroker(shellJobTransport(client as never, "conv_1", "widget_frame_1"));
+    const detached = frameJobBroker(
+      detachedJobTransport({ get: async () => ({ ok: true, job: JOB }), list: async () => ({ ok: true, jobs: [JOB] }), cancel: async () => ({ ok: true }) }),
+    );
+    for (const request of [{ op: "get", jobId: "job_1" }, { op: "list" }, { op: "cancel", jobId: "job_1" }] as const) {
+      expect(await detached(request)).toEqual(await conversation(request));
+    }
+    expect(await detached({ op: "list" })).toMatchObject({ status: "ok", jobs: [{ jobId: "job_1" }] });
+  });
+
+  it("refuses a job the same in both windows, and a malformed snapshot is refused", async () => {
+    const conversation = frameJobBroker(
+      shellJobTransport({ getWidgetJob: async () => Promise.reject(new GatewayError(404, "JOB_NOT_FOUND", "no such job")) } as never, "c", "w"),
+    );
+    const detached = frameJobBroker(
+      detachedJobTransport({ get: async () => ({ ok: false, code: "JOB_NOT_FOUND", refused: "no such job" }), list: async () => ({ ok: true }), cancel: async () => ({ ok: true }) }),
+    );
+    expect(await detached({ op: "get", jobId: "job_1" })).toEqual(await conversation({ op: "get", jobId: "job_1" }));
+    expect(await detached({ op: "get", jobId: "job_1" })).toMatchObject({ status: "refused", code: "JOB_NOT_FOUND" });
+    const malformed = frameJobBroker(detachedJobTransport({ get: async () => ({ ok: true, job: { jobId: 3 } }), list: async () => ({ ok: true }), cancel: async () => ({ ok: true }) }));
+    expect(await malformed({ op: "get", jobId: "job_1" })).toMatchObject({ status: "refused", code: "MALFORMED_RESPONSE" });
+  });
+
+  it("hands a token out and refuses one the same in both windows, and ends the session when the frame goes", async () => {
+    const token = { provider: "example.maps", token: "t-value", scopes: ["tiles:read"], expiresAt: "2026-01-01T01:00:00.000Z" };
+    const ended: string[] = [];
+    const conversation = frameTokenBroker(
+      shellTokenTransport(
+        {
+          requestBrowserToken: async () => ({ provider: "example.maps", value: "t-value", scopes: ["tiles:read"], expiresAt: token.expiresAt }),
+          endBrowserTokens: async () => undefined,
+        } as never,
+        "c",
+        "w",
+      ),
+    );
+    const detached = frameTokenBroker(
+      detachedTokenTransport({
+        request: async () => ({ ok: true, token }),
+        end: async (input) => (ended.push(input.session), { ok: true }),
+      }),
+    );
+    expect(await detached.request(TOKEN_REQUEST, "s".repeat(32))).toEqual(await conversation.request(TOKEN_REQUEST, "s".repeat(32)));
+    detached.release("s".repeat(32));
+    await Promise.resolve();
+    expect(ended).toEqual(["s".repeat(32)]);
+
+    const refusedDetached = frameTokenBroker(
+      detachedTokenTransport({ request: async () => ({ ok: false, code: "TOKEN_NOT_DECLARED", refused: "not declared" }), end: async () => ({ ok: true }) }),
+    );
+    const refusedConversation = frameTokenBroker(
+      shellTokenTransport(
+        { requestBrowserToken: async () => Promise.reject(new GatewayError(403, "TOKEN_NOT_DECLARED", "not declared")), endBrowserTokens: async () => undefined } as never,
+        "c",
+        "w",
+      ),
+    );
+    expect(await refusedDetached.request(TOKEN_REQUEST, "s".repeat(32))).toEqual(await refusedConversation.request(TOKEN_REQUEST, "s".repeat(32)));
+  });
+
+  it("offers tokens only to a frame whose package declared some", () => {
+    expect(offersBrowserTokens({})).toBe(false);
+    expect(offersBrowserTokens({ browserTokens: [] })).toBe(false);
+    expect(offersBrowserTokens({ browserTokens: [{ provider: "example.maps" }] })).toBe(true);
   });
 });
