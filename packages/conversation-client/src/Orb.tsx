@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, type RefObject } from "react";
 
-import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
+import {
+  createOrbFrameScheduler,
+  createOrbRenderer,
+  orbFrameBudget,
+  orbPointerFromClient,
+  type OrbOptions,
+  type OrbPointerRect,
+  type OrbPointerSample,
+} from "./orb.ts";
 import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
 import { orbOptionsFromProfile } from "./orb-snapshot.ts";
 import { readDocumentAppearance, subscribeToDocumentTheme } from "./theme.ts";
@@ -16,7 +24,9 @@ import { usePlatformReducedMotion } from "./typewriter.ts";
  *     being spent for nothing;
  *   - it honours `prefers-reduced-motion` by drawing one frame and stopping, because an animated
  *     glow is exactly the kind of decoration that setting exists to turn off;
- *   - it renders a static fallback when WebGL is unavailable, rather than an empty box.
+ *   - it renders a static fallback when WebGL is unavailable, rather than an empty box;
+ *   - it draws less often, and at a lower resolution, when WebGL is drawn by the CPU rather than a GPU,
+ *     because there an orb animated at the display's rate takes several cores of an idle machine.
  *
  * The fallback is the element's own gradient background, which is why the class stays on the
  * canvas: with WebGL the canvas paints over it, and without WebGL it is what the user sees.
@@ -108,6 +118,8 @@ export function Orb({
 }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
+  // Whether the working context is drawn by the CPU, which is when the orb runs on its reduced frame budget.
+  const [software, setSoftware] = useState(false);
   const platformReducedMotion = usePlatformReducedMotion();
   /*
    * Either switch is enough. The profile carries the stored preference; the live query covers the platform switch,
@@ -158,9 +170,9 @@ export function Orb({
     setFailed(undefined);
 
     const renderer = created.renderer;
+    setSoftware(renderer.software);
     renderer.resize();
 
-    let frameHandle = 0;
     let visible = true;
 
     /*
@@ -207,20 +219,23 @@ export function Orb({
     // leave the cached rect behind and the glow would answer a pointer position that has moved.
     window.addEventListener("scroll", invalidateRect, true);
 
+    /*
+     * Every animation frame on a GPU. Drawn by the CPU, the next frame waits out the budget's interval on a timer, so
+     * the shader runs a fraction as often and the compositor is left idle in between.
+     */
+    const frames = createOrbFrameScheduler(window, orbFrameBudget(renderer.software).minFrameIntervalMs);
     const loop = (time: number): void => {
       renderer.setPointer(sample);
       renderer.frame(time);
-      frameHandle = window.requestAnimationFrame(loop);
+      frames.request(loop, true);
     };
 
     const start = (): void => {
-      if (frameHandle !== 0 || reduceMotion) return;
-      frameHandle = window.requestAnimationFrame(loop);
+      if (frames.pending || reduceMotion) return;
+      frames.request(loop, false);
     };
     const stop = (): void => {
-      if (frameHandle === 0) return;
-      window.cancelAnimationFrame(frameHandle);
-      frameHandle = 0;
+      frames.cancel();
     };
 
     if (reduceMotion) {
@@ -233,7 +248,9 @@ export function Orb({
     const onResize = (): void => {
       renderer.resize();
       invalidateRect();
-      if (reduceMotion) renderer.frame(0);
+      // Redrawn at once: resizing the buffer clears it, and on the reduced budget the next frame can be 60 ms away,
+      // which shows as the orb blinking out while the window is resized.
+      renderer.frame(reduceMotion ? 0 : performance.now());
     };
     window.addEventListener("resize", onResize);
 
@@ -296,6 +313,8 @@ export function Orb({
       }}
       data-orb={failed === undefined ? "gl" : "fallback"}
       {...(failed === undefined ? {} : { "data-orb-reason": failed })}
+      // Published for diagnostics and tests, like the render mode: whether this orb is drawn on the CPU's budget.
+      {...(failed === undefined ? { "data-orb-renderer": software ? "software" : "gpu" } : {})}
       /*
        * The resolved profile, published as state rather than kept internal.
        *

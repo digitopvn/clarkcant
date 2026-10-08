@@ -559,6 +559,115 @@ test("without WebGL the orb stays visible in its style's colours, and Settings s
   expect(previewBackground).toContain("radial-gradient");
 });
 
+/**
+ * Name the machine's WebGL renderer, and count the frames each canvas draws.
+ *
+ * The name is what the orb decides its frame budget from, so a test pins it rather than inheriting whatever this
+ * runner happens to have: a CI runner draws WebGL with SwiftShader, and a developer's machine may have a GPU. The
+ * shader still runs on whatever the browser really has; only the name the orb reads is fixed.
+ */
+async function withRenderer(page: Page, name: string): Promise<void> {
+  await page.addInitScript((rendererName) => {
+    const UNMASKED_RENDERER_WEBGL = 0x9246;
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function named(this: WebGLRenderingContext, parameter: number) {
+      return parameter === UNMASKED_RENDERER_WEBGL ? rendererName : getParameter.call(this, parameter);
+    } as typeof getParameter;
+    const drawArrays = WebGLRenderingContext.prototype.drawArrays;
+    WebGLRenderingContext.prototype.drawArrays = function counted(this: WebGLRenderingContext, ...args: Parameters<typeof drawArrays>) {
+      const canvas = this.canvas as HTMLCanvasElement & { __orbDraws?: number };
+      canvas.__orbDraws = (canvas.__orbDraws ?? 0) + 1;
+      return drawArrays.apply(this, args);
+    };
+  }, name);
+}
+
+/**
+ * The hero orb's drawing buffer against its size on screen.
+ *
+ * The buffer is sized when the renderer is built and on a window resize, and the hero settles into its place after the
+ * first one; a resize event first makes the comparison about the size it is shown at now.
+ */
+async function heroBuffer(page: Page): Promise<{ buffer: number; shown: number }> {
+  return page.evaluate(() => {
+    window.dispatchEvent(new Event("resize"));
+    const canvas = document.querySelector<HTMLCanvasElement>(".cc-empty-orb[data-orb]");
+    if (canvas === null) throw new Error("the hero orb is not on the page");
+    return { buffer: canvas.width, shown: canvas.getBoundingClientRect().width };
+  });
+}
+
+/**
+ * Wait for the hero to finish entering.
+ *
+ * Its stage fades and slides in with CSS, and a picture taken during that would differ from the next one whether or
+ * not the shader moved: the stillness check below has to be about the orb, not its entrance.
+ */
+async function heroSettled(page: Page): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const stage = document.querySelector(".cc-stage-orb");
+        if (stage === null) return -1;
+        return stage.getAnimations({ subtree: true }).filter((animation) => animation.playState === "running").length;
+      }),
+    )
+    .toBe(0);
+}
+
+/** Frames the hero orb drew per second, over two seconds. */
+async function heroDrawRate(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const canvas = document.querySelector<HTMLCanvasElement & { __orbDraws?: number }>(".cc-empty-orb[data-orb]");
+    if (canvas === null) throw new Error("the hero orb is not on the page");
+    const before = canvas.__orbDraws ?? 0;
+    const started = performance.now();
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    return ((canvas.__orbDraws ?? 0) - before) / ((performance.now() - started) / 1000);
+  });
+}
+
+test.describe("the orb's frame budget follows what draws its WebGL", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("drawn by the CPU, the orb keeps moving on a reduced frame and resolution budget", async ({ page }) => {
+    mkdirSync(EVIDENCE, { recursive: true });
+    await withRenderer(page, "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)");
+    await openApp(page);
+    const hero = page.locator(".cc-empty-orb[data-orb]");
+    await expect(hero).toHaveAttribute("data-orb", "gl");
+    await expect(hero).toHaveAttribute("data-orb-renderer", "software");
+    await expect(page.locator(".cc-orb[data-orb]").first()).toHaveAttribute("data-orb-renderer", "software");
+    // The motion preference is untouched: this is a budget, not reduced motion.
+    await expect(hero).toHaveAttribute("data-orb-motion", "full");
+    await heroSettled(page);
+
+    // Still animated, at most twenty frames a second rather than one per display frame.
+    const rate = await heroDrawRate(page);
+    expect(rate).toBeGreaterThan(8);
+    expect(rate).toBeLessThanOrEqual(21);
+    expect(await looksStill(page, ".cc-empty-orb[data-orb]")).toBe(false);
+
+    // Drawn into a buffer half its size on screen, which the browser scales up.
+    const size = await heroBuffer(page);
+    expect(size.buffer).toBeLessThanOrEqual(Math.ceil(size.shown * 0.5) + 1);
+    await page.screenshot({ path: join(EVIDENCE, "orb-09-software-renderer-1280.png") });
+  });
+
+  test("a GPU keeps the orb on every display frame at full resolution", async ({ page }) => {
+    await withRenderer(page, "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)");
+    await openApp(page);
+    const hero = page.locator(".cc-empty-orb[data-orb]");
+    await expect(hero).toHaveAttribute("data-orb-renderer", "gpu");
+    await heroSettled(page);
+    // Faster than any software budget allows. Headless Chromium runs its display frames at 60 Hz; the bound is low
+    // enough that a loaded runner drawing the real shader on the CPU still clears it.
+    expect(await heroDrawRate(page)).toBeGreaterThan(22);
+    const size = await heroBuffer(page);
+    expect(size.buffer).toBeGreaterThanOrEqual(Math.floor(size.shown));
+  });
+});
+
 test("the shell publishes how the user is interacting and what the agent is doing", async ({ page }) => {
   await openApp(page);
 

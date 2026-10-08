@@ -144,6 +144,8 @@ prefers-reduced-motion always wins over the animation preference: the Orb still 
 
 Without WebGL, the Orb stays visible as a still gradient in the chosen preset's colours (the shipped gradient for Clark), and Settings says that the machine cannot draw it and that the choice is still saved. The preview's status then reads as still rather than animating.
 
+When WebGL is drawn by the CPU rather than a GPU (SwiftShader in Chromium and Electron, Mesa's llvmpipe on Linux, the Microsoft Basic Render Driver on Windows, the Apple Software Renderer on macOS), the Orb stays animated but draws on a reduced budget: at least 50 ms between frames, into a drawing buffer half the size it is shown at, which the browser scales up. A small Orb, such as the one in the header, keeps its full resolution. The renderer recognises this from the WebGL renderer's name, and a name it does not recognise is treated as a GPU, so a GPU-backed machine draws every display frame at full resolution exactly as before. Without this, the animated Orb alone took three to seven CPU cores of an idle page. There is no setting for it and nothing on screen announces it. Reduced motion still wins over it: a reduced-motion Orb draws one frame whatever renders it.
+
 On a light surface the Orb keeps its own deep glass. The interior is light added to the glass body, so the body cannot be the page colour there: light added to a near-white page clips to a blank white disc. On the light theme the body is therefore the same dark, shell-tinted glass sphere the dark theme shows, and every preset's interior (the band, the nacre layers, the plasma filaments) reads as it does on dark. Towards the silhouette the glass takes on the page and shell colours, the way a glass ball's edge reflects a bright room, and the outer glow is a tinted aura rather than a grey ring. This matches the still gradient shown without WebGL, which is also a deep glass ball. The shader derives the surface's lightness from the page colour it is given, so the dark theme renders exactly as before, and a future theme gets the right body from its own canvas colour.
 
 ---
@@ -291,11 +293,15 @@ The root conversation surface should have a state machine expressed via data att
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
 
-On the Orb's own canvas, three more attributes publish the **resolved profile** rather than the raw preference:
+On the Orb's own canvas, more attributes publish the **resolved profile** rather than the raw preference:
 
     data-orb          = gl | fallback
     data-orb-profile  = clark | calm | jelly | glass | pearl | plasma | custom
     data-orb-motion   = full | reduced
+    data-orb-renderer = gpu | software   (only while data-orb = gl)
+
+`data-orb-renderer` says which frame budget the Orb is drawn on; `software` is the reduced budget described in §1
+for WebGL drawn by the CPU. It does not change `data-orb-motion`: a budget is not reduced motion.
 
 `data-orb-motion` is the value **after** reduced-motion has already won, so a surface reads the resolved truth
 instead of having to re-derive it from the preference and potentially get it wrong. The resolution (clamp, preset,

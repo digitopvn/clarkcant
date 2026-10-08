@@ -144,6 +144,8 @@ prefers-reduced-motion luôn thắng preference animation: Orb vẫn hiện như
 
 Khi không có WebGL, Orb vẫn hiện dưới dạng gradient tĩnh bằng màu của preset đã chọn (gradient gốc với Clark), và Settings nói rõ máy này không vẽ được Orb nhưng lựa chọn vẫn được lưu. Khi đó, dòng trạng thái của bản xem trước báo là ảnh tĩnh chứ không báo đang chuyển động.
 
+Khi WebGL được vẽ bằng CPU thay vì GPU (SwiftShader trong Chromium và Electron, llvmpipe của Mesa trên Linux, Microsoft Basic Render Driver trên Windows, Apple Software Renderer trên macOS), Orb vẫn chuyển động nhưng vẽ theo một ngân sách thấp hơn: cách nhau ít nhất 50 ms giữa hai khung hình, vào một drawing buffer bằng một nửa kích thước hiển thị, rồi trình duyệt phóng lên. Một Orb nhỏ, như Orb trên thanh tiêu đề, vẫn giữ nguyên độ phân giải. Renderer nhận ra trường hợp này từ tên của WebGL renderer, và một cái tên nó không nhận ra thì được coi là GPU, nên máy có GPU vẫn vẽ mọi khung hình của màn hình ở độ phân giải đầy đủ như trước. Nếu không có điều này, riêng Orb chuyển động đã chiếm từ ba đến bảy nhân CPU của một trang đang rảnh. Không có cài đặt nào cho việc này và màn hình cũng không thông báo gì. Reduced motion vẫn thắng: Orb ở chế độ reduced motion chỉ vẽ một khung hình, dù thứ gì đang vẽ nó.
+
 Trên nền sáng, Orb giữ thân kính sẫm của chính nó. Phần lõi là ánh sáng được cộng vào thân kính, nên ở đó thân kính không thể là màu nền của trang: ánh sáng cộng vào một nền gần trắng chỉ có thể cháy thành một đĩa trắng trơn. Vì vậy ở chủ đề sáng, thân kính là chính khối cầu kính sẫm, nhuốm màu vỏ, giống như ở chủ đề tối, và phần lõi của mọi preset (dải quang phổ, các lớp xà cừ, các sợi plasma) hiện ra như trên nền tối. Càng gần viền, kính càng mang màu của trang và của vỏ, giống như mép một quả cầu thủy tinh phản chiếu căn phòng sáng xung quanh, và quầng sáng bên ngoài là một vầng màu thay vì một vòng xám. Cách này khớp với gradient tĩnh hiện ra khi không có WebGL, vốn cũng là một quả cầu kính sẫm. Shader tự suy ra độ sáng của bề mặt từ màu nền được truyền vào, nên chủ đề tối hiển thị đúng như trước, và một chủ đề mới sau này cũng tự có thân kính phù hợp từ màu nền của nó.
 
 ---
@@ -289,11 +291,15 @@ Root conversation surface nên có state machine hiển thị bằng data attrib
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
 
-Trên chính canvas của Orb, ba attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
+Trên chính canvas của Orb, thêm vài attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
 
     data-orb          = gl | fallback
     data-orb-profile  = clark | calm | jelly | glass | pearl | plasma | custom
     data-orb-motion   = full | reduced
+    data-orb-renderer = gpu | software   (chỉ khi data-orb = gl)
+
+`data-orb-renderer` cho biết Orb đang vẽ theo ngân sách khung hình nào; `software` là ngân sách thấp hơn mô tả ở §1
+cho WebGL được vẽ bằng CPU. Nó không đổi `data-orb-motion`: một ngân sách không phải là reduced motion.
 
 `data-orb-motion` là giá trị **sau khi** reduced-motion đã thắng, nên một surface đọc được sự thật đã resolve
 thay vì phải suy lại từ preference và có thể suy sai. Việc resolve (clamp, preset, reduced-motion) nằm ở một
