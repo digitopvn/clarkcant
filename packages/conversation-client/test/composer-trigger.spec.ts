@@ -105,6 +105,17 @@ describe("what a message carries", () => {
     expect(tokenPresent("so với (@clarkcant)", "@clarkcant")).toBe(true);
   });
 
+  it("keeps a reference written right before a colon, as in a line number, a path or a time", () => {
+    const main: ComposerReference = { kind: "file", projectId: "proj_1", path: "main.ts", label: "main.ts" };
+    const proj: ComposerReference = { kind: "project", projectId: "proj_2", label: "proj" };
+    const team: ComposerReference = { kind: "project", projectId: "proj_3", label: "team" };
+    expect(liveReferences("xem @main.ts:42", [{ ref: main }])).toEqual([{ ref: main }]);
+    expect(liveReferences("@proj:C:\\x", [{ ref: proj }])).toEqual([{ ref: proj }]);
+    expect(liveReferences("họp @team:10:30", [{ ref: team }])).toEqual([{ ref: team }]);
+    expect(liveReferences("/review:xem", [{ ref: skill }])).toEqual([{ ref: skill }]);
+    expect(withoutToken("xem @main.ts:42", "@main.ts")).toBe("xem :42");
+  });
+
   it("drops a reference whose token was deleted, and keeps several that are still there", () => {
     const chosen = [{ ref: skill }, { ref: project }, { ref: file }];
     expect(liveReferences("/review @clarkcant/src/app.ts", chosen).map((entry) => entry.ref)).toEqual([skill, file]);
