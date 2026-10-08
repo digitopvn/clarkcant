@@ -15,6 +15,7 @@
 import { z } from "zod";
 
 import appearanceSchema from "./appearance-schema.json" with { type: "json" };
+import semanticProposalSchema from "./semantic-proposal-schema.json" with { type: "json" };
 import { DETACHED_WINDOW_CHANNELS, createWindowOptions } from "./security.mjs";
 
 const appearanceContract = z.fromJSONSchema(appearanceSchema);
@@ -114,13 +115,13 @@ export function reviewDetachedBootstrap(payload) {
     // rather than as a detach that could not be prepared.
     return { ok: false, reason: "a detached window needs the widget host bootstrap it is a view of" };
   }
-  if (payload.live.kind === "isolated-frame") {
+  if (payload.live.kind === "isolated-frame" && (payload.live.frame === null || typeof payload.live.frame !== "object")) {
     /*
-     * A widget in its own frame cannot run here. Its frame saves state, publishes what it shows and renews its URL
-     * through the conversation's credential, and this window holds none — so it would open as a frame that cannot
-     * save. Refused here as well as unoffered in the conversation, so no caller can open one.
+     * A widget in its own frame runs here through the host's relays, but only while it has a frame: `frame: null` is a
+     * widget whose package is gone, and what is left of it is its text, which the conversation already shows. Refused
+     * here as well as unoffered in the conversation, so no caller can open a window with nothing to run.
      */
-    return { ok: false, reason: "a widget that runs in its own frame stays in the conversation" };
+    return { ok: false, reason: "a widget with no frame (frame: null, its package is gone) stays in the conversation" };
   }
   if (typeof payload.instanceRef !== "string" || payload.instanceRef === "") {
     // A detached window with no instance reference has nothing to show, and an empty frame would read as a widget
@@ -141,30 +142,234 @@ export function reviewDetachedBootstrap(payload) {
  * The fields are named, so the payload cannot carry an owner token, a conversation id or a gateway URL: those are
  * the host's, and a relay that accepted them would be a window invoking anything.
  */
-const INTENT_FIELDS = Object.freeze(["instanceRef", "actionBindingId", "expectedRevision", "input"]);
+const INTENT_FIELDS = Object.freeze(["instanceRef", "actionBindingId", "expectedRevision", "input", "invocationId"]);
+
+/**
+ * The limits the host holds every relay to: a bucket per verb, a ceiling on how many calls wait at once, and a size per
+ * payload. A copy of `DETACHED_RELAY_LIMITS` in `@clarkcant/widget-host`, which this file cannot import because Electron
+ * loads no TypeScript; `detached-window.spec.ts` holds the two equal.
+ */
+export const RELAY_LIMITS = Object.freeze({
+  inFlight: 8,
+  "frame.read": Object.freeze({ burst: 10, refillPerSecond: 1 }),
+  "state.save": Object.freeze({ maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5 }),
+  "semantic.publish": Object.freeze({ maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 }),
+  intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4 }),
+  "dev.session": Object.freeze({ burst: 5, refillPerSecond: 1 }),
+});
+
+/**
+ * The header a relayed press carries, the same one the conversation's own presses do (`COMPOSER_SURFACE_HEADER` in
+ * `@clarkcant/contracts`): the person pressed it, so the node records them as who asked. Writes the widget makes on its
+ * own — state, what it shows — carry none.
+ */
+export const COMPOSER_SURFACE_HEADER = "x-clarkcant-surface";
+
+/** The bound on an id a frame names: the widget SDK's own (`actionBindingId`, `invocationId`). */
+const MAX_ID_LENGTH = 128;
+
+/** The JSON length of a payload, or undefined when it is not JSON at all. */
+function jsonBytes(value) {
+  try {
+    const text = JSON.stringify(value);
+    return text === undefined ? undefined : Buffer.byteLength(text, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * The checks every relay payload goes through first: an object (or nothing, for a verb that takes nothing), no
+ * privileged field, and no field the verb does not take. Refused rather than stripped, as the bootstrap is.
+ *
+ * @returns {{ ok: true, payload: Record<string, unknown> } | { ok: false, reason: string }}
+ */
+function reviewRelayFields(raw, fields, what) {
+  if (raw === undefined && fields.length === 0) return { ok: true, payload: {} };
+  if (!isPlainObject(raw)) return { ok: false, reason: `${what} must be an object` };
+  const keys = Object.keys(raw);
+  const privileged = keys.filter((key) => PRIVILEGED_FIELDS.includes(key) || key === "instanceId");
+  if (privileged.length > 0) {
+    // A relayed call carrying a credential or an id is an attempt to act as the host, or somewhere else, not to ask.
+    return { ok: false, reason: `${what} may not carry privileged fields: ${privileged.join(", ")}` };
+  }
+  const unknown = keys.filter((key) => !fields.includes(key));
+  if (unknown.length > 0) {
+    return { ok: false, reason: `${what} carries fields the host does not accept: ${unknown.join(", ")}` };
+  }
+  return { ok: true, payload: raw };
+}
+
+const isId = (value) => typeof value === "string" && value.length > 0 && value.length <= MAX_ID_LENGTH;
+const isRevision = (value) => Number.isSafeInteger(value) && value >= 0;
 
 /** @returns {{ ok: true, intent: object } | { ok: false, reason: string }} */
 export function reviewDetachedIntent(payload) {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return { ok: false, reason: "an intent must be an object" };
-  }
-  const keys = Object.keys(payload);
-  const privileged = keys.filter((key) => PRIVILEGED_FIELDS.includes(key));
-  if (privileged.length > 0) {
-    // A relayed intent carrying a credential is an attempt to act as the host, not to ask it.
-    return { ok: false, reason: `an intent may not carry privileged fields: ${privileged.join(", ")}` };
-  }
-  const unknown = keys.filter((key) => !INTENT_FIELDS.includes(key));
-  if (unknown.length > 0) {
-    return { ok: false, reason: `an intent carries fields the host does not accept: ${unknown.join(", ")}` };
-  }
+  const fields = reviewRelayFields(payload, INTENT_FIELDS, "an intent");
+  if (!fields.ok) return fields;
   if (typeof payload.instanceRef !== "string" || payload.instanceRef === "") {
     return { ok: false, reason: "an intent has to name the instance it acts on" };
   }
-  if (typeof payload.actionBindingId !== "string" || payload.actionBindingId === "") {
+  if (!isId(payload.actionBindingId)) {
     return { ok: false, reason: "an intent has to name the binding it invokes" };
   }
+  if (!isRevision(payload.expectedRevision)) {
+    return { ok: false, reason: "an intent has to say which revision of the widget it was pressed on" };
+  }
+  if (payload.input !== undefined && !isPlainObject(payload.input)) {
+    return { ok: false, reason: "an intent's input must be an object" };
+  }
+  // The frame's own idempotency key, so a press it retries is one effect; absent, the host makes one per attempt.
+  if (payload.invocationId !== undefined && !isId(payload.invocationId)) {
+    return { ok: false, reason: "an intent's invocation id must be a short string" };
+  }
+  const bytes = jsonBytes(payload);
+  if (bytes === undefined || bytes > RELAY_LIMITS.intent.maxBytes) {
+    return { ok: false, reason: `an intent is limited to ${String(RELAY_LIMITS.intent.maxBytes)} bytes` };
+  }
   return { ok: true, intent: payload };
+}
+
+/**
+ * A request for a fresh read of the instance the window shows. It takes nothing: which instance is the host's to say.
+ *
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function reviewDetachedFrameRead(payload) {
+  const fields = reviewRelayFields(payload, [], "a frame read");
+  return fields.ok ? { ok: true } : fields;
+}
+
+/** A dev-session status read. It takes nothing either: the session is the one the host's last read named. */
+export function reviewDetachedDevSession(payload) {
+  const fields = reviewRelayFields(payload, [], "a dev-session read");
+  return fields.ok ? { ok: true } : fields;
+}
+
+/**
+ * A state write the frame made, relayed as the conversation sends it: a patch and the state revision it was made
+ * against. The node checks the owner, the kind, the schema and the revision; the host bounds the size.
+ *
+ * @returns {{ ok: true, write: { expectedRevision: number, patch: Record<string, unknown> } } | { ok: false, reason: string }}
+ */
+export function reviewDetachedStateSave(payload) {
+  const fields = reviewRelayFields(payload, ["expectedRevision", "patch"], "a state write");
+  if (!fields.ok) return fields;
+  if (!isRevision(payload.expectedRevision)) {
+    return { ok: false, reason: "a state write has to say which state revision it was made against" };
+  }
+  if (!isPlainObject(payload.patch)) return { ok: false, reason: "a state write's patch must be an object" };
+  const bytes = jsonBytes(payload);
+  if (bytes === undefined || bytes > RELAY_LIMITS["state.save"].maxBytes) {
+    return { ok: false, reason: `a state write is limited to ${String(RELAY_LIMITS["state.save"].maxBytes)} bytes` };
+  }
+  return { ok: true, write: { expectedRevision: payload.expectedRevision, patch: payload.patch } };
+}
+
+const semanticProposalContract = z.fromJSONSchema(semanticProposalSchema);
+
+/**
+ * What the frame says it shows, relayed for the next turn and for voice: the public proposal shape and nothing else,
+ * so a window cannot name actions or reach the turn with anything but a bounded summary and values.
+ *
+ * @returns {{ ok: true, proposal: Record<string, unknown> } | { ok: false, reason: string }}
+ */
+export function reviewDetachedSemanticPublish(payload) {
+  const fields = reviewRelayFields(payload, ["proposal"], "a semantic publish");
+  if (!fields.ok) return fields;
+  const bytes = jsonBytes(payload);
+  if (bytes === undefined || bytes > RELAY_LIMITS["semantic.publish"].maxBytes) {
+    return { ok: false, reason: `a semantic publish is limited to ${String(RELAY_LIMITS["semantic.publish"].maxBytes)} bytes` };
+  }
+  const checked = semanticProposalContract.safeParse(payload.proposal);
+  if (!checked.success) return { ok: false, reason: "the proposal does not match the public contract" };
+  return { ok: true, proposal: checked.data };
+}
+
+/**
+ * The node's answer to a frame read, checked before the window sees it.
+ *
+ * It must be the instance the window was opened for and still a widget in its own frame; anything else would hand the
+ * window a different widget than the one it shows. The frame's URL is made absolute against the node, and must stay on
+ * the node: the window frames it, and a URL elsewhere would be a document the node never granted.
+ *
+ * @param {unknown} body
+ * @param {{ instanceId: string, baseUrl: string }} bound
+ * @returns {{ ok: true, live: Record<string, unknown> } | { ok: false, reason: string }}
+ */
+export function reviewDetachedFrameAnswer(body, bound) {
+  if (!isPlainObject(body)) return { ok: false, reason: "the node's read is not an object" };
+  if (body.kind !== "isolated-frame") return { ok: false, reason: "the widget no longer runs in its own frame" };
+  if (body.instanceId !== bound.instanceId) return { ok: false, reason: "the node answered for another instance" };
+  if (body.frame === null) return { ok: true, live: body };
+  if (!isPlainObject(body.frame) || typeof body.frame.url !== "string") {
+    return { ok: false, reason: "the node's read has no frame address" };
+  }
+  let url;
+  try {
+    url = new URL(body.frame.url, bound.baseUrl);
+  } catch {
+    return { ok: false, reason: "the frame address is not a URL" };
+  }
+  if (url.origin !== new URL(bound.baseUrl).origin) return { ok: false, reason: "the frame address is not on the node" };
+  return { ok: true, live: { ...body, frame: { ...body.frame, url: url.href } } };
+}
+
+/**
+ * The relays' budget: a bucket per verb, a cap on calls in flight across all of them, and, for presses, a cap of their
+ * own. A call over any of them is refused at once rather than queued, so a renderer that asks without pause costs the
+ * host a refusal per call and the node nothing.
+ *
+ * `take(verb)` answers a `done()` the caller runs when its call settles, or the refusal.
+ *
+ * @param {{ limits?: typeof RELAY_LIMITS, now?: () => number }} [input]
+ * @returns {{ take: (verb: string) => ({ ok: true, done: () => void } | { ok: false, refused: string, code: string }) }}
+ */
+export function relayBudget(input = {}) {
+  const limits = input.limits ?? RELAY_LIMITS;
+  const now = input.now ?? (() => Date.now());
+  /** @type {Map<string, { tokens: number, at: number, inFlight: number }>} */
+  const buckets = new Map();
+  let inFlight = 0;
+  const take = (verb) => {
+    const limit = limits[verb];
+    if (limit === undefined || typeof limit !== "object") {
+      return { ok: false, refused: `the host relays no verb called ${String(verb)}`, code: "RELAY_UNKNOWN" };
+    }
+    const at = now();
+    const bucket = buckets.get(verb) ?? { tokens: limit.burst, at, inFlight: 0 };
+    bucket.tokens = Math.min(limit.burst, bucket.tokens + (Math.max(0, at - bucket.at) / 1000) * limit.refillPerSecond);
+    bucket.at = at;
+    buckets.set(verb, bucket);
+    if (inFlight >= limits.inFlight || (limit.inFlight !== undefined && bucket.inFlight >= limit.inFlight)) {
+      return { ok: false, refused: "the host is still relaying earlier calls; try again shortly", code: "RELAY_BUSY" };
+    }
+    if (bucket.tokens < 1) {
+      return {
+        ok: false,
+        refused: `at most ${String(limit.refillPerSecond)} ${verb} calls a second, after a burst of ${String(limit.burst)}`,
+        code: "RELAY_RATE_LIMITED",
+      };
+    }
+    bucket.tokens -= 1;
+    bucket.inFlight += 1;
+    inFlight += 1;
+    let settled = false;
+    return {
+      ok: true,
+      done: () => {
+        if (settled) return;
+        settled = true;
+        bucket.inFlight -= 1;
+        inFlight -= 1;
+      },
+    };
+  };
+  return { take };
 }
 
 /**

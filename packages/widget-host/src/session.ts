@@ -89,6 +89,29 @@ export const FRAME_PERFORM_TIMEOUT_MS = 6_000;
 /** Performs one frame may be asked at once. */
 const MAX_PERFORMS_IN_FLIGHT = 4;
 
+/** The largest message a frame may post, unless its host asks for a smaller ceiling (`maxMessageBytes`). */
+export const FRAME_MESSAGE_MAX_BYTES = 64 * 1024;
+
+/**
+ * The limits a desktop host applies when a frame runs in a detached window and every request it makes is relayed
+ * through the host's own credential.
+ *
+ * The frame session already bounds what the frame posts; these bound what the detached window may ask the host to
+ * send to the node, because that window is a second renderer the host cannot tell from an honest one. Each relay has a
+ * bucket of `burst` requests refilled at `refillPerSecond`, and every relay together has at most `inFlight` calls
+ * waiting; a call over either is refused, never queued. The Electron host cannot load TypeScript, so it keeps its own
+ * copy, and a test holds the two equal.
+ */
+export const DETACHED_RELAY_LIMITS = {
+  inFlight: 8,
+  "frame.read": { burst: 10, refillPerSecond: 1 },
+  "state.save": { maxBytes: 256 * 1024, burst: 20, refillPerSecond: 5 },
+  "semantic.publish": { maxBytes: 16 * 1024, burst: 10, refillPerSecond: 4, timeoutMs: 10_000 },
+  // A press is a frame message the session has already bounded, so it is held to the same ceiling.
+  intent: { maxBytes: FRAME_MESSAGE_MAX_BYTES, burst: 10, refillPerSecond: 2, inFlight: 4 },
+  "dev.session": { burst: 5, refillPerSecond: 1 },
+} as const;
+
 /**
  * What the host answered one artifact request with.
  *
@@ -323,7 +346,7 @@ function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>
 }
 
 export function createFrameSession(input: FrameSessionInput): FrameSession {
-  const maxMessageBytes = input.maxMessageBytes ?? 64 * 1024;
+  const maxMessageBytes = input.maxMessageBytes ?? FRAME_MESSAGE_MAX_BYTES;
   const maxMessages = input.maxMessages ?? 200;
   const maxArtifactMessageBytes = input.maxArtifactMessageBytes ?? 512 * 1024;
   const artifactBurst = input.artifactBurst ?? 300;

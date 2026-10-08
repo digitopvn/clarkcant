@@ -44,23 +44,32 @@ export function nodeRefusal(status, body) {
 export function createNodeCaller(deps) {
   const send = deps.fetch ?? fetch;
   /**
+   * `headers` adds to the two this always sends and cannot replace them: a caller may say which surface a press came
+   * from, never whose credential it carries. `timeoutMs` bounds a call the node accepts and never answers.
+   *
    * @param {string} path
-   * @param {{ method?: string, body?: unknown }} [init]
+   * @param {{ method?: string, body?: unknown, headers?: Record<string, string>, timeoutMs?: number }} [init]
    */
   return async function callNode(path, init) {
     const session = deps.readSession();
     if (!session.ok) return { ok: false, refused: session.refused, code: "NO_NODE_SESSION", details: {} };
     let response;
+    const signal = init?.timeoutMs === undefined ? undefined : globalThis.AbortSignal.timeout(init.timeoutMs);
     try {
       response = await send(`${session.baseUrl}${path}`, {
         method: init?.method ?? "POST",
         headers: {
+          ...(init?.headers ?? {}),
           "content-type": "application/json",
           authorization: `Bearer ${session.token}`,
         },
         ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+        ...(signal === undefined ? {} : { signal }),
       });
     } catch (error) {
+      if (signal?.aborted === true) {
+        return { ok: false, refused: "the node did not answer in time", code: "NODE_TIMEOUT", details: {} };
+      }
       // Named rather than swallowed: "the node is not answering" and "the node said no" are different, and only
       // one of them is worth retrying.
       return {

@@ -247,6 +247,15 @@ export interface IsolatedFrameLiveResponse {
   development?: { sessionId: string };
 }
 
+/**
+ * A frame read with its grant's expiry in this client's clock (`urlExpiresAt`), counted from `sentAt`, the moment the
+ * request went out: the node starts the grant's lifetime later than that, so the deadline can only be early, never late.
+ */
+export function withFrameExpiry(live: IsolatedFrameLiveResponse, sentAt: number): IsolatedFrameLiveResponse {
+  if (live.frame === null || typeof live.frame.urlExpiresInMs !== "number") return live;
+  return { ...live, frame: { ...live.frame, urlExpiresAt: sentAt + live.frame.urlExpiresInMs } };
+}
+
 export type FrameStateStatus =
   | { kind: "writable" }
   | { kind: "offline"; reason: string }
@@ -1870,8 +1879,7 @@ export class GatewayClient {
       "GET",
       `/conversations/${conversationId}/widgets/${instanceId}/live`,
     );
-    if (live.kind !== "isolated-frame" || live.frame === null || typeof live.frame.urlExpiresInMs !== "number") return live;
-    return { ...live, frame: { ...live.frame, urlExpiresAt: sentAt + live.frame.urlExpiresInMs } };
+    return live.kind === "isolated-frame" ? withFrameExpiry(live, sentAt) : live;
   }
 
   /** The immutable presentation a message captured. Never carries an action binding. */

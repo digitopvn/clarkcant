@@ -421,6 +421,27 @@ describe("Clark performing an offered action", () => {
     expect(later.asked).toHaveLength(1);
   });
 
+  it("says a widget open in its own window is detached, and how to let Clark act on it", async () => {
+    const placed = placeSheet();
+    const detachedPage = page({
+      status: "refused",
+      by: "page",
+      code: "FRAME_DETACHED",
+      message: "the widget is open in its own window; reattach it to let Clark act on it; nothing was sent",
+    });
+    const refused = await perform(placed, { format: "percent" }, { perform: detachedPage.performer });
+    expect(refused).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "FRAME_DETACHED",
+      message: expect.stringContaining("reattach it"),
+      detail: { outcome: "refused" },
+    });
+    if (refused.ok) throw new Error("expected a refusal");
+    expect(performReceipt("en", "Format", refused).text).toContain("reattach it to let Clark act on it");
+    expect(performReceipt("vi", "Format", refused).text).toContain("cửa sổ riêng");
+  });
+
   it("takes only the page's own codes as the page's, so a widget cannot pass its refusal off as the host's", async () => {
     const placed = placeSheet();
     const gone = page({ status: "refused", by: "page", code: "SURFACE_GONE", message: "the page moved on" });

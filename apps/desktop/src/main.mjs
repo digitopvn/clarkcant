@@ -43,6 +43,7 @@ import {
 import {
   contentSecurityPolicy,
   createWindowOptions,
+  DETACHED_WINDOW_CHANNELS,
   IPC_CHANNELS,
   normalizeExternalUrl,
   reviewCredentialRequest,
@@ -52,12 +53,20 @@ import {
   withContentSecurityPolicy,
 } from "./security.mjs";
 import {
+  COMPOSER_SURFACE_HEADER,
   DETACHED_LEASE,
+  RELAY_LIMITS,
   detachedBootstrap,
   detachedWindowOptions,
+  relayBudget,
   reviewDetachedBootstrap,
+  reviewDetachedDevSession,
+  reviewDetachedFrameAnswer,
+  reviewDetachedFrameRead,
   reviewDetachedIntent,
   reviewDetachedAppearance,
+  reviewDetachedSemanticPublish,
+  reviewDetachedStateSave,
   superviseDetachedWindow,
 } from "./detached-window.mjs";
 import { createNodeCaller } from "./node-call.mjs";
@@ -350,6 +359,13 @@ function handle(channel, handler) {
       if (devMode) process.stderr.write(`ipc ${channel} refused: ${review.reason}\n`);
       return { ok: false, refused: review.reason };
     }
+    /*
+     * A detached window's verb is answered only for the window the host opened, compared by the contents themselves
+     * rather than by address: another window that loaded the same URL is not the window the instance was handed to.
+     */
+    if (DETACHED_WINDOW_CHANNELS.includes(channel) && (detached === undefined || event.sender !== detached.window.webContents)) {
+      return { ok: false, refused: "this window is not showing a detached instance" };
+    }
     return await handler(...args);
   });
 }
@@ -406,7 +422,40 @@ const callNode = createNodeCaller({ readSession: readNodeSession });
 
 /** The live-owner route of the instance a detached window shows. */
 function liveOwnerPath(open) {
-  return `/conversations/${open.conversationId}/widgets/${open.instanceId}/live-owner`;
+  return widgetPath(open, "/live-owner");
+}
+
+/**
+ * A route of the instance a detached window shows, built from the ids the host recorded when it opened the window. The
+ * window never names either id: every relay reaches this one instance or nothing.
+ */
+function widgetPath(open, suffix) {
+  return `/conversations/${encodeURIComponent(open.conversationId)}/widgets/${encodeURIComponent(open.instanceId)}${suffix}`;
+}
+
+/** A node refusal as a relay answers it: the node's own code and details, so the window maps it as the shell would. */
+function relayRefusal(result) {
+  return { ok: false, refused: result.refused, code: result.code, details: result.details ?? {} };
+}
+
+/**
+ * Run one relay for the detached window under its budget, against the window that asked.
+ *
+ * The budget is the window's own, so a window reopened starts afresh; a call over it is refused at once. A call that
+ * settles after its window closed answers as refused, because what it would hand back belongs to a window that is gone.
+ */
+async function relayForDetached(verb, run) {
+  const open = detached;
+  if (open === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+  const taken = open.budget.take(verb);
+  if (!taken.ok) return { ok: false, refused: taken.refused, code: taken.code, details: {} };
+  try {
+    const answer = await run(open);
+    if (detached !== open) return { ok: false, refused: "the widget window closed before the node answered", code: "WINDOW_CLOSED", details: {} };
+    return answer;
+  } finally {
+    taken.done();
+  }
 }
 
 /**
@@ -737,9 +786,15 @@ function registerHandlers() {
     );
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
 
+    /*
+     * The detached window is the conversation's own document at `?detached=1`, so it frames what the conversation may
+     * frame under the same policy. In every real run that document is `rendererUrl`; the smoke test serves it from its
+     * stand-in node (`shellDocumentUrl`), and a window opened at the bundled posture document instead could frame nothing.
+     */
+    const detachedBase = shellDocumentUrl;
     let address;
     try {
-      address = new URL(rendererUrl);
+      address = new URL(detachedBase);
     } catch {
       // A shell not loaded from a URL has no address to open a child window at, and a refusal says so rather
       // than throwing inside a handler where nobody would see it.
@@ -755,7 +810,7 @@ function registerHandlers() {
 
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", (event, target) => {
-      if (!target.startsWith(rendererUrl)) event.preventDefault();
+      if (!target.startsWith(detachedBase)) event.preventDefault();
     });
     /*
      * The same two listeners the shell window has, and for the same reason: a preload that fails to load is silent
@@ -780,6 +835,8 @@ function registerHandlers() {
       instanceId,
       ownerToken: randomUUID(),
       lease: undefined,
+      // Every relay this window asks for spends from this, and it goes with the window.
+      budget: relayBudget(),
     };
     detached = opened;
     /*
@@ -867,25 +924,106 @@ function registerHandlers() {
       // A window that could act on an instance other than the one it shows would have reach beyond its own view.
       return { ok: false, refused: "this window may only act on the instance it is showing" };
     }
-    const bindings = detached.bootstrap.live?.bindings;
-    const binding = Array.isArray(bindings)
-      ? bindings.find((entry) => entry?.actionBindingId === intent.actionBindingId)
-      : undefined;
-    if (binding === undefined) return { ok: false, refused: "that action is not bound on this instance" };
-
-    const result = await callNode(`/conversations/${detached.conversationId}/widgets/${detached.instanceId}/actions`, {
-      method: "POST",
-      body: {
-        instanceId: detached.instanceId,
-        actionBindingId: intent.actionBindingId,
-        expectedRevision: intent.expectedRevision,
-        expectedBindingDigest: binding.bindingDigest,
-        input: intent.input ?? {},
-        invocationId: randomUUID(),
-      },
+    return relayForDetached("intent", async (open) => {
+      // The bindings of the newest read the host made, so a digest the node changed since the window opened is the one
+      // sent — and a binding the node no longer holds is refused here.
+      const bindings = open.bootstrap.live?.bindings;
+      const binding = Array.isArray(bindings)
+        ? bindings.find((entry) => entry?.actionBindingId === intent.actionBindingId)
+        : undefined;
+      if (binding === undefined) return { ok: false, refused: "that action is not bound on this instance", code: "ACTION_UNBOUND", details: {} };
+      const result = await callNode(widgetPath(open, "/actions"), {
+        method: "POST",
+        // A press in this window is the person's, as it is in the conversation.
+        headers: { [COMPOSER_SURFACE_HEADER]: "composer" },
+        body: {
+          instanceId: open.instanceId,
+          actionBindingId: intent.actionBindingId,
+          expectedRevision: intent.expectedRevision,
+          expectedBindingDigest: binding.bindingDigest,
+          input: intent.input ?? {},
+          // The frame's own key when it sent one, so its retry of a press is one effect; a fresh one per attempt otherwise.
+          invocationId: intent.invocationId ?? randomUUID(),
+        },
+      });
+      if (!result.ok) return relayRefusal(result);
+      return { ok: true, result: result.body };
     });
-    if (!result.ok) return { ok: false, refused: result.refused, code: result.code, details: result.details };
-    return { ok: true, result: result.body };
+  });
+
+  /*
+   * The relays a widget in its own frame needs, each performed by the host with its own credential against the one
+   * instance this window was opened for. The window names no id and holds no token; the node re-authorizes every call.
+   */
+
+  /*
+   * A fresh read of the instance: a new grant in the frame URL every time, never a cached one. The answer is checked to
+   * be this instance, still in its own frame, with a URL on the node; the bindings the host resolves digests from and
+   * the dev session it reads are refreshed from it.
+   */
+  handle("detached:frame.read", async (raw) => {
+    const reviewed = reviewDetachedFrameRead(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    return relayForDetached("frame.read", async (open) => {
+      const session = readNodeSession();
+      if (!session.ok) return { ok: false, refused: session.refused, code: "NO_NODE_SESSION", details: {} };
+      const result = await callNode(widgetPath(open, "/live"), { method: "GET" });
+      if (!result.ok) return relayRefusal(result);
+      const answer = reviewDetachedFrameAnswer(result.body, { instanceId: open.instanceId, baseUrl: session.baseUrl });
+      if (!answer.ok) return { ok: false, refused: answer.reason, code: "FRAME_READ_REFUSED", details: {} };
+      open.bootstrap = { ...open.bootstrap, live: answer.live };
+      return { ok: true, live: answer.live };
+    });
+  });
+
+  // A state write the frame made. No surface header: the widget wrote it, not the person.
+  handle("detached:state.save", async (raw) => {
+    const reviewed = reviewDetachedStateSave(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    return relayForDetached("state.save", async (open) => {
+      const result = await callNode(widgetPath(open, "/state"), { method: "POST", body: reviewed.write });
+      if (!result.ok) return relayRefusal(result);
+      return { ok: true, saved: result.body };
+    });
+  });
+
+  // What the frame says it shows, bounded in time as well as size: a publish the node does not answer is given up.
+  handle("detached:semantic.publish", async (raw) => {
+    const reviewed = reviewDetachedSemanticPublish(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    return relayForDetached("semantic.publish", async (open) => {
+      const result = await callNode(widgetPath(open, "/semantic"), {
+        method: "POST",
+        body: { proposal: reviewed.proposal },
+        timeoutMs: RELAY_LIMITS["semantic.publish"].timeoutMs,
+      });
+      if (!result.ok) return relayRefusal(result);
+      return { ok: true };
+    });
+  });
+
+  /*
+   * The status of the widget dev session whose build the frame runs: the session the host's newest read named, read
+   * only, and without the developer's folder path or where the session is placed. The conversation still shows those.
+   */
+  handle("detached:dev.session", async (raw) => {
+    const reviewed = reviewDetachedDevSession(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    return relayForDetached("dev.session", async (open) => {
+      const sessionId = open.bootstrap.live?.development?.sessionId;
+      if (typeof sessionId !== "string" || sessionId === "") {
+        return { ok: false, refused: "this widget is not running a widget dev session's build", code: "NO_DEV_SESSION", details: {} };
+      }
+      const result = await callNode(`/widget-dev/sessions/${encodeURIComponent(sessionId)}`, { method: "GET" });
+      if (!result.ok) return relayRefusal(result);
+      if (result.body === null || typeof result.body !== "object" || Array.isArray(result.body)) {
+        return { ok: false, refused: "the node's session status is not an object", code: "MALFORMED_RESPONSE", details: {} };
+      }
+      const view = { ...result.body };
+      delete view.root;
+      delete view.placed;
+      return { ok: true, view };
+    });
   });
 
   handle("detached:release", async () => {
@@ -1079,7 +1217,9 @@ async function runSmokeTest() {
        * are supposed to differ. What matters is that the shell exposes none of the detached window's own verbs.
        */
       "the shell bridge cannot reach the detached window's own channels",
-      !observed.bridgeMethods.some((name) => ["bootstrap", "intent", "release"].includes(name)),
+      !observed.bridgeMethods.some((name) =>
+        ["bootstrap", "intent", "release", "frameRead", "saveState", "publishSemantic", "devSession"].includes(name),
+      ),
     ],
     ["Node is unreachable from the renderer", observed.nodeReachable === false],
     ["the shell reports its own posture", observed.status?.sandboxed === true],
@@ -1154,7 +1294,8 @@ async function runSmokeTest() {
     detachShell = await createShellWindow({ show: false, url: node.url });
     step = "install the reattach listener";
     await detachShell.webContents.executeJavaScript(
-      "window.__reattached = []; window.clarkcant.onWidgetReattached((payload) => window.__reattached.push(payload)); true",
+      "window.__reattached = []; window.__reattachedAt = []; " +
+        "window.clarkcant.onWidgetReattached((payload) => { window.__reattached.push(payload); window.__reattachedAt.push(Date.now()); }); true",
     );
 
     /*
@@ -1313,7 +1454,8 @@ async function runSmokeTest() {
       ],
       [
         "the detached window reaches only its own verbs and read-only appearance subscription",
-        JSON.stringify(verbs) === JSON.stringify(["bootstrap", "intent", "onAppearance", "release"]),
+        JSON.stringify(verbs) ===
+          JSON.stringify(["bootstrap", "devSession", "frameRead", "intent", "onAppearance", "publishSemantic", "release", "saveState"]),
       ],
       ["closing the window gives the lease back", release !== undefined],
       ["and the shell is told to take the instance back", Array.isArray(reattached) && reattached.length === 1],
@@ -1345,6 +1487,166 @@ async function runSmokeTest() {
       "a refresh refused as owned elsewhere closes the detached window and hands the widget back",
       askedAgain?.ok === true && second !== undefined && second.isDestroyed() && detached === undefined &&
         Array.isArray(reattachedAfterLoss) && reattachedAfterLoss.length === 2,
+    ]);
+
+    /*
+     * A widget in its own frame, detached. The window holds no credential, so every request its frame makes is a relay
+     * the host performs: this drives each one from the real detached renderer against the stand-in, and checks what
+     * reached the node — the bound path, the host's bearer and nobody else's, the composer mark on a press only.
+     */
+    step = "detach a widget that runs in its own frame";
+    const frameRequest = {
+      conversationId: "conv_smoke",
+      instanceId: "widget_frame_smoke",
+      title: "Bo dem",
+      appearance: appearance.initial,
+      live: {
+        kind: "isolated-frame",
+        instanceId: "widget_frame_smoke",
+        revision: 1,
+        readOnly: false,
+        frame: {
+          url: `${SMOKE_FRAME_PATH}?grant=shell`,
+          document: "build-1",
+          isolation: "sandboxed-frame",
+          grantedCapabilities: [],
+          allowedOrigins: [],
+        },
+        bindings: [{ actionBindingId: "refresh", label: "Refresh", effectCategory: "read", bindingDigest: "sha256:smoke-binding" }],
+        props: {},
+        stateRevision: 0,
+        stateVersion: 1,
+        state: {},
+        stateStatus: { kind: "writable" },
+        ephemeralStateKeys: [],
+        development: { sessionId: "dev_smoke" },
+      },
+    };
+    const askedFrame = await detachShell.webContents.executeJavaScript(
+      `window.clarkcant.detachWidget(${JSON.stringify(frameRequest)})`,
+    );
+    const frameWindow = detached?.window;
+    const inFrameWindow = (script) =>
+      frameWindow === undefined || frameWindow.isDestroyed()
+        ? Promise.resolve(undefined)
+        : frameWindow.webContents.executeJavaScript(script);
+    step = "read the frame through the host";
+    const frameRead = await inFrameWindow("window.clarkcantDetached.frameRead()");
+    const frameUrl = frameRead?.live?.frame?.url;
+    step = "mount the frame the read named in the detached window";
+    const frameMounted =
+      typeof frameUrl !== "string"
+        ? { loaded: false }
+        : await inFrameWindow(`new Promise((resolve) => {
+            const frame = document.createElement("iframe");
+            frame.setAttribute("sandbox", "allow-scripts");
+            const timer = setTimeout(() => resolve({ loaded: false }), 3000);
+            window.addEventListener("message", (event) => {
+              if (event.source !== frame.contentWindow || event.data?.smokeFrame !== "ready") return;
+              clearTimeout(timer);
+              resolve({ loaded: true });
+            });
+            frame.src = ${JSON.stringify(frameUrl)};
+            document.body.append(frame);
+          })`);
+    step = "relay a state write, a semantic publish and a press";
+    const saved = await inFrameWindow("window.clarkcantDetached.saveState({ expectedRevision: 0, patch: { count: 1 } })");
+    const foreign = await inFrameWindow(
+      "window.clarkcantDetached.saveState({ conversationId: 'conv_other', expectedRevision: 1, patch: { count: 2 } })",
+    );
+    const published = await inFrameWindow("window.clarkcantDetached.publishSemantic({ proposal: { summary: 'Counting to one' } })");
+    const pressed = await inFrameWindow(
+      "window.clarkcantDetached.intent({ instanceRef: 'widget_frame_smoke', actionBindingId: 'refresh', expectedRevision: 1, input: {}, invocationId: 'inv_smoke_frame' })",
+    );
+    step = "read the dev session, start a new build, and read both again";
+    const devBefore = await inFrameWindow("window.clarkcantDetached.devSession()");
+    node.control.build = 2;
+    const devAfter = await inFrameWindow("window.clarkcantDetached.devSession()");
+    const reread = await inFrameWindow("window.clarkcantDetached.frameRead()");
+    step = "look for a credential in the detached window";
+    const heldInWindow = await inFrameWindow(
+      "JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie })",
+    );
+    step = "read faster than the host relays";
+    // One after another, so it is the per-verb rate that refuses and not the cap on calls in flight.
+    const burst = await inFrameWindow(
+      "(async () => { const out = []; for (let i = 0; i < 14; i += 1) out.push(await window.clarkcantDetached.frameRead()); return out; })()",
+    );
+
+    const frameRelays = node.relays.filter((call) => call.path.includes("widget_frame_smoke") || call.path.startsWith("/widget-dev/"));
+    const relayed = (suffix) => frameRelays.find((call) => call.method === "POST" && call.path.endsWith(suffix));
+    const statePosts = frameRelays.filter((call) => call.method === "POST" && call.path.endsWith("/state"));
+    const answers = JSON.stringify([frameRead, saved, published, pressed, devBefore, devAfter, reread, burst]);
+    checks.push(
+      ["a widget that runs in its own frame opens in its own window", askedFrame?.ok === true && frameWindow !== undefined],
+      [
+        "the host reads the frame for the window, with a fresh grant on the node's own origin",
+        frameRead?.ok === true &&
+          typeof frameUrl === "string" &&
+          frameUrl.startsWith(node.url) &&
+          !frameUrl.includes("grant=shell"),
+      ],
+      ["the frame the read named loads and runs in the detached window", frameMounted?.loaded === true],
+      [
+        "every relay reaches only the bound instance's routes",
+        frameRelays.length > 0 &&
+          frameRelays.every(
+            (call) => call.path.startsWith("/conversations/conv_smoke/widgets/widget_frame_smoke/") || call.path === "/widget-dev/sessions/dev_smoke",
+          ),
+      ],
+      [
+        "the bearer reaches the node from the host only, and never the detached window",
+        frameRelays.every((call) => call.authorization === `Bearer ${nodeIdentityOverride}`) &&
+          !answers.includes(String(nodeIdentityOverride)) &&
+          typeof heldInWindow === "string" &&
+          !heldInWindow.includes(String(nodeIdentityOverride)),
+      ],
+      [
+        "a state write the frame made is committed by the node and answered to the window",
+        saved?.ok === true && saved.saved?.stateRevision === 1 && relayed("/state")?.surface === undefined,
+      ],
+      [
+        "a relay that names another conversation is refused, and the node never hears of it",
+        foreign?.ok === false && statePosts.length === 1 && !node.relays.some((call) => call.path.includes("conv_other")),
+      ],
+      ["what the frame shows is relayed without a surface mark", published?.ok === true && relayed("/semantic")?.surface === undefined],
+      [
+        "a press is relayed as the person's, with the frame's own key and the digest the host resolved",
+        pressed?.ok === true &&
+          relayed("/actions")?.surface === "composer" &&
+          relayed("/actions")?.body["invocationId"] === "inv_smoke_frame" &&
+          relayed("/actions")?.body["expectedBindingDigest"] === "sha256:smoke-binding",
+      ],
+      [
+        "the dev session's status reaches the window without the developer's folder",
+        devBefore?.ok === true && devBefore.view?.running?.generation === 1 && !("root" in devBefore.view) && !("placed" in devBefore.view),
+      ],
+      [
+        "a new build is seen through the relays: the session's running digest and the frame's document both move",
+        devAfter?.ok === true &&
+          devAfter.view?.running?.digest === "sha256:build-2" &&
+          reread?.ok === true &&
+          reread.live?.frame?.document === "build-2",
+      ],
+      [
+        "reads faster than the host relays are refused rather than queued",
+        Array.isArray(burst) && burst.some((answer) => answer?.ok === false && answer.code === "RELAY_RATE_LIMITED"),
+      ],
+    );
+
+    step = "close the frame's window";
+    const releasesBefore = node.calls.filter((call) => call.method === "DELETE").length;
+    const reattachedBefore = (await detachShell.webContents.executeJavaScript("window.__reattachedAt")).length;
+    frameWindow?.close();
+    for (let attempt = 0; attempt < 40 && detached !== undefined; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const frameRelease = node.calls.filter((call) => call.method === "DELETE")[releasesBefore];
+    const reattachedAt = (await detachShell.webContents.executeJavaScript("window.__reattachedAt"))[reattachedBefore];
+    checks.push([
+      "closing the frame's window gives the lease back before the conversation is told to take the widget back",
+      frameRelease !== undefined && typeof reattachedAt === "number" && frameRelease.at <= reattachedAt,
     ]);
 
     // The conversation window closing takes the detached window with it, and the lease is given back on the way.

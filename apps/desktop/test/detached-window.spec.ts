@@ -1,20 +1,33 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { appearanceSnapshotSchema } from "@clarkcant/contracts";
+import {
+  COMPOSER_SURFACE_HEADER as CONTRACT_COMPOSER_SURFACE_HEADER,
+  appearanceSnapshotSchema,
+  semanticProposalSchema,
+} from "@clarkcant/contracts";
 import { compileAppearance } from "@clarkcant/design-tokens";
+import { DETACHED_RELAY_LIMITS, FRAME_MESSAGE_MAX_BYTES } from "@clarkcant/widget-host/session";
 
 import {
+  COMPOSER_SURFACE_HEADER,
   DETACHED_CHANNELS,
   DETACHED_LEASE,
   PRIVILEGED_FIELDS,
+  RELAY_LIMITS,
   detachedBootstrap,
   detachedBounds,
   detachedWindowOptions,
   holdDetachedLease,
   keepDetachedLease,
+  relayBudget,
   reviewDetachedBootstrap,
+  reviewDetachedDevSession,
+  reviewDetachedFrameAnswer,
+  reviewDetachedFrameRead,
   reviewDetachedIntent,
   reviewDetachedAppearance,
+  reviewDetachedSemanticPublish,
+  reviewDetachedStateSave,
   superviseDetachedWindow,
 } from "../src/detached-window.mjs";
 
@@ -143,8 +156,7 @@ describe("the detached bootstrap", () => {
     expect(reviewed.ok === false ? reviewed.reason : "").toContain("bootstrap");
   });
 
-  it("refuses to detach a widget that runs in its own frame", () => {
-    // The window holds no credential, so an isolated frame there could not save its state or renew its URL.
+  it("accepts a widget that runs in its own frame, which the host's relays let the window run", () => {
     const reviewed = reviewDetachedBootstrap(
       detachedBootstrap({
         instanceRef: "widget_1",
@@ -152,8 +164,164 @@ describe("the detached bootstrap", () => {
         live: { kind: "isolated-frame", instanceId: "widget_1", frame: { url: "/widgets/frame" } },
       }),
     );
+    expect(reviewed.ok).toBe(true);
+  });
+
+  it("refuses a frame whose package is gone, by name", () => {
+    // `frame: null` leaves only the widget's text, which the conversation already shows; a window would run nothing.
+    const reviewed = reviewDetachedBootstrap(
+      detachedBootstrap({
+        instanceRef: "widget_1",
+        live: { kind: "isolated-frame", instanceId: "widget_1", frame: null, textFallback: "Bộ đếm" },
+      }),
+    );
     expect(reviewed.ok).toBe(false);
-    expect(reviewed.ok === false ? reviewed.reason : "").toContain("own frame");
+    expect(reviewed.ok === false ? reviewed.reason : "").toContain("frame: null");
+  });
+});
+
+/** Every field a relay must refuse, by name, whatever else it carries. */
+const SMUGGLED = [...PRIVILEGED_FIELDS, "instanceId"] as const;
+
+describe("the frame relays", () => {
+  it("accept exactly their own fields", () => {
+    expect(reviewDetachedFrameRead(undefined)).toEqual({ ok: true });
+    expect(reviewDetachedFrameRead({})).toEqual({ ok: true });
+    expect(reviewDetachedDevSession(undefined)).toEqual({ ok: true });
+    expect(reviewDetachedStateSave({ expectedRevision: 3, patch: { count: 1 } })).toEqual({
+      ok: true,
+      write: { expectedRevision: 3, patch: { count: 1 } },
+    });
+    expect(reviewDetachedSemanticPublish({ proposal: { summary: "Đang đếm", selectedIds: ["a"], values: { count: 1 } } })).toEqual({
+      ok: true,
+      proposal: { summary: "Đang đếm", selectedIds: ["a"], values: { count: 1 } },
+    });
+    expect(
+      reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 1, input: {}, invocationId: "inv_1" }).ok,
+    ).toBe(true);
+  });
+
+  it("refuse every privileged field and every id, by name", () => {
+    for (const field of SMUGGLED) {
+      const reviews = [
+        reviewDetachedFrameRead({ [field]: "x" }),
+        reviewDetachedDevSession({ [field]: "x" }),
+        reviewDetachedStateSave({ expectedRevision: 0, patch: {}, [field]: "x" }),
+        reviewDetachedSemanticPublish({ proposal: { summary: "s" }, [field]: "x" }),
+        reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 0, [field]: "x" }),
+      ];
+      for (const reviewed of reviews) {
+        expect(reviewed.ok).toBe(false);
+        expect("reason" in reviewed ? String(reviewed.reason) : "").toContain(field);
+      }
+    }
+  });
+
+  it("refuse a field they do not take", () => {
+    expect(reviewDetachedFrameRead({ path: "/conversations" }).ok).toBe(false);
+    expect(reviewDetachedDevSession({ sessionId: "other" }).ok).toBe(false);
+    expect(reviewDetachedStateSave({ expectedRevision: 0, patch: {}, path: "/x" }).ok).toBe(false);
+    expect(reviewDetachedSemanticPublish({ proposal: { summary: "s" }, availableActions: [] }).ok).toBe(false);
+    // Actions a widget offers are the host's bindings; a proposal that names its own is refused, not partly read.
+    expect(reviewDetachedSemanticPublish({ proposal: { summary: "s", availableActions: [] } }).ok).toBe(false);
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 0, expectedBindingDigest: "d" }).ok).toBe(false);
+  });
+
+  it("refuse a payload over its size", () => {
+    const big = "x".repeat(RELAY_LIMITS["state.save"].maxBytes);
+    expect(reviewDetachedStateSave({ expectedRevision: 0, patch: { big } }).ok).toBe(false);
+    const values = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`k${String(index)}`, "y".repeat(600)]));
+    expect(reviewDetachedSemanticPublish({ proposal: { summary: "s", values } }).ok).toBe(false);
+    const input = { text: "z".repeat(RELAY_LIMITS.intent.maxBytes) };
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 0, input }).ok).toBe(false);
+  });
+
+  it("refuse malformed ids, revisions and shapes", () => {
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b".repeat(129), expectedRevision: 0 }).ok).toBe(false);
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 0, invocationId: "" }).ok).toBe(false);
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 0, invocationId: 7 }).ok).toBe(false);
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: -1 }).ok).toBe(false);
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", expectedRevision: 0, input: [] }).ok).toBe(false);
+    expect(reviewDetachedStateSave({ expectedRevision: 1.5, patch: {} }).ok).toBe(false);
+    expect(reviewDetachedStateSave({ expectedRevision: 0, patch: [] }).ok).toBe(false);
+    expect(reviewDetachedStateSave(null).ok).toBe(false);
+    expect(reviewDetachedSemanticPublish({ proposal: { summary: "" } }).ok).toBe(false);
+    expect(reviewDetachedFrameRead([]).ok).toBe(false);
+  });
+
+  it("check the node's read is this instance, still in its own frame, framed from the node", () => {
+    const bound = { instanceId: "widget_1", baseUrl: "http://127.0.0.1:4273" };
+    const read = { kind: "isolated-frame", instanceId: "widget_1", frame: { url: "/frame/g1/index.html", document: "d1" } };
+    expect(reviewDetachedFrameAnswer(read, bound)).toEqual({
+      ok: true,
+      live: { ...read, frame: { url: "http://127.0.0.1:4273/frame/g1/index.html", document: "d1" } },
+    });
+    expect(reviewDetachedFrameAnswer({ ...read, frame: null }, bound).ok).toBe(true);
+    expect(reviewDetachedFrameAnswer({ ...read, instanceId: "widget_2" }, bound).ok).toBe(false);
+    expect(reviewDetachedFrameAnswer({ ...read, kind: "composition" }, bound).ok).toBe(false);
+    expect(reviewDetachedFrameAnswer({ ...read, frame: { url: "https://elsewhere.test/x" } }, bound).ok).toBe(false);
+    expect(reviewDetachedFrameAnswer({ ...read, frame: { url: "//elsewhere.test/x" } }, bound).ok).toBe(false);
+    expect(reviewDetachedFrameAnswer(undefined, bound).ok).toBe(false);
+  });
+});
+
+describe("the relay budget", () => {
+  it("spends a burst, then refuses until the bucket refills", () => {
+    let now = 0;
+    const budget = relayBudget({ now: () => now });
+    const burst = RELAY_LIMITS["frame.read"].burst;
+    for (let index = 0; index < burst; index += 1) {
+      const taken = budget.take("frame.read");
+      expect(taken.ok).toBe(true);
+      if (taken.ok) taken.done();
+    }
+    expect(budget.take("frame.read")).toMatchObject({ ok: false, code: "RELAY_RATE_LIMITED" });
+    // Another verb has its own bucket.
+    expect(budget.take("state.save").ok).toBe(true);
+    now += 1000 / RELAY_LIMITS["frame.read"].refillPerSecond;
+    const refilled = budget.take("frame.read");
+    expect(refilled.ok).toBe(true);
+    expect(budget.take("frame.read")).toMatchObject({ ok: false, code: "RELAY_RATE_LIMITED" });
+  });
+
+  it("refuses rather than queues past the calls in flight, across every verb and for presses on their own", () => {
+    const budget = relayBudget({ now: () => 0 });
+    const presses = Array.from({ length: RELAY_LIMITS.intent.inFlight }, () => budget.take("intent"));
+    expect(presses.every((taken) => taken.ok)).toBe(true);
+    expect(budget.take("intent")).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+    const others = Array.from({ length: RELAY_LIMITS.inFlight - RELAY_LIMITS.intent.inFlight }, () => budget.take("state.save"));
+    expect(others.every((taken) => taken.ok)).toBe(true);
+    expect(budget.take("semantic.publish")).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+    // A call that settles frees its place, once, however often it says so.
+    const first = presses[0];
+    if (first?.ok) {
+      first.done();
+      first.done();
+    }
+    expect(budget.take("semantic.publish").ok).toBe(true);
+    expect(budget.take("dev.session")).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+  });
+
+  it("refuses a verb it has no limits for", () => {
+    expect(relayBudget().take("node")).toMatchObject({ ok: false, code: "RELAY_UNKNOWN" });
+    expect(relayBudget().take("inFlight")).toMatchObject({ ok: false, code: "RELAY_UNKNOWN" });
+  });
+});
+
+describe("the relay limits and schema, against the packages they copy", () => {
+  it("holds the host's limits equal to the widget host's", () => {
+    expect(JSON.parse(JSON.stringify(RELAY_LIMITS))).toEqual(JSON.parse(JSON.stringify(DETACHED_RELAY_LIMITS)));
+    // A press is a frame message, so its ceiling is the frame session's own.
+    expect(RELAY_LIMITS.intent.maxBytes).toBe(FRAME_MESSAGE_MAX_BYTES);
+  });
+
+  it("holds the semantic proposal schema equal to the contract", () => {
+    const generated = JSON.parse(readFileSync(new URL("../src/semantic-proposal-schema.json", import.meta.url), "utf8"));
+    expect(generated).toEqual(semanticProposalSchema.toJSONSchema());
+  });
+
+  it("marks a relayed press with the conversation's own surface header", () => {
+    expect(COMPOSER_SURFACE_HEADER).toBe(CONTRACT_COMPOSER_SURFACE_HEADER);
   });
 });
 

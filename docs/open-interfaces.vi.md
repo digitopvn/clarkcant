@@ -85,8 +85,8 @@ khác không được gửi event nào, và lần thực hiện bị từ chối
 - `{ status: "refused", by: "page" | "widget", code, message }`;
 - `{ status: "no-answer", message }`.
 
-`by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
-`PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
+`by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `FRAME_DETACHED` (widget đang
+mở trong cửa sổ desktop riêng), `SURFACE_GONE`, `PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
 trả lời theo `performId` của nó. Lời từ chối của widget tới Clark dưới dạng `WIDGET_REFUSED`, với mã của widget trong
 `detail.widgetCode` và lý do của chính widget, khi widget có nêu, trong `detail.widgetMessage`. Cả hai là lời của
 widget, không phải của host: bề mặt nào hiển thị hoặc đọc chúng lên đều trích dẫn chúng như lời của widget.

@@ -40,6 +40,26 @@ contextBridge.exposeInMainWorld("clarkcantDetached", {
   intent(input) {
     return ipcRenderer.invoke("detached:intent", input);
   },
+  /*
+   * The relays a widget in its own frame needs. Each takes only what the frame said — never an instance, a
+   * conversation, a gateway or a token — and the host performs it against the instance it opened this window for.
+   */
+  /** A fresh read of this instance: a new frame URL and the bindings, state and status the node holds now. */
+  frameRead() {
+    return ipcRenderer.invoke("detached:frame.read");
+  },
+  /** Commit a state write the frame made: `{ expectedRevision, patch }`. */
+  saveState(write) {
+    return ipcRenderer.invoke("detached:state.save", write);
+  },
+  /** Tell the node what the frame says it shows: `{ proposal }`. */
+  publishSemantic(input) {
+    return ipcRenderer.invoke("detached:semantic.publish", input);
+  },
+  /** The build status of the widget dev session this frame runs, without the developer's folder path. */
+  devSession() {
+    return ipcRenderer.invoke("detached:dev.session");
+  },
   /**
    * Hands the instance back to the window that owns the conversation.
    *

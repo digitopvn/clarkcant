@@ -84,8 +84,8 @@ mounted frame and answers `POST /app-intents/widget-perform/{performId}` with on
 - `{ status: "refused", by: "page" | "widget", code, message }`;
 - `{ status: "no-answer", message }`.
 
-`by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
-`PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
+`by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `FRAME_DETACHED` (the widget is
+open in its own desktop window), `SURFACE_GONE`, `PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
 still answers under its `performId`. A widget's refusal reaches Clark as `WIDGET_REFUSED`, with the widget's code in
 `detail.widgetCode` and its own reason, when it gave one, in `detail.widgetMessage`. Both are the widget's words, not
 the host's: a surface that shows or speaks them quotes them as the widget's.

@@ -22,17 +22,33 @@ export const SMOKE_FRAME_PATH = "/frame/smoke-grant/index.html";
 /**
  * Start the stand-in on a free loopback port.
  *
- * Loopback only, and it answers exactly the live-owner route, a blank page and one widget document: anything else is
- * a 404, so a host that called the wrong path would fail loudly here rather than being quietly served something
- * plausible.
+ * Loopback only, and it answers exactly the live-owner route, the routes a detached frame's relays reach (its live read,
+ * state, semantic and actions, and its widget dev session), a blank page and one widget document: anything else is a
+ * 404, so a host that called the wrong path would fail loudly here rather than being quietly served something plausible.
  *
- * @returns {Promise<{ url: string, calls: { method: string, path: string, body: Record<string, unknown> }[], control: { refuseClaims: boolean }, close: () => Promise<void> }>}
+ * @returns {Promise<{ url: string, calls: { method: string, path: string, body: Record<string, unknown>, at: number }[], relays: { method: string, path: string, body: Record<string, unknown>, authorization: string | undefined, surface: string | undefined, at: number }[], control: { refuseClaims: boolean, build: number }, close: () => Promise<void> }>}
  */
 export async function startSmokeNode() {
-  /** @type {{ method: string, path: string, body: Record<string, unknown> }[]} */
+  /** @type {{ method: string, path: string, body: Record<string, unknown>, at: number }[]} */
   const calls = [];
-  /** Switched by the smoke test: when set, a claim is refused as the node refuses one another surface holds. */
-  const control = { refuseClaims: false };
+  /**
+   * What the detached window's relays reached, with the two headers that say whose they were: the credential, which
+   * only the host holds, and the surface mark a press carries. Kept apart from `calls` so the lease checks read only
+   * the lease.
+   *
+   * @type {{ method: string, path: string, body: Record<string, unknown>, authorization: string | undefined, surface: string | undefined, at: number }[]}
+   */
+  const relays = [];
+  /**
+   * Switched by the smoke test. `refuseClaims` refuses a claim as the node refuses one another surface holds; `build`
+   * is the widget dev session's running build, and the document a read of the frame names, so a new build can be
+   * started between two reads.
+   */
+  const control = { refuseClaims: false, build: 1 };
+  let grants = 0;
+  let stateRevision = 0;
+  /** @type {Record<string, unknown>} */
+  let state = {};
 
   const server = createServer((request, response) => {
     /** @type {Buffer[]} */
@@ -54,8 +70,85 @@ export async function startSmokeNode() {
       const path = request.url ?? "";
       const isLiveOwner = /^\/conversations\/[^/]+\/widgets\/[^/]+\/live-owner$/.test(path);
 
+      const json = (status, value) => {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify(value));
+      };
+      const widgetRoute = /^\/conversations\/[^/]+\/widgets\/[^/]+\/(live|state|semantic|actions)$/.exec(path);
+      const devRoute = /^\/widget-dev\/sessions\/[^/]+$/.test(path);
+      if (widgetRoute !== null || devRoute) {
+        const header = (name) => {
+          const value = request.headers[name];
+          return Array.isArray(value) ? value.join(",") : value;
+        };
+        relays.push({
+          method: request.method ?? "",
+          path,
+          body,
+          authorization: header("authorization"),
+          surface: header("x-clarkcant-surface"),
+          at: Date.now(),
+        });
+      }
+      if (widgetRoute?.[1] === "live" && request.method === "GET") {
+        // A widget in its own frame, read the way the node answers one: a fresh grant in the URL on every read.
+        grants += 1;
+        json(200, {
+          kind: "isolated-frame",
+          instanceId: path.split("/")[4],
+          revision: 1,
+          readOnly: false,
+          frame: {
+            url: `${SMOKE_FRAME_PATH}?grant=${String(grants)}`,
+            urlExpiresInMs: 60_000,
+            document: `build-${String(control.build)}`,
+            isolation: "sandboxed-frame",
+            grantedCapabilities: [],
+            allowedOrigins: [],
+          },
+          bindings: [{ actionBindingId: "refresh", label: "Refresh", effectCategory: "read", bindingDigest: "sha256:smoke-binding" }],
+          props: {},
+          stateRevision,
+          stateVersion: 1,
+          state,
+          stateStatus: { kind: "writable" },
+          ephemeralStateKeys: [],
+          development: { sessionId: "dev_smoke" },
+        });
+        return;
+      }
+      if (widgetRoute?.[1] === "state" && request.method === "POST") {
+        if (body["expectedRevision"] !== stateRevision) {
+          json(409, { code: "STATE_REVISION_MISMATCH", message: "the state moved on", stateRevision, state });
+          return;
+        }
+        stateRevision += 1;
+        state = { ...state, ...(typeof body["patch"] === "object" && body["patch"] !== null ? body["patch"] : {}) };
+        json(200, { stateRevision, state });
+        return;
+      }
+      if (widgetRoute?.[1] === "semantic" && request.method === "POST") {
+        json(200, { accepted: true });
+        return;
+      }
+      if (widgetRoute?.[1] === "actions" && request.method === "POST") {
+        json(200, { invocationId: body["invocationId"], revision: 1, duplicate: false, timeline: [] });
+        return;
+      }
+      if (devRoute && request.method === "GET") {
+        // The folder path is here because the node sends it; the host is what must keep it from the detached window.
+        json(200, {
+          sessionId: "dev_smoke",
+          status: "live",
+          root: "/home/someone/private-widget",
+          placed: { conversationId: "conv_smoke", instanceId: "widget_frame_smoke" },
+          running: { generation: control.build, digest: `sha256:build-${String(control.build)}` },
+        });
+        return;
+      }
+
       if (isLiveOwner && (request.method === "POST" || request.method === "DELETE")) {
-        calls.push({ method: request.method, path, body });
+        calls.push({ method: request.method, path, body, at: Date.now() });
         if (request.method === "POST" && control.refuseClaims) {
           // What the node answers once another surface holds the instance: the detached window has lost it.
           response.writeHead(409, { "content-type": "application/json" });
@@ -84,7 +177,7 @@ export async function startSmokeNode() {
         return;
       }
 
-      if (request.method === "GET" && path === SMOKE_FRAME_PATH) {
+      if (request.method === "GET" && (path === SMOKE_FRAME_PATH || path.startsWith(`${SMOKE_FRAME_PATH}?`))) {
         /*
          * A widget document the way the node serves one: its own policy in the response, with a per-response script
          * nonce and `frame-ancestors` naming who may frame it (`widgetDocumentPolicy` in core). The script says it ran,
@@ -121,6 +214,7 @@ export async function startSmokeNode() {
   return {
     url: `http://127.0.0.1:${String(address.port)}/`,
     calls,
+    relays,
     control,
     close: () =>
       new Promise((resolve) => {

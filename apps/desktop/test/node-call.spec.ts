@@ -75,6 +75,28 @@ describe("calling the node", () => {
     expect(await callNode("/x")).toMatchObject({ ok: false, code: "NODE_UNREACHABLE", refused: "the node could not be reached (ECONNREFUSED)" });
   });
 
+  it("adds a caller's headers without letting them replace the host's credential", async () => {
+    const send = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => answer(200, {}));
+    const callNode = createNodeCaller({ readSession: () => SESSION, fetch: send });
+    await callNode("/x", { headers: { "x-clarkcant-surface": "composer", authorization: "Bearer forged" } });
+    expect(send.mock.calls[0]?.[1]?.headers).toEqual({
+      "x-clarkcant-surface": "composer",
+      "content-type": "application/json",
+      authorization: `Bearer ${SESSION.token}`,
+    });
+  });
+
+  it("gives up on a call the node accepts and never answers, and says so", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: (_url: URL | RequestInfo, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    });
+    expect(await callNode("/x", { timeoutMs: 20 })).toMatchObject({ ok: false, code: "NODE_TIMEOUT" });
+  });
+
   it("refuses before calling when there is no node session", async () => {
     const send = vi.fn();
     const callNode = createNodeCaller({ readSession: () => ({ ok: false, refused: "no --data-dir was given" }), fetch: send });

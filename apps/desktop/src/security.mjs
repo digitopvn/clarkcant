@@ -61,6 +61,10 @@ export const IPC_CHANNELS = Object.freeze([
   "detached:bootstrap",
   "detached:intent",
   "detached:release",
+  "detached:frame.read",
+  "detached:state.save",
+  "detached:semantic.publish",
+  "detached:dev.session",
 ]);
 
 /**
@@ -70,7 +74,20 @@ export const IPC_CHANNELS = Object.freeze([
  * for a detached bootstrap could read a widget's composition without owning it, and a detached window that could
  * call `desktop:getSession` would hold the token this design exists to keep away from it.
  */
-export const DETACHED_WINDOW_CHANNELS = Object.freeze(["detached:bootstrap", "detached:intent", "detached:release"]);
+export const DETACHED_WINDOW_CHANNELS = Object.freeze([
+  "detached:bootstrap",
+  "detached:intent",
+  "detached:release",
+  /*
+   * The relays an isolated widget's frame needs, each performed by the host with its own credential against the
+   * instance the window was opened for. None of them takes an id, a gateway or a token, and there is no generic
+   * "call the node" verb: a window that could name the path could reach the whole conversation.
+   */
+  "detached:frame.read",
+  "detached:state.save",
+  "detached:semantic.publish",
+  "detached:dev.session",
+]);
 
 /**
  * Schemes `openExternal` will hand to the OS.
