@@ -139,7 +139,7 @@ export function orbPointerFromClient(input: OrbPointerRect & { clientX: number; 
  * Driver; macOS names its own "Apple Software Renderer". A name that matches none of these — including no name at
  * all — is treated as a GPU, so an unknown machine keeps the orb exactly as designed.
  */
-const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|lavapipe|basic render driver|software/i;
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|lavapipe|basic render driver|apple software renderer/i;
 
 export function isSoftwareRenderer(name: string | undefined): boolean {
   return name !== undefined && SOFTWARE_RENDERER.test(name);
