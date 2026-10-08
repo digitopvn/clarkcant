@@ -49,8 +49,9 @@ function scriptJson(value: unknown): string {
  * is what decides whether an id is one, and this page is only served for an id that resolved.
  *
  * `moduleUrl` is the source module in this repository and the bundled one in an installed CLI; the dev host passes
- * what `package-assets.ts` resolved. It is a parameter rather than a lookup here because `catalog-runtime.tsx` imports
- * this file into the browser, where the filesystem check that lookup makes does not exist.
+ * the URL, under its nonce, at which it serves what `package-assets.ts` resolved. It is a parameter rather than a
+ * lookup here because `catalog-runtime.tsx` imports this file into the browser, where the filesystem check that lookup
+ * makes does not exist.
  */
 export function catalogFrameHtml(input: CatalogRuntimeInput, moduleUrl = "/src/catalog-runtime.tsx"): string {
   return [
