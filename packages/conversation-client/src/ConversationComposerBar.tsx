@@ -241,7 +241,12 @@ export function ConversationComposerBar({
             data-voice-open="true"
             onClick={onOpenVoice}
           >
-            ◉
+            {/* A microphone, drawn like the header's line icons; the button's own label names it. */}
+            <svg className="cc-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-icon="microphone">
+              <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <path d="M12 19v3" />
+            </svg>
           </button>
           {busy ? (
             <button
