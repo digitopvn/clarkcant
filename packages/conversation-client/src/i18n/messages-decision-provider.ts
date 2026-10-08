@@ -39,6 +39,8 @@ export const MESSAGES_DECISION_PROVIDER_VI = {
   "settings.decision.hint.misconfigured.cloudflare":
     "Cấu hình này chưa dùng được: {reason}. Nhập account id Cloudflare bên dưới (hoặc đặt CLOUDFLARE_ACCOUNT_ID trên node); trong lúc đó Clark dùng quy tắc có sẵn.",
   "settings.decision.hint.no-credential": "Chưa có khoá cho {provider}. Lưu một khoá trong thẻ của nó bên dưới; trong lúc đó Clark dùng quy tắc có sẵn.",
+  "settings.decision.hint.no-credential.credentials":
+    "Chưa có khoá cho {provider}. Lưu một khoá trong danh sách Thông tin xác thực bên dưới; trong lúc đó Clark dùng quy tắc có sẵn.",
   "settings.decision.hint.disabled":
     "Các quyết định bị tắt trên node này (CLARKCANT_JEV_ENABLED). Bật lại trên node để dùng nhà cung cấp; trong lúc đó Clark dùng quy tắc có sẵn.",
   "settings.decision.lastCall.none": "Chưa có quyết định nào được hỏi kể từ khi node khởi động.",
@@ -94,11 +96,18 @@ export const MESSAGES_DECISION_PROVIDER_VI = {
   "settings.decision.keys.intro":
     "Mỗi khoá chỉ được gửi tới endpoint cố định của nhà cung cấp đó. Khoá bạn nhập không bao giờ hiện lại; thẻ chỉ cho biết khoá đến từ đâu.",
   "settings.decision.key.source.vault": "Đã lưu ở đây",
+  "settings.decision.key.source.vault.credentials": "Đã lưu trong Thông tin xác thực",
   "settings.decision.key.source.environment": "Từ môi trường",
   "settings.decision.key.source.none": "Chưa có khoá",
   "settings.decision.key.note.vault": "Khoá lưu trong kho của node; nó được ưu tiên hơn biến môi trường.",
   "settings.decision.key.note.environment": "Khoá lấy từ biến môi trường của node ({variable}). Lưu một khoá ở đây để thay thế nó.",
   "settings.decision.key.note.none": "Chưa có khoá trong kho hay trong môi trường ({variable}).",
+  "settings.decision.key.note.environment.credentials":
+    "Khoá lấy từ biến môi trường của node ({variable}). Lưu một khoá trong danh sách Thông tin xác thực để thay thế nó.",
+  "settings.decision.key.inCredentials":
+    "Khoá {provider} chỉ có một chỗ: danh sách Thông tin xác thực bên dưới, nơi lưu, thay và gỡ khoá này.",
+  "settings.decision.key.goToCredentials": "Mở Thông tin xác thực",
+  "settings.decision.key.credentialsMissing": "Không thấy danh sách Thông tin xác thực trên trang này; danh sách nằm trong tab AI & Định tuyến.",
   "settings.decision.key.label": "Khoá {provider}",
   "settings.decision.key.save": "Lưu khoá",
   "settings.decision.key.replace": "Thay khoá",
@@ -149,6 +158,8 @@ export const MESSAGES_DECISION_PROVIDER_EN = {
   "settings.decision.hint.misconfigured.cloudflare":
     "This configuration can't be used: {reason}. Enter the Cloudflare account id below (or set CLOUDFLARE_ACCOUNT_ID on the node); until then Clark uses its built-in rules.",
   "settings.decision.hint.no-credential": "There is no key for {provider}. Save one in its card below; until then Clark uses its built-in rules.",
+  "settings.decision.hint.no-credential.credentials":
+    "There is no key for {provider}. Save one in Credentials below; until then Clark uses its built-in rules.",
   "settings.decision.hint.disabled":
     "Decisions are switched off on this node (CLARKCANT_JEV_ENABLED). Switch them back on there to use a provider; until then Clark uses its built-in rules.",
   "settings.decision.lastCall.none": "No decision has been asked since the node started.",
@@ -203,11 +214,16 @@ export const MESSAGES_DECISION_PROVIDER_EN = {
   "settings.decision.keys.intro":
     "Each key is sent only to that provider's fixed endpoint. A key you type is never shown again; a card says only where its key comes from.",
   "settings.decision.key.source.vault": "Saved here",
+  "settings.decision.key.source.vault.credentials": "Saved in Credentials",
   "settings.decision.key.source.environment": "From the environment",
   "settings.decision.key.source.none": "No key",
   "settings.decision.key.note.vault": "Key kept in the node's vault; it wins over the environment.",
   "settings.decision.key.note.environment": "Key from the node's environment ({variable}). Save one here to replace it.",
   "settings.decision.key.note.none": "No key in the vault or the environment ({variable}).",
+  "settings.decision.key.note.environment.credentials": "Key from the node's environment ({variable}). Save one in Credentials to replace it.",
+  "settings.decision.key.inCredentials": "The {provider} key has one place: Credentials below, where it is saved, replaced and removed.",
+  "settings.decision.key.goToCredentials": "Go to Credentials",
+  "settings.decision.key.credentialsMissing": "The Credentials list is not on this page; it is in the AI & Routing tab.",
   "settings.decision.key.label": "{provider} key",
   "settings.decision.key.save": "Save key",
   "settings.decision.key.replace": "Replace key",

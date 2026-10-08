@@ -55,9 +55,9 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. The TypeSafe key can also be typed into its card in Settings (the decision provider's TypeSafe card, or the Credentials list, which store the same `typesafe` name). When both hold one,
-the key saved in the card wins, the rule every provider credential follows; the environment's key is
-used when the card holds none. Saving or removing the key in the card takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value.
+referenced from code. The TypeSafe key can also be saved in Settings, in one place: the Credentials list on AI & Routing, under the `typesafe` name. The decision provider's TypeSafe card says where the key comes from and offers Go to Credentials rather than a second field. When both hold one,
+the key saved in Settings wins, the rule every provider credential follows; the environment's key is
+used when Settings holds none. Saving or removing the key there takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value.
 
 The Cloudflare and OpenRouter keys follow the same rule, but are stored under host-owned vault names
 (`decision:cloudflare`, `decision:openrouter`) that only the decision provider's own card writes
@@ -79,8 +79,14 @@ TypeSafe Jev stays the default. There are two ways to choose another provider, a
    node's English sentence; a refused save is worded the same way.
    The person picks "Follow environment", TypeSafe Jev, Cloudflare Clef or OpenRouter; Cloudflare offers
    its two models and an account-id field, and OpenRouter a model-slug field, which is saved only once a
-   slug is entered. Each provider has a key card that says where its key comes from (saved here, the
-   environment, or none) with Save and Remove; a typed key is cleared once saved and never shown again.
+   slug is entered. Each provider has a key card that says where its key comes from (saved on its card,
+   saved in Credentials for TypeSafe, the environment, or none). Cloudflare's and OpenRouter's cards have a
+   password field with Save and Remove; a typed key is cleared once saved and never shown again. TypeSafe's
+   card has no field of its own: its key is the `typesafe` credential, so the card points to the Credentials
+   list, the one place to save, replace or remove it, with a Go to Credentials button that moves focus to
+   that row's key field (or to the list's heading if the row is missing). Saving or removing the key there
+   updates the card at once, without a reload. A reason code newer than
+   the client knows is worded as a generic "no reason this app can show", never as a raw code.
    Every change says it applies from the next decision. The choice is stored as the preference `ai.decisionProvider`,
    so it has a revision and an undo. Choosing "follow the environment" stores `null` and hands the
    choice back to the variables below. The same choice is available over the node's API:

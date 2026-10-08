@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { DECISION_REASON_CODES, type DecisionProviderView } from "@clarkcant/contracts";
 
-import { GatewayError } from "../src/api.ts";
+import { GatewayClient, GatewayError } from "../src/api.ts";
 
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
@@ -14,9 +14,17 @@ import {
   decisionReasonText,
   decisionWriteFailure,
   isPinnedOpenrouterSlug,
+  keyLivesInCredentials,
+  keySourceBadge,
   lastCallLine,
   selectionFor,
 } from "../src/settings/controls/decision-provider-section.tsx";
+import {
+  CREDENTIALS_SECTION_SELECTOR,
+  credentialFieldSelector,
+  credentialRowSelector,
+  focusCredential,
+} from "../src/settings/controls/vault-list-focus.ts";
 
 /**
  * Settings → AI & Routing → Decision provider, drawn from what the node said.
@@ -148,8 +156,50 @@ describe("the decision provider section", () => {
     expect(typesafe).toContain('data-decision-key-source="none"');
     expect(typesafe).not.toContain("data-decision-key-remove");
     // Every key field is a password field that starts empty: the card has no key to show, and never renders one.
-    expect(html.match(/type="password"/g)).toHaveLength(3);
+    expect(html.match(/type="password"/g)).toHaveLength(2);
     for (const field of html.match(/<input[^>]*type="password"[^>]*>/g) ?? []) expect(field).toContain('value=""');
+  });
+
+  it("gives the TypeSafe key one control: its card points to the Credentials list instead of holding a second field", () => {
+    // TypeSafe's key is the plain `typesafe` credential the Credentials list edits; the other two are host-owned names
+    // only their own cards can write, so they keep their fields.
+    expect(keyLivesInCredentials("typesafe")).toBe(true);
+    expect(keyLivesInCredentials("cloudflare")).toBe(false);
+    expect(keyLivesInCredentials("openrouter")).toBe(false);
+
+    for (const [t, messages] of [
+      [english, MESSAGES_EN],
+      [vietnamese, MESSAGES_VI],
+    ] as const) {
+      const html = draw({}, t);
+      const typesafe = card(html, "typesafe");
+      expect(typesafe).not.toContain("data-decision-key-input");
+      expect(typesafe).not.toContain("data-decision-key-save");
+      expect(typesafe).not.toContain('type="password"');
+      expect(typesafe).toContain('data-decision-key-in-credentials="typesafe"');
+      expect(typesafe).toContain('data-decision-key-go-to-credentials="typesafe"');
+      expect(typesafe).toContain(messages["settings.decision.key.goToCredentials"]);
+      expect(typesafe).toContain(messages["settings.decision.key.inCredentials"].replace("{provider}", "TypeSafe Jev"));
+      for (const provider of ["cloudflare", "openrouter"]) {
+        expect(card(html, provider)).toContain(`data-decision-key-input="${provider}"`);
+        expect(card(html, provider)).not.toContain("data-decision-key-go-to-credentials");
+      }
+    }
+    // With no TypeSafe key, the hint sends the person to Credentials rather than to a card with no field.
+    expect(decisionHint(DEFAULT_NO_KEY, english)).toBe(
+      "There is no key for TypeSafe Jev. Save one in Credentials below; until then Clark uses its built-in rules.",
+    );
+    expect(decisionHint(DEFAULT_NO_KEY, vietnamese)).toContain("danh sách Thông tin xác thực");
+    expect(decisionHint({ ...DEFAULT_NO_KEY, provider: "openrouter" }, english)).toContain("Save one in its card below");
+    // A TypeSafe key from the environment is replaced in Credentials, not "here".
+    const fromEnvironment = draw({
+      listing: {
+        status: "ready",
+        view: { ...READY, providers: [{ id: "typesafe", models: null, credential: { name: "typesafe", source: "environment" } }, ...PROVIDERS.slice(1)] },
+      },
+    });
+    expect(card(fromEnvironment, "typesafe")).toContain("Save one in Credentials to replace it.");
+    expect(card(fromEnvironment, "openrouter")).toContain("Save one here to replace it.");
   });
 
   it("draws every state with its reason and what to do about it", () => {
@@ -266,6 +316,32 @@ describe("the decision provider section", () => {
     expect(decisionReasonText(undefined, vietnamese)).toBe(MESSAGES_VI["settings.decision.reason.unknown"]);
   });
 
+  it("words a reason code from a newer node that this client does not know with the generic reason, never a raw key", () => {
+    // A newer node can send a code this client was built without; the wire value is not narrowed to the known codes.
+    const newer = "provider-quota-paused";
+    expect((DECISION_REASON_CODES as readonly string[]).includes(newer)).toBe(false);
+    expect(decisionReasonText(newer, english)).toBe(MESSAGES_EN["settings.decision.reason.unknown"]);
+    expect(decisionReasonText(newer, vietnamese)).toBe(MESSAGES_VI["settings.decision.reason.unknown"]);
+    const view = {
+      ...READY,
+      status: "misconfigured",
+      reason: "a reason only a newer node words",
+      reasonCode: newer,
+      lastCall: { event: "error", status: "unavailable", model: "clef-flash", durationMs: 12, reason: "a newer failure", reasonCode: newer },
+    } as unknown as DecisionProviderView;
+    for (const t of [english, vietnamese]) {
+      const hint = decisionHint(view, t);
+      const line = lastCallLine(view, t);
+      expect(hint).toContain(t("settings.decision.reason.unknown"));
+      expect(line).toContain(t("settings.decision.reason.unknown"));
+      for (const text of [hint, line]) {
+        expect(text).not.toContain("settings.decision.reason.");
+        expect(text).not.toContain("undefined");
+        expect(text).not.toContain(newer);
+      }
+    }
+  });
+
   it("words a refused write in the person's language, not the node's English", () => {
     const refusedSlug = new GatewayError(400, "INVALID_SCHEMA", "model: is an OpenRouter router, not a pinned model");
     const selection = decisionWriteFailure("selection", refusedSlug, vietnamese);
@@ -285,5 +361,127 @@ describe("the decision provider section", () => {
     expect(html).toContain("Áp dụng từ quyết định tiếp theo");
     expect(html).toContain("Theo môi trường");
     expect(Object.keys(MESSAGES_VI).filter((key) => key.startsWith("settings.decision.")).length).toBeGreaterThan(40);
+  });
+});
+
+/** Just enough of an element for `focusCredential`: the selectors it asks for, answered from a table. */
+class FakeElement {
+  tabIndex = 0;
+  focused = false;
+  readonly #attributes: Set<string>;
+  readonly #children: Record<string, FakeElement>;
+  constructor(children: Record<string, FakeElement> = {}, attributes: string[] = []) {
+    this.#children = children;
+    this.#attributes = new Set(attributes);
+  }
+  querySelector(selector: string): FakeElement | null {
+    return this.#children[selector] ?? null;
+  }
+  hasAttribute(name: string): boolean {
+    return this.#attributes.has(name);
+  }
+  scrollIntoView(): void {}
+  focus(): void {
+    this.focused = true;
+  }
+}
+
+function focusIn(root: FakeElement): ReturnType<typeof focusCredential> {
+  return focusCredential("typesafe", root as unknown as ParentNode);
+}
+
+describe("pointing at a credential in the Credentials list", () => {
+  const FIELD = `${credentialFieldSelector("typesafe")}:not([disabled])`;
+
+  it("focuses the key field, never a button in the row", () => {
+    const field = new FakeElement();
+    const row = new FakeElement({ [FIELD]: field });
+    const heading = new FakeElement();
+    const section = new FakeElement({ [credentialRowSelector("typesafe")]: row, "h2, h3, h4": heading });
+    expect(focusIn(new FakeElement({ [CREDENTIALS_SECTION_SELECTOR]: section }))).toBe("field");
+    expect(field.focused).toBe(true);
+    expect(row.focused).toBe(false);
+  });
+
+  it("focuses the row itself, out of the Tab order, when it has no field to type in", () => {
+    const row = new FakeElement();
+    const section = new FakeElement({ [credentialRowSelector("typesafe")]: row, "h2, h3, h4": new FakeElement() });
+    expect(focusIn(new FakeElement({ [CREDENTIALS_SECTION_SELECTOR]: section }))).toBe("row");
+    expect(row.focused).toBe(true);
+    expect(row.tabIndex).toBe(-1);
+  });
+
+  it("falls back to the Credentials heading when the row is missing, so the press is never silent", () => {
+    const heading = new FakeElement();
+    const section = new FakeElement({ "h2, h3, h4": heading });
+    expect(focusIn(new FakeElement({ [CREDENTIALS_SECTION_SELECTOR]: section }))).toBe("heading");
+    expect(heading.focused).toBe(true);
+    expect(heading.tabIndex).toBe(-1);
+    // With no list at all, the caller is told so and says it on the card.
+    expect(focusIn(new FakeElement())).toBe("none");
+    expect(MESSAGES_EN["settings.decision.key.credentialsMissing"]).toContain("AI & Routing");
+    expect(MESSAGES_VI["settings.decision.key.credentialsMissing"]).toContain("AI & Định tuyến");
+  });
+
+  it("names the selectors the Credentials list renders", () => {
+    expect(CREDENTIALS_SECTION_SELECTOR).toBe("[data-credentials-section='true']");
+    expect(credentialRowSelector("typesafe")).toBe('[data-credential-row="typesafe"]');
+    expect(credentialFieldSelector("typesafe")).toBe('[data-credential-field="typesafe"]');
+  });
+});
+
+describe("the TypeSafe key's badge", () => {
+  it("says a saved TypeSafe key is in Credentials, not on the card, and keeps 'saved here' for the cards that save", () => {
+    expect(keySourceBadge("typesafe", "vault")).toBe("settings.decision.key.source.vault.credentials");
+    expect(keySourceBadge("cloudflare", "vault")).toBe("settings.decision.key.source.vault");
+    expect(keySourceBadge("typesafe", "none")).toBe("settings.decision.key.source.none");
+    const saved: DecisionProviderView = {
+      ...READY,
+      providers: PROVIDERS.map((entry) => (entry.id === "typesafe" ? { ...entry, credential: { ...entry.credential, source: "vault" } } : entry)),
+    };
+    for (const [t, messages] of [
+      [english, MESSAGES_EN],
+      [vietnamese, MESSAGES_VI],
+    ] as const) {
+      const html = draw({ listing: { status: "ready", view: saved } }, t);
+      expect(card(html, "typesafe")).toContain(messages["settings.decision.key.source.vault.credentials"]);
+      expect(card(html, "typesafe")).not.toContain(`>${messages["settings.decision.key.source.vault"]}<`);
+      expect(card(html, "cloudflare")).toContain(messages["settings.decision.key.source.vault"]);
+    }
+    expect(MESSAGES_EN["settings.decision.key.source.vault.credentials"]).toBe("Saved in Credentials");
+    expect(MESSAGES_VI["settings.decision.key.source.vault.credentials"]).toBe("Đã lưu trong Thông tin xác thực");
+  });
+});
+
+describe("the client's credential change notice", () => {
+  const client = (status: number): GatewayClient =>
+    new GatewayClient({
+      baseUrl: "http://node.test",
+      token: "t",
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(status === 200 ? { ok: true, names: ["typesafe"] } : { code: "X" }), { status })),
+    });
+
+  it("tells listeners after a credential is saved or removed, and not after a refusal or once they stop listening", async () => {
+    const ok = client(200);
+    let heard = 0;
+    const stop = ok.onCredentialsChange(() => {
+      heard += 1;
+    });
+    await ok.putCredential({ fields: [{ name: "typesafe", value: "v" }] });
+    expect(heard).toBe(1);
+    await ok.deleteCredential("typesafe");
+    expect(heard).toBe(2);
+    stop();
+    await ok.deleteCredential("typesafe");
+    expect(heard).toBe(2);
+
+    const refused = client(400);
+    let refusedHeard = 0;
+    refused.onCredentialsChange(() => {
+      refusedHeard += 1;
+    });
+    await expect(refused.putCredential({ fields: [{ name: "typesafe", value: "v" }] })).rejects.toBeInstanceOf(GatewayError);
+    await expect(refused.deleteCredential("typesafe")).rejects.toBeInstanceOf(GatewayError);
+    expect(refusedHeard).toBe(0);
   });
 });
