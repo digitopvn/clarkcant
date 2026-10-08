@@ -1684,9 +1684,12 @@ export class GatewayClient {
     /**
      * When the choice takes effect.
      *
-     * `next-session` when the node already has a model turn to read it — the choice lands on the next conversation.
+     * `next-session` when the node already has a model turn to read it: the turn reads the choice on every message, so
+     * the current conversation switches to it from its next message (the wire name predates that and is kept).
      * `next-start` when it has none, which is the node that has never run a model: the choice is stored, and the node
      * starts with it next time. The copy beside the field says which, rather than promising the sooner of the two.
+     *
+     * A model whose provider is signed out is refused with a 409 `CAPABILITY_NOT_AUTHENTICATED` that says so.
      */
     applies: "next-session" | "next-start";
   }> {

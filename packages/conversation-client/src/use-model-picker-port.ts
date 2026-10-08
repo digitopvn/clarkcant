@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import type { GatewayClient } from "./api.ts";
+import { GatewayError, type GatewayClient } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import type { ModelChoiceState, ModelChoices, ModelPickerPort } from "./model-picker.tsx";
 
@@ -41,7 +41,12 @@ export function useModelPickerPort(client: GatewayClient, t: (key: MessageKey) =
           (error: unknown) =>
             setModelChoice((current) => ({
               ...current,
-              [key]: { status: "failed", model, message: error instanceof Error ? error.message : t("commandCard.failed") },
+              [key]: {
+                status: "failed",
+                model,
+                // The node's own words for a refusal (a signed-out provider, a model no longer offered), without its code.
+                message: error instanceof GatewayError ? error.reason : error instanceof Error ? error.message : t("commandCard.failed"),
+              },
             })),
         )
         .finally(() => choosing.current.delete(key));

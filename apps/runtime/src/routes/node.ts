@@ -33,7 +33,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
 export interface NodeRouteDeps {
   services: Pick<
     NodeServices,
-    "runtime" | "model" | "currentModel" | "modelCatalogue" | "extensions" | "piSettings" | "turnControl"
+    "runtime" | "model" | "currentModel" | "modelCatalogue" | "extensions" | "piSettings" | "turnControl" | "providerAuth"
   >;
   request: GatewayRequest;
   segments: string[];
@@ -89,12 +89,13 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
   /*
    * A model a person chose.
    *
-   * Stored, and applied to sessions created afterwards: the model is resolved when a session is created, which is the
-   * only moment a choice can reach one, so the answer names that scope rather than implying a conversation already
-   * running changed underneath somebody. A conversation that is open keeps the model it started with.
+   * Stored, and read by the turn on every message: an open conversation switches to it from its next message, and a
+   * node that runs no model yet starts with it the next time it starts. The answer names which, rather than implying a
+   * change the person will not see.
    *
-   * The choice is still checked against the catalogue first: a stored model this installation cannot run would fail
-   * every later turn with a message about a provider rather than about the choice that caused it.
+   * The choice is checked first, against the catalogue and the sign-ins: a stored model this installation cannot run,
+   * or one whose provider is signed out, would fail every later turn with a message about a provider rather than about
+   * the choice that caused it.
    */
   if (segments.length === 1 && segments[0] === "model" && request.method === "POST") {
     const parsed = readJson(request);
@@ -104,17 +105,27 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
     if (provider === "" || id === "") {
       return fail(400, "INVALID_SCHEMA", "a model choice needs a provider and a model id");
     }
-    const catalogue = await (deps.services.modelCatalogue?.() ?? Promise.resolve([]));
+    const [catalogue, providerAuth] = await Promise.all([
+      deps.services.modelCatalogue?.() ?? Promise.resolve([]),
+      // A sign-in list that cannot be read leaves the choice checked against the catalogue alone, not refused.
+      deps.services.providerAuth?.providerAuth().catch(() => undefined),
+    ]);
     const stored = storeModelChoice(
-        {
-          db: runtime.db,
-          ownerPrincipalId: runtime.identity.ownerPrincipalId,
-          catalogue,
-          hasTurnControl: deps.services.turnControl !== undefined,
-        },
+      {
+        db: runtime.db,
+        ownerPrincipalId: runtime.identity.ownerPrincipalId,
+        catalogue,
+        hasTurnControl: deps.services.turnControl !== undefined,
+        ...(providerAuth === undefined ? {} : { providerAuth }),
+        locale: ownerLocale(runtime),
+      },
       { provider, id },
     );
-    if (!stored.ok) return fail(400, "INVALID_SCHEMA", stored.message);
+    if (!stored.ok) {
+      return stored.code === "provider-signed-out"
+        ? fail(409, "CAPABILITY_NOT_AUTHENTICATED", stored.message, { provider })
+        : fail(400, "INVALID_SCHEMA", stored.message);
+    }
     // When the choice takes effect, told rather than implied; the client turns either code into the
     // sentence beside the field.
     return json(200, { ok: true, stored: { provider, id }, applies: stored.applies });

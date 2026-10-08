@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type CommandCard, SLASH_COMMANDS, commandCardSchema, instantSchema, parseSlashCommand } from "@clarkcant/contracts";
+import { writeRegisteredPreference } from "@clarkcant/core";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { messagesSince, putPreference, readPreference } from "@clarkcant/storage";
 
 import { readModelChoice } from "../src/application/model-choice.ts";
+import { providerAuthPort } from "../src/application/provider-sign-in.ts";
 import { composerSuggestions } from "../src/composer-suggestions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -147,5 +149,71 @@ describe("the model a person chose, as a turn reads it", () => {
     const refused = await call("POST", "/model", { provider: "fake", id: "no-such-model" });
     expect(refused.status).toBeGreaterThanOrEqual(400);
     expect(readModelChoice(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toEqual({ provider: "fake", id: "fake-model-large" });
+  });
+});
+
+describe("POST /model and a signed-out provider", () => {
+  const authPort = (adapter: FakePiAdapter) => {
+    const port = providerAuthPort(adapter);
+    if (port === undefined) throw new Error("the fake adapter no longer lists sign-ins");
+    return port;
+  };
+  const signIn = (adapter: FakePiAdapter) =>
+    adapter.signIn("fake-other", "api_key", {
+      signal: new AbortController().signal,
+      prompt: async () => "a key",
+      notify: () => {},
+    });
+
+  it("refuses a signed-out provider's model with a typed error, whichever surface sent it, and stores nothing", async () => {
+    const adapter = new FakePiAdapter();
+    services.modelCatalogue = () => adapter.catalogue();
+    services.providerAuth = authPort(adapter);
+
+    const refused = await call("POST", "/model", { provider: "fake-other", id: "fake-other-model" });
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ code: "CAPABILITY_NOT_AUTHENTICATED", provider: "fake-other" });
+    expect((refused.body as { message: string }).message).toContain("/login");
+    expect(storedModel()).toBeUndefined();
+
+    await signIn(adapter);
+    const chosen = await call("POST", "/model", { provider: "fake-other", id: "fake-other-model" });
+    expect(chosen.status).toBe(200);
+    expect(readModelChoice(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toEqual({ provider: "fake-other", id: "fake-other-model" });
+  });
+
+  it("words the refusal in the owner's language", async () => {
+    const adapter = new FakePiAdapter();
+    services.modelCatalogue = () => adapter.catalogue();
+    services.providerAuth = authPort(adapter);
+    const vi = await call("POST", "/model", { provider: "fake-other", id: "fake-other-model" });
+    expect((vi.body as { message: string }).message).toContain("chưa đăng nhập Fake Other");
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", value: "en", source: "user" },
+    );
+    if (!written.ok) throw new Error(written.message);
+    const en = await call("POST", "/model", { provider: "fake-other", id: "fake-other-model" });
+    expect(en.status).toBe(409);
+    expect((en.body as { message: string }).message).toContain("because Fake Other is signed out");
+  });
+
+  it("checks the catalogue alone when the sign-in list cannot be read, rather than refusing on a guess", async () => {
+    const adapter = new FakePiAdapter();
+    services.modelCatalogue = () => adapter.catalogue();
+    services.providerAuth = { ...authPort(adapter), providerAuth: () => Promise.reject(new Error("unreadable")) };
+    const chosen = await call("POST", "/model", { provider: "fake-other", id: "fake-other-model" });
+    expect(chosen.status).toBe(200);
+  });
+
+  it("accepts a provider the sign-in list does not name: it needs no sign-in", async () => {
+    const adapter = new FakePiAdapter();
+    services.modelCatalogue = async () => [
+      ...(await adapter.catalogue()),
+      { id: "local", models: [{ provider: "local", id: "local-model", current: false }] },
+    ];
+    services.providerAuth = authPort(adapter);
+    const chosen = await call("POST", "/model", { provider: "local", id: "local-model" });
+    expect(chosen.status).toBe(200);
   });
 });

@@ -538,7 +538,10 @@ makes an earlier reference stale.
 search, a provider filter and a marker on the model in use. Opening it changes nothing. A model is applied only once
 the person confirms it, through `POST /model` — the same catalogue-checked path Settings uses — and it answers from the
 next message (`applies: "next-session"`), or from the next node start on a node that runs no model yet
-(`"next-start"`). A signed-out provider's models are shown but cannot be applied until it signs in. After a sign-in on a
+(`"next-start"`). A signed-out provider's models are shown but cannot be applied until it signs in: `POST /model`
+itself refuses one with `409 CAPABILITY_NOT_AUTHENTICATED`, so the API, the CLI and MCP meet the same rule as the picker
+(a provider the sign-in list does not name needs no sign-in, and an unreadable list leaves the catalogue check alone).
+After a sign-in on a
 `/login` card (or in Settings → AI & Routing) finishes, the card names the provider, re-reads both lists rather than assuming the sign-in made models
 available, and offers that provider's models in the same picker or keeping the model in use; a provider that is not
 listed as signed in yet, or has no models, is said so with a way to check again. A record of the card — a transcript, a

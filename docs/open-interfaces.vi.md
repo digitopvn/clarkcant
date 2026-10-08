@@ -546,7 +546,10 @@ chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao g
 provider và dấu đánh dấu model đang dùng. Mở thẻ không thay đổi gì. Một model chỉ được áp dụng khi người dùng xác nhận,
 qua `POST /model` — cùng đường kiểm tra theo danh mục mà phần Cài đặt dùng — và nó trả lời từ tin nhắn tiếp theo
 (`applies: "next-session"`), hoặc từ lần khởi động node sau với node chưa chạy model nào (`"next-start"`). Model của
-provider chưa đăng nhập vẫn được hiện nhưng không áp dụng được cho tới khi provider đó đăng nhập. Khi một lần đăng nhập
+provider chưa đăng nhập vẫn được hiện nhưng không áp dụng được cho tới khi provider đó đăng nhập: chính `POST /model`
+từ chối model đó bằng `409 CAPABILITY_NOT_AUTHENTICATED`, nên API, CLI và MCP gặp cùng quy tắc với bộ chọn (provider
+không có trong danh sách đăng nhập thì không cần đăng nhập, và khi không đọc được danh sách thì chỉ kiểm tra theo danh
+mục). Khi một lần đăng nhập
 trên thẻ `/login` (hoặc trong Cài đặt → AI & Định tuyến) hoàn tất, thẻ nêu tên provider, đọc lại cả hai danh sách thay vì cho rằng đăng nhập là đã có model,
 rồi đề nghị chọn model của provider đó ngay trong cùng bộ chọn, hoặc giữ model đang dùng; provider chưa hiện là đã đăng
 nhập, hoặc không có model nào, được nói rõ kèm cách kiểm tra lại. Bản ghi của thẻ — trong bản ghi hội thoại, trong kết
