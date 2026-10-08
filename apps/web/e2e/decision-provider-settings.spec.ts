@@ -3,6 +3,12 @@ import { join } from "node:path";
 
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
+import {
+  CREDENTIALS_SECTION_SELECTOR,
+  credentialFieldSelector,
+  credentialRowSelector,
+} from "../../../packages/conversation-client/src/settings/controls/vault-list-focus.ts";
+
 /**
  * Choosing who answers Clark's decisions from Settings → AI & Routing, as a person does it.
  *
@@ -177,33 +183,57 @@ test("a key is saved and removed with the keyboard alone", async ({ page }) => {
   await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-selected-by", "settings", { timeout: 10_000 });
 });
 
-test("the TypeSafe key has one control: its card points to the Credentials list, which the card then reads", async ({ page, request }) => {
+test("the TypeSafe key has one control: its card points to the Credentials list and follows what is saved there", async ({ page, request }) => {
   const section = await openDecisionProvider(page);
+  const current = section.locator("[data-decision-current]");
   const typesafe = section.locator('[data-decision-key-card="typesafe"]');
   await expect(typesafe).toHaveAttribute("data-decision-key-source", "none");
+  await expect(current).toHaveAttribute("data-decision-status", "no-credential");
   await expect(typesafe.locator("input")).toHaveCount(0);
   await expect(typesafe.locator("[data-decision-key-in-credentials='typesafe']")).toContainText("Thông tin xác thực");
 
-  // The pointer moves focus to the TypeSafe row of the Credentials list, the one place its key is saved.
-  const row = page.locator("[data-credentials-section='true'] [data-credential-row='typesafe']");
+  // The pointer moves focus to the key field of the TypeSafe row, the one place its key is saved; never to a button.
+  const row = page.locator(`${CREDENTIALS_SECTION_SELECTOR} ${credentialRowSelector("typesafe")}`);
   await expect(row).toBeVisible();
+  const field = row.locator(credentialFieldSelector("typesafe"));
   const go = typesafe.locator("[data-decision-key-go-to-credentials='typesafe']");
   await go.focus();
   await page.keyboard.press("Enter");
-  await expect(row.locator(":focus")).toHaveCount(1);
+  await expect(field).toBeFocused();
 
-  // A key stored where the Credentials list stores it is the key the decision provider reads.
-  const stored = await request.post(`${GATEWAY}/credentials`, {
-    headers: { authorization: `Bearer ${token()}` },
-    data: { fields: [{ name: "typesafe", value: TYPESAFE_KEY }] },
-  });
-  expect(stored.ok()).toBe(true);
-  await page.reload();
-  const reopened = await openDecisionProvider(page);
-  await expect(reopened.locator('[data-decision-key-card="typesafe"]')).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
-  await expect(reopened.locator("[data-decision-current]")).toHaveAttribute("data-decision-status", "ready");
+  // Saved there, the card says so at once, with no reload: the key is in Credentials and the decider is ready.
+  await page.keyboard.type(TYPESAFE_KEY);
+  await row.locator("[data-credential-replace='typesafe']").click();
+  await expect(typesafe).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
+  await expect(typesafe).toContainText("Đã lưu trong Thông tin xác thực");
+  await expect(typesafe).not.toContainText("Đã lưu ở đây");
+  await expect(current).toHaveAttribute("data-decision-status", "ready");
   expect(await page.content()).not.toContain(TYPESAFE_KEY);
   expect(await nodeView(request)).not.toContain(TYPESAFE_KEY);
+
+  // Removed there, the card goes back to no key, again without a reload.
+  await row.locator("[data-credential-remove='typesafe']").click();
+  await expect(typesafe).toHaveAttribute("data-decision-key-source", "none", { timeout: 10_000 });
+  await expect(current).toHaveAttribute("data-decision-status", "no-credential");
+});
+
+test("Go to Credentials still lands somewhere when the TypeSafe row or the whole list is missing", async ({ page }) => {
+  const section = await openDecisionProvider(page);
+  const typesafe = section.locator('[data-decision-key-card="typesafe"]');
+  const go = typesafe.locator("[data-decision-key-go-to-credentials='typesafe']");
+  const credentials = page.locator(CREDENTIALS_SECTION_SELECTOR);
+  await expect(credentials.locator(credentialRowSelector("typesafe"))).toBeVisible();
+
+  // A row the pointer cannot find: focus falls back to the list's heading rather than nowhere.
+  await page.evaluate((selector) => document.querySelector(selector)?.removeAttribute("data-credential-row"), credentialRowSelector("typesafe"));
+  await go.click();
+  await expect(credentials.locator("h2, h3, h4").first()).toBeFocused();
+  await expect(typesafe.locator("[data-decision-credentials-missing]")).toHaveCount(0);
+
+  // No list on the page at all: the card says where the list lives.
+  await page.evaluate((selector) => document.querySelector(selector)?.removeAttribute("data-credentials-section"), CREDENTIALS_SECTION_SELECTOR);
+  await go.click();
+  await expect(typesafe.locator("[data-decision-credentials-missing='typesafe']")).toContainText("AI & Định tuyến");
 });
 
 test("on a phone, in English, the card fits the screen and every control is reachable", async ({ browser, request }) => {

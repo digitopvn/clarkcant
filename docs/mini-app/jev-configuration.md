@@ -79,11 +79,13 @@ TypeSafe Jev stays the default. There are two ways to choose another provider, a
    node's English sentence; a refused save is worded the same way.
    The person picks "Follow environment", TypeSafe Jev, Cloudflare Clef or OpenRouter; Cloudflare offers
    its two models and an account-id field, and OpenRouter a model-slug field, which is saved only once a
-   slug is entered. Each provider has a key card that says where its key comes from (saved here, the
-   environment, or none). Cloudflare's and OpenRouter's cards have a password field with Save and Remove;
-   a typed key is cleared once saved and never shown again. TypeSafe's card has no field of its own: its
-   key is the `typesafe` credential, so the card points to the Credentials list, the one place to save,
-   replace or remove it, with a Go to Credentials button that moves focus there. A reason code newer than
+   slug is entered. Each provider has a key card that says where its key comes from (saved on its card,
+   saved in Credentials for TypeSafe, the environment, or none). Cloudflare's and OpenRouter's cards have a
+   password field with Save and Remove; a typed key is cleared once saved and never shown again. TypeSafe's
+   card has no field of its own: its key is the `typesafe` credential, so the card points to the Credentials
+   list, the one place to save, replace or remove it, with a Go to Credentials button that moves focus to
+   that row's key field (or to the list's heading if the row is missing). Saving or removing the key there
+   updates the card at once, without a reload. A reason code newer than
    the client knows is worded as a generic "no reason this app can show", never as a raw code.
    Every change says it applies from the next decision. The choice is stored as the preference `ai.decisionProvider`,
    so it has a revision and an undo. Choosing "follow the environment" stores `null` and hands the

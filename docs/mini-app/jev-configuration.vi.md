@@ -77,11 +77,12 @@ TypeSafe Jev vẫn là mặc định. Có hai cách chọn provider khác, và c
    một lần lưu bị từ chối cũng được diễn đạt như vậy. Người dùng chọn
    "Theo môi trường", TypeSafe Jev, Cloudflare Clef hoặc OpenRouter; Cloudflare có hai model và một ô
    account id, còn OpenRouter có một ô model slug, chỉ được lưu khi đã nhập slug. Mỗi provider có một thẻ
-   key cho biết key đến từ đâu (lưu ở đây, môi trường, hoặc chưa có). Thẻ của Cloudflare và OpenRouter có
-   một ô mật khẩu cùng nút Lưu và Gỡ; key đã nhập được xoá khỏi ô sau khi lưu và không bao giờ hiện lại.
-   Thẻ TypeSafe không có ô riêng: key của nó là credential `typesafe`, nên thẻ chỉ tới danh sách Thông tin
-   xác thực, nơi duy nhất để lưu, thay hoặc gỡ key này, kèm nút Mở Thông tin xác thực để chuyển focus tới
-   đó. Một mã lý do mới hơn những gì client biết được diễn đạt thành câu chung "node không nêu lý do theo
+   key cho biết key đến từ đâu (lưu trên thẻ, lưu trong Thông tin xác thực với TypeSafe, môi trường, hoặc
+   chưa có). Thẻ của Cloudflare và OpenRouter có một ô mật khẩu cùng nút Lưu và Gỡ; key đã nhập được xoá
+   khỏi ô sau khi lưu và không bao giờ hiện lại. Thẻ TypeSafe không có ô riêng: key của nó là credential
+   `typesafe`, nên thẻ chỉ tới danh sách Thông tin xác thực, nơi duy nhất để lưu, thay hoặc gỡ key này, kèm
+   nút Mở Thông tin xác thực để chuyển focus vào ô key của dòng đó (hoặc tới tiêu đề của danh sách nếu không
+   tìm thấy dòng). Lưu hoặc gỡ key ở đó sẽ cập nhật thẻ ngay, không cần tải lại trang. Một mã lý do mới hơn những gì client biết được diễn đạt thành câu chung "node không nêu lý do theo
    cách ứng dụng này hiển thị được", không bao giờ hiện mã thô. Mọi thay đổi đều nói rõ là áp dụng từ quyết định
    tiếp theo. Lựa chọn được lưu thành preference
    `ai.decisionProvider`, nên có revision và có thể hoàn tác. Chọn "theo môi trường" sẽ lưu `null` và

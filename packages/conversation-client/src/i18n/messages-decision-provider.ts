@@ -96,6 +96,7 @@ export const MESSAGES_DECISION_PROVIDER_VI = {
   "settings.decision.keys.intro":
     "Mỗi khoá chỉ được gửi tới endpoint cố định của nhà cung cấp đó. Khoá bạn nhập không bao giờ hiện lại; thẻ chỉ cho biết khoá đến từ đâu.",
   "settings.decision.key.source.vault": "Đã lưu ở đây",
+  "settings.decision.key.source.vault.credentials": "Đã lưu trong Thông tin xác thực",
   "settings.decision.key.source.environment": "Từ môi trường",
   "settings.decision.key.source.none": "Chưa có khoá",
   "settings.decision.key.note.vault": "Khoá lưu trong kho của node; nó được ưu tiên hơn biến môi trường.",
@@ -106,6 +107,7 @@ export const MESSAGES_DECISION_PROVIDER_VI = {
   "settings.decision.key.inCredentials":
     "Khoá {provider} chỉ có một chỗ: danh sách Thông tin xác thực bên dưới, nơi lưu, thay và gỡ khoá này.",
   "settings.decision.key.goToCredentials": "Mở Thông tin xác thực",
+  "settings.decision.key.credentialsMissing": "Không thấy danh sách Thông tin xác thực trên trang này; danh sách nằm trong tab AI & Định tuyến.",
   "settings.decision.key.label": "Khoá {provider}",
   "settings.decision.key.save": "Lưu khoá",
   "settings.decision.key.replace": "Thay khoá",
@@ -212,6 +214,7 @@ export const MESSAGES_DECISION_PROVIDER_EN = {
   "settings.decision.keys.intro":
     "Each key is sent only to that provider's fixed endpoint. A key you type is never shown again; a card says only where its key comes from.",
   "settings.decision.key.source.vault": "Saved here",
+  "settings.decision.key.source.vault.credentials": "Saved in Credentials",
   "settings.decision.key.source.environment": "From the environment",
   "settings.decision.key.source.none": "No key",
   "settings.decision.key.note.vault": "Key kept in the node's vault; it wins over the environment.",
@@ -220,6 +223,7 @@ export const MESSAGES_DECISION_PROVIDER_EN = {
   "settings.decision.key.note.environment.credentials": "Key from the node's environment ({variable}). Save one in Credentials to replace it.",
   "settings.decision.key.inCredentials": "The {provider} key has one place: Credentials below, where it is saved, replaced and removed.",
   "settings.decision.key.goToCredentials": "Go to Credentials",
+  "settings.decision.key.credentialsMissing": "The Credentials list is not on this page; it is in the AI & Routing tab.",
   "settings.decision.key.label": "{provider} key",
   "settings.decision.key.save": "Save key",
   "settings.decision.key.replace": "Replace key",

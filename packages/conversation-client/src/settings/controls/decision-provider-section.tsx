@@ -19,6 +19,7 @@ import { fillMessage } from "../../i18n/fill-message.ts";
 import { useT } from "../../i18n/locale-context.tsx";
 import type { MessageKey } from "../../i18n/messages.ts";
 import { SegmentedControl, type SegmentedOption } from "./primitives.tsx";
+import { focusCredential } from "./vault-list-focus.ts";
 
 export type DecisionListing =
   | { status: "loading" }
@@ -76,15 +77,9 @@ export function keyLivesInCredentials(provider: DecisionProviderId): boolean {
   return !HOST_OWNED_DECISION_CREDENTIALS.includes(DECISION_CREDENTIAL_NAMES[provider]);
 }
 
-/** Moves focus to a credential's row in the Credentials list, or brings the list into view when the row has nothing to focus. */
-function focusCredentialRow(name: string): void {
-  const row = document.querySelector(`[data-credential-row="${CSS.escape(name)}"]`);
-  const target = row?.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])");
-  if (target) {
-    target.focus();
-    return;
-  }
-  (row ?? document.querySelector("[data-credentials-section='true']"))?.scrollIntoView({ block: "nearest" });
+/** The badge for where a key comes from: a key saved in the Credentials list is said to be there, not on this card. */
+export function keySourceBadge(provider: DecisionProviderId, source: DecisionCredentialSource): MessageKey {
+  return source === "vault" && keyLivesInCredentials(provider) ? "settings.decision.key.source.vault.credentials" : KEY_SOURCE_BADGE[source];
 }
 
 const SELECTED_BY: Record<DecisionProviderView["selectedBy"], MessageKey> = {
@@ -213,6 +208,8 @@ export function DecisionProviderSection({ client }: { client: GatewayClient }): 
   }, [client]);
 
   useEffect(load, [load]);
+  // TypeSafe's key is saved and removed in the Credentials list, so the card reads the node again after either.
+  useEffect(() => client.onCredentialsChange(load), [client, load]);
 
   const settle = (slot: DecisionOutcomeSlot, outcome: DecisionOutcome): void =>
     setOutcomes((current) => ({ ...current, [slot]: outcome }));
@@ -590,6 +587,7 @@ function DecisionKeyCard({
   const busy = outcome?.status === "pending";
   const inCredentials = keyLivesInCredentials(provider);
   const note = inCredentials && source === "environment" ? "settings.decision.key.note.environment.credentials" : KEY_SOURCE_NOTE[source];
+  const [credentialsMissing, setCredentialsMissing] = useState(false);
   return (
     <li
       className="cc-list-item cc-command-row"
@@ -603,7 +601,7 @@ function DecisionKeyCard({
           <span className="cc-list-subtitle">{fillMessage(t(note), { variable: KEY_VARIABLE[provider] })}</span>
         </div>
         <span className="cc-badge" data-tone={source === "none" ? undefined : "ok"}>
-          {t(KEY_SOURCE_BADGE[source])}
+          {t(keySourceBadge(provider, source))}
         </span>
       </div>
       {inCredentials ? (
@@ -613,10 +611,15 @@ function DecisionKeyCard({
             type="button"
             className="cc-action"
             data-decision-key-go-to-credentials={provider}
-            onClick={() => focusCredentialRow(DECISION_CREDENTIAL_NAMES[provider])}
+            onClick={() => setCredentialsMissing(focusCredential(DECISION_CREDENTIAL_NAMES[provider]) === "none")}
           >
             {t("settings.decision.key.goToCredentials")}
           </button>
+          {credentialsMissing ? (
+            <p className="cc-panel-note" role="alert" data-decision-credentials-missing={provider}>
+              {t("settings.decision.key.credentialsMissing")}
+            </p>
+          ) : null}
         </div>
       ) : (
         <DecisionKeyForm

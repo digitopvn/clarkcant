@@ -1028,6 +1028,7 @@ export class GatewayClient {
   readonly #fetch: typeof fetch;
   readonly #packageListeners = new Set<() => void>();
   readonly #modelListeners = new Set<() => void>();
+  readonly #credentialListeners = new Set<() => void>();
 
   readonly #appVersion: string | undefined;
   /** The node's version as last asked: a lookup in flight, or one that answered. A failed lookup is never kept. */
@@ -1721,7 +1722,27 @@ export class GatewayClient {
    * length, and says not-found rather than success when there was nothing to forget.
    */
   async deleteCredential(name: string): Promise<{ ok: boolean; names: string[] }> {
-    return this.#call("DELETE", `/credentials/${encodeURIComponent(name)}`);
+    return this.#changingCredentials(this.#call<{ ok: boolean; names: string[] }>("DELETE", `/credentials/${encodeURIComponent(name)}`));
+  }
+
+  /**
+   * Called after this page saves or removes a credential, with no name and never a value.
+   *
+   * A surface that reports a key's state from elsewhere, such as the decision provider's TypeSafe card, reads its view
+   * again then instead of showing what it read before the change. Answers the function that stops listening.
+   */
+  onCredentialsChange(listener: () => void): () => void {
+    this.#credentialListeners.add(listener);
+    return () => {
+      this.#credentialListeners.delete(listener);
+    };
+  }
+
+  #changingCredentials<T>(call: Promise<T>): Promise<T> {
+    return call.then((result) => {
+      for (const listener of this.#credentialListeners) listener();
+      return result;
+    });
   }
 
   /** The providers pi can sign in to, and which are signed in. Never a credential. */
@@ -2720,6 +2741,12 @@ export class GatewayClient {
    * on this side of the wire.
    */
   async putCredential(input: {
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }): Promise<{ names: string[] }> {
+    return this.#changingCredentials(this.#storeCredential(input));
+  }
+
+  async #storeCredential(input: {
     fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
   }): Promise<{ names: string[] }> {
     const response = await this.#fetch(`${this.#baseUrl}/credentials`, {
