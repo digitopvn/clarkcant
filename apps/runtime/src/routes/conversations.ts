@@ -188,6 +188,8 @@ export type ConversationServices = Pick<
   | "providerAuth"
   | "currentModel"
   | "feedbackGithub"
+  | "model"
+  | "modelCatalogue"
 >;
 
 /** What the conversation routes need. */

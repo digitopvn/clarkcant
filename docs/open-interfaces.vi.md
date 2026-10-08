@@ -79,14 +79,16 @@ khác không được gửi event nào, và lần thực hiện bị từ chối
 `/messages` thường, MCP, relay và `clarkcant api`.
 
 `request` của event là `{ v: 1, performId, instanceId, actionBindingId, action, input }`. Trang chuyển nó cho frame
-đang được mount và trả lời bằng `POST /app-intents/widget-perform/{performId}` với một trong các dạng:
+đang được mount và trả lời bằng `POST /app-intents/widget-perform/{performId}` với một trong các dạng dưới đây. Khi
+widget đang mở trong cửa sổ desktop riêng, host desktop chuyển lần perform tới cửa sổ đó và tự gửi câu trả lời này, với
+cùng nội dung:
 
 - `{ status: "done", output? }`;
 - `{ status: "refused", by: "page" | "widget", code, message }`;
 - `{ status: "no-answer", message }`.
 
 `by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `FRAME_DETACHED` (widget đang
-mở trong cửa sổ desktop riêng), `SURFACE_GONE`, `PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
+mở trong cửa sổ desktop riêng và host desktop cũ hơn cơ chế chuyển lần perform tới đó), `SURFACE_GONE`, `PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
 trả lời theo `performId` của nó. Lời từ chối của widget tới Clark dưới dạng `WIDGET_REFUSED`, với mã của widget trong
 `detail.widgetCode` và lý do của chính widget, khi widget có nêu, trong `detail.widgetMessage`. Cả hai là lời của
 widget, không phải của host: bề mặt nào hiển thị hoặc đọc chúng lên đều trích dẫn chúng như lời của widget.
@@ -539,6 +541,21 @@ không chọn được sẽ nói lý do trong
 `disabledReason`. Dịch vụ được gọi bằng id mà gói của nó đặt và
 chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao giờ kèm thứ nó được khởi động cùng hay lý do nó lỗi;
 `serviceKey` của nó còn gắn với thế hệ gói đang chạy nó, nên một bản cập nhật làm tham chiếu cũ hết hiệu lực.
+
+`/model` (và `/model <từ khoá>`, là thứ bộ chọn tìm trước tiên) trả lời bằng một `command-card` có `picker` là
+`{ "kind": "model" }` và `rows` rỗng. Bản thân thẻ không đóng băng danh sách nào: client vẽ bộ chọn từ `GET /model`
+(danh mục model và model đang dùng) và `GET /providers/auth` (provider nào đã đăng nhập), có ô tìm kiếm, bộ lọc theo
+provider và dấu đánh dấu model đang dùng. Mở thẻ không thay đổi gì. Một model chỉ được áp dụng khi người dùng xác nhận,
+qua `POST /model` — cùng đường kiểm tra theo danh mục mà phần Cài đặt dùng — và nó trả lời từ tin nhắn tiếp theo
+(`applies: "next-session"`), hoặc từ lần khởi động node sau với node chưa chạy model nào (`"next-start"`). Model của
+provider chưa đăng nhập vẫn được hiện nhưng không áp dụng được cho tới khi provider đó đăng nhập: chính `POST /model`
+từ chối model đó bằng `409 CAPABILITY_NOT_AUTHENTICATED`, nên API và `clarkcant api` gặp cùng quy tắc với bộ chọn (provider
+không có trong danh sách đăng nhập thì không cần đăng nhập, và khi không đọc được danh sách thì chỉ kiểm tra theo danh
+mục). Khi một lần đăng nhập
+trên thẻ `/login` (hoặc trong Cài đặt → AI & Định tuyến) hoàn tất, thẻ nêu tên provider, đọc lại cả hai danh sách thay vì cho rằng đăng nhập là đã có model,
+rồi đề nghị chọn model của provider đó ngay trong cùng bộ chọn, hoặc giữ model đang dùng; provider chưa hiện là đã đăng
+nhập, hoặc không có model nào, được nói rõ kèm cách kiểm tra lại. Bản ghi của thẻ — trong bản ghi hội thoại, trong kết
+quả tìm kiếm — không vẽ bộ chọn.
 
 Các route hộp thư gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi: `GET /inbox`
 (những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn, các loại đang tắt báo và các phiên bản đã bỏ

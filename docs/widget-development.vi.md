@@ -2225,8 +2225,12 @@ có handler bị từ chối với `ACTION_NOT_OFFERED`. Output mang token bị 
 - bên gọi đang chạy lượt không tới được frame (CLI, một relay hoặc một trang cũ hơn);
 - frame chưa được mount.
 
-Widget đang mở trong cửa sổ desktop riêng thì bị từ chối với `FRAME_DETACHED`: hãy gắn lại để Clark thao tác được.
-Không có gì được gửi tới frame nào.
+Widget đang mở trong cửa sổ desktop riêng thì được hỏi ngay tại đó: trang giao lần perform cho host desktop, host chuyển
+nó tới cửa sổ đó và báo lại câu trả lời (xem [Vòng đời pin / detach](#11-pin--detach-lifecycle)). Nếu host từ chối
+nhận thì không có gì được gửi tới frame nào. Trang trả lời bằng mã của host khi đó là một mã của chính trang
+(`PERFORM_IN_PROGRESS`, `PERFORM_BUSY`, `PERFORM_UNREADABLE`, `FRAME_NOT_MOUNTED`), và bằng `FRAME_NOT_MOUNTED` với mọi
+lời từ chối khác. Ứng dụng desktop có host cũ hơn cơ chế này trả lời `FRAME_DETACHED`: hãy gắn widget lại để Clark
+thao tác được.
 
 Trang mà hội thoại đã đổi trước khi kịp hỏi thì trả `SURFACE_GONE`. Trang không đọc được sự kiện thì trả
 `PERFORM_UNREADABLE`, hoặc `PERFORM_VERSION_UNSUPPORTED` với phiên bản khác. Không có gì được xếp hàng để làm sau và
@@ -2353,16 +2357,31 @@ node vẫn đang chạy nó. Nút `agent` chạy một lượt của mô hình, 
 vượt quá thời gian chờ. Nếu một lần bấm hết giờ, widget được báo rằng yêu cầu đã được gửi nhưng chưa rõ đã có hiệu lực hay chưa (`uncertain`), không bao giờ báo là
 bị từ chối. Trạng thái bản dựng của phiên phát triển widget được hiện trong cửa sổ, không kèm đường dẫn thư mục, kể cả
 bên trong thông báo lỗi dựng: thư mục được thay bằng `.`, nên một tệp bên trong nó được đọc theo đường dẫn tương đối
-với package. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai, và các lần perform của
-Clark trên widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại.
+với package. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai.
 
 Relay tệp, job và token có các giới hạn riêng, giống hệt một frame trong hội thoại, và một lần chọn hay lưu tệp chỉ giữ
 một hộp thoại mở tại một thời điểm. Widget nhận cùng câu trả lời và cùng mã từ chối ở cả hai cửa sổ.
 
-Cửa sổ tách rời chưa có: các hành động Clark thực hiện (`offeredActions`). Frame được báo là chúng không được cung cấp,
-và chúng chạy lại khi widget được gắn lại. Widget mà package đã mất (`frame: null`) không có nút
-detach; nó hiện văn bản thay thế trong hội thoại. Phần việc còn lại được theo dõi ở
-[#577](https://github.com/digitopvn/clarkcant/issues/577) và [#617](https://github.com/digitopvn/clarkcant/issues/617).
+Các lần perform của Clark (`offeredActions`) cũng tới được cửa sổ tách rời
+([#617](https://github.com/digitopvn/clarkcant/issues/617)). Trang của hội thoại giao lần perform cho host
+(`desktop:forwardWidgetPerform`), và chỉ cho đúng instance mà cửa sổ đang hiện. Host đẩy cho cửa sổ id, action và input
+của lần perform (`detached:perform`), cửa sổ hỏi frame của nó giống hệt cách hội thoại sẽ hỏi, rồi trả lời qua
+`detached:perform.report` kèm id và báo cáo của widget. Host gửi báo cáo đó lên node
+(`POST /app-intents/widget-perform/:performId`) bằng token của chính nó, nên cửa sổ không bao giờ giữ token. Host từ
+chối:
+
+- báo cáo cho một lần perform nó chưa từng đẩy, hoặc đã báo rồi (`PERFORM_NOT_EXPECTED`);
+- báo cáo lớn hơn 8 KiB JSON dạng UTF-8, hoặc có bất kỳ hình dạng nào khác (`RELAY_REFUSED`);
+- một lần perform đang chờ (`PERFORM_IN_PROGRESS`), và lần thứ năm khi đã có bốn lần đang chờ (`PERFORM_BUSY`).
+
+Cửa sổ có 7 giây để trả lời, lâu hơn thời gian frame tự chờ widget và ngắn hơn 8 giây của node. Lần perform mà cửa sổ
+không trả lời kịp, hoặc vẫn đang chờ khi cửa sổ đóng, được báo là không có trả lời. Lần perform được đẩy tới trước khi
+trang của cửa sổ bắt đầu lắng nghe sẽ được giữ lại cho tới lúc đó, trong phạm vi 7 giây ấy, rồi được trả lời, là chưa
+mount nếu frame chưa mở. Hợp đồng cho phép `output` dài 4.000 ký tự, mà với tiếng Việt hay emoji thì có thể mã hóa thành
+hơn 8 KiB, nên cửa sổ cắt `output` dài giữa các ký tự trọn vẹn cho tới khi báo cáo vừa. Nếu host vẫn từ chối báo cáo,
+cửa sổ lập tức báo rằng câu trả lời của widget không chuyển đi được, là không có trả lời. Ứng dụng desktop có host cũ hơn
+cơ chế này thì trả lời `FRAME_DETACHED`. Widget mà package đã mất (`frame: null`) không có nút detach; nó hiện văn bản thay
+thế trong hội thoại.
 
 Audio/call/player không được duplicate playback khi chuyển surface.
 
@@ -3547,7 +3566,7 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có. Một widget chạy trong khung
   riêng được tách thật do smoke test desktop (`pnpm --filter @clarkcant/app-desktop smoke`) điều khiển: nó mount widget
   từ lần đọc của host và chuyển tiếp một lần ghi state, một lần publish, một lần bấm và một lần đọc phiên phát triển tới
-  một node giả lập.
+  một node giả lập, đồng thời chuyển lần perform của Clark tới cửa sổ và gửi báo cáo của nó.
 - Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
 
 ---

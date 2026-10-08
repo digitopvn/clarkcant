@@ -16,6 +16,8 @@ import { z } from "zod";
 
 import appearanceSchema from "./appearance-schema.json" with { type: "json" };
 import semanticProposalSchema from "./semantic-proposal-schema.json" with { type: "json" };
+import performReportSchema from "./widget-perform-report-schema.json" with { type: "json" };
+import performRequestSchema from "./widget-perform-request-schema.json" with { type: "json" };
 import { DETACHED_WINDOW_CHANNELS, createWindowOptions } from "./security.mjs";
 
 const appearanceContract = z.fromJSONSchema(appearanceSchema);
@@ -1023,5 +1025,148 @@ export function detachedWindowOptions(preloadPath, parentBounds, workArea) {
     autoHideMenuBar: true,
     fullscreenable: false,
     show: false,
+  };
+}
+
+/*
+ * Clark's performs on the detached instance.
+ *
+ * The node decides a perform — gate, input schema, policy, ledger — before any window sees it, and sends it to the
+ * conversation's page as it always does. That page hands it here (`desktop:forwardWidgetPerform`) when the instance is
+ * open in this window; the host pushes it to the window (`detached:perform`), whose frame answers, and the window's
+ * report (`detached:perform.report`) is posted by the host to `POST /app-intents/widget-perform/:performId`. No window
+ * decides anything: the conversation cannot push to the detached window itself, the detached window cannot forward a
+ * perform, and a report is taken only for an id the host pushed and is still waiting on.
+ */
+
+/**
+ * The bounds on performs in the detached window.
+ *
+ * At most four wait at once, as many as a frame's own session takes (`FRAME_PERFORMS_IN_FLIGHT`). A request is the
+ * node's own, bounded as a frame message is (`FRAME_MESSAGE_MAX_BYTES`). A report is at most 8 KiB of UTF-8 JSON
+ * (`DETACHED_PERFORM_REPORT_MAX_BYTES`): ample for ASCII, but a contract-valid `output` of 4,000 Vietnamese, emoji or
+ * control characters encodes to more, so the window cuts the output to fit before it reports. The host waits `answerWithinMs` for the window's report: longer than the frame's
+ * own wait for its widget (`FRAME_PERFORM_TIMEOUT_MS`), so a widget that does not answer is reported as such by the
+ * window, and shorter than the node's (`WIDGET_PERFORM_REPORT_WITHIN_MS`), so the host's "no answer" reaches the node
+ * before it gives up. `detached-window.spec.ts` holds both orderings and each copied bound to its source.
+ */
+export const DETACHED_PERFORM_LIMITS = Object.freeze({
+  inFlight: 4,
+  requestMaxBytes: 64 * 1024,
+  reportMaxBytes: 8 * 1024,
+  answerWithinMs: 7_000,
+  reportTimeoutMs: 5_000,
+});
+
+const performRequestContract = z.fromJSONSchema(performRequestSchema);
+const performReportContract = z.fromJSONSchema(performReportSchema);
+// The id as the request names it, so a report cannot name an id the node would never have sent.
+const performIdContract = z.fromJSONSchema(performRequestSchema.properties.performId);
+
+/**
+ * A perform the conversation hands over: the `widget-perform` request exactly as the node words it (`v`, `performId`,
+ * `instanceId`, `actionBindingId`, `action`, `input`) and nothing else.
+ *
+ * @returns {{ ok: true, request: { performId: string, instanceId: string, action: string, input: Record<string, unknown> } } | { ok: false, reason: string }}
+ */
+export function reviewForwardedPerform(payload) {
+  const bytes = jsonBytes(payload);
+  if (bytes === undefined || bytes > DETACHED_PERFORM_LIMITS.requestMaxBytes) {
+    return { ok: false, reason: `a perform is limited to ${String(DETACHED_PERFORM_LIMITS.requestMaxBytes)} bytes` };
+  }
+  const checked = performRequestContract.safeParse(payload);
+  if (!checked.success) return { ok: false, reason: "the perform does not match the widget-perform contract" };
+  const { performId, instanceId, action, input } = checked.data;
+  return { ok: true, request: { performId, instanceId, action, input } };
+}
+
+/**
+ * The detached window's report on a perform: `{ performId, report }`, the report in the contract's shape, at most 8 KiB.
+ *
+ * @returns {{ ok: true, performId: string, report: Record<string, unknown> } | { ok: false, reason: string }}
+ */
+export function reviewPerformReport(payload) {
+  const fields = reviewRelayFields(payload, ["performId", "report"], "a perform report");
+  if (!fields.ok) return fields;
+  const bytes = jsonBytes(payload);
+  if (bytes === undefined || bytes > DETACHED_PERFORM_LIMITS.reportMaxBytes) {
+    return { ok: false, reason: `a perform report is limited to ${String(DETACHED_PERFORM_LIMITS.reportMaxBytes)} bytes` };
+  }
+  if (!performIdContract.safeParse(payload.performId).success) {
+    return { ok: false, reason: "a perform report has to name the perform it answers" };
+  }
+  const checked = performReportContract.safeParse(payload.report);
+  if (!checked.success) return { ok: false, reason: "the report does not match the widget-perform contract" };
+  return { ok: true, performId: payload.performId, report: checked.data };
+}
+
+/**
+ * The performs pushed to one detached window and not yet answered.
+ *
+ * - `forward(request)` pushes a reviewed perform to the window with `send` and starts its wait. It is refused, with
+ *   nothing pushed, as `PERFORM_IN_PROGRESS` for an id already waiting, as `PERFORM_BUSY` with four waiting, and as
+ *   `FRAME_NOT_MOUNTED` when the window cannot be sent anything.
+ * - `settle(raw)` takes the window's report for an id it is waiting on, and hands it to `report` once. An id it is not
+ *   waiting on — never pushed, answered already, or given up on — is refused.
+ * - A perform not answered within `answerWithinMs` is reported as no answer: the frame may have done it.
+ * - `abandon()`, when the window closes, reports every perform still waiting as no answer.
+ *
+ * `report(performId, report)` posts to the node; its failure is the node's to time out, and nothing here retries it.
+ *
+ * @param {{ send: (push: { performId: string, action: string, input: Record<string, unknown> }) => boolean, report: (performId: string, report: Record<string, unknown>) => Promise<unknown>, limits?: typeof DETACHED_PERFORM_LIMITS, timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout } }} input
+ */
+export function detachedPerforms(input) {
+  const limits = input.limits ?? DETACHED_PERFORM_LIMITS;
+  const timers = input.timers ?? globalThis;
+  /** @type {Map<string, ReturnType<typeof setTimeout>>} */
+  const pending = new Map();
+  const finish = (performId, report) => {
+    const timer = pending.get(performId);
+    if (timer === undefined) return false;
+    timers.clearTimeout(timer);
+    pending.delete(performId);
+    void Promise.resolve()
+      .then(() => input.report(performId, report))
+      .catch(() => undefined);
+    return true;
+  };
+  const refuse = (code, refused) => ({ ok: false, code, refused });
+  return {
+    forward(request) {
+      if (pending.has(request.performId)) return refuse("PERFORM_IN_PROGRESS", "the widget's window is already performing this");
+      if (pending.size >= limits.inFlight) {
+        return refuse("PERFORM_BUSY", `the widget's window is answering ${String(limits.inFlight)} performs already`);
+      }
+      const timer = timers.setTimeout(
+        () => finish(request.performId, { status: "no-answer", message: "the widget's window did not answer in time" }),
+        limits.answerWithinMs,
+      );
+      pending.set(request.performId, timer);
+      let sent;
+      try {
+        sent = input.send({ performId: request.performId, action: request.action, input: request.input });
+      } catch {
+        sent = false;
+      }
+      if (!sent) {
+        timers.clearTimeout(timer);
+        pending.delete(request.performId);
+        return refuse("FRAME_NOT_MOUNTED", "the widget's window closed before it could be asked");
+      }
+      return { ok: true };
+    },
+    settle(raw) {
+      const reviewed = reviewPerformReport(raw);
+      if (!reviewed.ok) return { ok: false, refused: reviewed.reason, code: "RELAY_REFUSED", details: {} };
+      if (!finish(reviewed.performId, reviewed.report)) {
+        return { ok: false, refused: "the host is not waiting on a report for that perform", code: "PERFORM_NOT_EXPECTED", details: {} };
+      }
+      return { ok: true };
+    },
+    abandon() {
+      for (const performId of [...pending.keys()]) {
+        finish(performId, { status: "no-answer", message: "the widget's window closed before the widget answered" });
+      }
+    },
   };
 }

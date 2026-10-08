@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactElement } from "react";
 
 import { SearchSelect } from "../search-select.tsx";
-import type { GatewayClient } from "../api.ts";
+import { fillMessage } from "../i18n/fill-message.ts";
+import { GatewayError, type GatewayClient } from "../api.ts";
 import { PERSONAL_INSTRUCTIONS_MAX_CHARS, THINKING_LEVELS, type ModelPool, type ModelRole } from "@clarkcant/contracts";
 import type { MessageKey } from "../i18n/messages.ts";
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
@@ -120,11 +121,18 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
         setModelStatus(
           `${t("settings.ai.model.status.saved")} ${provider}/${id}. ` +
             (answer.applies === "next-session"
-              ? t("settings.ai.model.status.appliesNextSession")
+              ? t("settings.ai.model.status.appliesNextMessage")
               : t("settings.ai.model.status.appliesNextRestart")),
         ),
       )
-      .catch(() => setModelStatus(t("settings.ai.model.status.saveFailed")));
+      // A refusal the node explains, such as a signed-out provider, is shown in its words; anything else stays generic.
+      .catch((error: unknown) =>
+        setModelStatus(
+          error instanceof GatewayError && error.status === 409
+            ? fillMessage(t("settings.ai.model.status.refused"), { reason: error.reason })
+            : t("settings.ai.model.status.saveFailed"),
+        ),
+      );
   };
 
   return (

@@ -19,6 +19,7 @@ import {
   offersBrowserTokens,
   relayRefusalError,
 } from "./frame-host-callbacks.ts";
+import { answerForwardedPerforms } from "./frame-performs.ts";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
 import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
 import { WidgetDevStatus } from "./widget-dev-status.tsx";
@@ -64,11 +65,13 @@ export interface DetachedBridge {
   jobs?: DetachedFrameBridge["jobs"];
   tokens?: DetachedFrameBridge["tokens"];
   onPackagesChanged?: DetachedFrameBridge["onPackagesChanged"];
+  onPerform?: DetachedFrameBridge["onPerform"];
+  reportPerform?: DetachedFrameBridge["reportPerform"];
 }
 
 /** The bridge, when it carries every relay a frame needs. */
 function frameBridge(bridge: DetachedBridge): DetachedFrameBridge | undefined {
-  const { frameRead, saveState, publishSemantic, devSession, artifacts, jobs, tokens, onPackagesChanged } = bridge;
+  const { frameRead, saveState, publishSemantic, devSession, artifacts, jobs, tokens, onPackagesChanged, onPerform, reportPerform } = bridge;
   if (
     frameRead === undefined ||
     saveState === undefined ||
@@ -89,6 +92,10 @@ function frameBridge(bridge: DetachedBridge): DetachedFrameBridge | undefined {
     jobs,
     tokens,
     ...(onPackagesChanged === undefined ? {} : { onPackagesChanged: (listener: () => void) => onPackagesChanged(listener) }),
+    // Both or neither: a window told of performs it cannot report would leave the node waiting on each one.
+    ...(onPerform === undefined || reportPerform === undefined
+      ? {}
+      : { onPerform: (listener: (push: unknown) => void) => onPerform(listener), reportPerform: (answer) => reportPerform(answer) }),
     intent: async (input) => {
       const answer = await bridge.intent(input);
       return answer.ok ? { ok: true, result: answer.result } : { ok: false, refused: answer.refused, code: answer.code, details: answer.details };
@@ -145,6 +152,14 @@ function DetachedFrame({ bridge, instanceRef, title }: { bridge: DetachedBridge;
 
   // A package installed, updated or removed elsewhere: re-read, so a new build loads and a removed one says so.
   useEffect(() => relays?.onPackagesChanged?.(() => void load()), [relays, load]);
+
+  // Clark's performs for this widget, pushed by the host: asked of the frame this window mounts, and reported back.
+  useEffect(() => {
+    const onPerform = relays?.onPerform;
+    const reportPerform = relays?.reportPerform;
+    if (onPerform === undefined || reportPerform === undefined) return undefined;
+    return answerForwardedPerforms({ instanceId: instanceRef, onPerform, reportPerform });
+  }, [relays, instanceRef]);
 
   const watchesServices = live?.bindings.some((entry) => entry.available !== undefined) ?? false;
   useEffect(() => {
@@ -271,7 +286,8 @@ export function DetachedFrameView({
 /**
  * The frame itself, with every broker the conversation's frame is given, each through the host's relays: files, jobs,
  * browser tokens. A pick or a save opens the OS dialog over this window; the panel asking the person first is drawn
- * here, beside the frame, as the conversation draws it. Clark's performs are not offered in this window yet.
+ * here, beside the frame, as the conversation draws it. Clark's performs reach this frame too: the host pushes each one
+ * to the window (`answerForwardedPerforms`), which asks the frame mounted here, by instance, as the conversation would.
  */
 function DetachedWidgetFrame({
   relays,
@@ -305,6 +321,8 @@ function DetachedWidgetFrame({
         url={frame.url}
         urlExpiresAt={frame.urlExpiresAt}
         renewUrl={renewUrl}
+        // Without the actions it offers, the session refuses every perform the host forwards here.
+        {...(frame.offeredActions === undefined ? {} : { offeredActions: frame.offeredActions })}
         title={title}
         props={live.props}
         state={live.state}

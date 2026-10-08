@@ -20,6 +20,7 @@ import { MESSAGES_DECISION_PROVIDER_EN, MESSAGES_DECISION_PROVIDER_VI } from "./
 import { MESSAGES_INBOX_EN, MESSAGES_INBOX_VI } from "./messages-inbox.ts";
 import { MESSAGES_INTENTS_EN, MESSAGES_INTENTS_VI } from "./messages-intents.ts";
 import { MESSAGES_PROVIDERS_EN, MESSAGES_PROVIDERS_VI } from "./messages-providers.ts";
+import { MESSAGES_MODEL_PICKER_EN, MESSAGES_MODEL_PICKER_VI } from "./messages-model-picker.ts";
 import { MESSAGES_SETTINGS_VI, MESSAGES_SETTINGS_EN } from "./messages-settings.ts";
 import { MESSAGES_SHELL_EN, MESSAGES_SHELL_VI } from "./messages-shell.ts";
 import { MESSAGES_SURFACE_STATUS_EN, MESSAGES_SURFACE_STATUS_VI } from "./messages-surface-status.ts";
@@ -33,6 +34,7 @@ export const MESSAGES_VI = {
   ...MESSAGES_INBOX_VI,
   ...MESSAGES_INTENTS_VI,
   ...MESSAGES_PROVIDERS_VI,
+  ...MESSAGES_MODEL_PICKER_VI,
   ...MESSAGES_SETTINGS_VI,
   ...MESSAGES_SHELL_VI,
   ...MESSAGES_TIMELINE_VI,
@@ -80,6 +82,7 @@ export const MESSAGES_EN = {
   ...MESSAGES_INBOX_EN,
   ...MESSAGES_INTENTS_EN,
   ...MESSAGES_PROVIDERS_EN,
+  ...MESSAGES_MODEL_PICKER_EN,
   ...MESSAGES_SETTINGS_EN,
   ...MESSAGES_SHELL_EN,
   ...MESSAGES_TIMELINE_EN,

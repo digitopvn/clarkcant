@@ -2228,8 +2228,12 @@ uncertain.
 - the caller running the turn cannot reach a frame (the CLI, a relay or an older page);
 - the frame is not mounted.
 
-A widget that is open in its own desktop window is refused with `FRAME_DETACHED`: reattach it to let Clark act on it.
-Nothing is sent to either frame.
+A widget that is open in its own desktop window is asked there: the page hands the perform to the desktop host, which
+forwards it to that window and reports its answer (see [Pin / detach lifecycle](#11-pin--detach-lifecycle)). If the host refuses
+the hand-off, nothing is sent to either frame. The page answers with the host's code when it is one of the page's own
+(`PERFORM_IN_PROGRESS`, `PERFORM_BUSY`, `PERFORM_UNREADABLE`, `FRAME_NOT_MOUNTED`), and with `FRAME_NOT_MOUNTED` for any
+other refusal. A desktop app whose host predates this hand-off answers `FRAME_DETACHED`: reattach the widget to let
+Clark act on it.
 
 A page whose conversation changed before it could ask answers `SURFACE_GONE`. A page that cannot read the event
 answers `PERFORM_UNREADABLE`, or `PERFORM_VERSION_UNSUPPORTED` for another version. Nothing is queued for later and
@@ -2356,16 +2360,30 @@ does not give up on such a press while the node is still running it. An `agent` 
 such deadline, so a long turn can still outlast the wait. If a press times out, the widget is told it was sent and
 whether it took effect is unknown (`uncertain`), never that it was refused. A widget dev session's build status is shown in the window without the folder
 path, inside build messages too: the folder is replaced by `.`, so a file under it reads relative to the package. While
-the widget is detached, the conversation shows a note instead of a second frame, and Clark's performs on it are refused
-with `FRAME_DETACHED` until it is reattached.
+the widget is detached, the conversation shows a note instead of a second frame.
 
 File, job and token relays have their own buckets, the same as a frame in the conversation, and a pick or a save holds
 one dialog open at a time. A widget gets the same answers and the same refusal codes in both windows.
 
-Not yet in a detached window: the actions Clark performs (`offeredActions`). The frame is told they are not offered,
-and they work again once the widget is reattached. A widget whose package is gone (`frame: null`)
-is not offered Detach; it shows its text alternative in the conversation. The rest of the work is tracked in
-[#577](https://github.com/digitopvn/clarkcant/issues/577) and [#617](https://github.com/digitopvn/clarkcant/issues/617).
+Clark's performs (`offeredActions`) reach a detached window too
+([#617](https://github.com/digitopvn/clarkcant/issues/617)). The conversation's page hands the perform to the host
+(`desktop:forwardWidgetPerform`), and only for the instance the window shows. The host pushes the window the perform's
+id, action and input (`detached:perform`), the window asks its frame the same way the conversation would, and it
+answers through `detached:perform.report` with the id and the widget's report. The host posts that report to the node
+(`POST /app-intents/widget-perform/:performId`) with its own token, so the window never holds one. The host refuses:
+
+- a report for a perform it never pushed, or one it already reported (`PERFORM_NOT_EXPECTED`);
+- a report larger than 8 KiB of UTF-8 JSON, or in any other shape (`RELAY_REFUSED`);
+- a perform already waiting (`PERFORM_IN_PROGRESS`), and a fifth while four wait (`PERFORM_BUSY`).
+
+The window has 7 seconds to answer, longer than the frame's own wait for the widget and shorter than the node's 8
+seconds. A perform it does not answer in time, or one still waiting when the window closes, is reported as not
+answered. A perform pushed before the window's page listens is held until it does, within those 7 seconds, and then
+answered, as not mounted if the frame is not open yet. The contract allows an `output` of 4,000 characters, which can
+encode to more than 8 KiB in Vietnamese or emoji, so the window cuts a long `output` between whole characters until
+its report fits. If the host still refuses a report, the window at once reports that the widget's answer could not be
+passed on, as not answered. A desktop app whose host predates this answers `FRAME_DETACHED` instead. A widget whose package is gone
+(`frame: null`) is not offered Detach; it shows its text alternative in the conversation.
 
 Audio/call/player must not duplicate playback when moving between surfaces.
 
@@ -3560,7 +3578,7 @@ This section states which parts of the document already have code, so that nobod
   detached window to drive. The ownership half (`detached` on the live-owner claim) is implemented. A widget in its
   own frame detached for real is driven by the desktop smoke test (`pnpm --filter @clarkcant/app-desktop smoke`),
   which mounts it from the host's read and relays a state write, a publish, a press and a dev-session read to a
-  stand-in node.
+  stand-in node, and forwards Clark's perform to the window and posts its report.
 - Runtime for MCP Apps: the isolated-app path is implemented; MCP Apps have not yet been proven on that same path.
 
 ---

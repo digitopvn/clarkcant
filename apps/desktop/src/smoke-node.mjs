@@ -80,7 +80,9 @@ export async function startSmokeNode() {
       // The file, job and token routes of a widget, and the one unbound route an export reaches.
       const brokerRoute = /^\/conversations\/[^/]+\/widgets\/[^/]+\/(artifacts|jobs|browser-tokens)(\/[^?]*)?(\?.*)?$/.exec(path);
       const exportRoute = /^\/artifacts\/([^/]+)\/export$/.exec(path);
-      if (widgetRoute !== null || devRoute || brokerRoute !== null || exportRoute !== null) {
+      // Where a page — here, the host for a detached window — reports what a frame answered to Clark's perform.
+      const performRoute = /^\/app-intents\/widget-perform\/[^/]+$/.test(path);
+      if (widgetRoute !== null || devRoute || brokerRoute !== null || exportRoute !== null || performRoute) {
         const header = (name) => {
           const value = request.headers[name];
           return Array.isArray(value) ? value.join(",") : value;
@@ -130,6 +132,10 @@ export async function startSmokeNode() {
         stateRevision += 1;
         state = { ...state, ...(typeof body["patch"] === "object" && body["patch"] !== null ? body["patch"] : {}) };
         json(200, { stateRevision, state });
+        return;
+      }
+      if (performRoute && request.method === "POST") {
+        json(200, { settled: true });
         return;
       }
       if (widgetRoute?.[1] === "semantic" && request.method === "POST") {

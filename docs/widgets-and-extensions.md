@@ -321,6 +321,10 @@ lifecycle.onMount / onSuspend / onResume / onDispose
 
 `requestPin` is a proposal unless it originated directly from a clear user gesture. The SDK has no `readAllSecrets`, `shell`, `queryCoreDb`, `disableCSP`, `approve`, `installAnything` or `registerSidebar`.
 
+An offered action works the same way when the widget is open in its own desktop window: the desktop host forwards
+Clark's perform to that window and reports the answer, so the widget's handler needs no change
+([#617](https://github.com/digitopvn/clarkcant/issues/617)).
+
 Widgets receive the checked public appearance through `appearance.current()` / `appearance.subscribe(handler)`
 (`appearance@1`, bridge v2). Built-ins and declarative Mini Apps use the same semantic tokens; isolated frames follow
 changes without remounting or semantic writes. Detached compositions receive the host's exact resolved snapshot through

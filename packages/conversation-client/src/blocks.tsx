@@ -38,6 +38,7 @@ import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { useSurfaceViewState } from "./surface-view-state.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
+import type { ModelPickerPort } from "./model-picker.tsx";
 import { ChangelogCardBlock } from "./changelog-card.tsx";
 import { FeedbackCardBlock } from "./feedback-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
@@ -550,7 +551,11 @@ export interface PackageInstallState {
 /** How a question the agent asked stopped waiting, as the node recorded it in the transcript. */
 export type QuestionOutcome = "answered" | "cancelled" | "expired" | "asked-again";
 
-export interface BlockActions {
+/**
+ * Also the model picker's reads and choices (`ModelPickerPort`): the picker a `/model` card draws, and a `/login` card
+ * offers after a sign-in. Absent in a snapshot, where no picker is drawn.
+ */
+export interface BlockActions extends ModelPickerPort {
   onApprovalDecide?: (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => void;
   /**
    * A secret the person typed, on its way to the node and nowhere else.

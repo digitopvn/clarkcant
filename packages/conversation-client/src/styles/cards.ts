@@ -524,6 +524,15 @@ label.cc-list-main { cursor: pointer; }
 .cc-changelog-commit { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-sign-in-code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-body-md); user-select: all; }
 @media (pointer: coarse) { .cc-sign-in .cc-field-input { min-height: 44px; } }
+/* The model picker: search and provider side by side where there is room, stacked on a narrow screen; the list scrolls inside the card. */
+.cc-model-picker-filters { display: flex; flex-wrap: wrap; gap: var(--cc-space-sm); }
+.cc-model-picker-field { display: flex; flex-direction: column; gap: 2px; flex: 1 1 200px; min-width: 0; }
+.cc-model-picker-list { border: 0; margin: 0; padding: 0; min-width: 0; }
+.cc-model-picker-list legend { padding: 0; margin-block-end: var(--cc-space-xs); }
+.cc-model-picker-list .cc-list { max-height: min(50vh, 420px); overflow-y: auto; overscroll-behavior: contain; }
+.cc-model-picker-list .cc-list-item { padding-inline: var(--cc-space-xs); }
+.cc-model-picker-list .cc-badge { flex: none; }
+.cc-after-sign-in .cc-command-actions { margin-inline-start: 0; }
 
 .cc-feedback-form { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-feedback-kind { display: flex; flex-wrap: wrap; gap: var(--cc-space-sm); border: 0; margin: 0; padding: 0; }

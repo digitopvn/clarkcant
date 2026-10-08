@@ -8,6 +8,7 @@ import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { nodeViewRefusalText } from "./node-view-refusal.ts";
 import { useProviderSignIns } from "./use-provider-sign-ins.ts";
+import { useModelPickerPort } from "./use-model-picker-port.ts";
 import type {
   ArtifactOpenState,
   BlockActions,
@@ -493,6 +494,9 @@ export function useBlockActions({
   const [commandAction, setCommandAction] = useState<Record<string, CommandActionState>>({});
   const { signIns, start: startSignIn, answer: answerSignIn, cancel: cancelSignIn, signOut: signOutProvider } = useProviderSignIns(client, setError);
 
+  /** The model picker a `/model` card draws and a sign-in offers next. */
+  const modelPicker = useModelPickerPort(client, t);
+
   /** Rows of a `/develop` card asking for a folder's path in words, and why (`FolderEntryReason`). */
   const [folderEntries, setFolderEntries] = useState<Record<string, FolderEntryReason>>({});
 
@@ -732,8 +736,10 @@ export function useBlockActions({
           const { [key]: _closed, ...rest } = current;
           return rest;
         }),
+      ...modelPicker,
     }),
     [
+      modelPicker,
       answeredFeedbackCards,
       conversationId,
       createFeedback,
