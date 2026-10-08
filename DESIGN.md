@@ -1312,6 +1312,16 @@ Don't show contrast debugging to consumers; put it in the Developer section.
   password field for a key) with loading, failure and done states, and what is typed goes straight to pi and is
   never shown back. A finished sign-in or sign-out reads the provider list and the model catalogue again. A node
   without pi says there is nothing to sign in to here; a list pi could not read says why and offers Try again.
+- Decision provider (shipped): beside Provider sign-in and separate from the conversation model, who answers Clark's
+  small typed decisions. It shows the provider and model in effect, a badge for what chose them (Settings, the
+  environment, or the default), the status — ready, local-only, misconfigured, no key, or off — with the decider's own
+  reason and what to do about it, and the last call since the node started. A segmented control offers Follow
+  environment, TypeSafe Jev, Cloudflare Clef and OpenRouter; Cloudflare adds its model choice and an account-id field,
+  OpenRouter a pinned model-slug field that is saved only once a slug is entered (a router such as `openrouter/auto`
+  is refused with the node's reason). Each provider has a key card that says where its key comes from (saved here, the
+  environment, or none), with a password field, Save/Replace and Remove for a key saved here; a typed key is cleared
+  once stored and never shown back. Every write goes to the node's decision-provider routes and the card redraws from
+  the answer; each change says it applies from the next decision, and nothing asks for a restart.
 - Favorites/recent models.
 - Shortcut order for model cycling.
 - Automatic routing by Jev toggle.

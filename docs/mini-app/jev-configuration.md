@@ -33,7 +33,7 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 | Variable | Default | Meaning |
 |---|---|---|
 | `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev), `cloudflare` (Clef) or `openrouter` (OpenRouter's decisions API). Any other value refuses every decision call rather than falling back to TypeSafe. A choice made in Settings wins over this. |
-| `CLARKCANT_DECISION_MODEL` | *(see meaning)* | Exact model id for the selected provider. With TypeSafe it wins over `CLARKCANT_JEV_MODEL`, and unset leaves that setting in charge. With Cloudflare it is required and must be `clef` or `clef-flash`. With OpenRouter it is required and must be a pinned slug (`vendor/model`, lower case, no `~` alias), such as `cloudflare/clef-flash` or `typesafe/jev-1.13`. |
+| `CLARKCANT_DECISION_MODEL` | *(see meaning)* | Exact model id for the selected provider. With TypeSafe it wins over `CLARKCANT_JEV_MODEL`, and unset leaves that setting in charge. With Cloudflare it is required and must be `clef` or `clef-flash`. With OpenRouter it is required and must be a pinned slug (`vendor/model`, lower case, no `~` alias, and not one of OpenRouter's own routers such as `openrouter/auto`), such as `cloudflare/clef-flash` or `typesafe/jev-1.13`. |
 | `TYPESAFE_API_KEY` | *(none)* | TypeSafe credential. With TypeSafe selected, no key means the selector is disabled. |
 | `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Cloudflare only. 32 hexadecimal characters; anything else refuses every call. An account id chosen in Settings wins over this. |
 | `CLOUDFLARE_API_TOKEN` | *(none)* | Cloudflare only. A token allowed to run Workers AI. A token saved in the decision provider's Cloudflare card wins over this. With Cloudflare selected and no token in either place, the selector is disabled; the TypeSafe key is never used instead. |
@@ -55,7 +55,7 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. The TypeSafe key can also be typed into the settings card. When both hold one,
+referenced from code. The TypeSafe key can also be typed into its card in Settings (the decision provider's TypeSafe card, or the Credentials list, which store the same `typesafe` name). When both hold one,
 the key saved in the card wins, the rule every provider credential follows; the environment's key is
 used when the card holds none. Saving or removing the key in the card takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value.
 
@@ -70,8 +70,15 @@ only its own name: a TypeSafe key is never sent to Cloudflare or OpenRouter, or 
 
 TypeSafe Jev stays the default. There are two ways to choose another provider, and the first wins:
 
-1. **In Settings.** The person picks a provider (and, for Cloudflare and OpenRouter, a model) and saves
-   that provider's key in its own card. The choice is stored as the preference `ai.decisionProvider`,
+1. **In Settings → AI & Routing → Decision provider**, beside Provider sign-in and separate from the
+   conversation model. The section shows the provider and model in effect, a badge saying what chose
+   them (Settings, the environment, or the default), the status with its reason and what to do about
+   it (for example "enter the Cloudflare account id below"), and the last call since the node started.
+   The person picks "Follow environment", TypeSafe Jev, Cloudflare Clef or OpenRouter; Cloudflare offers
+   its two models and an account-id field, and OpenRouter a model-slug field, which is saved only once a
+   slug is entered. Each provider has a key card that says where its key comes from (saved here, the
+   environment, or none) with Save and Remove; a typed key is cleared once saved and never shown again.
+   Every change says it applies from the next decision. The choice is stored as the preference `ai.decisionProvider`,
    so it has a revision and an undo. Choosing "follow the environment" stores `null` and hands the
    choice back to the variables below. The same choice is available over the node's API:
    `PUT /decision-provider` with a body such as
@@ -98,7 +105,7 @@ OPENROUTER_API_KEY=<an OpenRouter key>
 | | TypeSafe Jev | Cloudflare Clef | OpenRouter |
 |---|---|---|---|
 | Receives the request | `https://api.typesafe.ai/v1/systemone`, or `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, built from the two validated values; there is no endpoint override | `https://openrouter.ai/api/alpha/decisions`; there is no endpoint override. OpenRouter forwards the request to the company that serves the chosen model. |
-| Model | `jev-1.13.0` unless overridden | `clef` or `clef-flash`, always named explicitly | A pinned slug such as `cloudflare/clef-flash` or `typesafe/jev-1.13`, always named explicitly; `~` aliases are refused |
+| Model | `jev-1.13.0` unless overridden | `clef` or `clef-flash`, always named explicitly | A pinned slug such as `cloudflare/clef-flash` or `typesafe/jev-1.13`, always named explicitly; `~` aliases and OpenRouter's routers (`openrouter/auto`, anything under `openrouter/`) are refused, because a router never answers as one pinned model |
 | Credential | The key from the settings card, else `TYPESAFE_API_KEY` | The decision provider's Cloudflare card, else `CLOUDFLARE_API_TOKEN` | The decision provider's OpenRouter card, else `OPENROUTER_API_KEY` |
 | Request body | System One: `{state, model, questions}` | The same body | The same body |
 | Response | System One answer | The same answer inside Cloudflare's REST envelope; only `success: true` is unwrapped | The System One answer plus OpenRouter's `id`, `provider` and `usage.cost`, which are dropped. The model comes back as a dated snapshot of the pinned slug (`typesafe/jev-1.13-20260917`), which is accepted; any other model is drift. |
@@ -246,9 +253,9 @@ the release evidence rather than tuned to taste.
 | Condition | Outcome |
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
-| Unknown provider name, a Cloudflare model or account id that is missing or malformed, or an OpenRouter model that is missing, an alias, or not a pinned slug | `unavailable`; no network call, and the reason names the setting. |
+| Unknown provider name, a Cloudflare model or account id that is missing or malformed, or an OpenRouter model that is missing, an alias, a router (`openrouter/auto`), or not a pinned slug | `unavailable`; no network call, and the reason names the setting. |
 | TypeSafe selected with a Cloudflare model id (`clef`, `clef-flash`, or any `@cf/` id) or an OpenRouter slug (anything with a `/`) | `unavailable`; no network call, and the reason says to select the provider that serves it or unset `CLARKCANT_DECISION_MODEL`. |
-| A selection in Settings that is not one of the three shapes, or a key that is empty or over 4096 characters | Refused when it is saved, with the field named and never the value; the configuration in effect does not change. |
+| A selection in Settings that is not one of the three shapes (an OpenRouter router slug included), or a key that is empty or over 4096 characters | Refused when it is saved, with the field named and never the value; the configuration in effect does not change. |
 | A credential left anywhere in the request | `unavailable`; no network call, and the reason carries no part of the value. |
 | A request over 64 KiB serialized | `unavailable`; no network call, and the request is not scanned. |
 | Fewer than two search results within the selector's ceiling | The ranking stands; no network call. |
@@ -257,8 +264,8 @@ the release evidence rather than tuned to taste.
 | 422 | `unavailable`; the provider's error body is cancelled unread, and never returned, logged or stored. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
-| A redirect | The call fails rather than follows it, so the credential never reaches a host the endpoint check did not approve. Applies to both providers. |
-| A response over 256 KiB | Not read past the limit (by its declared length, or by counting the stream), and treated as malformed. The shared call path holds the same limit whatever transport delivered the answer. Applies to both providers. |
+| A redirect | The call fails rather than follows it, so the credential never reaches a host the endpoint check did not approve. Applies to every provider. |
+| A response over 256 KiB | Not read past the limit (by its declared length, or by counting the stream), and treated as malformed. The shared call path holds the same limit whatever transport delivered the answer. Applies to every provider. |
 | Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. For Cloudflare, an envelope without `success: true` or without a System One `result` is malformed. For OpenRouter, a model other than the pinned slug or its dated snapshot (`<slug>-YYYYMMDD`) is drift. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 

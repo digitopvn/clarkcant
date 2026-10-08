@@ -1296,6 +1296,16 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
   thất bại và hoàn tất, và những gì người dùng nhập đi thẳng tới pi, không bao giờ hiện lại. Đăng nhập hoặc đăng
   xuất xong thì danh sách nhà cung cấp và danh mục model được đọc lại. Node không có pi nói rằng ở đây không có gì
   để đăng nhập; danh sách pi không đọc được thì nói lý do và có nút Thử lại.
+- Nhà cung cấp quyết định (đã ship): cạnh mục Đăng nhập nhà cung cấp và tách biệt với mô hình trò chuyện, cho biết ai
+  trả lời những quyết định nhỏ, có kiểu của Clark. Mục này hiện provider và model đang có hiệu lực, một nhãn cho biết
+  ai đã chọn chúng (Cài đặt, môi trường hay mặc định), trạng thái — sẵn sàng, chỉ cục bộ, cấu hình sai, chưa có khoá,
+  hoặc đã tắt — kèm lý do của chính bộ quyết định và việc cần làm, và lần gọi gần nhất kể từ khi node khởi động. Một
+  segmented control cho chọn Theo môi trường, TypeSafe Jev, Cloudflare Clef và OpenRouter; Cloudflare có thêm lựa
+  chọn model và ô account id, OpenRouter có ô model slug được ghim, chỉ được lưu khi đã nhập slug (router như
+  `openrouter/auto` bị từ chối kèm lý do của node). Mỗi provider có một thẻ key cho biết key đến từ đâu (lưu ở đây,
+  môi trường, hoặc chưa có), với ô mật khẩu, Lưu/Thay và Gỡ cho key lưu ở đây; key đã nhập được xoá khỏi ô sau khi
+  lưu và không bao giờ hiện lại. Mọi thao tác ghi đều đi qua các route decision-provider của node và thẻ vẽ lại từ
+  câu trả lời; mỗi thay đổi nói rõ là áp dụng từ quyết định tiếp theo, và không có gì đòi khởi động lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.
 - Automatic routing by Jev toggle.

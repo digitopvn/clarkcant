@@ -31,7 +31,7 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 | Variable | Default | Meaning |
 |---|---|---|
 | `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev), `cloudflare` (Clef) hoặc `openrouter` (decisions API của OpenRouter). Giá trị khác thì từ chối mọi lời gọi quyết định, chứ không quay về TypeSafe. Lựa chọn trong Cài đặt thắng biến này. |
-| `CLARKCANT_DECISION_MODEL` | *(xem ý nghĩa)* | Model id chính xác cho provider đang được chọn. Với TypeSafe, nó thắng `CLARKCANT_JEV_MODEL`, và khi không đặt thì thiết lập đó vẫn quyết định. Với Cloudflare, nó là bắt buộc và phải là `clef` hoặc `clef-flash`. Với OpenRouter, nó là bắt buộc và phải là một slug được ghim (`nhà-cung-cấp/model`, chữ thường, không dùng alias `~`), ví dụ `cloudflare/clef-flash` hay `typesafe/jev-1.13`. |
+| `CLARKCANT_DECISION_MODEL` | *(xem ý nghĩa)* | Model id chính xác cho provider đang được chọn. Với TypeSafe, nó thắng `CLARKCANT_JEV_MODEL`, và khi không đặt thì thiết lập đó vẫn quyết định. Với Cloudflare, nó là bắt buộc và phải là `clef` hoặc `clef-flash`. Với OpenRouter, nó là bắt buộc và phải là một slug được ghim (`nhà-cung-cấp/model`, chữ thường, không dùng alias `~`, và không phải một router của chính OpenRouter như `openrouter/auto`), ví dụ `cloudflare/clef-flash` hay `typesafe/jev-1.13`. |
 | `TYPESAFE_API_KEY` | *(none)* | Credential của TypeSafe. Khi chọn TypeSafe, không có key nghĩa là selector bị tắt. |
 | `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Chỉ cho Cloudflare. 32 ký tự thập lục phân; giá trị khác thì mọi lời gọi bị từ chối. Account id chọn trong Cài đặt thắng biến này. |
 | `CLOUDFLARE_API_TOKEN` | *(none)* | Chỉ cho Cloudflare. Một token được phép chạy Workers AI. Token lưu trong thẻ Cloudflare của decision provider thắng biến này. Khi chọn Cloudflare mà không có token ở nơi nào, selector bị tắt; key của TypeSafe không bao giờ được dùng thay. |
@@ -53,7 +53,7 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt. Khi cả hai nơi đều có,
+referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ của nó trong Cài đặt (thẻ TypeSafe của decision provider, hoặc danh sách Thông tin xác thực; cả hai lưu cùng tên `typesafe`). Khi cả hai nơi đều có,
 key lưu trong thẻ được ưu tiên, theo quy tắc chung cho mọi credential của nhà cung cấp; key trong môi
 trường chỉ được dùng khi thẻ chưa có key. Lưu hoặc xoá key trong thẻ có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. 
 
@@ -68,8 +68,15 @@ của chính nó: key của TypeSafe không bao giờ được gửi tới Cloud
 
 TypeSafe Jev vẫn là mặc định. Có hai cách chọn provider khác, và cách thứ nhất thắng:
 
-1. **Trong Cài đặt.** Người dùng chọn một provider (và, với Cloudflare và OpenRouter, một model) rồi
-   lưu key của provider đó trong thẻ riêng của nó. Lựa chọn được lưu thành preference
+1. **Trong Cài đặt → AI & Định tuyến → Nhà cung cấp quyết định**, cạnh mục Đăng nhập nhà cung cấp và
+   tách biệt với mô hình trò chuyện. Mục này cho thấy provider và model đang có hiệu lực, một nhãn cho
+   biết ai đã chọn chúng (Cài đặt, môi trường hay mặc định), trạng thái kèm lý do và việc cần làm (ví dụ
+   "nhập account id Cloudflare bên dưới"), và lần gọi gần nhất kể từ khi node khởi động. Người dùng chọn
+   "Theo môi trường", TypeSafe Jev, Cloudflare Clef hoặc OpenRouter; Cloudflare có hai model và một ô
+   account id, còn OpenRouter có một ô model slug, chỉ được lưu khi đã nhập slug. Mỗi provider có một thẻ
+   key cho biết key đến từ đâu (lưu ở đây, môi trường, hoặc chưa có) cùng nút Lưu và Gỡ; key đã nhập được
+   xoá khỏi ô sau khi lưu và không bao giờ hiện lại. Mọi thay đổi đều nói rõ là áp dụng từ quyết định
+   tiếp theo. Lựa chọn được lưu thành preference
    `ai.decisionProvider`, nên có revision và có thể hoàn tác. Chọn "theo môi trường" sẽ lưu `null` và
    trả quyền chọn về cho các biến bên dưới. Cùng lựa chọn đó cũng có qua API của node:
    `PUT /decision-provider` với thân như
@@ -96,7 +103,7 @@ OPENROUTER_API_KEY=<một key OpenRouter>
 | | TypeSafe Jev | Cloudflare Clef | OpenRouter |
 |---|---|---|---|
 | Nơi nhận request | `https://api.typesafe.ai/v1/systemone`, hoặc `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, dựng từ hai giá trị đã kiểm tra; không có cách ghi đè endpoint | `https://openrouter.ai/api/alpha/decisions`; không có cách ghi đè endpoint. OpenRouter chuyển tiếp request tới công ty phục vụ model được chọn. |
-| Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ | Một slug được ghim như `cloudflare/clef-flash` hay `typesafe/jev-1.13`, luôn phải nêu rõ; alias `~` bị từ chối |
+| Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ | Một slug được ghim như `cloudflare/clef-flash` hay `typesafe/jev-1.13`, luôn phải nêu rõ; alias `~` và các router của OpenRouter (`openrouter/auto`, mọi thứ dưới `openrouter/`) bị từ chối, vì một router không bao giờ trả lời như một model được ghim |
 | Credential | Key từ thẻ cài đặt, nếu không có thì `TYPESAFE_API_KEY` | Thẻ Cloudflare của decision provider, nếu không có thì `CLOUDFLARE_API_TOKEN` | Thẻ OpenRouter của decision provider, nếu không có thì `OPENROUTER_API_KEY` |
 | Thân request | System One: `{state, model, questions}` | Cùng một thân | Cùng một thân |
 | Response | Câu trả lời System One | Cùng câu trả lời đó nằm trong envelope REST của Cloudflare; chỉ `success: true` mới được mở ra | Câu trả lời System One cộng thêm `id`, `provider` và `usage.cost` của OpenRouter, các trường này bị bỏ. Model trả về là bản snapshot có ngày của slug được ghim (`typesafe/jev-1.13-20260917`) và được chấp nhận; model khác là drift. |
@@ -244,9 +251,9 @@ the release evidence rather than tuned to taste.
 | Condition | Outcome |
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
-| Tên provider không xác định, model hay account id của Cloudflare bị thiếu hoặc sai dạng, hoặc model của OpenRouter bị thiếu, là alias, hoặc không phải slug được ghim | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
+| Tên provider không xác định, model hay account id của Cloudflare bị thiếu hoặc sai dạng, hoặc model của OpenRouter bị thiếu, là alias, là một router (`openrouter/auto`), hoặc không phải slug được ghim | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
 | Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) hoặc là slug của OpenRouter (bất cứ thứ gì có `/`) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn provider phục vụ model đó hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
-| Lựa chọn trong Cài đặt không thuộc một trong ba dạng, hoặc key rỗng hay dài quá 4096 ký tự | Bị từ chối khi lưu, nêu tên trường và không bao giờ nêu giá trị; cấu hình đang có hiệu lực không đổi. |
+| Lựa chọn trong Cài đặt không thuộc một trong ba dạng (kể cả slug router của OpenRouter), hoặc key rỗng hay dài quá 4096 ký tự | Bị từ chối khi lưu, nêu tên trường và không bao giờ nêu giá trị; cấu hình đang có hiệu lực không đổi. |
 | Còn sót một credential ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do không chứa phần nào của giá trị. |
 | Request lớn hơn 64 KiB sau khi tuần tự hoá | `unavailable`; không có lời gọi mạng, và request không bị quét. |
 | Ít hơn hai kết quả tìm kiếm nằm trong trần của selector | Giữ nguyên thứ hạng; không có lời gọi mạng. |
@@ -255,8 +262,8 @@ the release evidence rather than tuned to taste.
 | 422 | `unavailable`; body lỗi của provider bị huỷ mà không đọc, và không bao giờ được trả về, ghi log hay lưu lại. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
-| Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho cả hai provider. |
-| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Đường gọi chung giữ cùng giới hạn đó bất kể transport nào đưa câu trả lời về. Áp dụng cho cả hai provider. |
+| Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho mọi provider. |
+| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Đường gọi chung giữ cùng giới hạn đó bất kể transport nào đưa câu trả lời về. Áp dụng cho mọi provider. |
 | Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. Với Cloudflare, envelope không có `success: true` hoặc không có `result` dạng System One được coi là sai dạng. Với OpenRouter, model khác slug được ghim hoặc bản snapshot có ngày của nó (`<slug>-YYYYMMDD`) là drift. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
