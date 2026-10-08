@@ -33,9 +33,20 @@ export const cloudflareAccountIdSchema = z.string().regex(CLOUDFLARE_ACCOUNT_ID_
  * model that changed underneath it, and an alias is by definition a model that changes.
  */
 export const OPENROUTER_DECISION_MODEL_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._:-]{0,95}$/;
+
+/**
+ * Whether a slug names one of OpenRouter's own routers (`openrouter/auto`, and anything else under the `openrouter/`
+ * vendor) rather than a model. A router picks a different model per request, so its answer never names the pinned slug
+ * and every decision would be refused as drift: a choice that can never answer is refused when it is saved instead.
+ */
+export function isOpenrouterRouterSlug(slug: string): boolean {
+  return slug.startsWith("openrouter/");
+}
+
 export const openrouterDecisionModelSchema = z
   .string()
-  .regex(OPENROUTER_DECISION_MODEL_PATTERN, "is not a pinned OpenRouter model slug (vendor/model, no ~ alias)");
+  .regex(OPENROUTER_DECISION_MODEL_PATTERN, "is not a pinned OpenRouter model slug (vendor/model, no ~ alias)")
+  .refine((slug) => !isOpenrouterRouterSlug(slug), "is an OpenRouter router, which never answers as one pinned model");
 
 export const decisionProviderSelectionSchema = z.discriminatedUnion("provider", [
   z.strictObject({ provider: z.literal("typesafe") }),
@@ -69,6 +80,68 @@ export const HOST_OWNED_DECISION_CREDENTIALS: readonly string[] = Object.freeze(
   DECISION_CREDENTIAL_NAMES.cloudflare,
   DECISION_CREDENTIAL_NAMES.openrouter,
 ]);
+
+/**
+ * Why decisions do or do not leave the node right now.
+ *
+ * - `ready`: a call would be attempted.
+ * - `local-only`: the operator forbids third-party processing; nothing is sent whatever is chosen.
+ * - `misconfigured`: the configuration names no endpoint this node will call (a missing model or account id).
+ * - `no-credential`: no key, in the vault or the environment.
+ * - `disabled`: the operator switched decisions off (`CLARKCANT_JEV_ENABLED=0`).
+ */
+export const DECISION_PROVIDER_STATUSES = Object.freeze(["ready", "local-only", "misconfigured", "no-credential", "disabled"] as const);
+export type DecisionProviderStatus = (typeof DECISION_PROVIDER_STATUSES)[number];
+
+/** What chose the provider in effect: the person in Settings, the node's environment, or neither (TypeSafe). */
+export type DecisionSelectionSource = "settings" | "environment" | "default";
+
+/** Where a decision provider's key comes from: the node's vault, its environment, or nowhere. Never the key. */
+export type DecisionCredentialSource = "vault" | "environment" | "none";
+
+/**
+ * `GET /decision-provider`: who decides on this node, with which model, with a key from where, and whether the last
+ * call worked. Names, sources and reasons only: never a key, never a length, never a request body.
+ */
+export interface DecisionProviderView {
+  provider: DecisionProviderId;
+  selectedBy: DecisionSelectionSource;
+  /** The person's stored choice, or `null` when the node follows its environment. */
+  selection: DecisionProviderSelection | null;
+  /** The pinned model a call names. */
+  model: string;
+  /** The host decisions are sent to; never a path, never a query. */
+  endpointHost: string;
+  status: DecisionProviderStatus;
+  /** Why the status is not `ready`, in the decider's own words. */
+  reason?: string;
+  localOnly: boolean;
+  credential: { name: string; source: DecisionCredentialSource };
+  /**
+   * Cloudflare only: where the account id comes from. The id is not a secret: one the person chose is returned in
+   * `selection` so the card can show it; one from the environment is named by its source only.
+   */
+  account?: { source: "settings" | "environment" | "none" };
+  /** A change to the provider, its model or its key applies from the next decision; nothing restarts. */
+  applies: "next-decision";
+  /** What every decision falls back to when the provider cannot answer. */
+  fallback: "deterministic";
+  /** The most recent provider call or refusal on this node since it started. No body, no key, no prompt. */
+  lastCall?: {
+    event: "call" | "refusal" | "policy" | "model_drift" | "error" | "oversized_state";
+    status: "answered" | "abstained" | "unavailable";
+    model: string;
+    durationMs: number;
+    reason?: string;
+  };
+  /** Every provider this node can use, for the selector, each with where its key would come from. */
+  providers: {
+    id: DecisionProviderId;
+    /** The models a person may choose from, or `null` when the provider takes a pinned slug. */
+    models: readonly string[] | null;
+    credential: { name: string; source: DecisionCredentialSource };
+  }[];
+}
 
 /** The consumer recorded on a decision provider's stored key. */
 export function decisionCredentialConsumer(provider: DecisionProviderId): string {

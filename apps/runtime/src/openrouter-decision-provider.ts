@@ -1,4 +1,4 @@
-import { DECISION_CREDENTIAL_NAMES, OPENROUTER_DECISION_MODEL_PATTERN } from "@clarkcant/contracts";
+import { DECISION_CREDENTIAL_NAMES, OPENROUTER_DECISION_MODEL_PATTERN, isOpenrouterRouterSlug } from "@clarkcant/contracts";
 
 import { validateProviderEndpoint } from "./decision-transport.ts";
 import type { DecisionProvider, DecisionProviderConnection } from "./decision-provider.ts";
@@ -49,6 +49,12 @@ export const openrouterDecisionProvider: DecisionProvider = {
       return refused(
         UNCONFIGURED_MODEL,
         "CLARKCANT_DECISION_MODEL is not a pinned OpenRouter model slug (vendor/model, lower case, no ~ alias)",
+      );
+    }
+    if (isOpenrouterRouterSlug(requested)) {
+      return refused(
+        UNCONFIGURED_MODEL,
+        "CLARKCANT_DECISION_MODEL names an OpenRouter router, which picks a different model per request and never answers as one pinned model",
       );
     }
     const endpointCheck = validateProviderEndpoint(OPENROUTER_DECISIONS_ENDPOINT);

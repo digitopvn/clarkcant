@@ -185,7 +185,8 @@ describe("selecting OpenRouter", () => {
       { config, transport },
       { state: { intent: "lịch" }, instructions: "Is this about a calendar?", budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "answered", probability: 0.96, verdict: "on" });
+    // The outcome names the provider and pinned model whose call answered, which provenance records.
+    expect(outcome).toEqual({ status: "answered", probability: 0.96, verdict: "on", decidedBy: { model: MODEL, provider: "openrouter" } });
   });
 
   it("refuses an answer from another model as drift", async () => {
@@ -196,7 +197,7 @@ describe("selecting OpenRouter", () => {
   });
 
   it("refuses, before any call, a missing, unpinned or malformed model slug", async () => {
-    for (const model of [undefined, "", "~typesafe/jev-latest", "jev-1.13.0", "https://evil.example/x", "Typesafe/Jev", "a/".padEnd(200, "b")]) {
+    for (const model of [undefined, "", "~typesafe/jev-latest", "jev-1.13.0", "https://evil.example/x", "Typesafe/Jev", "a/".padEnd(200, "b"), "openrouter/auto"]) {
       const config = decisionConfigFromEnv(openrouterEnv({ CLARKCANT_DECISION_MODEL: model }));
       expect(decisionCallRefusal(config)).toContain("CLARKCANT_DECISION_MODEL");
       const { outcome, calls } = await selectWith(config, [answered(decisiveTemplate)]);
@@ -237,7 +238,11 @@ describe("selecting OpenRouter", () => {
       "yes",
     ]) {
       const { outcome } = await selectWith(config, [{ status: 200, body }]);
-      expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
+      expect(outcome).toEqual({
+        status: "unavailable",
+        reason: "the provider response did not match the documented answer shape",
+        decidedBy: { model: MODEL, provider: "openrouter" },
+      });
     }
   });
 });

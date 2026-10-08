@@ -8,6 +8,7 @@ import {
   DECISION_PROVIDER_PREFERENCE,
   type DecisionProviderSelection,
   type Instant,
+  PERSON_ONLY_REFUSAL,
   isPersonOnlyRoute,
 } from "@clarkcant/contracts";
 import { type Database, credentialNames, getSecretMetadata, migrate, openDatabase, readCredential } from "@clarkcant/storage";
@@ -231,6 +232,14 @@ describe("the decision provider API", () => {
     });
     expect(svc.jev.config.provider).toBe("cloudflare");
 
+    // A router picks a different model per request, so it could never answer as the pinned slug: refused when saved.
+    for (const router of ["openrouter/auto", "openrouter/free"]) {
+      const routed = call(svc, "PUT", "/decision-provider", { selection: { provider: "openrouter", model: router } });
+      expect(routed.status).toBe(400);
+      expect(JSON.stringify(bodyOf(routed))).not.toContain(router);
+    }
+    expect(call(svc, "PUT", "/decision-provider", { selection: { provider: "openrouter", model: "cloudflare/clef" } }).status).toBe(200);
+
     const followEnv = call(svc, "PUT", "/decision-provider", { selection: null });
     expect(bodyOf(followEnv).decisionProvider).toMatchObject({ provider: "typesafe", selectedBy: "default" });
   });
@@ -272,6 +281,8 @@ describe("who may change it", () => {
     expect(isPersonOnlyRoute("PUT", `/preferences/${DECISION_PROVIDER_PREFERENCE}`)).toBe(true);
     expect(isPersonOnlyRoute("POST", `/preferences/${DECISION_PROVIDER_PREFERENCE}/undo`)).toBe(true);
     expect(isPersonOnlyRoute("GET", "/decision-provider")).toBe(false);
+    // A machine client refused here is told what it was refused.
+    expect(PERSON_ONLY_REFUSAL.message).toContain("decision provider");
   });
 });
 

@@ -202,7 +202,7 @@ export function removeMapTileKey(deps: Pick<CredentialVaultDeps, "db" | "ownerPr
 }
 
 const DECISION_KEY_IN_SETTINGS =
-  "a decision provider's key is entered in Settings → AI & Routing → Decision provider, which records the one consumer allowed to use it; it is not stored here";
+  "a decision provider's key is saved in its own card under Settings → AI & Routing → Decision provider (the node route PUT /decision-provider/credential), which records the one consumer allowed to use it; it is not stored here";
 
 /** The longest key a decision provider card accepts; every real provider key is far shorter. */
 const MAX_DECISION_KEY_LENGTH = 4_096;

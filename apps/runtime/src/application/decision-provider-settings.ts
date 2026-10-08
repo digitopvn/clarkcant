@@ -3,9 +3,11 @@ import {
   DECISION_PROVIDER_IDS,
   type DecisionProviderId,
   type DecisionProviderSelection,
+  type DecisionProviderStatus,
+  type DecisionProviderView,
 } from "@clarkcant/contracts";
 
-import { type DecisionConfig, type DecisionSelectionSource, currentDecisionConfig } from "../decision-config.ts";
+import { type DecisionConfig, currentDecisionConfig } from "../decision-config.ts";
 import { decisionProviderFor } from "../decision-provider.ts";
 import type { JevTelemetry } from "../jev-selector.ts";
 import { CREDENTIAL_VARIABLES, type CredentialSource, providerCredentialSource } from "../provider-credential.ts";
@@ -18,47 +20,8 @@ import { CREDENTIAL_VARIABLES, type CredentialSource, providerCredentialSource }
  * disagree. Names, sources and reasons only: never a key, never a length, never a request body.
  */
 
-/**
- * Why decisions do or do not leave the node right now.
- *
- * - `ready`: a call would be attempted.
- * - `local-only`: the operator forbids third-party processing; nothing is sent whatever is chosen.
- * - `misconfigured`: the configuration names no endpoint this node will call (a missing model or account id).
- * - `no-credential`: no key, in the vault or the environment.
- * - `disabled`: the operator switched decisions off (`CLARKCANT_JEV_ENABLED=0`).
- */
-export type DecisionProviderStatus = "ready" | "local-only" | "misconfigured" | "no-credential" | "disabled";
-
-export interface DecisionProviderView {
-  provider: DecisionProviderId;
-  selectedBy: DecisionSelectionSource;
-  /** The person's stored choice, or `null` when the node follows its environment. */
-  selection: DecisionProviderSelection | null;
-  /** The pinned model a call names. */
-  model: string;
-  /** The host decisions are sent to; never a path, never a query. */
-  endpointHost: string;
-  status: DecisionProviderStatus;
-  /** Why the status is not `ready`, in the decider's own words. */
-  reason?: string;
-  localOnly: boolean;
-  credential: { name: string; source: CredentialSource };
-  /** Cloudflare only: where the account id comes from. The id itself is not a secret but is not echoed either. */
-  account?: { source: "settings" | "environment" | "none" };
-  /** A change to the provider, its model or its key applies from the next decision; nothing restarts. */
-  applies: "next-decision";
-  /** What every decision falls back to when the provider cannot answer. */
-  fallback: "deterministic";
-  /** The most recent provider call or refusal on this node since it started. No body, no key, no prompt. */
-  lastCall?: Pick<JevTelemetry, "event" | "status" | "model" | "durationMs" | "reason">;
-  /** Every provider this node can use, for the selector, each with where its key would come from. */
-  providers: {
-    id: DecisionProviderId;
-    /** The models a person may choose from, or `null` when the provider takes a pinned slug. */
-    models: readonly string[] | null;
-    credential: { name: string; source: CredentialSource };
-  }[];
-}
+/** The view's shape is the contract's, so the Settings card and this route cannot drift apart. */
+export type { DecisionProviderStatus, DecisionProviderView };
 
 export interface DecisionProviderViewInput {
   config: DecisionConfig;

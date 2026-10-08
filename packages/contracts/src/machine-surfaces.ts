@@ -133,7 +133,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, which projects a package's instructions apply in, filing a product report, which decision provider answers Clark's decisions and its key, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
 
 /**

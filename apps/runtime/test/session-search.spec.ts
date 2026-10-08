@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type DataClass, HOST_WRITTEN_MESSAGE_VERSION, type Instant, type MessageRecord } from "@clarkcant/contracts";
+import { type DataClass, type DecisionProviderSelection, HOST_WRITTEN_MESSAGE_VERSION, type Instant, type MessageRecord } from "@clarkcant/contracts";
 import { appendMessage, historyEntryTexts, indexHistory, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
@@ -22,6 +22,7 @@ import {
   textOfSessionEntry,
 } from "../src/session-search.ts";
 import { historySearchFor } from "../src/bootstrap/model-bootstrap.ts";
+import { liveDecisionConfig } from "../src/decision-config.ts";
 import { SEARCH_TOTAL_BUDGET_MS } from "../src/jev-decider.ts";
 import type { JevConfig, JevTransport } from "../src/jev-selector.ts";
 import { parseTemporal, stripDiacritics } from "../src/temporal-parse.ts";
@@ -613,6 +614,21 @@ describe("the search deadline", () => {
     );
     expect(byCloudflare.mode).toBe("jev");
     expect(byCloudflare.decider).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
+
+    // The person switches to TypeSafe while Cloudflare is answering: the record names Cloudflare, whose call chose.
+    let selection: DecisionProviderSelection | null = { provider: "cloudflare", model: "clef", accountId: "0123456789abcdef0123456789abcdef" };
+    const live = liveDecisionConfig({ TYPESAFE_API_KEY: "ts-key", CLOUDFLARE_API_TOKEN: "cf-key" }, undefined, {}, () => selection);
+    const clef = deciding("clef", (result) => ({ success: true, errors: [], messages: [], result }));
+    const switching: JevTransport = async (request) => {
+      selection = { provider: "typesafe" };
+      return clef(request);
+    };
+    const bySwitch = await searchSessions(
+      { ...search, decider: { jev: { config: live, transport: switching }, budget }, deciderMode: "jev" },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+    expect(bySwitch.mode).toBe("jev");
+    expect(bySwitch.decider).toMatchObject({ mode: "jev", model: "clef", provider: "cloudflare" });
   });
 
   /** Records every request and declines to choose, so the search falls back to its ranking. */

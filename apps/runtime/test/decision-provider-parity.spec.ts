@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { decisionConfigFromEnv } from "../src/decision-config.ts";
+import type { DecisionProviderSelection } from "@clarkcant/contracts";
+
+import { decisionConfigFromEnv, liveDecisionConfig } from "../src/decision-config.ts";
 import type { DecisionTransport } from "../src/decision-transport.ts";
 import {
   type DecideDeps,
@@ -39,6 +41,8 @@ const OPENROUTER_ENV: NodeJS.ProcessEnv = {
   CLARKCANT_DECISION_MODEL: "typesafe/jev-1.13",
   OPENROUTER_API_KEY: "or-test-key-not-a-real-one",
 };
+
+const ACCOUNT = "0123456789abcdef0123456789abcdef";
 
 type Provider = "typesafe" | "cloudflare" | "openrouter";
 
@@ -154,10 +158,10 @@ const CONSUMERS: Record<string, (deps: DecideDeps) => Promise<unknown>> = {
     }),
 };
 
-/** The outcome without the model id, which is the one field that is supposed to differ. */
+/** The outcome without who answered (model and provider), which is the one thing that is supposed to differ. */
 function withoutModel(outcome: unknown): unknown {
   if (outcome === null || typeof outcome !== "object") return outcome;
-  const { model: _model, probedAt: _probedAt, ...rest } = outcome as Record<string, unknown>;
+  const { model: _model, provider: _provider, decidedBy: _decidedBy, probedAt: _probedAt, ...rest } = outcome as Record<string, unknown>;
   return rest;
 }
 
@@ -180,6 +184,29 @@ describe("decision consumers behave the same whichever provider answers", () => 
         expect(JSON.stringify(seen)).not.toContain("sk-live-abcdef1234567890");
         expect(JSON.stringify(seen)).not.toContain("an.nguyen@example.com");
       }
+    });
+
+    it(`${name}: names the provider that answered when the person switches during the decision`, async () => {
+      // Cloudflare is chosen when the decision starts; the person switches to TypeSafe while the first call is in flight.
+      let selection: DecisionProviderSelection | null = { provider: "cloudflare", model: "clef-flash", accountId: ACCOUNT };
+      const config = liveDecisionConfig({ TYPESAFE_API_KEY: "ts-key", CLOUDFLARE_API_TOKEN: "cf-key" }, undefined, {}, () => selection);
+      const hosts: string[] = [];
+      const cloudflare = answering("cloudflare", "clef-flash", []);
+      const typesafe = answering("typesafe", "jev-1.13.0", []);
+      const transport: DecisionTransport = async (request) => {
+        hosts.push(new URL(request.url).host);
+        selection = { provider: "typesafe" };
+        return new URL(request.url).host === "api.cloudflare.com" ? cloudflare(request) : typesafe(request);
+      };
+      const outcome = await run({ jev: { config, transport }, budget: () => createJevBudget(config) });
+
+      expect(hosts[0]).toBe("api.cloudflare.com");
+      if (typeof outcome !== "object" || outcome === null) return;
+      const recorded = outcome as { model?: string; provider?: string; decidedBy?: { model: string; provider?: string } };
+      const named = recorded.decidedBy ?? (recorded.model === undefined ? undefined : recorded);
+      // Every consumer that names who decided names the provider whose call decided, never the one chosen afterwards.
+      if (named !== undefined) expect(named).toMatchObject({ model: "clef-flash", provider: "cloudflare" });
+      expect(JSON.stringify(outcome)).not.toContain("jev-1.13.0");
     });
 
     it(`${name}: same fallback when the provider fails`, async () => {
