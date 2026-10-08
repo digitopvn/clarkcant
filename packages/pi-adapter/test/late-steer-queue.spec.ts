@@ -79,13 +79,16 @@ const HANDLED = " [handled]";
 /** What another extension's `before_agent_start` handler adds to the system prompt of every run. */
 const THIRD_PARTY_FRAGMENT = "THIRD-PARTY-FRAGMENT";
 
+/** What that extension's `before_agent_start` handler injects as a message alongside every run's prompt. */
+const INJECTED_NOTE = "INJECTED-NOTE";
+
 /**
  * The real SDK, with the model catalogue read without a network refresh and each session's stream function replaced by
  * one that records the request and answers at once. The session is kept, so a test can queue on it as Pi does.
  *
  * Every session also loads an inline extension with an input handler, as a Pi extension registers one: it records the
  * text it is given and hands it on with a marker added. Another extension adds a fragment to each run's system prompt
- * from `before_agent_start`, as a third-party extension may.
+ * from `before_agent_start`, and injects a message alongside it, as a third-party extension may.
  */
 async function realSdk(harness: Harness): Promise<NonNullable<RealPiAdapterOptions["sdk"]>> {
   const sdk = (await import(SDK_PACKAGE)) as unknown as Record<string, unknown> & {
@@ -105,7 +108,10 @@ async function realSdk(harness: Harness): Promise<NonNullable<RealPiAdapterOptio
   const systemPromptFragment = {
     name: "late-steer-system-prompt-fragment",
     factory: (api: { on: (event: string, handler: (event: { systemPrompt: string }) => unknown) => void }) => {
-      api.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${THIRD_PARTY_FRAGMENT}` }));
+      api.on("before_agent_start", (event) => ({
+        systemPrompt: `${event.systemPrompt}\n\n${THIRD_PARTY_FRAGMENT}`,
+        message: { customType: "late-steer-injected", content: INJECTED_NOTE, display: false },
+      }));
     },
   };
   class CountingLoader extends sdk.DefaultResourceLoader {
@@ -446,6 +452,68 @@ describe("late steers sent again after a turn keep the run's system prompt", () 
     }
     await adapter.continueQueued(sessionId);
     expect(timesSent(harness, before, `steer while streaming${HANDLED}`)).toBe(1);
+    await adapter.dispose(sessionId);
+  }, 60_000);
+});
+describe("late steers sent again after a turn keep what prompt() attaches to a run", () => {
+  /** Queue a message for the next run, as an extension's `sendMessage` with `deliverAs: "nextTurn"` does. */
+  async function queueNextTurn(session: Session, text: string): Promise<void> {
+    const sessionWithMessages = session as unknown as {
+      sendCustomMessage: (message: object, options: { deliverAs: string }) => Promise<void>;
+    };
+    await sessionWithMessages.sendCustomMessage({ customType: "next-turn-note", content: text, display: true }, { deliverAs: "nextTurn" });
+  }
+
+  it("send a next-turn message and the message before_agent_start injects with the re-sent steer, each once", async () => {
+    const { adapter, sessionId, harness, session } = await answeredSession();
+    const before = harness.sent.length;
+
+    await queueNextTurn(session, "NEXT-TURN-NOTE");
+    await adapter.steer(sessionId, "late steer with company");
+    await adapter.continueQueued(sessionId);
+
+    const request = requestOf(harness, before, `late steer with company${HANDLED}`);
+    expect(request).toBeGreaterThanOrEqual(0);
+    expect(harness.sent[request]).toContain("NEXT-TURN-NOTE");
+    expect(harness.sent[request]).toContain(INJECTED_NOTE);
+    expect(timesSent(harness, before, "NEXT-TURN-NOTE")).toBe(1);
+    expect(timesSent(harness, before, INJECTED_NOTE)).toBe(1);
+    await adapter.dispose(sessionId);
+  }, 60_000);
+
+  it("fall back to the public prompt when a mirrored member keeps its name but throws, losing nothing", async () => {
+    const { adapter, sessionId, harness, session } = await answeredSession({ personalInstructions: () => "PERSONAL-MARKER" });
+    const before = harness.sent.length;
+    const beforeRequests = harness.requests.length;
+    const warnings = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    // As an SDK whose member behaves differently under the same name would look: it throws the first time it is
+    // called, from the mirrored sequence; the SDK's own prompt then calls it as before.
+    const internals = session as unknown as { _preparePromptAndToolLoadout: (...args: unknown[]) => unknown };
+    const original = internals._preparePromptAndToolLoadout;
+    let calls = 0;
+    internals._preparePromptAndToolLoadout = function (this: unknown, ...args: unknown[]) {
+      calls += 1;
+      if (calls === 1) throw new TypeError("a changed member");
+      return original.apply(this, args);
+    };
+
+    try {
+      await queueNextTurn(session, "NEXT-TURN-AFTER-FAILURE");
+      await adapter.steer(sessionId, "late steer after a failing member");
+      await adapter.continueQueued(sessionId);
+
+      expect(calls).toBeGreaterThan(1);
+      // Sent through prompt(), so the handler ran on it again: its text carries the marker twice, and only once.
+      expect(timesSent(harness, before, `late steer after a failing member${HANDLED}${HANDLED}`)).toBe(1);
+      expect(timesSent(harness, before, "NEXT-TURN-AFTER-FAILURE")).toBe(1);
+      for (const request of harness.requests.slice(beforeRequests)) expect(request).toContain("PERSONAL-MARKER");
+      expect(session.agent.hasQueuedMessages()).toBe(false);
+      const fallbackWarnings = warnings.mock.calls.filter(([message]) => String(message).includes("private members"));
+      expect(fallbackWarnings).toHaveLength(1);
+      expect(String(fallbackWarnings[0]?.[0])).toContain("failed (a changed member)");
+    } finally {
+      warnings.mockRestore();
+    }
     await adapter.dispose(sessionId);
   }, 60_000);
 });
