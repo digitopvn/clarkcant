@@ -33,6 +33,8 @@ export const MESSAGES_SURFACE_STATUS_VI = {
   "blocks.taskSummary.unverified": "Lần chạy đã kết thúc, nhưng chưa có bằng chứng xác nhận kết quả.",
   "blocks.taskOverview.empty": "Chưa có việc nào trong cuộc trò chuyện này.",
   "widgets.metrics.unknown": "chưa rõ",
+  "surface.retry": "Thử lại",
+  "feedback.unread": "Node đã trả lời, nhưng ứng dụng này không đọc được báo cáo đã được gửi lên hay chưa.",
 } as const;
 
 export type SurfaceStatusMessageKey = keyof typeof MESSAGES_SURFACE_STATUS_VI;
@@ -64,4 +66,6 @@ export const MESSAGES_SURFACE_STATUS_EN = {
   "blocks.taskSummary.unverified": "The run ended, but no evidence confirms the result yet.",
   "blocks.taskOverview.empty": "No tasks in this conversation yet.",
   "widgets.metrics.unknown": "unknown",
+  "surface.retry": "Try again",
+  "feedback.unread": "The node answered, but this app can't read whether the report was filed.",
 } as const satisfies Record<SurfaceStatusMessageKey, string>;

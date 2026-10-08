@@ -751,8 +751,25 @@ export type FeedbackCardState =
   | { status: "prepared"; requestKey: string; draft: FeedbackDraft; diagnostics: DiagnosticLine[] }
   | { status: "publishing"; intent: FeedbackPublishIntent }
   | { status: "done"; publication: FeedbackPublication }
-  /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
-  | { status: "failed"; message: string; reportId?: string; requestKey?: string };
+  /**
+   * `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. `next`
+   * is `retry` only when the same press, sent again, can go through (`retryableFailure`); `press` and `intent` say which
+   * press that is, so Try again repeats it rather than guessing.
+   */
+  | {
+      status: "failed";
+      message: string;
+      reportId?: string;
+      requestKey?: string;
+      next?: "retry";
+      press?: "preview" | "create";
+      intent?: FeedbackPublishIntent;
+    }
+  /**
+   * The node answered a publish, but this app cannot read the answer: the report may or may not have been filed. Not a
+   * failure and not a success; Check again asks the node where `reportId` stands, and sends nothing.
+   */
+  | { status: "unknown"; message: string; reportId: string; requestKey?: string };
 
 /** A secret's save on a credential card: on its way, kept, or refused. Never the value itself. */
 export interface CredentialSaveStatus {
@@ -774,7 +791,12 @@ export type FolderEntryReason = "browser" | "remote-node" | "dialog-failed";
 export type CommandActionState = (
   | { status: "pending" }
   | { status: "done"; message: string }
-  | { status: "failed"; message: string }
+  /**
+   * `next: "retry"`: the press did not reach the node or got no answer in time, and sending it again is safe, so the
+   * row offers Try again (`canRetry`). `root`: the folder a `/develop` start was for, so Try again starts that folder
+   * again rather than asking for one.
+   */
+  | { status: "failed"; message: string; next?: "retry"; root?: string }
   /** The node answered, but this app cannot read what it did: neither success nor failure is claimed. */
   | { status: "unknown"; message: string }
 ) & { attempt?: number };

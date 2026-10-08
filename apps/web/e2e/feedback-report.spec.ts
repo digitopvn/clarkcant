@@ -108,3 +108,42 @@ test("/report with its words prepares the issue, and only the person's press fil
   await expect(reloaded).toBeVisible({ timeout: 20_000 });
   await expect(reloaded.locator("[data-feedback-create]")).toHaveCount(0);
 });
+
+test("an answer to Create issue this app cannot read is not known, never failed, and Check again asks the node", async ({ page }) => {
+  await openApp(page);
+  const results = page.locator('.cc-row[data-role="assistant"] [data-feedback-stage="result"]');
+  const before = await results.count();
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await composer.fill("/report bug the settings sheet forgets its scroll position");
+  await composer.press("Enter");
+  const prepared = page.locator('.cc-row[data-role="assistant"] [data-feedback-prepared]').last();
+  await expect(prepared).toBeVisible({ timeout: 20_000 });
+
+  // The node answers in a shape this app does not read, as a newer node might: nothing says whether it was filed.
+  await page.route("**/feedback/reports/*/publish", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ publication: { status: "filed-somewhere-new" }, timeline: { messages: [] } }) }),
+  );
+  await prepared.locator("[data-feedback-create]").click();
+  const note = prepared.locator(".cc-command-status[data-result='unknown']");
+  await expect(note).toHaveAttribute("data-surface-phase", "partial", { timeout: 20_000 });
+  await expect(note).toContainText("Node đã trả lời, nhưng ứng dụng này không đọc được báo cáo đã được gửi lên hay chưa.");
+  // Partial is said politely, not as an error, and never with the schema's own words.
+  await expect(prepared.locator("[role='status'] .cc-command-status[data-result='unknown']")).toBeVisible();
+  await expect(prepared.locator("[role='alert'] p")).toHaveCount(0);
+  await expect(prepared).not.toContainText("Invalid");
+  await expect(prepared).not.toContainText("filed-somewhere-new");
+  await page.unrouteAll({ behavior: "wait" });
+
+  // Check again only asks: the node never filed this report, and says so; nothing new is filed by the check.
+  const check = prepared.locator("[data-feedback-check-unread]");
+  await check.focus();
+  await page.keyboard.press("Enter");
+  await expect(prepared.locator("[role='alert'] .cc-command-status[data-result='failed']")).toBeVisible({ timeout: 20_000 });
+  await expect(results).toHaveCount(before);
+
+  // Create issue still files it, once.
+  await prepared.locator("[data-feedback-create]").click();
+  await expect(results).toHaveCount(before + 1, { timeout: 20_000 });
+  await expect(results.last()).toHaveAttribute("data-feedback-status", "published");
+});

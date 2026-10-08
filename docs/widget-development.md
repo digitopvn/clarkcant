@@ -495,8 +495,10 @@ The last rule, and the rule that a retry is offered only after a failure or a
 partial result, are helpers in the contract (`settleSurfaceStatus` and
 `canRetry`) that built-in cards adopt one surface at a time. Command-card rows
 and the credential card settle late answers through `settleSurfaceStatus`, and
-are the reference for that rule; no built-in card offers a retry through
-`canRetry` yet.
+are the reference for that rule. Command-card rows and the feedback card are the
+reference for `canRetry`: they offer Try again only beside a failure whose press
+did not reach the node or timed out (`next: "retry"`), never beside a refusal
+the node decided or an answer they cannot read.
 
 ---
 

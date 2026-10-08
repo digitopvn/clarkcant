@@ -863,6 +863,24 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   cũ sẽ đi qua `pending` trước, nên cùng một thất bại hai lần được nói hai lần.
   `canRetry` chỉ đề nghị thử lại khi phase là `error` hoặc `partial` và miền nêu
   rõ `retry` hoặc `check-again`.
+- **Chỉ đề nghị thử lại khi thử lại có ích.** Một lần bấm không tới được node
+  hoặc không có câu trả lời kịp thời (lỗi mạng, hết thời gian chờ, một chặng
+  chuyển tiếp hoặc node tạm thời không sẵn sàng) nêu `retry`, và thẻ đặt nút
+  **Thử lại** cạnh thất bại đó: các dòng của thẻ lệnh (`/thinking`, `/login`,
+  `/logout`, `/develop` và Quên) và thẻ góp ý. Thử lại gửi đúng lần bấm đó qua
+  đúng con đường cũ, dùng được bằng chuột và bàn phím như chính lần bấm, và bằng
+  giọng nói khi nói lại cùng lệnh; node trả lời an toàn cho mỗi lần bấm như vậy
+  ở lần thứ hai. Một lời từ chối do node quyết định (chính sách, xung đột, lỗi
+  của chính node) và một câu trả lời mà ứng dụng này không đọc được thì không có
+  gì để lặp lại, vì gửi lại chỉ nhận về đúng câu trả lời cũ. Trình hiển thị
+  terminal không tải được mã của nó cũng không đề nghị Thử lại, vì trình duyệt
+  giữ thất bại đó suốt vòng đời của trang; thông báo của nó nói rằng tải lại ứng
+  dụng sẽ tải lại trình hiển thị.
+- **Chưa biết đã gửi hay chưa.** Khi node trả lời lần bấm Tạo issue mà ứng dụng
+  này không đọc được câu trả lời, báo cáo có thể đã được gửi lên hoặc chưa. Thẻ
+  nói đúng điều đó, ở dạng `partial` và không bao giờ là "thất bại" kèm chữ của
+  schema, dùng câu mở đầu cho câu trả lời node không đọc được cùng câu về phiên
+  bản, và đề nghị **Kiểm tra lại**, chỉ hỏi node báo cáo đang ở đâu.
 
 ### 8.4 Local vs effect actions
 

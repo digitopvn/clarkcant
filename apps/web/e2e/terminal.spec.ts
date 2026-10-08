@@ -164,6 +164,40 @@ test("a terminal just asked for that cannot be reached says so at once, rather t
   await expect(card.locator("[role='alert'] [data-terminal-notice='disconnected']")).toBeVisible();
 });
 
+test("a terminal view that did not load offers no Try again that cannot help, and a reload of the app, as it says, loads it", async ({
+  page,
+}) => {
+  // The terminal's own code arrives as its own chunk when a card first needs it; the network drops it once. The browser
+  // keeps that failure for the page's life, so a press in the page could only bring it back.
+  let dropped = 0;
+  await page.route(
+    (url) => /\/assets\/.*(xterm|addon-fit).*\.js$/u.test(url.pathname),
+    (route) => {
+      if (dropped > 0) return route.fallback();
+      dropped += 1;
+      return route.abort("internetdisconnected");
+    },
+  );
+  await openApp(page);
+  const composer = page.locator("textarea[aria-label='Nhập tin nhắn']");
+  await composer.click();
+  await composer.fill("mở terminal giúp tôi");
+  await composer.press("Enter");
+  const card = page.locator("[data-host-card='terminal-session']").last();
+  await expect(card).toHaveAttribute("data-terminal-mode", "live", { timeout: 20_000 });
+  await expect(card.locator("[data-terminal-notice='load-failed']")).toBeVisible({ timeout: 15_000 });
+  expect(dropped).toBe(1);
+  await expect(card.locator("[data-terminal-notice='load-failed']")).toContainText("tải lại ứng dụng");
+  await expect(card.locator("[data-terminal-retry]")).toHaveCount(0);
+
+  // The shell on the node was not affected: after a reload the same card loads its view and attaches to it.
+  const terminalId = (await card.getAttribute("data-terminal-id")) ?? "";
+  await page.reload();
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+  const again = page.locator(`[data-host-card='terminal-session'][data-terminal-id='${terminalId}']`);
+  await expect(again).toHaveAttribute("data-terminal-phase", "attached", { timeout: 20_000 });
+});
+
 test("the card fits a narrow window without scrolling the page sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "reduce" });

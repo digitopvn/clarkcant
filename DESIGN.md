@@ -879,6 +879,24 @@ whether it can be retried, and whether it is still current.
   whose retry repeats the same answer passes through `pending` first, so the
   same failure twice is said twice. `canRetry` offers a retry only for `error`
   or `partial` when the domain names `retry` or `check-again`.
+- **Try again only where it can help.** A press that did not reach the node or
+  got no answer in time (a network failure, a timeout, a relay or the node
+  briefly unavailable) names `retry`, and the card offers **Try again** beside
+  the failure: command-card rows (`/thinking`, `/login`, `/logout`, `/develop`
+  and Forget) and the feedback card. Try again sends the same press through the
+  same path, reachable by pointer and keyboard like the press itself, and by
+  voice as the same command spoken again; each of those presses is one the node
+  answers safely a second time. A refusal the node decided (policy, a conflict,
+  its own failure) and an answer this app cannot read offer nothing to repeat,
+  because sending them again would bring the same answer back. A terminal view
+  whose code did not load offers no Try again either, because the browser keeps
+  that failure for the page's life; its notice says that reloading the app loads
+  it again.
+- **Filed or not is not known.** When the node answers Create issue and this app
+  cannot read the answer, the report may have been filed or not. The card says
+  exactly that, as `partial` and never as "failed" with the schema's text, using
+  the node-view refusal lead and the version sentence, and offers **Check
+  again**, which only asks the node where the report stands.
 
 ### 8.4 Local vs effect actions
 

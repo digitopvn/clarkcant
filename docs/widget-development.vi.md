@@ -502,8 +502,10 @@ Quy tắc cuối cùng, và quy tắc chỉ đề nghị thử lại sau một l
 không đầy đủ, là các helper trong hợp đồng (`settleSurfaceStatus` và
 `canRetry`) mà các thẻ dựng sẵn áp dụng dần từng bề mặt. Các dòng của thẻ lệnh
 và thẻ thông tin xác thực chốt câu trả lời đến muộn qua `settleSurfaceStatus`,
-và là mẫu tham chiếu cho quy tắc đó; hiện chưa thẻ dựng sẵn nào đề nghị thử lại
-qua `canRetry`.
+và là mẫu tham chiếu cho quy tắc đó. Các dòng của thẻ lệnh và thẻ góp ý là mẫu
+tham chiếu cho `canRetry`: chúng chỉ đề nghị Thử lại cạnh một thất bại mà lần
+bấm không tới được node hoặc hết thời gian chờ (`next: "retry"`), không bao giờ
+cạnh một lời từ chối do node quyết định hay một câu trả lời chúng không đọc được.
 
 ---
 
