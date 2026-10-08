@@ -114,6 +114,28 @@ function engineFor(root: string, cacheRoot?: string): DevEngine {
   return engine;
 }
 
+/**
+ * Source for a child process that makes a folder again whole, as a build tool that writes its output elsewhere and moves
+ * it into place does: `remake(source, out)` copies into a sibling folder, then renames it to `out`, so the folder is
+ * readable the moment it is back. Copied straight to `out`, a look could find the folder with only some of its files,
+ * a pause a loaded runner can stretch past the debounce, and the engine would rightly build that half-written folder.
+ */
+const REMAKE_WHOLE = [
+  "const remake = (source, out) => {",
+  "  const next = out + '.next';",
+  "  fs.cpSync(source, next, { recursive: true });",
+  "  for (const until = Date.now() + 2000; ; ) {",
+  "    try {",
+  "      return fs.renameSync(next, out);",
+  "    } catch (error) {",
+  // Windows refuses the move for a moment while an antivirus or indexer holds a file just written.
+  "      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || Date.now() > until) throw error;",
+  "      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);",
+  "    }",
+  "  }",
+  "};",
+].join("\n");
+
 afterEach(() => {
   beforeRead.path = undefined;
   beforeRead.run = undefined;
@@ -719,7 +741,11 @@ describe("the dev engine", () => {
     });
     engines.push(engine);
     await engine.ready;
-    await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
+    // A new watcher can report the writes that made the folder late (FSEvents on macOS), and the build that change runs
+    // is reported. Builds run one at a time, so once a rebuild settles every build already started has ended; nothing
+    // can start between that and the removal below, and a change the watcher reports after it finds the folder missing.
+    await engine.rebuild();
+    built.length = 0;
     const good = engine.lastBuild();
 
     rmSync(root, { recursive: true, force: true });
@@ -804,20 +830,21 @@ describe("the dev engine", () => {
       onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`),
     });
     engines.push(engine);
-    await engine.ready;
+    expect((await engine.ready).kind).toBe("generation");
     await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
     built.length = 0;
 
-    // As a build tool in its own process: delete the output folder, work for a moment, then write it again. It writes the
-    // folder again once the rebuilds below have been asked for (or after 1.5 s, inside the grace), so a slow runner cannot
-    // let the folder come back before they are.
+    // As a build tool in its own process: delete the output folder, work for a moment, then write it again, whole. It
+    // writes the folder again once the rebuilds below have been asked for (or after 1.5 s, inside the grace), so a slow
+    // runner cannot let the folder come back before they are.
     const go = join(base, "go");
     const script = [
       "const fs = require('node:fs');",
+      REMAKE_WHOLE,
       "const [out, source, go] = process.argv.slice(1);",
       "fs.rmSync(out, { recursive: true, force: true });",
       "const until = Date.now() + 1500;",
-      "const wait = () => (fs.existsSync(go) || Date.now() > until ? fs.cpSync(source, out, { recursive: true }) : setTimeout(wait, 10));",
+      "const wait = () => (fs.existsSync(go) || Date.now() > until ? remake(source, out) : setTimeout(wait, 10));",
       "wait();",
     ].join("\n");
     const child = spawn(process.execPath, ["-e", script, root, source, go], { stdio: "ignore" });
@@ -854,15 +881,16 @@ describe("the dev engine", () => {
     const built: string[] = [];
     const engine = startDevEngine({ root, watch: true, debounceMs: 30, rootCheckMs: 50, onBuild: (event) => built.push(`${event.build.trigger}:${event.kind}`) });
     engines.push(engine);
-    await engine.ready;
+    expect((await engine.ready).kind).toBe("generation");
     await new Promise((done) => setTimeout(done, DEV_ENGINE_WATCH_CATCH_UP_MS + 100));
     built.length = 0;
 
     const script = [
       "const fs = require('node:fs');",
+      REMAKE_WHOLE,
       "const [out, source] = process.argv.slice(1);",
       "fs.rmSync(out, { recursive: true, force: true });",
-      "fs.cpSync(source, out, { recursive: true });",
+      "remake(source, out);",
     ].join("\n");
     const child = spawn(process.execPath, ["-e", script, root, source], { stdio: "ignore" });
     expect(await new Promise((done) => child.on("exit", done))).toBe(0);

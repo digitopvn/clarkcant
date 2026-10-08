@@ -25,6 +25,8 @@ import {
   DIRECTORY_FEED_FORMAT,
   EXECUTION_POLICY_PREFERENCE_KEY,
   OFFICIAL_MARKETPLACE_FEED_URL,
+  activeGenerations,
+  cachedLocalSnapshotPath,
   customFeedId,
   listInstalledPackages,
   refreshDirectory,
@@ -72,13 +74,20 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, statSync, rmSync, default: { ...actual, statSync, rmSync } };
 });
 
+/** Seen as a file is about to be opened through the promise API; the promise form waits for what it returns, so a test can hold a read. */
+const opening = vi.hoisted(() => ({ starting: undefined as ((path: string) => void | Promise<void>) | undefined }));
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof fsPromises>();
   const rm = (async (path: fs.PathLike, options?: fs.RmOptions) => {
     await removal.starting?.(resolve(String(path)), options);
     await actual.rm(path, options);
   }) as typeof actual.rm;
-  return { ...actual, rm, default: { ...actual, rm } };
+  const open = (async (...args: Parameters<typeof actual.open>) => {
+    await opening.starting?.(resolve(String(args[0])));
+    return actual.open(...args);
+  }) as typeof actual.open;
+  return { ...actual, rm, open, default: { ...actual, rm, open } };
 });
 
 /** The removal itself, past the mock, for a test that tries a path once on its own. */
@@ -277,6 +286,7 @@ afterEach(async () => {
   statFailure.path = undefined;
   homeOverride.path = undefined;
   removal.starting = undefined;
+  opening.starting = undefined;
   engineClose.throws = undefined;
   // A snapshot a session is still removing is finished (or given up on) before the database and the folder go.
   await services.widgetDev?.close();
@@ -1239,12 +1249,14 @@ describe("a widget dev session", () => {
   it("keeps the newest build's snapshot when the node closes as the answer the session waited on comes in", async () => {
     askEveryInstall();
     const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(asked.activation.state).toBe("awaiting-approval");
     const approvalId = asked.activation.state === "awaiting-approval" ? asked.activation.approvalId : "";
     const local = join(dir, "node", "package-cache", "local");
     const before = new Set(readdirSync(local));
     // The newest build is neither what runs nor what waits: only the session's engine names it.
     writePackage("<!doctype html><p>second</p>\n");
     const waiting = session(await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`));
+    expect(waiting.lastBuild).toMatchObject({ ok: true, generation: 2 });
     expect(waiting.activation).toMatchObject({ state: "awaiting-approval", generation: 1 });
     const newest = readdirSync(local).filter((name) => !before.has(name));
     expect(newest).toHaveLength(1);
@@ -1253,6 +1265,43 @@ describe("a widget dev session", () => {
     await services.widgetDev?.close();
     await new Promise((done) => setTimeout(done, 100));
     expect(existsSync(join(local, newest[0] ?? ""))).toBe(true);
+  });
+
+  it("installs a newer build only once the inbox has installed the one the person granted, so the grant never fails", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    expect(asked.activation.state).toBe("awaiting-approval");
+    const approvalId = asked.activation.state === "awaiting-approval" ? asked.activation.approvalId : "";
+    const granted = cachedLocalSnapshotPath(join(dir, "node", "package-cache"), asked.latest?.digest ?? "") ?? "";
+    writePackage("<!doctype html><p>second</p>\n");
+    const newer = session(await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`));
+    expect(newer.lastBuild).toMatchObject({ ok: true, generation: 2 });
+
+    // The inbox's install is held as it starts to read the granted build's snapshot.
+    let release = (): void => undefined;
+    const gate = new Promise<void>((done) => (release = done));
+    let reading = (): void => undefined;
+    const readingStarted = new Promise<void>((done) => (reading = done));
+    opening.starting = async (path) => {
+      if (!path.startsWith(granted + sep)) return;
+      opening.starting = undefined;
+      reading();
+      await gate;
+    };
+    const row = services.runtime.db.prepare("SELECT operation_digest FROM approvals WHERE approval_id = ?").get(approvalId) as { operation_digest: string };
+    const decided = call("POST", `/packages/approvals/${approvalId}/decision`, { decision: "granted", digest: row.operation_digest });
+    await readingStarted;
+    // The session follows the grant while that install runs: it neither installs the newer build nor removes the snapshot.
+    expect((await call("POST", `/widget-dev/sessions/${asked.sessionId}/rebuild`)).status).toBe(200);
+    release();
+    expect((await decided).status).toBe(200);
+
+    // Once the grant is installed, the newer build installs on it, and the granted one stays for a rollback.
+    const view = await eventually(asked.sessionId, (current) => current.activation.state === "active" && current.activation.generation === 2);
+    expect(view.activation).toMatchObject({ state: "active", generation: 2 });
+    const running = activeGenerations({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }).find((generation) => generation.packageId === PACKAGE);
+    expect(running?.snapshotDigest).toBe(newer.latest?.digest);
+    expect(existsSync(granted)).toBe(true);
   });
 
   it("ends every session, and resolves, on a close where a watcher fails to let go", async () => {
