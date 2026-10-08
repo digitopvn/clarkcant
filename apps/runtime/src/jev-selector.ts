@@ -15,7 +15,13 @@ import {
   sanitizeIntent,
   stateLooksRedacted,
 } from "./mini-app-candidates.ts";
-import { type DecisionConfig, JEV_POLICY_VERSION, decisionCallRefusal, decisionConfigFromEnv } from "./decision-config.ts";
+import {
+  type DecisionConfig,
+  JEV_POLICY_VERSION,
+  currentDecisionConfig,
+  decisionCallRefusal,
+  decisionConfigFromEnv,
+} from "./decision-config.ts";
 import {
   DEFAULT_DECISION_PROVIDER,
   type DecisionProviderId,
@@ -184,15 +190,33 @@ export interface ChoiceAnswerValue {
   substantive: boolean;
 }
 
+/**
+ * Who a call was made to: the provider and pinned model of the one configuration reading the call itself used.
+ *
+ * Provenance records this rather than reading the configuration again after the call, because the person may switch the
+ * provider while a decision is in flight, and a second reading would then name a provider or model that never answered.
+ * `provider` is absent for TypeSafe, as in telemetry, so a record from a default node reads as it always has.
+ */
+export interface DecidedBy {
+  model: string;
+  provider?: DecisionProviderId;
+}
+
 export type ChoiceOutcome =
-  | { status: "answered"; value: ChoiceAnswerValue }
-  | { status: "abstained"; reason: string }
-  | { status: "unavailable"; reason: string };
+  | { status: "answered"; value: ChoiceAnswerValue; decidedBy: DecidedBy }
+  | { status: "abstained"; reason: string; decidedBy?: DecidedBy }
+  | { status: "unavailable"; reason: string; decidedBy?: DecidedBy };
 
 export type NoulOutcome =
-  | { status: "answered"; probability: number; verdict: "on" | "off" | "uncertain" }
-  | { status: "abstained"; reason: string }
-  | { status: "unavailable"; reason: string };
+  | { status: "answered"; probability: number; verdict: "on" | "off" | "uncertain"; decidedBy: DecidedBy }
+  | { status: "abstained"; reason: string; decidedBy?: DecidedBy }
+  | { status: "unavailable"; reason: string; decidedBy?: DecidedBy };
+
+/** The provider and model one configuration reading names, in the form provenance records them. */
+export function decidedByOf(config: JevConfig): DecidedBy {
+  const provider = recordedDecisionProvider(config);
+  return provider === undefined ? { model: config.model } : { model: config.model, provider };
+}
 
 interface CallInput {
   state: JevSelectionState | Record<string, unknown> | string;
@@ -218,6 +242,23 @@ function refusalReason(deps: JevDeps, budget: JevBudget): string | undefined {
  * why the deadline is an AbortSignal rather than a race against a promise that keeps running.
  */
 async function callProvider(
+  callerDeps: JevDeps,
+  input: CallInput,
+): Promise<CallResult> {
+  // One reading of the configuration for the whole call, so a provider switch mid-call cannot pair one provider's key
+  // with another's endpoint (currentDecisionConfig), and so what is recorded names the provider that was asked.
+  const deps: JevDeps = { ...callerDeps, config: currentDecisionConfig(callerDeps.config) };
+  const decidedBy = decidedByOf(deps.config);
+  return { ...(await callWith(deps, input)), decidedBy };
+}
+
+type CallResult = (
+  | { ok: true; response: SystemOneResponse }
+  | { ok: false; status: "abstained" | "unavailable"; reason: string }
+) & { decidedBy: DecidedBy };
+
+/** The call itself, on the one configuration reading `callProvider` took. */
+async function callWith(
   deps: JevDeps,
   input: CallInput,
 ): Promise<{ ok: true; response: SystemOneResponse } | { ok: false; status: "abstained" | "unavailable"; reason: string }> {
@@ -342,7 +383,8 @@ async function callProvider(
     }
 
     const usage = answered.usage;
-    const drift = answered.model !== deps.config.model;
+    const adapter = decisionProviderFor(providerOf(deps.config));
+    const drift = !(adapter.answersAs?.(deps.config.model, answered.model) ?? answered.model === deps.config.model);
     // The id is the provider's text, so it is bounded before it is recorded or repeated in a reason.
     const answeredModel = answered.model.slice(0, MAX_RECORDED_MODEL_LENGTH);
     emit(deps, {
@@ -440,27 +482,28 @@ export async function askChoice(
     questions: { [questionId]: { type: "choice", instructions: request.instructions, criteria } },
     budget: request.budget,
   });
-  if (!result.ok) return { status: result.status, reason: result.reason };
+  const { decidedBy } = result;
+  if (!result.ok) return { status: result.status, reason: result.reason, decidedBy };
 
   const answer = result.response.answers[questionId];
   if (answer === undefined || answer.type !== "choice") {
-    return { status: "abstained", reason: `the provider returned no Choice answer for ${questionId}` };
+    return { status: "abstained", reason: `the provider returned no Choice answer for ${questionId}`, decidedBy };
   }
   if (!criteria[answer.choice] && !Object.hasOwn(criteria, answer.choice)) {
-    return { status: "abstained", reason: `the provider chose ${answer.choice}, which was not an option` };
+    return { status: "abstained", reason: `the provider chose ${answer.choice}, which was not an option`, decidedBy };
   }
 
   const probabilities: Record<string, number> = {};
   for (const [option, probability] of Object.entries(answer.probabilities)) {
     if (!Object.hasOwn(criteria, option)) continue;
     if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
-      return { status: "abstained", reason: `the probability for ${option} was not a value in [0,1]` };
+      return { status: "abstained", reason: `the probability for ${option} was not a value in [0,1]`, decidedBy };
     }
     probabilities[option] = probability;
   }
   const missing = options.filter((option) => probabilities[option] === undefined);
   if (missing.length > 0) {
-    return { status: "abstained", reason: `the distribution omitted ${missing.join(", ")}` };
+    return { status: "abstained", reason: `the distribution omitted ${missing.join(", ")}`, decidedBy };
   }
 
   const ranked = Object.entries(probabilities).sort((a, b) => b[1] - a[1]);
@@ -479,6 +522,7 @@ export async function askChoice(
       margin,
       substantive: answer.choice !== NONE_OPTION,
     },
+    decidedBy,
   };
 }
 
@@ -505,20 +549,22 @@ export async function askNoul(
     },
     budget: request.budget,
   });
-  if (!result.ok) return { status: result.status, reason: result.reason };
+  const { decidedBy } = result;
+  if (!result.ok) return { status: result.status, reason: result.reason, decidedBy };
 
   const answer = result.response.answers[questionId];
   if (answer === undefined || answer.type !== "noul") {
-    return { status: "abstained", reason: `the provider returned no Noul answer for ${questionId}` };
+    return { status: "abstained", reason: `the provider returned no Noul answer for ${questionId}`, decidedBy };
   }
   if (!Number.isFinite(answer.noul) || answer.noul < 0 || answer.noul > 1) {
-    return { status: "abstained", reason: "the Noul answer was not a probability in [0,1]" };
+    return { status: "abstained", reason: "the Noul answer was not a probability in [0,1]", decidedBy };
   }
 
   return {
     status: "answered",
     probability: answer.noul,
     verdict: noulVerdict(answer.noul, { on: deps.config.noulOnFloor, off: deps.config.noulOffFloor }),
+    decidedBy,
   };
 }
 
@@ -527,7 +573,16 @@ export async function askNoul(
  * ------------------------------------------------------------------ */
 
 export type TemplateSelectionOutcome =
-  | { status: "selected"; templateId: string; templateVersion: string; confidence: number | undefined; margin: number | undefined; probedAt: number }
+  | {
+      status: "selected";
+      templateId: string;
+      templateVersion: string;
+      confidence: number | undefined;
+      margin: number | undefined;
+      probedAt: number;
+      /** Who chose it; absent when there was one candidate and no call was made. */
+      decidedBy?: DecidedBy;
+    }
   | { status: "abstained"; reason: string }
   | { status: "unavailable"; reason: string };
 
@@ -650,6 +705,7 @@ export async function selectTemplate(
     confidence: outcome.value.confidence ?? outcome.value.top,
     margin: outcome.value.margin,
     probedAt: (deps.now ?? Date.now)(),
+    decidedBy: outcome.decidedBy,
   };
 }
 

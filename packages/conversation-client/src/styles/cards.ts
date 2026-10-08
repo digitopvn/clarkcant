@@ -6,6 +6,19 @@
  * Wrapped in its own CSS `@layer` so the concatenation order in styles.ts stays the visible,
  * intentional cascade order rather than an accident of import order.
  */
+import { SURFACE_PHASE_MARK, SURFACE_PHASES } from "@clarkcant/contracts";
+
+/**
+ * The mark before each phase's words, drawn by the stylesheet rather than written into the badge: the badge's text
+ * stays exactly its words for anything that reads it, and the empty alternative after the slash keeps a screen reader
+ * from reading the mark aloud. The first declaration is the fallback for an engine without alternative text. Static on
+ * purpose, so reduced motion has nothing to stop.
+ */
+const PHASE_MARK_CSS = SURFACE_PHASES.map(
+  (phase) =>
+    `.cc-badge[data-surface-phase="${phase}"]::before { content: "${SURFACE_PHASE_MARK[phase]} "; content: "${SURFACE_PHASE_MARK[phase]} " / ""; }`,
+).join("\n");
+
 export const CARDS_CSS = `
 @layer cards {
 /* Cards */
@@ -83,6 +96,10 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-badge[data-tone="danger"] { color: var(--cc-danger); border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent); }
 .cc-badge[data-tone="ok"] { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
 .cc-freshness { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+/* The mark beside a state's words: a second, colour-free signal of how it went. */
+${PHASE_MARK_CSS}
+/* A live note's wrapper takes no space of its own; its regions stay mounted while empty. */
+.cc-live-note { display: contents; }
 .cc-widget-frame-document { display: block; width: 100%; border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); }
 .cc-widget-frame-document[hidden] { display: none; }
 /* A frame that could not load again: in place of the document, with the one way forward beside what failed. */

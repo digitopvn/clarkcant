@@ -1,6 +1,7 @@
 import type { DataClass } from "@clarkcant/contracts";
 
 import {
+  type DecidedBy,
   type JevBudget,
   type JevConfig,
   type JevDeps,
@@ -11,6 +12,7 @@ import {
   createJevBudget,
   jevCallRefusal,
 } from "./jev-selector.ts";
+import type { DecisionProviderId } from "./decision-provider.ts";
 import { sanitizeIntent, selectorMayOffer, selectorText } from "./mini-app-candidates.ts";
 import { describeRuntimeCandidate, type RuntimeCandidate } from "./runtime-candidates.ts";
 
@@ -219,7 +221,7 @@ export async function decideRuntimeTarget(
     id: chosen.id,
     confidence: outcome.value.confidence ?? outcome.value.top,
     margin: outcome.value.margin,
-    model: deps.jev.config.model,
+    ...outcome.decidedBy,
   };
 }
 
@@ -260,9 +262,10 @@ function shownSubject(text: string, maxLength: number): string | undefined {
 }
 
 export type SearchDecision =
-  | { status: "chosen"; ref: string; confidence: number | undefined; margin: number | undefined; model: string }
-  | { status: "clarify"; question: string }
-  | { status: "rank"; reason: string };
+  | { status: "chosen"; ref: string; confidence: number | undefined; margin: number | undefined; model: string; provider?: DecisionProviderId }
+  | { status: "clarify"; question: string; model: string; provider?: DecisionProviderId }
+  /** `decidedBy` is the provider last asked, when a call was made at all. */
+  | { status: "rank"; reason: string; decidedBy?: DecidedBy };
 
 /**
  * Choose which directory the user meant.
@@ -357,7 +360,7 @@ export async function decideProject(
     id: chosen.id,
     confidence: outcome.value.confidence ?? outcome.value.top,
     margin: outcome.value.margin,
-    model: deps.jev.config.model,
+    ...outcome.decidedBy,
   };
 }
 
@@ -369,11 +372,11 @@ export async function decideProject(
  * constraint could author a wider one, so it never gets to.
  */
 export type OperationGuardOutcome =
-  | { status: "allow"; reason?: string; model?: string }
-  | { status: "deny"; reason: string; model?: string }
-  | { status: "constrain"; constraintId: string; reason: string; model?: string }
+  | { status: "allow"; reason?: string; model?: string; provider?: DecisionProviderId }
+  | { status: "deny"; reason: string; model?: string; provider?: DecisionProviderId }
+  | { status: "constrain"; constraintId: string; reason: string; model?: string; provider?: DecisionProviderId }
   /** Not permission: the operation is under-specified and several readings are equally valid. */
-  | { status: "clarify"; question: string; model?: string }
+  | { status: "clarify"; question: string; model?: string; provider?: DecisionProviderId }
   /** The policy layer could not be reached or would not decide; the caller's fail-open setting governs. */
   | { status: "unavailable"; reason: string };
 
@@ -463,16 +466,17 @@ export async function guardOperation(deps: DecideDeps, input: OperationGuardInpu
   );
   if (!decisive.decisive) return { status: "unavailable", reason: decisive.reason };
 
-  const model = deps.jev.config.model;
+  // The model of the call that decided, not a second reading of a configuration the person may have changed since.
+  const decidedBy = outcome.decidedBy;
   const choice = outcome.value.choice;
 
-  if (choice === "allow") return { status: "allow", model };
+  if (choice === "allow") return { status: "allow", ...decidedBy };
   if (choice === "clarify") {
     return {
       status: "clarify",
       question:
         input.clarifyQuestion ?? "Việc này có thể nhắm vào nhiều đối tượng đều hợp lệ. Bạn muốn nói tới cái nào?",
-      model,
+      ...decidedBy,
     };
   }
   if (choice === "deny") {
@@ -486,7 +490,7 @@ export async function guardOperation(deps: DecideDeps, input: OperationGuardInpu
      */
     const effect = input.state["effect"] ?? "không rõ";
     const family = input.state["commandClass"] ?? "không rõ";
-    return { status: "deny", reason: `guardrail từ chối nhóm ${family}, ảnh hưởng ${effect}`, model };
+    return { status: "deny", reason: `guardrail từ chối nhóm ${family}, ảnh hưởng ${effect}`, ...decidedBy };
   }
   if (choice !== "constrain") {
     return { status: "unavailable", reason: `the guardrail chose something that was not an option: ${choice}` };
@@ -528,7 +532,7 @@ export async function guardOperation(deps: DecideDeps, input: OperationGuardInpu
   if (!offered.some((entry) => entry.id === constraintId)) {
     return { status: "unavailable", reason: "the guardrail chose a narrowing the host never offered" };
   }
-  return { status: "constrain", constraintId, reason: "guardrail yêu cầu thu hẹp phạm vi", model };
+  return { status: "constrain", constraintId, reason: "guardrail yêu cầu thu hẹp phạm vi", ...narrowing.decidedBy };
 }
 
 /**
@@ -600,7 +604,7 @@ export async function decideModelRoute(
   if (chosen === undefined) {
     return { status: "unavailable", reason: `bộ chọn trả về ${outcome.value.choice}, không nằm trong danh sách được đưa` };
   }
-  return { status: "chosen", alias: chosen.alias, model: deps.jev.config.model };
+  return { status: "chosen", alias: chosen.alias, ...outcome.decidedBy };
 }
 
 /** The three things that can happen to a message that arrives while something is running. */
@@ -670,7 +674,7 @@ export async function decideTurnAction(
     status: "decided",
     action: choice,
     confidence: outcome.value.confidence ?? outcome.value.top,
-    model: deps.jev.config.model,
+    ...outcome.decidedBy,
   };
 }
 /** The most candidates a context-focus question ever offers. */
@@ -718,7 +722,7 @@ export async function decideContextFocus(
   const index = Number.parseInt(outcome.value.choice.replace(/^item:/, ""), 10);
   const chosen = Number.isInteger(index) ? offered[index] : undefined;
   if (chosen === undefined) return { status: "rank", reason: "the selector chose something that was not offered" };
-  return { status: "chosen", id: chosen.id, confidence: outcome.value.confidence ?? outcome.value.top, model: deps.jev.config.model };
+  return { status: "chosen", id: chosen.id, confidence: outcome.value.confidence ?? outcome.value.top, ...outcome.decidedBy };
 }
 
 /**
@@ -756,7 +760,7 @@ export async function decideToolFamily(
   if (!decisive.decisive) return { status: "all", reason: decisive.reason };
   const family = outcome.value.choice.replace(/^family:/, "");
   if (!names.includes(family)) return { status: "all", reason: "the selector chose something that was not offered" };
-  return { status: "chosen", family, confidence: outcome.value.confidence ?? outcome.value.top, model: deps.jev.config.model };
+  return { status: "chosen", family, confidence: outcome.value.confidence ?? outcome.value.top, ...outcome.decidedBy };
 }
 
 /**
@@ -860,6 +864,7 @@ export async function decideSearchResult(
     return {
       status: "rank",
       reason: choice.status === "unavailable" ? choice.reason : `the selector did not decide: ${choice.reason}`,
+      ...(choice.decidedBy === undefined ? {} : { decidedBy: choice.decidedBy }),
     };
   }
   if (choice.value.substantive) {
@@ -872,7 +877,7 @@ export async function decideSearchResult(
           ref,
           confidence: choice.value.confidence ?? choice.value.top,
           margin: choice.value.margin,
-          model: deps.jev.config.model,
+          ...choice.decidedBy,
         };
       }
     }
@@ -897,6 +902,7 @@ export async function decideSearchResult(
     return {
       status: "clarify",
       question: `Có ${offered.length} kết quả gần nhau. Bạn muốn nói tới kết quả nào?`,
+      ...noul.decidedBy,
     };
   }
 
@@ -906,6 +912,7 @@ export async function decideSearchResult(
       noul.status === "answered"
         ? `the selector was not decisive and clarification was declined (${noul.verdict})`
         : `the selector was not decisive and ${noul.reason}`,
+    decidedBy: noul.decidedBy ?? choice.decidedBy,
   };
 }
 

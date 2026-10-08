@@ -177,15 +177,21 @@ describe("selecting Cloudflare", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("takes the Cloudflare token from the environment only, never from a stored secret", async () => {
-    // A stored value here is whatever the credential store would hand back; none of it may become the bearer.
-    const stored = (): string | undefined => "stored-secret-for-another-consumer";
+  it("never takes another provider's stored key as the Cloudflare token", async () => {
+    // The vault answers by provider; a key saved for TypeSafe must not become Cloudflare's bearer.
+    const stored = (provider: string): string | undefined => (provider === "typesafe" ? "stored-typesafe-key" : undefined);
     const config = decisionConfigFromEnv(cloudflareEnv({ CLOUDFLARE_API_TOKEN: undefined }), stored);
     expect(config.apiKey).toBeUndefined();
     expect(config.enabled).toBe(false);
     const { calls } = await selectWith(config, [envelope(decisiveTemplate)]);
     expect(calls).toHaveLength(0);
     expect(decisionConfigFromEnv(cloudflareEnv(), stored).apiKey).toBe(TOKEN);
+  });
+
+  it("uses the token saved in its own card over the environment's, and the environment's when none is saved", () => {
+    const stored = (provider: string): string | undefined => (provider === "cloudflare" ? "cf-card-token" : undefined);
+    expect(decisionConfigFromEnv(cloudflareEnv(), stored).apiKey).toBe("cf-card-token");
+    expect(decisionConfigFromEnv(cloudflareEnv(), () => undefined).apiKey).toBe(TOKEN);
   });
 });
 
@@ -217,7 +223,7 @@ describe("the Workers AI wire shape", () => {
       { config, transport },
       { state: { intent: "thêm lịch" }, instructions: "Should a calendar be shown?", budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "answered", probability: 0.58, verdict: "uncertain" });
+    expect(outcome).toEqual({ status: "answered", probability: 0.58, verdict: "uncertain", decidedBy: { model: "clef", provider: "cloudflare" } });
   });
 
   it("maps a Score answer to the same System One shape", () => {
@@ -259,7 +265,7 @@ describe("the Workers AI wire shape", () => {
     ];
     for (const response of malformed) {
       const { outcome, calls } = await selectWith(config, [response]);
-      expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape" });
+      expect(outcome).toEqual({ status: "unavailable", reason: "the provider response did not match the documented answer shape", decidedBy: { model: "clef", provider: "cloudflare" } });
       expect(calls).toHaveLength(1);
     }
   });
@@ -301,7 +307,7 @@ describe("the Workers AI wire shape", () => {
       { config, transport: hanging },
       { intent: "x", candidateSet: candidates(), budget: createJevBudget(config) },
     );
-    expect(outcome).toEqual({ status: "unavailable", reason: "the selector call exceeded the 40 ms deadline for this decision" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "the selector call exceeded the 40 ms deadline for this decision", decidedBy: { model: "clef", provider: "cloudflare" } });
   });
 
   it("sends the token as a bearer header through the shared fetch transport, and nowhere else", async () => {

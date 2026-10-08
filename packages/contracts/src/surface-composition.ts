@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { checkCompositionGraph, compositionGraphSchema } from "./composition-graph.ts";
 import { checkLayout, layoutNodeSchema } from "./composition-layout.ts";
+import { decisionProviderIdSchema } from "./decision-provider.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
 /**
@@ -171,7 +172,7 @@ export const compositionSelectorProvenanceSchema = z.strictObject({
    * Who answered a model decision, recorded only when it is not the default provider, so a record from a node that
    * never chose one is unchanged.
    */
-  provider: z.enum(["typesafe", "cloudflare"]).optional(),
+  provider: decisionProviderIdSchema.optional(),
   policyVersion: z.string().min(1).max(80),
   confidence: z.number().min(0).max(1).optional(),
   margin: z.number().min(0).max(1).optional(),

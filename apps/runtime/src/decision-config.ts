@@ -1,3 +1,6 @@
+import { DECISION_PROVIDER_PREFERENCE, type DecisionProviderSelection, decisionProviderPreferenceSchema } from "@clarkcant/contracts";
+import { type PreferenceDeps, readRegisteredPreference } from "@clarkcant/core";
+
 import {
   DECISION_PROVIDER_IDS,
   DEFAULT_DECISION_PROVIDER,
@@ -20,6 +23,11 @@ export interface DecisionConfig {
    * existed meant; only `CLARKCANT_DECISION_PROVIDER` selects another.
    */
   provider?: DecisionProviderId;
+  /**
+   * What chose the provider: the person's Settings choice, the operator's `CLARKCANT_DECISION_PROVIDER`, or nothing
+   * (TypeSafe by default). Reported by the diagnostics so a card can say why this provider answers.
+   */
+  selectedBy?: DecisionSelectionSource;
   /** False when the provider is switched off or has no key. No call is attempted. */
   enabled: boolean;
   /** True when the operator forbids third-party processing of any intent. */
@@ -44,6 +52,9 @@ export interface DecisionConfig {
 
 export const JEV_POLICY_VERSION = "2026-09-17";
 
+/** What chose the provider in effect. */
+export type DecisionSelectionSource = "settings" | "environment" | "default";
+
 /**
  * The provider an operator selected, or a refusal.
  *
@@ -59,6 +70,31 @@ function selectedProvider(env: NodeJS.ProcessEnv): { ok: true; id: DecisionProvi
     ok: false,
     reason: `CLARKCANT_DECISION_PROVIDER names no provider this node knows (${DECISION_PROVIDER_IDS.join(", ")}), so no decision is sent anywhere`,
   };
+}
+
+/**
+ * The person's Settings choice laid over the operator's environment.
+ *
+ * The choice wins when there is one, by the same rule a key saved in the vault wins over a variable: it is the person's
+ * most recent, explicit statement of who decides. It replaces only the provider, its model and Cloudflare's account id;
+ * the local-only flag, the off switch, the budget and the policy version stay the operator's, so a Settings choice can
+ * never send an intent from a node configured local-only. A model left in the environment for another provider is not
+ * carried into a choice that names none (TypeSafe), so switching back does not leave a request TypeSafe can only refuse.
+ */
+function withSelection(env: NodeJS.ProcessEnv, selection: DecisionProviderSelection): NodeJS.ProcessEnv {
+  const overlaid: NodeJS.ProcessEnv = { ...env, CLARKCANT_DECISION_PROVIDER: selection.provider };
+  switch (selection.provider) {
+    case "typesafe":
+      delete overlaid.CLARKCANT_DECISION_MODEL;
+      return overlaid;
+    case "cloudflare":
+      overlaid.CLARKCANT_DECISION_MODEL = selection.model;
+      if (selection.accountId !== undefined) overlaid.CLOUDFLARE_ACCOUNT_ID = selection.accountId;
+      return overlaid;
+    case "openrouter":
+      overlaid.CLARKCANT_DECISION_MODEL = selection.model;
+      return overlaid;
+  }
 }
 
 function flag(raw: string | undefined): boolean {
@@ -85,10 +121,19 @@ export function decisionConfigFromEnv(
    * recent statement of which key to use.
    */
   stored?: StoredCredential,
+  /** The person's Settings choice (`ai.decisionProvider`), when they made one. `null` follows the environment. */
+  selection?: DecisionProviderSelection | null,
 ): DecisionConfig {
-  const selected = selectedProvider(env);
+  const effectiveEnv = selection === undefined || selection === null ? env : withSelection(env, selection);
+  const selectedBy: DecisionSelectionSource =
+    selection !== undefined && selection !== null
+      ? "settings"
+      : (env.CLARKCANT_DECISION_PROVIDER?.trim() ?? "") === ""
+        ? "default"
+        : "environment";
+  const selected = selectedProvider(effectiveEnv);
   const provider = selected.ok ? selected.id : DEFAULT_DECISION_PROVIDER;
-  const resolved = decisionProviderFor(provider).connection(env, stored);
+  const resolved = decisionProviderFor(provider).connection(effectiveEnv, stored);
   const connection: DecisionProviderConnection = selected.ok
     ? resolved
     : { ...resolved, apiKey: undefined, endpointRefusal: selected.reason };
@@ -98,6 +143,7 @@ export function decisionConfigFromEnv(
 
   return {
     provider,
+    selectedBy,
     enabled: explicit ?? (connection.apiKey !== undefined && !localOnly),
     localOnly,
     apiKey: connection.apiKey,
@@ -114,29 +160,62 @@ export function decisionConfigFromEnv(
   };
 }
 
+/** The fields a key, a Settings choice or a removed key can change while the node runs. */
+const LIVE_FIELDS = ["provider", "selectedBy", "apiKey", "enabled", "endpoint", "endpointRefusal", "model"] as const;
+
+/** How a live configuration resolves itself, kept beside it so `currentDecisionConfig` can take one consistent reading. */
+const resolvers = new WeakMap<DecisionConfig, () => DecisionConfig>();
+
 /**
- * The configuration a running node decides with: its credential is resolved each time a decision reads it.
+ * The configuration a running node decides with: its credential and its provider are resolved each time a decision
+ * reads them.
  *
- * A key saved in the credential card, or removed from it, is used from the next decision on, without a restart. Built
- * once and read at start-up, the card would say "the node is using the new key" while the decider kept the old one, or
- * kept calling with a key the person had removed. The key and whether the provider is enabled are the two fields that
- * follow it, and both are read through `decisionConfigFromEnv`, so the rule that picks the key stays the one in
- * `provider-credential.ts`. A field in `overrides` is fixed at the value given, which is how a test pins one.
+ * A key saved in the credential card, or removed from it, and a provider chosen in Settings, are used from the next
+ * decision on, without a restart. Built once and read at start-up, the card would say "the node is using the new key"
+ * while the decider kept the old one, or kept calling with a key the person had removed. Every live field is read
+ * through `decisionConfigFromEnv`, so the rules that pick the provider and the key stay the ones above. A field in
+ * `overrides` is fixed at the value given, which is how a test pins one.
  */
 export function liveDecisionConfig(
   env: NodeJS.ProcessEnv,
   stored: StoredCredential | undefined,
   overrides: Partial<DecisionConfig> = {},
+  selection?: () => DecisionProviderSelection | null | undefined,
 ): DecisionConfig {
-  const config: DecisionConfig = { ...decisionConfigFromEnv(env, stored), ...overrides };
-  for (const field of ["apiKey", "enabled"] as const) {
+  const resolve = (): DecisionConfig => ({ ...decisionConfigFromEnv(env, stored, selection?.()), ...overrides });
+  const config: DecisionConfig = resolve();
+  for (const field of LIVE_FIELDS) {
     if (field in overrides) continue;
     Object.defineProperty(config, field, {
       enumerable: true,
-      get: () => decisionConfigFromEnv(env, stored)[field],
+      get: () => resolve()[field],
     });
   }
+  resolvers.set(config, resolve);
   return config;
+}
+
+/**
+ * One consistent reading of a configuration, for the length of one provider call.
+ *
+ * Each live field resolves on its own, so a call that read the endpoint, then the key, then the model, could read them
+ * across a switch and send one provider's key to another provider's endpoint. A call takes this snapshot once and reads
+ * only from it. A configuration that is not live is already consistent and is returned as it is.
+ */
+export function currentDecisionConfig(config: DecisionConfig): DecisionConfig {
+  return resolvers.get(config)?.() ?? config;
+}
+
+/**
+ * The person's decision provider choice, or `null` when they made none.
+ *
+ * Read through the preference registry, which already answers a stored value this build cannot parse as the default;
+ * parsed again here so the type the config reads is the contract's, not `unknown`.
+ */
+export function readDecisionSelection(deps: PreferenceDeps, principalId: string): DecisionProviderSelection | null {
+  const preference = readRegisteredPreference(deps, { principalId, key: DECISION_PROVIDER_PREFERENCE });
+  const parsed = decisionProviderPreferenceSchema.safeParse(preference?.value ?? null);
+  return parsed.success ? parsed.data : null;
 }
 
 /**

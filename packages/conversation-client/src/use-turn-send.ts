@@ -12,7 +12,7 @@ import { chipsAfterAnswer, readyAttachmentIds, readyChipIds, type AttachmentChip
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
-import { followScrollBehavior, followsBottom, reportScroll, scrollAsTranscript, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
+import { followScrollBehavior, followsAfterScroll, reportScroll, scrollAsTranscript, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -192,18 +192,18 @@ export function useTurnSend({
     // further up.
   }, [followsBottomNow, live, pendingUser, timeline]);
 
-  /* Reading away from the bottom stops the following; coming back to it starts it again. */
+  /*
+   * Reading away from the bottom stops the following; coming back to it starts it again. A step of the transcript's own
+   * glide, reported after more of the reply landed below, is neither (`followsAfterScroll`).
+   */
   useEffect(() => {
     const node = scroller.current;
     if (node === null) return;
     const onScroll = (): void => {
+      followBottom.current = followsAfterScroll(followBottom.current, reported.current, node);
       reported.current = reportScroll(node);
-      followBottom.current = followsBottom({
-        scrollHeight: node.scrollHeight,
-        scrollTop: node.scrollTop,
-        clientHeight: node.clientHeight,
-      });
     };
+    reported.current = reportScroll(node);
     node.addEventListener("scroll", onScroll, { passive: true });
     return () => node.removeEventListener("scroll", onScroll);
   }, []);

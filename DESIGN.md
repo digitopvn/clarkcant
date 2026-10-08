@@ -835,6 +835,39 @@ Every widget must define:
 - read-only snapshot;
 - disabled action reason.
 
+Built-in miniapps read their own state machines through one shared status
+contract (`packages/contracts/src/surface-status.ts`). Each domain keeps its
+machine; the contract only decides how a state looks, whether it is said aloud,
+whether it can be retried, and whether it is still current.
+
+- **Phases.** `loading`, `empty`, `pending`, `needs-action`, `success`,
+  `partial`, `error`, `unavailable`, `cancelled`. One tone and one text mark per
+  phase, so `partial` is never green on one card and amber on the next, and no
+  state is told by colour alone. The mark is drawn by the stylesheet with an
+  empty alternative text; the badge's text is only the domain's own words.
+- **Never a failure as a success.** A task that reports success against
+  contradicting evidence is `error`; success without verified evidence is
+  `partial`. A state this build does not know is drawn plain, never guessed.
+- **Missing is not zero.** A value is `reported` (with its source, `official` or
+  `inferred`, and an as-of time), `unknown`, `unavailable` (with a reason) or
+  `unsupported`. A missing duration or metric is left out or said as unknown.
+- **Snapshot or live.** A host card is a snapshot and is never stale. A live
+  view carries `observedAt` and a stale window, and past it keeps what it showed
+  and says how old it is.
+- **Announcements.** What a press answered goes in a live region that exists
+  before the answer arrives: `error` is assertive, any other change of phase is
+  polite, and the same phase again, `loading`, or anything already on screen at
+  mount (a reload, a scroll back) is not announced.
+- **Late answers and retry (contract helpers, adopted surface by surface).**
+  The contract's `settleSurfaceStatus` drops an answer for an earlier attempt
+  and keeps the first outcome of an attempt, so neither a late "still working"
+  nor a later outcome replaces it; its `canRetry` offers a retry only for
+  `error` or `partial` when the domain names `retry` or `check-again`. No
+  built-in miniapp calls them yet: today's retries (press again on a task stop,
+  try again on a credential) and late answers on command-card rows still follow
+  each surface's own rules, and move onto these helpers as those surfaces are
+  reworked.
+
 ### 8.4 Local vs effect actions
 
 Local view actions don't need to ask:
@@ -1312,6 +1345,16 @@ Don't show contrast debugging to consumers; put it in the Developer section.
   password field for a key) with loading, failure and done states, and what is typed goes straight to pi and is
   never shown back. A finished sign-in or sign-out reads the provider list and the model catalogue again. A node
   without pi says there is nothing to sign in to here; a list pi could not read says why and offers Try again.
+- Decision provider (shipped): beside Provider sign-in and separate from the conversation model, who answers Clark's
+  small typed decisions. It shows the provider and model in effect, a badge for what chose them (Settings, the
+  environment, or the default), the status — ready, local-only, misconfigured, no key, or off — with the decider's own
+  reason and what to do about it, and the last call since the node started. A segmented control offers Follow
+  environment, TypeSafe Jev, Cloudflare Clef and OpenRouter; Cloudflare adds its model choice and an account-id field,
+  OpenRouter a pinned model-slug field that is saved only once a slug is entered (a router such as `openrouter/auto`
+  is refused with the node's reason). Each provider has a key card that says where its key comes from (saved here, the
+  environment, or none), with a password field, Save/Replace and Remove for a key saved here; a typed key is cleared
+  once stored and never shown back. Every write goes to the node's decision-provider routes and the card redraws from
+  the answer; each change says it applies from the next decision, and nothing asks for a restart.
 - Favorites/recent models.
 - Shortcut order for model cycling.
 - Automatic routing by Jev toggle.

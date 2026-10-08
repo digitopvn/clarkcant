@@ -10,28 +10,32 @@ effect. Everything that turns its answer into something the user sees is host co
 This document is the operator's half: what to set, what leaves the machine, what is recorded, and
 what happens when the provider is unavailable.
 
-Selector là một vai trò, và Jev là provider đảm nhận vai trò đó theo mặc định. Người vận hành có thể
-chọn Cloudflare Clef trên Workers AI thay thế (xem [Chọn decision provider](#chọn-decision-provider)).
+Selector là một vai trò, và Jev là provider đảm nhận vai trò đó theo mặc định. Nó tách biệt với model
+hội thoại: Pi trả lời cuộc hội thoại, còn decision provider chỉ trả lời các câu hỏi nhỏ có kiểu bên
+dưới. Người vận hành có thể chọn Cloudflare Clef trên Workers AI hoặc decisions API của OpenRouter thay
+thế, và người dùng có thể chọn trong Cài đặt (xem [Chọn decision provider](#chọn-decision-provider)).
 Chính sách của Clark — những gì được đưa ra để chọn, những gì bị che, các ngưỡng, ngân sách thời
 gian và mọi fallback — giống hệt nhau dù provider nào trả lời; chỉ endpoint, credential và model được
 ghim là khác. Trừ khi một mục nói khác, "provider" bên dưới là provider đang được chọn.
 
 ## Configuration
 
-Mọi thiết lập được đọc từ môi trường của process runtime. Credential của provider đang được chọn
-(`TYPESAFE_API_KEY`, hoặc `CLOUDFLARE_API_TOKEN` khi chọn Cloudflare) là credential duy nhất được
-dùng, và nó không bao giờ được renderer đọc, ghi vào props, lưu trong snapshot hay ghi log. Các thiết
+Mọi thiết lập được đọc từ môi trường của process runtime, trừ việc lựa chọn của người dùng trong Cài
+đặt (bên dưới) thay thế provider, model của nó và account id của Cloudflare. Credential của provider
+đang được chọn (`TYPESAFE_API_KEY`, `CLOUDFLARE_API_TOKEN` hoặc `OPENROUTER_API_KEY`, hoặc key đã lưu
+trong thẻ của provider đó) là credential duy nhất được dùng, và nó không bao giờ được renderer đọc, ghi vào props, lưu trong snapshot hay ghi log. Các thiết
 lập `CLARKCANT_JEV_*`, trừ model và endpoint, áp dụng cho provider nào đang được chọn; giá trị `jev`
 của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "hỏi decision provider đang
 được chọn".
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev) hoặc `cloudflare` (Clef). Giá trị khác thì từ chối mọi lời gọi quyết định, chứ không quay về TypeSafe. |
-| `CLARKCANT_DECISION_MODEL` | *(xem ý nghĩa)* | Model id chính xác cho provider đang được chọn. Với TypeSafe, nó thắng `CLARKCANT_JEV_MODEL`, và khi không đặt thì thiết lập đó vẫn quyết định. Với Cloudflare, nó là bắt buộc và phải là `clef` hoặc `clef-flash`. |
+| `CLARKCANT_DECISION_PROVIDER` | `typesafe` | `typesafe` (Jev), `cloudflare` (Clef) hoặc `openrouter` (decisions API của OpenRouter). Giá trị khác thì từ chối mọi lời gọi quyết định, chứ không quay về TypeSafe. Lựa chọn trong Cài đặt thắng biến này. |
+| `CLARKCANT_DECISION_MODEL` | *(xem ý nghĩa)* | Model id chính xác cho provider đang được chọn. Với TypeSafe, nó thắng `CLARKCANT_JEV_MODEL`, và khi không đặt thì thiết lập đó vẫn quyết định. Với Cloudflare, nó là bắt buộc và phải là `clef` hoặc `clef-flash`. Với OpenRouter, nó là bắt buộc và phải là một slug được ghim (`nhà-cung-cấp/model`, chữ thường, không dùng alias `~`, và không phải một router của chính OpenRouter như `openrouter/auto`), ví dụ `cloudflare/clef-flash` hay `typesafe/jev-1.13`. |
 | `TYPESAFE_API_KEY` | *(none)* | Credential của TypeSafe. Khi chọn TypeSafe, không có key nghĩa là selector bị tắt. |
-| `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Chỉ cho Cloudflare. 32 ký tự thập lục phân; giá trị khác thì mọi lời gọi bị từ chối. |
-| `CLOUDFLARE_API_TOKEN` | *(none)* | Chỉ cho Cloudflare, và chỉ đọc từ môi trường. Một token được phép chạy Workers AI. Khi chọn Cloudflare, không có token nghĩa là selector bị tắt; key của TypeSafe không bao giờ được dùng thay. |
+| `CLOUDFLARE_ACCOUNT_ID` | *(none)* | Chỉ cho Cloudflare. 32 ký tự thập lục phân; giá trị khác thì mọi lời gọi bị từ chối. Account id chọn trong Cài đặt thắng biến này. |
+| `CLOUDFLARE_API_TOKEN` | *(none)* | Chỉ cho Cloudflare. Một token được phép chạy Workers AI. Token lưu trong thẻ Cloudflare của decision provider thắng biến này. Khi chọn Cloudflare mà không có token ở nơi nào, selector bị tắt; key của TypeSafe không bao giờ được dùng thay. |
+| `OPENROUTER_API_KEY` | *(none)* | Chỉ cho OpenRouter, dùng cho quyết định. Key lưu trong thẻ OpenRouter của decision provider thắng biến này. Khi chọn OpenRouter mà không có key ở nơi nào, selector bị tắt. Đây cũng là biến Pi có thể dùng cho model hội thoại; chỉ khi chọn OpenRouter làm decision provider thì quyết định mới dùng nó. |
 | `CLARKCANT_JEV_ENABLED` | derived | Explicit override. Defaults to "a key is present and the node is not local-only". |
 | `CLARKCANT_JEV_LOCAL_ONLY` | off | `1`/`true` forbids sending any intent to a third party. Outranks a key being present. |
 | `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | Chỉ cho TypeSafe. Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
@@ -49,53 +53,115 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt. Khi cả hai nơi đều có,
+referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ của nó trong Cài đặt (thẻ TypeSafe của decision provider, hoặc danh sách Thông tin xác thực; cả hai lưu cùng tên `typesafe`). Khi cả hai nơi đều có,
 key lưu trong thẻ được ưu tiên, theo quy tắc chung cho mọi credential của nhà cung cấp; key trong môi
-trường chỉ được dùng khi thẻ chưa có key. Lưu hoặc xoá key trong thẻ có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. Token của Cloudflare chỉ được đọc từ môi
-trường: không có thẻ cài đặt cho nó, và một secret được lưu cho mục đích khác không bao giờ được dùng
-làm credential của decision provider.
+trường chỉ được dùng khi thẻ chưa có key. Lưu hoặc xoá key trong thẻ có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. 
+
+Key của Cloudflare và OpenRouter theo cùng quy tắc, nhưng được lưu dưới các tên vault do host sở hữu
+(`decision:cloudflare`, `decision:openrouter`) mà chỉ thẻ riêng của decision provider được ghi
+(`PUT /decision-provider/credential`). Kho credential chung từ chối các tên này, nên một secret ai đó
+lưu cho mục đích khác (chẳng hạn token `cloudflare` cho lệnh deploy) không bao giờ trở thành credential
+của decision provider, và key quyết định không thể bị thay từ một biểu mẫu. Mỗi provider chỉ đọc tên
+của chính nó: key của TypeSafe không bao giờ được gửi tới Cloudflare hay OpenRouter, và ngược lại.
 
 ### Chọn decision provider
 
-TypeSafe Jev vẫn là mặc định. Cloudflare Clef chỉ được dùng khi người vận hành đặt đủ cả bốn:
+TypeSafe Jev vẫn là mặc định. Có hai cách chọn provider khác, và cách thứ nhất thắng:
+
+1. **Trong Cài đặt → AI & Định tuyến → Nhà cung cấp quyết định**, cạnh mục Đăng nhập nhà cung cấp và
+   tách biệt với mô hình trò chuyện. Mục này cho thấy provider và model đang có hiệu lực, một nhãn cho
+   biết ai đã chọn chúng (Cài đặt, môi trường hay mặc định), trạng thái kèm lý do và việc cần làm (ví dụ
+   "nhập account id Cloudflare bên dưới"), và lần gọi gần nhất kể từ khi node khởi động. Người dùng chọn
+   "Theo môi trường", TypeSafe Jev, Cloudflare Clef hoặc OpenRouter; Cloudflare có hai model và một ô
+   account id, còn OpenRouter có một ô model slug, chỉ được lưu khi đã nhập slug. Mỗi provider có một thẻ
+   key cho biết key đến từ đâu (lưu ở đây, môi trường, hoặc chưa có) cùng nút Lưu và Gỡ; key đã nhập được
+   xoá khỏi ô sau khi lưu và không bao giờ hiện lại. Mọi thay đổi đều nói rõ là áp dụng từ quyết định
+   tiếp theo. Lựa chọn được lưu thành preference
+   `ai.decisionProvider`, nên có revision và có thể hoàn tác. Chọn "theo môi trường" sẽ lưu `null` và
+   trả quyền chọn về cho các biến bên dưới. Cùng lựa chọn đó cũng có qua API của node:
+   `PUT /decision-provider` với thân như
+   `{"selection": {"provider": "cloudflare", "model": "clef", "accountId": "<32 hex>"}}`,
+   `{"selection": {"provider": "openrouter", "model": "cloudflare/clef-flash"}}`,
+   `{"selection": {"provider": "typesafe"}}` hoặc `{"selection": null}`. Key được gửi tới
+   `PUT /decision-provider/credential` với `{provider, value}` và được xoá bằng
+   `DELETE /decision-provider/credential/<provider>`. Mọi thao tác ghi này chỉ con người được làm: một
+   AI client hay một bề mặt máy khác không thể chọn bên thứ ba nào nhận quyết định.
+2. **Trong môi trường**, cho người vận hành cấu hình node mà không qua Cài đặt:
 
 ```bash
 CLARKCANT_DECISION_PROVIDER=cloudflare
 CLARKCANT_DECISION_MODEL=clef        # hoặc clef-flash
 CLOUDFLARE_ACCOUNT_ID=<32 ký tự thập lục phân>
 CLOUDFLARE_API_TOKEN=<một token được phép chạy Workers AI>
+
+# hoặc
+CLARKCANT_DECISION_PROVIDER=openrouter
+CLARKCANT_DECISION_MODEL=cloudflare/clef-flash   # một slug được ghim
+OPENROUTER_API_KEY=<một key OpenRouter>
 ```
 
-| | TypeSafe Jev | Cloudflare Clef |
-|---|---|---|
-| Nơi nhận request | `https://api.typesafe.ai/v1/systemone`, hoặc `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, dựng từ hai giá trị đã kiểm tra; không có cách ghi đè endpoint |
-| Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ |
-| Credential | Key từ thẻ cài đặt, nếu không có thì `TYPESAFE_API_KEY` | Chỉ `CLOUDFLARE_API_TOKEN` |
-| Thân request | System One: `{state, model, questions}` | Cùng một thân |
-| Response | Câu trả lời System One | Cùng câu trả lời đó nằm trong envelope REST của Cloudflare; chỉ `success: true` mới được mở ra |
+| | TypeSafe Jev | Cloudflare Clef | OpenRouter |
+|---|---|---|---|
+| Nơi nhận request | `https://api.typesafe.ai/v1/systemone`, hoặc `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, dựng từ hai giá trị đã kiểm tra; không có cách ghi đè endpoint | `https://openrouter.ai/api/alpha/decisions`; không có cách ghi đè endpoint. OpenRouter chuyển tiếp request tới công ty phục vụ model được chọn. |
+| Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ | Một slug được ghim như `cloudflare/clef-flash` hay `typesafe/jev-1.13`, luôn phải nêu rõ; alias `~` và các router của OpenRouter (`openrouter/auto`, mọi thứ dưới `openrouter/`) bị từ chối, vì một router không bao giờ trả lời như một model được ghim |
+| Credential | Key từ thẻ cài đặt, nếu không có thì `TYPESAFE_API_KEY` | Thẻ Cloudflare của decision provider, nếu không có thì `CLOUDFLARE_API_TOKEN` | Thẻ OpenRouter của decision provider, nếu không có thì `OPENROUTER_API_KEY` |
+| Thân request | System One: `{state, model, questions}` | Cùng một thân | Cùng một thân |
+| Response | Câu trả lời System One | Cùng câu trả lời đó nằm trong envelope REST của Cloudflare; chỉ `success: true` mới được mở ra | Câu trả lời System One cộng thêm `id`, `provider` và `usage.cost` của OpenRouter, các trường này bị bỏ. Model trả về là bản snapshot có ngày của slug được ghim (`typesafe/jev-1.13-20260917`) và được chấp nhận; model khác là drift. |
 
-Những gì rời khỏi node là giống hệt nhau cho cả hai: cùng một state đã che và giới hạn kích thước,
-cùng các lựa chọn được đưa ra, tất cả được dựng trước khi biết provider nào nhận. Chế độ local-only từ
-chối cả hai, và mọi lỗi đều fallback đúng như mô tả ở [Failure behaviour](#failure-behaviour). Đổi
-provider là đổi bên nhận dữ liệu quyết định, nên đó là một quyết định chia sẻ dữ liệu chứ không chỉ là
-một lựa chọn kỹ thuật.
+Những gì rời khỏi node là giống hệt nhau cho mọi provider: cùng một state đã che và giới hạn kích
+thước, cùng các lựa chọn được đưa ra, tất cả được dựng trước khi biết provider nào nhận. Chế độ
+local-only từ chối tất cả, và mọi lỗi đều fallback đúng như mô tả ở
+[Failure behaviour](#failure-behaviour). Đổi provider là đổi bên nhận dữ liệu quyết định, nên đó là một
+quyết định chia sẻ dữ liệu chứ không chỉ là một lựa chọn kỹ thuật. Với OpenRouter, có hai bên nhận dữ
+liệu: OpenRouter và công ty phục vụ model.
+
+OpenRouter đánh dấu decisions API của họ là alpha. Trang API reference ghi đường dẫn
+`/api/v1/api/alpha/decisions` trong khi các hướng dẫn dùng `/api/alpha/decisions`; node gọi đường dẫn
+thứ hai, là đường dẫn đã trả lời khi chạy thật (bên dưới).
 
 Cloudflare công bố benchmark so sánh Clef với Jev. Đó là số liệu của nhà cung cấp trên workload của
 họ, không phải bằng chứng về các quyết định của node này, và vì thế mặc định không thay đổi.
 
-**Chuyển về TypeSafe.** Bỏ `CLARKCANT_DECISION_PROVIDER` (hoặc đặt thành `typesafe`) rồi khởi động
-lại. Một surface do Cloudflare chọn vẫn đọc được: một lượt được phát lại trả về surface đã lưu mà không
-hỏi provider nào, và provenance của nó vẫn ghi `provider: "cloudflare"` cùng `clef`, vì nó ghi lại ai
-đã quyết định chứ không phải cấu hình hiện tại. Quyết định mới được ghi như một node mặc định vẫn ghi,
-không có trường `provider`. Còn hạ chính node về một bản phát hành chưa hỗ trợ Cloudflare thì khác:
-schema surface đã lưu của bản đó không biết trường `provider`, nên nó từ chối đọc một surface do
-Cloudflare chọn (phát lại hay làm mới surface đó sẽ thất bại). Hãy chuyển provider về trước, và giữ bản
-phát hành đọc được trường này chừng nào các surface đó còn cần.
+**Khi nào thay đổi có hiệu lực.** Thay đổi provider, model, account id của Cloudflare hay key, làm
+trong Cài đặt hoặc qua API, có hiệu lực từ quyết định kế tiếp. Node không khởi động lại, và một lời gọi
+quyết định đang chạy sẽ kết thúc với cấu hình lúc nó bắt đầu: một lời gọi không bao giờ ghép key của
+provider này với endpoint của provider khác. Dòng in lúc khởi động (xem runbook) vẫn mô tả node như lúc
+nó khởi động. Thay đổi biến môi trường, kể cả `CLARKCANT_JEV_LOCAL_ONLY` và `CLARKCANT_JEV_ENABLED`, vẫn
+cần khởi động lại; Cài đặt và API đều không thể gỡ chế độ local-only.
 
-Những gì chưa được kiểm chứng với dịch vụ Workers AI thật: model id chính xác trong response của Clef
-(`clef` và `@cf/cloudflare/clef` đều được đọc là `clef`; mọi giá trị khác bị từ chối như drift), và
-envelope mà Clef thực sự trả về, vốn đang theo tài liệu REST chung của Cloudflare. `clef-live.spec.ts`
-(bên dưới) là bài kiểm tra sẽ tạo ra bằng chứng đó.
+**Xem cấu hình đang có hiệu lực.** `GET /decision-provider` trả về provider và model đang có hiệu lực,
+cái gì đã chọn chúng (`settings`, `environment` hoặc `default`), host nhận quyết định, key lấy từ đâu
+(`vault`, `environment` hoặc `none`, không bao giờ là giá trị), với Cloudflare thì account id lấy từ
+đâu, một `status` (`ready`, `local-only`, `misconfigured`, `no-credential` hoặc `disabled`) kèm lý do,
+kết quả của lời gọi gần nhất kể từ khi node khởi động, và nguồn credential của từng provider, để một bộ
+chọn có thể cho thấy provider nào đã sẵn sàng.
+
+**Chuyển về TypeSafe.** Chọn TypeSafe (hoặc "theo môi trường") trong Cài đặt, hoặc bỏ
+`CLARKCANT_DECISION_PROVIDER` (hoặc đặt thành `typesafe`) rồi khởi động lại. Một surface do provider
+khác chọn vẫn đọc được: một lượt được phát lại trả về surface đã lưu mà không hỏi provider nào, và
+provenance của nó vẫn ghi provider và model đó, vì nó ghi lại ai đã quyết định chứ không phải cấu hình
+hiện tại. Quyết định mới được ghi như một node mặc định vẫn ghi, không có trường `provider`. Còn hạ chính
+node về một bản phát hành cũ hơn thì khác: bản phát hành có schema surface đã lưu không biết
+`provider: "cloudflare"` (hoặc, trước khi hỗ trợ OpenRouter, `provider: "openrouter"`) sẽ từ chối đọc
+surface đó (phát lại hay làm mới nó sẽ thất bại). Hãy chuyển provider về trước, và giữ một bản phát hành
+đọc được trường này chừng nào các surface đó còn cần.
+
+**Bằng chứng chạy thật (2026-10-08).** Chạy với key thật và chỉ state tổng hợp, bằng các bài kiểm tra
+tự chọn ở [Running the checks](#running-the-checks):
+
+| Provider và model | Chọn template | Câu hỏi có/không |
+|---|---|---|
+| Cloudflare `clef` | đạt | đạt |
+| Cloudflare `clef-flash` | đạt | đạt |
+| OpenRouter `cloudflare/clef` | đạt | đạt |
+| OpenRouter `cloudflare/clef-flash` | đạt | đạt |
+| OpenRouter `typesafe/jev-1.13` | bị chặn: một HTTP 529 (provider quá tải), sau đó hết giờ | bị chặn |
+| TypeSafe `jev-1.13.0` trực tiếp | bị chặn: hết giờ ở 4 s và 20 s | bị chặn |
+
+Các lần chạy đạt đi qua cùng bước kiểm tra model và phân tích response như production, nên envelope
+và model id của Clef mà adapter mong đợi đã được xác nhận khi chạy thật. Hai hàng bị chặn là tình trạng
+sẵn sàng trong ngày hôm đó, không phải kết luận về tương thích: TypeSafe vẫn trả lời bài kiểm tra từ
+chối model sai đúng như mong đợi.
 
 ### The exact-model gate
 
@@ -185,8 +251,9 @@ the release evidence rather than tuned to taste.
 | Condition | Outcome |
 |---|---|
 | No key, disabled, or local-only | `unavailable`; no network call. |
-| Tên provider không xác định, hoặc model hay account id của Cloudflare bị thiếu hoặc sai dạng | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
-| Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn Cloudflare hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
+| Tên provider không xác định, model hay account id của Cloudflare bị thiếu hoặc sai dạng, hoặc model của OpenRouter bị thiếu, là alias, là một router (`openrouter/auto`), hoặc không phải slug được ghim | `unavailable`; không có lời gọi mạng, và lý do nêu tên thiết lập. |
+| Chọn TypeSafe nhưng model id là của Cloudflare (`clef`, `clef-flash`, hoặc bất kỳ id `@cf/` nào) hoặc là slug của OpenRouter (bất cứ thứ gì có `/`) | `unavailable`; không có lời gọi mạng, và lý do hướng dẫn chọn provider phục vụ model đó hoặc bỏ `CLARKCANT_DECISION_MODEL`. |
+| Lựa chọn trong Cài đặt không thuộc một trong ba dạng (kể cả slug router của OpenRouter), hoặc key rỗng hay dài quá 4096 ký tự | Bị từ chối khi lưu, nêu tên trường và không bao giờ nêu giá trị; cấu hình đang có hiệu lực không đổi. |
 | Còn sót một credential ở bất kỳ đâu trong request | `unavailable`; không có lời gọi mạng, và lý do không chứa phần nào của giá trị. |
 | Request lớn hơn 64 KiB sau khi tuần tự hoá | `unavailable`; không có lời gọi mạng, và request không bị quét. |
 | Ít hơn hai kết quả tìm kiếm nằm trong trần của selector | Giữ nguyên thứ hạng; không có lời gọi mạng. |
@@ -195,9 +262,9 @@ the release evidence rather than tuned to taste.
 | 422 | `unavailable`; body lỗi của provider bị huỷ mà không đọc, và không bao giờ được trả về, ghi log hay lưu lại. |
 | 429 / 529 / 5xx | `unavailable`; **no retry**. A retry inside a four-second budget only makes a slow answer a late one. |
 | Deadline exceeded | The call is aborted through its `AbortSignal`, and the reason names the budget. |
-| Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho cả hai provider. |
-| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Đường gọi chung giữ cùng giới hạn đó bất kể transport nào đưa câu trả lời về. Áp dụng cho cả hai provider. |
-| Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. Với Cloudflare, envelope không có `success: true` hoặc không có `result` dạng System One được coi là sai dạng. |
+| Một redirect | Lời gọi thất bại thay vì đi theo redirect, nên credential không bao giờ tới một host mà bước kiểm tra endpoint chưa duyệt. Áp dụng cho mọi provider. |
+| Response lớn hơn 256 KiB | Không đọc quá giới hạn (theo độ dài khai báo, hoặc bằng cách đếm luồng dữ liệu), và bị coi là sai dạng. Đường gọi chung giữ cùng giới hạn đó bất kể transport nào đưa câu trả lời về. Áp dụng cho mọi provider. |
+| Malformed or drifted response | `abstained` or `unavailable`; a missing field is never read as a default. Với Cloudflare, envelope không có `success: true` hoặc không có `result` dạng System One được coi là sai dạng. Với OpenRouter, model khác slug được ghim hoặc bản snapshot có ngày của nó (`<slug>-YYYYMMDD`) là drift. |
 | Low confidence, tie, or `none` | `abstained`, with the reason recorded. |
 
 An abstention is not a failure. It is the answer that says "no offered option fits", and the
@@ -209,9 +276,12 @@ clarifying question — and to record that the composition was a fallback.
 One line per call, printed through the injected sink and kept to the last 200 in memory. It holds:
 request id, event (`call`, `refusal`, `policy`, `model_drift`, `error`, `oversized_state`), model id,
 policy version, duration, question count, token counts, the selected enum, and a reason. Khi một
-provider khác TypeSafe được chọn, mỗi dòng còn nêu tên provider đó (`provider: "cloudflare"`); dòng
-từ một node mặc định không có trường `provider`, giống hệt trước đây. Model id do provider trả về được
-cắt còn 64 ký tự trước khi được ghi lại hoặc nhắc lại trong một lý do.
+provider khác TypeSafe được chọn, mỗi dòng còn nêu tên provider đó (`provider: "cloudflare"` hoặc
+`provider: "openrouter"`); dòng từ một node mặc định không có trường `provider`, giống hệt trước đây.
+Model id là model mà provider đã trả lời, nên một dòng của OpenRouter ghi bản snapshot có ngày đã phục
+vụ lời gọi. Model id do provider trả về được cắt còn 64 ký tự trước khi được ghi lại hoặc nhắc lại
+trong một lý do. `GET /decision-provider` hiện event, status, model, thời lượng và lý do của dòng gần
+nhất.
 
 Quy tắc này cũng áp dụng cho những gì được lưu kèm một quyết định: provenance của bộ chọn trong một
 composition và bản ghi decider của kết quả tìm kiếm chỉ có `provider` khi provider đó không phải TypeSafe.
@@ -233,9 +303,10 @@ selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
 
-Dạng thứ hai chỉ xuất hiện khi Cloudflare được chọn. Dòng này mô tả node lúc khởi động: key TypeSafe
-được lưu hoặc xoá trong thẻ cài đặt sau đó thay đổi cách selector hoạt động mà không làm thay đổi dòng
-này.
+Dạng thứ hai chỉ xuất hiện khi một provider khác được chọn (`on cloudflare`, `on openrouter`). Dòng
+này mô tả node lúc khởi động: một provider được chọn, hay một key được lưu hoặc xoá, trong Cài đặt sau
+đó thay đổi cách selector hoạt động mà không làm thay đổi dòng này. `GET /decision-provider` là câu trả
+lời hiện tại.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one
@@ -321,12 +392,16 @@ startup.
 # Unit and boundary tests: no credentials, no network.
 pnpm exec vitest run apps/runtime/test/jev-selector.spec.ts
 pnpm exec vitest run apps/runtime/test/cloudflare-decision-provider.spec.ts apps/runtime/test/decision-provider-parity.spec.ts
+pnpm exec vitest run apps/runtime/test/openrouter-decision-provider.spec.ts apps/runtime/test/decision-provider-settings.spec.ts
 
 # Live smoke: opt-in, needs a real key, sends only synthetic state.
 CLARKCANT_JEV_LIVE=1 pnpm exec vitest run apps/runtime/test/jev-live.spec.ts
 
 # Live smoke cho Clef: opt-in, cần các thiết lập Cloudflare ở trên, chỉ gửi state tổng hợp.
 CLARKCANT_CLEF_LIVE=1 pnpm exec vitest run apps/runtime/test/clef-live.spec.ts
+
+# Live smoke cho OpenRouter: opt-in, cần OPENROUTER_API_KEY và CLARKCANT_DECISION_MODEL (một slug được ghim).
+CLARKCANT_OPENROUTER_DECISION_LIVE=1 pnpm exec vitest run apps/runtime/test/openrouter-decision-live.spec.ts
 ```
 
 Mỗi file live báo `BLOCKED` kèm biến còn thiếu khi không chạy được. It deliberately

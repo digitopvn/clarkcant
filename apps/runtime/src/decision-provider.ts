@@ -1,4 +1,7 @@
+import { DECISION_PROVIDER_IDS as PROVIDER_IDS, type DecisionProviderId } from "@clarkcant/contracts";
+
 import { cloudflareDecisionProvider } from "./cloudflare-decision-provider.ts";
+import { openrouterDecisionProvider } from "./openrouter-decision-provider.ts";
 import type { SystemOneResponse } from "./system-one-wire.ts";
 import { typesafeDecisionProvider } from "./typesafe-decision-provider.ts";
 
@@ -14,10 +17,10 @@ import { typesafeDecisionProvider } from "./typesafe-decision-provider.ts";
  * change a floor and cannot turn a refusal into a choice; it can only return a System One response or nothing.
  */
 
-export type DecisionProviderId = "typesafe" | "cloudflare";
+export type { DecisionProviderId };
 
 /** Every provider id this node knows. TypeSafe is first because it is the default. */
-export const DECISION_PROVIDER_IDS: readonly DecisionProviderId[] = Object.freeze(["typesafe", "cloudflare"]);
+export const DECISION_PROVIDER_IDS: readonly DecisionProviderId[] = PROVIDER_IDS;
 
 /** Used when nothing names a provider, which is every configuration written before a second one existed. */
 export const DEFAULT_DECISION_PROVIDER: DecisionProviderId = "typesafe";
@@ -45,21 +48,22 @@ export interface DecisionProviderConnection {
 }
 
 /**
- * The TypeSafe key a person typed into the settings card, when there is one.
+ * The key a person typed into the settings card for a provider, when there is one.
  *
  * A function rather than a value because it is read again for each decision (`liveDecisionConfig`), and the point of
- * storing one is that it works without restarting the node. It reads that one named key and nothing else: a lookup by any name would let a
- * secret stored for a different consumer become a decision provider's bearer without the vault's consumer check.
+ * storing one is that it works without restarting the node. It is asked by provider and answers from that provider's one
+ * vault name (`DECISION_CREDENTIAL_NAMES`) and nothing else: a lookup by any name would let a secret stored for a
+ * different consumer become a decision provider's bearer without the vault's consumer check.
  */
-export type StoredCredential = () => string | undefined;
+export type StoredCredential = (provider: DecisionProviderId) => string | undefined;
 
 export interface DecisionProvider {
   readonly id: DecisionProviderId;
   /**
-   * Credential, endpoint and pinned model, read from the operator's environment (and, for TypeSafe only, the key from
-   * its settings card).
+   * Credential, endpoint and pinned model, read from the operator's environment overlaid with the person's Settings
+   * choice (`decision-config.ts`), and the key from the provider's own settings card.
    *
-   * Never from conversation or project state: what a decision may be sent to is an operator choice.
+   * Never from conversation or project state: what a decision may be sent to is an operator's or the person's choice.
    */
   connection(env: NodeJS.ProcessEnv, stored: StoredCredential | undefined): DecisionProviderConnection;
   /**
@@ -69,6 +73,15 @@ export interface DecisionProvider {
    * caller as malformed, exactly as it would be for any other provider.
    */
   readResponse(body: unknown): SystemOneResponse | undefined;
+  /**
+   * Whether the model an answer names is the model this node pinned. Absent means the two ids must be equal.
+   *
+   * A provider that serves a pinned name from a dated snapshot (`typesafe/jev-1.13` answered as
+   * `typesafe/jev-1.13-20260917`) says so here, and nowhere looser: any other id is drift and is refused.
+   */
+  answersAs?(pinned: string, answered: string): boolean;
+  /** The models a person may choose from in Settings, or `undefined` when the provider takes a pinned slug. */
+  readonly models: readonly string[] | undefined;
 }
 
 /** The adapter for a provider id. */
@@ -78,5 +91,7 @@ export function decisionProviderFor(id: DecisionProviderId): DecisionProvider {
       return typesafeDecisionProvider;
     case "cloudflare":
       return cloudflareDecisionProvider;
+    case "openrouter":
+      return openrouterDecisionProvider;
   }
 }

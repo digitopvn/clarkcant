@@ -121,8 +121,18 @@ describe("the diagnostic says which source is in effect", () => {
   it("names the source for each credential and carries no value", () => {
     const env = { GEMINI_API_KEY: FROM_ENV, TYPESAFE_API_KEY: FROM_ENV };
     const sources = credentialSources({ env, vault: ["gemini"] });
-    expect(sources).toEqual({ gemini: "vault", typesafe: "environment" });
+    expect(sources).toEqual({
+      gemini: "vault",
+      typesafe: "environment",
+      "decision:cloudflare": "none",
+      "decision:openrouter": "none",
+    });
     expect(JSON.stringify(sources)).not.toContain(FROM_ENV);
-    expect(credentialSources({ env: {}, vault: [] })).toEqual({ gemini: "none", typesafe: "none" });
+    expect(credentialSources({ env: {}, vault: [] })).toEqual({
+      gemini: "none",
+      typesafe: "none",
+      "decision:cloudflare": "none",
+      "decision:openrouter": "none",
+    });
   });
 });

@@ -24,6 +24,7 @@ import {
   type UnreadableSnapshot,
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
+import { DECISION_CREDENTIAL_NAMES, type DecisionProviderSelection } from "@clarkcant/contracts";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
 import type { ProviderAuthPort } from "./application/provider-sign-in.ts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
@@ -95,7 +96,7 @@ import {
   createFetchTransport,
   createJevBudget,
 } from "./jev-selector.ts";
-import { liveDecisionConfig } from "./decision-config.ts";
+import { liveDecisionConfig, readDecisionSelection } from "./decision-config.ts";
 import type { StoredCredential } from "./decision-provider.ts";
 import type { FeedbackGithub } from "./application/feedback-github.ts";
 
@@ -413,9 +414,14 @@ export function newId(prefix: string): string {
  * node asked a provider to decide, and it holds no request body, so nothing here needs retention
  * or redaction at rest. It is also the counter the tests read.
  */
-function buildJevRuntime(options: RuntimeOptions, storedCredential?: StoredCredential): JevRuntime {
-  // The credential is read per decision, so a key saved or removed in the card applies without a restart.
-  const config: JevConfig = liveDecisionConfig(process.env, storedCredential, options.jev?.config);
+function buildJevRuntime(
+  options: RuntimeOptions,
+  storedCredential?: StoredCredential,
+  selection?: () => DecisionProviderSelection | null,
+): JevRuntime {
+  // The credential and the provider are read per decision, so a key or a provider chosen in Settings applies without a
+  // restart.
+  const config: JevConfig = liveDecisionConfig(process.env, storedCredential, options.jev?.config, selection);
   const telemetry: JevTelemetry[] = [];
   let providerCalls = 0;
 
@@ -460,8 +466,11 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const nodeId = runtime.identity.nodeId;
   // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault at each
   // decision rather than passed in as a value, because the point of storing one is that the node is already running.
-  const jevRuntime = buildJevRuntime(options, () =>
-    readCredential(runtime.db, runtime.identity.ownerPrincipalId, "typesafe"),
+  // The provider chosen in Settings is read the same way, at each decision, so choosing one needs no restart either.
+  const jevRuntime = buildJevRuntime(
+    options,
+    (provider) => readCredential(runtime.db, runtime.identity.ownerPrincipalId, DECISION_CREDENTIAL_NAMES[provider]),
+    () => readDecisionSelection({ db: runtime.db, now: () => nowInstant() }, runtime.identity.ownerPrincipalId),
   );
   const catalog = registerCatalog(
     new CatalogRegistry(),

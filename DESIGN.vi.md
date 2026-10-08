@@ -818,6 +818,40 @@ Mọi widget phải định nghĩa:
 - read-only snapshot;
 - disabled action reason.
 
+Các miniapp dựng sẵn đọc state machine của riêng mình qua một hợp đồng trạng
+thái dùng chung (`packages/contracts/src/surface-status.ts`). Mỗi miền giữ
+nguyên machine của nó; hợp đồng chỉ quyết định một trạng thái trông thế nào, có
+được đọc thành tiếng không, có thử lại được không, và còn mới hay không.
+
+- **Phase.** `loading`, `empty`, `pending`, `needs-action`, `success`,
+  `partial`, `error`, `unavailable`, `cancelled`. Mỗi phase có một tông màu và
+  một ký hiệu chữ, nên `partial` không bao giờ xanh ở thẻ này mà vàng ở thẻ kia,
+  và không trạng thái nào chỉ được nói bằng màu. Ký hiệu do stylesheet vẽ với
+  văn bản thay thế rỗng; chữ trong badge chỉ là lời của chính miền đó.
+- **Không bao giờ coi thất bại là thành công.** Một task báo thành công nhưng
+  bằng chứng mâu thuẫn là `error`; thành công mà chưa có bằng chứng xác nhận là
+  `partial`. Trạng thái mà bản dựng này không biết được vẽ trơn, không đoán.
+- **Thiếu không phải là 0.** Một giá trị là `reported` (kèm nguồn, `official`
+  hoặc `inferred`, và thời điểm), `unknown`, `unavailable` (kèm lý do) hoặc
+  `unsupported`. Thời lượng hay chỉ số bị thiếu thì được bỏ ra hoặc nói là chưa
+  rõ.
+- **Snapshot hay live.** Thẻ của host là snapshot và không bao giờ cũ. Một view
+  live mang `observedAt` và khoảng thời gian hết hạn; quá hạn thì nó giữ nguyên
+  những gì đã hiện và nói rõ đã cũ bao lâu.
+- **Thông báo.** Kết quả của một lần bấm được đặt trong một live region có sẵn
+  trước khi kết quả tới: `error` là assertive, mọi thay đổi phase khác là
+  polite; cùng phase lặp lại, `loading`, hay bất cứ gì đã có trên màn hình lúc
+  mount (tải lại trang, cuộn ngược) đều không được thông báo.
+- **Câu trả lời đến muộn và thử lại (helper của hợp đồng, áp dụng dần từng
+  bề mặt).** `settleSurfaceStatus` của hợp đồng bỏ qua câu trả lời cho một lần
+  thử trước và giữ kết quả đầu tiên của một lần thử, nên cả một "vẫn đang chạy"
+  đến muộn lẫn một kết quả đến sau đều không thay được nó; `canRetry` chỉ đề
+  nghị thử lại khi phase là `error` hoặc `partial` và miền nêu rõ `retry` hoặc
+  `check-again`. Hiện chưa miniapp dựng sẵn nào gọi hai helper này: các lần thử
+  lại hôm nay (bấm lại khi dừng task, thử lại khi lưu thông tin xác thực) và câu
+  trả lời đến muộn trên các dòng của thẻ lệnh vẫn theo quy tắc riêng của từng bề
+  mặt, và sẽ chuyển sang các helper này khi những bề mặt đó được làm lại.
+
 ### 8.4 Local vs effect actions
 
 Local view actions không cần hỏi:
@@ -1296,6 +1330,16 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
   thất bại và hoàn tất, và những gì người dùng nhập đi thẳng tới pi, không bao giờ hiện lại. Đăng nhập hoặc đăng
   xuất xong thì danh sách nhà cung cấp và danh mục model được đọc lại. Node không có pi nói rằng ở đây không có gì
   để đăng nhập; danh sách pi không đọc được thì nói lý do và có nút Thử lại.
+- Nhà cung cấp quyết định (đã ship): cạnh mục Đăng nhập nhà cung cấp và tách biệt với mô hình trò chuyện, cho biết ai
+  trả lời những quyết định nhỏ, có kiểu của Clark. Mục này hiện provider và model đang có hiệu lực, một nhãn cho biết
+  ai đã chọn chúng (Cài đặt, môi trường hay mặc định), trạng thái — sẵn sàng, chỉ cục bộ, cấu hình sai, chưa có khoá,
+  hoặc đã tắt — kèm lý do của chính bộ quyết định và việc cần làm, và lần gọi gần nhất kể từ khi node khởi động. Một
+  segmented control cho chọn Theo môi trường, TypeSafe Jev, Cloudflare Clef và OpenRouter; Cloudflare có thêm lựa
+  chọn model và ô account id, OpenRouter có ô model slug được ghim, chỉ được lưu khi đã nhập slug (router như
+  `openrouter/auto` bị từ chối kèm lý do của node). Mỗi provider có một thẻ key cho biết key đến từ đâu (lưu ở đây,
+  môi trường, hoặc chưa có), với ô mật khẩu, Lưu/Thay và Gỡ cho key lưu ở đây; key đã nhập được xoá khỏi ô sau khi
+  lưu và không bao giờ hiện lại. Mọi thao tác ghi đều đi qua các route decision-provider của node và thẻ vẽ lại từ
+  câu trả lời; mỗi thay đổi nói rõ là áp dụng từ quyết định tiếp theo, và không có gì đòi khởi động lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.
 - Automatic routing by Jev toggle.

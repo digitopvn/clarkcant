@@ -20,7 +20,8 @@ import {
   searchHistory,
 } from "@clarkcant/storage";
 
-import { type DecisionProviderId, recordedDecisionProvider } from "./decision-provider.ts";
+import { currentDecisionConfig } from "./decision-config.ts";
+import type { DecisionProviderId } from "./decision-provider.ts";
 import type { EmbeddingProvider } from "./embeddings-local.ts";
 import { applySemanticFusion, type SemanticStatus } from "./hybrid-rank.ts";
 import {
@@ -28,6 +29,7 @@ import {
   type SearchDeciderMode,
   decideSearchResult,
 } from "./jev-decider.ts";
+import { decidedByOf } from "./jev-selector.ts";
 import { type TemporalParseResult, parseTemporal } from "./temporal-parse.ts";
 
 /**
@@ -263,8 +265,6 @@ async function decideAmongRanked(
     return { ...ranked, decider: { mode: "rank" } };
   }
 
-  const recordedProvider = recordedDecisionProvider(deps.decider.jev.config);
-  const provider = recordedProvider === undefined ? {} : { provider: recordedProvider };
   // The decider asks for the class of a result's whole stored record before offering it, so one the selector may not be
   // shown is left out before anything is sent, rather than the tool filtering it after the provider already read it.
   const decision = await decideSearchResult(deps.decider, {
@@ -277,6 +277,14 @@ async function decideAmongRanked(
     })),
     classify: dataClassOf,
   });
+  /*
+   * The provider recorded is the one the decision's own call used, never a second reading of the configuration: the
+   * person may switch providers while a decision is in flight. Only when no call was made at all does the configuration
+   * name the provider, and then in a single reading.
+   */
+  const asked =
+    decision.status === "rank" ? (decision.decidedBy ?? decidedByOf(currentDecisionConfig(deps.decider.jev.config))) : decision;
+  const provider = asked.provider === undefined ? {} : { provider: asked.provider };
 
   if (decision.status === "chosen") {
     const chosen = ranked.results.find((hit) => hit.ref === decision.ref);
@@ -304,7 +312,7 @@ async function decideAmongRanked(
       ...ranked,
       mode: "clarify",
       clarification: decision.question,
-      decider: { mode: "jev", model: deps.decider.jev.config.model, ...provider, reason: "the results are ambiguous" },
+      decider: { mode: "jev", model: decision.model, ...provider, reason: "the results are ambiguous" },
     };
   }
 
