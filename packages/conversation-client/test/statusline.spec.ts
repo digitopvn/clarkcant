@@ -46,6 +46,13 @@ describe("the statusline under the composer", () => {
     }
   });
 
+  it("names the unset level in Settings with the words the /thinking chooser uses", () => {
+    // Settings, the statusline and `/thinking` describe one state; a person who reads "thinking: auto" and opens
+    // Settings → AI & Routing should find the same "Auto" there, not a different "Default".
+    expect(MESSAGES_EN["settings.ai.thinking.default"]).toBe("Auto (model default)");
+    expect(MESSAGES_VI["settings.ai.thinking.default"]).toBe("Tự động (mặc định của model)");
+  });
+
   it("says how full the context is, first, because it is the number with a ceiling", () => {
     expect(statuslineParts({ metrics: { contextTokens: 12_300, contextWindow: 1_000_000 } }, t)).toEqual([
       "12k/1.00M (1%)",
