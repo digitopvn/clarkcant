@@ -26,6 +26,22 @@ export const WIDGET_PERFORM_VERSION = 1;
  */
 export const WIDGET_PERFORM_HEADER = "x-clarkcant-widget-perform";
 
+/**
+ * How long the node waits for a page's report on one perform before it records the outcome as unknown.
+ *
+ * A little longer than a frame's own wait for its widget's answer (`FRAME_PERFORM_TIMEOUT_MS` in
+ * `@clarkcant/widget-host`), so a frame that does not answer is reported as such by the page rather than the node giving
+ * up first. A surface that hands the perform on — the desktop host, to a detached window — reports within it as well.
+ */
+export const WIDGET_PERFORM_REPORT_WITHIN_MS = 8_000;
+
+/**
+ * The most a detached desktop window may hand its host for one report: `{ performId, report }` as JSON, in UTF-8 bytes.
+ * A contract-valid `output` can encode to more than that (4,000 characters of Vietnamese, emoji or control characters),
+ * so the window cuts the output on a character boundary to fit before it reports.
+ */
+export const DETACHED_PERFORM_REPORT_MAX_BYTES = 8 * 1024;
+
 export const widgetPerformIdSchema = z
   .string()
   .min(1)
@@ -49,7 +65,11 @@ export type WidgetPerformRequest = z.infer<typeof widgetPerformRequestSchema>;
  */
 export const PAGE_PERFORM_REFUSAL_CODES = [
   "FRAME_NOT_MOUNTED",
-  // The widget is open in its own desktop window, which Clark cannot ask yet; reattaching it lets Clark act on it.
+  /*
+   * The widget is open in its own desktop window and this page cannot hand the perform there: only a desktop app whose
+   * host predates forwarding (`desktop:forwardWidgetPerform`) answers it. A current one forwards the perform to the
+   * detached window, which reports what its frame answered.
+   */
   "FRAME_DETACHED",
   "FRAME_NOT_READY",
   "EXTENSION_NOT_OFFERED",

@@ -60,6 +60,13 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:updateAppearance",
   // The shell says the installed packages changed, so a detached frame re-reads the document it runs.
   "desktop:notifyPackagesChanged",
+  /*
+   * Clark's perform for the detached instance, handed from the conversation to the host, and the detached window's
+   * report of what its frame answered. The host pushes the perform itself (`detached:perform`), and the node decided it
+   * before either window saw it: neither window approves anything here.
+   */
+  "desktop:forwardWidgetPerform",
+  "detached:perform.report",
   "detached:bootstrap",
   "detached:intent",
   "detached:release",
@@ -121,6 +128,11 @@ export const DETACHED_WINDOW_CHANNELS = Object.freeze([
   "detached:jobs.cancel",
   "detached:tokens.request",
   "detached:tokens.end",
+  /*
+   * What the frame answered to a perform the host pushed. Only an id the host pushed is taken, and the host — not the
+   * window — reports it to the node.
+   */
+  "detached:perform.report",
 ]);
 
 /**

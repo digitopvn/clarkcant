@@ -86,8 +86,8 @@ export interface FramePerformRequest {
 
 /** How long a frame has to answer one perform before the host stops waiting. Below the node's own wait. */
 export const FRAME_PERFORM_TIMEOUT_MS = 6_000;
-/** Performs one frame may be asked at once. */
-const MAX_PERFORMS_IN_FLIGHT = 4;
+/** Performs one frame may be asked at once. The desktop host holds a detached window to the same number. */
+export const FRAME_PERFORMS_IN_FLIGHT = 4;
 
 /** The largest message a frame may post, unless its host asks for a smaller ceiling (`maxMessageBytes`). */
 export const FRAME_MESSAGE_MAX_BYTES = 64 * 1024;
@@ -1037,8 +1037,8 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         return refused("ACTION_NOT_OFFERED", `this widget does not offer an action named "${request.action}"`);
       }
       if (performs.has(request.performId)) return refused("PERFORM_IN_PROGRESS", "this perform is already waiting for the widget's answer");
-      if (performs.size >= MAX_PERFORMS_IN_FLIGHT) {
-        return refused("PERFORM_BUSY", `the widget is already performing ${String(MAX_PERFORMS_IN_FLIGHT)} actions`);
+      if (performs.size >= FRAME_PERFORMS_IN_FLIGHT) {
+        return refused("PERFORM_BUSY", `the widget is already performing ${String(FRAME_PERFORMS_IN_FLIGHT)} actions`);
       }
       return new Promise<FramePerformOutcome>((resolve) => {
         const timer = setTimeout(() => {

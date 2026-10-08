@@ -336,6 +336,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:closeWindow",
       "desktop:detachWidget",
       "desktop:focusWindow",
+      "desktop:forwardWidgetPerform",
       "desktop:getSession",
       "desktop:getStatus",
       "desktop:minimizeWindow",
@@ -369,6 +370,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "detached:jobs.cancel",
       "detached:jobs.get",
       "detached:jobs.list",
+      "detached:perform.report",
       "detached:release",
       "detached:semantic.publish",
       "detached:state.save",
@@ -404,12 +406,24 @@ describe("IPC is answered only for the shell document (sender validation)", () =
     for (const refused of ["detached:openExternal", "detached:node", "detached:getSession", "detached:pickDirectory", "detached:timeline"]) {
       expect(IPC_CHANNELS).not.toContain(refused);
     }
-    // Clark's performs are not relayed to a detached window yet.
-    expect(IPC_CHANNELS.some((name) => /^detached:perform/.test(name))).toBe(false);
+    // Clark's performs reach a detached window as one report verb: the host pushes the perform itself, and there is no
+    // verb by which the window could ask for one or forward one.
+    expect(IPC_CHANNELS.filter((name) => /perform/i.test(name)).sort()).toEqual(["desktop:forwardWidgetPerform", "detached:perform.report"]);
     // Every file, job and token relay names its own verb: none takes a path, a conversation or an instance to act on.
     expect(IPC_CHANNELS.filter((name) => /^detached:(artifacts|jobs|tokens)\./.test(name)).sort()).toEqual(
       BROKER_RELAY_VERBS.map((verb) => `detached:${verb}`).sort(),
     );
+  });
+
+  it("lets only the conversation's document hand Clark's perform to the host, and only the detached document report it", () => {
+    const detachedUrl = "file:///Applications/clarkcant/shell.html?detached=1";
+    expect(reviewIpcCall(sender(SHELL_URL), "desktop:forwardWidgetPerform", SHELL_URL, detachedUrl).allowed).toBe(true);
+    // The detached window cannot hand a perform to itself, and a frame in either window can do neither.
+    expect(reviewIpcCall(sender(detachedUrl), "desktop:forwardWidgetPerform", SHELL_URL, detachedUrl).allowed).toBe(false);
+    expect(reviewIpcCall(sender(SHELL_URL, frame(SHELL_URL)), "desktop:forwardWidgetPerform", SHELL_URL, detachedUrl).allowed).toBe(false);
+    expect(reviewIpcCall(sender(detachedUrl), "detached:perform.report", SHELL_URL, detachedUrl).allowed).toBe(true);
+    expect(reviewIpcCall(sender(SHELL_URL), "detached:perform.report", SHELL_URL, detachedUrl).allowed).toBe(false);
+    expect(reviewIpcCall(sender(detachedUrl, frame(detachedUrl)), "detached:perform.report", SHELL_URL, detachedUrl).allowed).toBe(false);
   });
 
   it("lets only the conversation's document tell the desktop the packages changed", () => {

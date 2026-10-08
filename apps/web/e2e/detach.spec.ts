@@ -715,3 +715,231 @@ test("a widget in a detached window exports through the host and attaches into t
   expect(await detached.evaluate(() => [window.sessionStorage.getItem("cc_token"), window.localStorage.getItem("cc_token")])).toEqual([null, null]);
   await context.close();
 });
+
+const TEXT_EDITOR = {
+  packageId: "com.clarkcant.reference.text-editor",
+  digest: "sha256:text-editor-reference-digest",
+  widgetId: "com.clarkcant.reference.text-editor.main@1",
+};
+
+/**
+ * Clark acting on a widget open in its own window, asked out loud.
+ *
+ * The text editor is placed through `place_widget`, so its offered actions are bound as a real install binds them, and
+ * detached from the conversation's pin into a second page that stands in for the detached window. Both desktop bridges
+ * are stood in for by this test as the host: the detached window's relays go to the node with the host's token, and the
+ * conversation's `forwardWidgetPerform` pushes the perform to the detached page, whose report the host posts to the node.
+ * The voice provider is the fixture (`CC_VOICE_FIXTURE=1`); the voice socket, the policy, the node's perform and the
+ * frame are real, and the edit is asserted in the detached window's frame.
+ */
+test("asked out loud, Clark edits the text selected in an editor open in its own window", async ({ browser }) => {
+  test.setTimeout(180_000);
+  if (NODE_PORT === undefined || NODE_PORT === "") throw new Error("CC_E2E_NODE_PORT is not set; run this suite through playwright.config.ts");
+  const auth = { authorization: `Bearer ${token()}`, "content-type": "application/json" };
+  const listed = (await (await fetch(`${GATEWAY}/packages`, { headers: auth })).json()) as { packages: { packageId: string }[] };
+  const installedBefore = listed.packages.some((entry) => entry.packageId === TEXT_EDITOR.packageId);
+  if (!installedBefore) {
+    const installed = await fetch(`${GATEWAY}/packages/install`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ packageId: TEXT_EDITOR.packageId, version: "1.0.0", localDigest: TEXT_EDITOR.digest }),
+    });
+    if (!installed.ok) {
+      const restored = await fetch(`${GATEWAY}/packages/${encodeURIComponent(TEXT_EDITOR.packageId)}/restore`, { method: "POST", headers: auth });
+      expect(restored.ok, `install answered ${String(installed.status)}`).toBe(true);
+    }
+  }
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const shell = await context.newPage();
+    const detached = await context.newPage();
+    let opened: { conversationId: string; instanceId: string } | undefined;
+    const forwarded: Record<string, unknown>[] = [];
+    const reports: { performId: string; status: number }[] = [];
+    let selectionPublished: () => void = () => undefined;
+    const published = new Promise<void>((resolve) => {
+      selectionPublished = resolve;
+    });
+
+    const node = async (path: string, init: { method: string; body?: unknown }) => {
+      const response = await fetch(`${GATEWAY}${path}`, {
+        method: init.method,
+        headers: auth,
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      });
+      return nodeAnswer(response.status, (await response.json().catch(() => ({}))) as Record<string, unknown>);
+    };
+    const widget = () => {
+      if (opened === undefined) throw new Error("nothing is detached");
+      return `/conversations/${encodeURIComponent(opened.conversationId)}/widgets/${encodeURIComponent(opened.instanceId)}`;
+    };
+    const frameRead = async () => {
+      const read = await node(`${widget()}/live`, { method: "GET" });
+      if (read.ok !== true) return read;
+      const { ok: _ok, ...live } = read as { ok: true; frame?: { url: string } | null };
+      return { ok: true, live: { ...live, frame: live.frame ? { ...live.frame, url: new URL(live.frame.url, GATEWAY).toString() } : null } };
+    };
+
+    // The conversation's half of the host: detaching claims the lease for the window, and a perform is pushed to it.
+    await shell.exposeFunction("__hostDetach", async (input: { conversationId: string; instanceId: string }) => {
+      opened = { conversationId: input.conversationId, instanceId: input.instanceId };
+      const claimed = await node(`${widget()}/live-owner`, {
+        method: "POST",
+        body: { ownerToken: "owner-detached-e2e", surface: "detached", leaseMs: 90_000 },
+      });
+      if (claimed.ok !== true) return claimed;
+      await detached.goto("/?detached=1");
+      return { ok: true, detached: { instanceRef: input.instanceId } };
+    });
+    await shell.exposeFunction("__hostForward", async (request: Record<string, unknown>) => {
+      forwarded.push(request);
+      if (opened === undefined || request["instanceId"] !== opened.instanceId) {
+        return { ok: false, code: "FRAME_NOT_MOUNTED", refused: "no widget window is showing that instance" };
+      }
+      const push = { performId: request["performId"], action: request["action"], input: request["input"] };
+      await detached.evaluate((value) => (window as unknown as { __pushPerform: (push: unknown) => void }).__pushPerform(value), push);
+      return { ok: true };
+    });
+    await shell.addInitScript(() => {
+      if (window.top !== window) return;
+      const host = window as unknown as {
+        __hostDetach: (input: unknown) => Promise<unknown>;
+        __hostForward: (request: unknown) => Promise<unknown>;
+      };
+      (window as unknown as { clarkcant: unknown }).clarkcant = {
+        detachWidget: (input: unknown) => host.__hostDetach(input),
+        attachWidget: async () => ({ ok: true, attached: false }),
+        forwardWidgetPerform: (request: unknown) => host.__hostForward(request),
+      };
+    });
+
+    // The detached window's half: its relays, and the perform pushed to it and reported back.
+    await detached.exposeFunction("__hostRelay", async (verb: string, payload: Record<string, unknown> | null) => {
+      const p = payload ?? {};
+      const artifact = (rest = "") => `${widget()}/artifacts/${encodeURIComponent(String(p["artifactId"]))}${rest}`;
+      switch (verb) {
+        case "bootstrap": {
+          const read = await frameRead();
+          return read.ok === true
+            ? { ok: true, bootstrap: { instanceRef: opened?.instanceId, title: "Trình soạn thảo", widgetKind: "widget", live: read["live"] } }
+            : read;
+        }
+        case "frame.read":
+          return frameRead();
+        case "state.save": {
+          const saved = await node(`${widget()}/state`, { method: "POST", body: p });
+          return saved.ok === true ? { ok: true, saved } : saved;
+        }
+        case "semantic.publish": {
+          const answer = await node(`${widget()}/semantic`, { method: "POST", body: { proposal: p["proposal"] } });
+          if (answer.ok === true && JSON.stringify(p).includes("selectedText")) selectionPublished();
+          return answer;
+        }
+        case "dev.session":
+          return { ok: false, code: "NO_DEV_SESSION", refused: "no dev session" };
+        case "release":
+          return { ok: true };
+        case "artifacts.pick": {
+          const picked = await node(`${widget()}/artifacts/pick`, {
+            method: "POST",
+            body: { accept: p["accept"] ?? [], name: "ghi-chu.txt", mimeType: "text/plain", contentBase64: Buffer.from(EDITOR_TEXT).toString("base64") },
+          });
+          return picked.ok === true ? { ok: true, canceled: false, artifactRef: picked["artifactRef"], original: { name: "ghi-chu.txt" } } : picked;
+        }
+        case "artifacts.describe":
+          return node(artifact(), { method: "GET" });
+        case "artifacts.read":
+          return node(artifact(`/content?offset=${String(p["offset"])}&length=${String(p["length"])}`), { method: "GET" });
+        case "perform.report": {
+          const response = await fetch(`${GATEWAY}/app-intents/widget-perform/${encodeURIComponent(String(p["performId"]))}`, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify(p["report"]),
+          });
+          reports.push({ performId: String(p["performId"]), status: response.status });
+          return response.ok ? { ok: true } : { ok: false, code: "PERFORM_NOT_EXPECTED", refused: `status ${String(response.status)}` };
+        }
+        default:
+          return { ok: false, code: "RELAY_REFUSED", refused: `the stand-in host does not relay ${verb}` };
+      }
+    });
+    await detached.addInitScript(() => {
+      if (window.top !== window) return;
+      const relay = (verb: string, payload?: unknown) =>
+        (window as unknown as { __hostRelay: (verb: string, payload: unknown) => Promise<unknown> }).__hostRelay(verb, payload ?? null);
+      const verbs = (family: string, names: string[]) => Object.fromEntries(names.map((name) => [name, (input?: unknown) => relay(`${family}.${name}`, input)]));
+      let listener: ((push: unknown) => void) | undefined;
+      (window as unknown as { __pushPerform: (push: unknown) => void }).__pushPerform = (push) => listener?.(push);
+      (window as unknown as { clarkcantDetached: unknown }).clarkcantDetached = {
+        bootstrap: () => relay("bootstrap"),
+        frameRead: () => relay("frame.read"),
+        saveState: (write: unknown) => relay("state.save", write),
+        publishSemantic: (input: unknown) => relay("semantic.publish", input),
+        devSession: () => relay("dev.session"),
+        intent: (input: unknown) => relay("intent", input),
+        release: () => relay("release"),
+        artifacts: verbs("artifacts", ["pick", "describe", "create", "read", "write", "finalize", "export", "attach", "discard"]),
+        jobs: verbs("jobs", ["get", "list", "cancel"]),
+        tokens: verbs("tokens", ["request", "end"]),
+        onPerform: (next: (push: unknown) => void) => {
+          listener = next;
+          return () => {
+            listener = undefined;
+          };
+        },
+        reportPerform: (answer: unknown) => relay("perform.report", answer),
+      };
+    });
+
+    // Placed and opened in the conversation, then detached into its own window.
+    await shell.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+    await expect(shell.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
+    await say(shell, `place widget ${TEXT_EDITOR.widgetId}`);
+    await expect(shell.getByText("Fixture: tui gọi place_widget").last()).toContainText("Actions you can perform on it", { timeout: 20_000 });
+    await shell.locator("[data-open-live]").last().click();
+    const live = shell.locator("[data-pin-live]").last();
+    await expect(live.locator("[data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
+    await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 20_000 });
+    await live.locator("[data-detach-widget='true']").click();
+    await expect(live.locator("[data-widget-frame]")).toHaveCount(0, { timeout: 20_000 });
+
+    const surface = detached.locator("[data-detached-surface='true']");
+    await expect(surface.locator("[data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
+    const frame = detached.frameLocator("[data-widget-frame] iframe");
+    await expect(frame.locator("#root[data-editor-ready='true']")).toHaveCount(1, { timeout: 20_000 });
+
+    // A file opened in the detached window, through the host's pick.
+    await frame.locator("[data-editor-open]").click();
+    await detached.locator("[data-artifact-prompt='pick'] [data-artifact-choose]").click();
+    await expect(frame.locator("[data-editor-status='opened']")).toHaveCount(1, { timeout: 20_000 });
+
+    // The selection the node holds is what Clark's replacement is computed from; the request is spoken once it lands.
+
+    await frame.locator("[data-editor-text]").evaluate((element) => {
+      const area = element as HTMLTextAreaElement;
+      const start = area.value.indexOf("hãy viết hoa câu này.");
+      area.focus();
+      area.setSelectionRange(start, start + "hãy viết hoa câu này.".length);
+      area.dispatchEvent(new Event("select"));
+    });
+    await expect(frame.locator("[data-editor-meta]")).toContainText("đã chọn 21 ký tự");
+    await published;
+
+    const scripted = await fetch(`${GATEWAY}/voice-fixture/words`, { method: "POST", headers: auth, body: JSON.stringify({ words: "uppercase the selection" }) });
+    expect(scripted.status).toBe(200);
+    await shell.locator('[data-voice-open="true"]').click();
+
+    await expect(frame.locator("[data-editor-text]")).toHaveValue("Dòng một.\nHÃY VIẾT HOA CÂU NÀY.\nDòng ba.\n", { timeout: 30_000 });
+    await expect(frame.locator("[data-editor-status]")).toContainText("Clark đã thay đoạn đã chọn.");
+    // The perform went to the window through the host, and the window's report settled it at the node.
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]).toMatchObject({ v: 1, instanceId: opened?.instanceId, action: "replaceSelection" });
+    expect(reports).toEqual([{ performId: String(forwarded[0]?.["performId"]), status: 200 }]);
+    await expect(shell.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("Done", { timeout: 30_000 });
+  } finally {
+    await context.close();
+    if (!installedBefore) await fetch(`${GATEWAY}/packages/${encodeURIComponent(TEXT_EDITOR.packageId)}/uninstall`, { method: "POST", headers: auth });
+  }
+});
+
+const EDITOR_TEXT = "Dòng một.\nhãy viết hoa câu này.\nDòng ba.\n";

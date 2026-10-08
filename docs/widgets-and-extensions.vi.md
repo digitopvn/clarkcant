@@ -320,6 +320,10 @@ lifecycle.onMount / onSuspend / onResume / onDispose
 
 `requestPin` là proposal trừ khi originated trực tiếp từ user gesture đã rõ. SDK không có `readAllSecrets`, `shell`, `queryCoreDb`, `disableCSP`, `approve`, `installAnything` hoặc `registerSidebar`.
 
+Hành động được cho phép vẫn hoạt động y như vậy khi widget đang mở trong cửa sổ desktop riêng: host desktop chuyển lần
+perform của Clark tới cửa sổ đó và báo lại câu trả lời, nên handler của widget không cần đổi gì
+([#617](https://github.com/digitopvn/clarkcant/issues/617)).
+
 Widget nhận diện mạo công khai đã kiểm tra qua `appearance.current()` / `appearance.subscribe(handler)`
 (`appearance@1`, bridge v2). Built-in và Mini App khai báo dùng cùng token semantic; iframe cách ly nhận thay đổi mà
 không mount lại hay ghi semantic. Composition tách cửa sổ nhận đúng snapshot đã phân giải của host qua relay chỉ đọc,

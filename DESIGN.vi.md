@@ -194,11 +194,17 @@ khác.
 Widget chạy trong khung riêng cũng tách ra theo cùng cách. Cửa sổ mount đúng frame sandbox mà hội thoại dùng, và mọi
 lần đọc, ghi state, publish semantic và bấm của frame đều là một relay có giới hạn do host thực hiện cho instance mà nó
 đã mở cửa sổ này. Frame được mount mới, nên state bền được giữ còn view state và vị trí phát bắt đầu lại. Trong lúc
-widget đang tách, hội thoại hiện một ghi chú ở chỗ của nó thay vì một frame thứ hai, và các lần perform của Clark trên
-widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại. Tệp, job và browser token hoạt động
-trong cửa sổ giống hệt trong hội thoại: mỗi thứ là một relay của host cho đúng instance đó, nên cửa sổ không bao giờ
-giữ token, và tệp được đính kèm sẽ hiện trong hội thoại. Các lần perform của Clark chưa được cung cấp trong cửa sổ này
-([#617](https://github.com/digitopvn/clarkcant/issues/617)).
+widget đang tách, hội thoại hiện một ghi chú ở chỗ của nó thay vì một frame thứ hai. Tệp, job và browser token hoạt
+động trong cửa sổ giống hệt trong hội thoại: mỗi thứ là một relay của host cho đúng instance đó, nên cửa sổ không bao
+giờ giữ token, và tệp được đính kèm sẽ hiện trong hội thoại.
+
+Các lần perform của Clark cũng tới được cửa sổ này
+([#617](https://github.com/digitopvn/clarkcant/issues/617)). Khi bạn nhờ Clark trong hội thoại, bằng chữ hay bằng giọng
+nói, thao tác trên một widget đã tách, widget đó được sửa ngay trong cửa sổ của nó. Hội thoại giao lần perform cho host.
+Host chỉ đẩy cho cửa sổ id, action và input của lần perform, rồi tự gửi báo cáo của cửa sổ lên node. Host từ chối báo cáo
+cho một lần perform nó chưa từng đẩy, báo cáo lớn hơn 8 KiB, và hơn bốn lần perform cùng chờ một lúc. Lần perform mà cửa
+sổ không trả lời kịp, hoặc vẫn đang chờ khi cửa sổ đóng, được báo là không có trả lời. Ứng dụng desktop có host cũ hơn
+bản này vẫn từ chối với `FRAME_DETACHED`, mã này nhắc người dùng gắn widget lại.
 
 Lease **chuyển** chứ không nhân bản: shell release trước, host claim surface `detached`, và khi cửa sổ đóng thì host
 release rồi shell claim lại — nên không có thời điểm nào có hai owner. Đóng cửa sổ cũng chính là đường reattach, kể cả
