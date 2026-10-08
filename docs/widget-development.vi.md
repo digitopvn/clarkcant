@@ -222,7 +222,7 @@ dự án và `when.project` là tên thư mục của nó. Đoạn hướng dẫ
 phần ngân sách riêng của lượt, được bọc bằng mã của session, bị giữ lại khi vượt mức dữ liệu model nhận được, được ghi
 nhãn và ghi audit kèm id và phiên bản của gói, và không bao giờ được ghim: `pin` của quy tắc bị bỏ qua. Đoạn hướng dẫn
 không cấp quyền nào. Cài đặt → Tiện ích & widget liệt kê các dự án đang bật hướng dẫn của từng gói, kèm nút Tắt. Gỡ gói
-sẽ tắt hướng dẫn của nó ở mọi nơi, nên cài lại sẽ bắt đầu với hướng dẫn tắt; nâng cấp hoặc quay lui giữ chúng bật ở
+sẽ tắt hướng dẫn của nó ở mọi nơi, nên cài lại hoặc khôi phục sẽ bắt đầu với hướng dẫn tắt; nâng cấp hoặc quay lui giữ chúng bật ở
 những nơi đã bật. `clarkcant instructions check <thư mục gói>` kiểm tra manifest cùng quy tắc và đoạn hướng dẫn của
 facet.
 

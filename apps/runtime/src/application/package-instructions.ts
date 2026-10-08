@@ -247,6 +247,45 @@ export function forgetPackageInstructions(
 }
 
 /**
+ * Forget a package's projects without ever failing what called it: the uninstall, restore or install around it has
+ * already happened, and its own cleanup must still run. A write that fails is said on stderr and left to the boot
+ * cleanup (`forgetUninstalledPackageInstructions`), which drops pairs for a package that is not installed.
+ */
+export function forgetPackageInstructionsQuietly(
+  deps: { db: Database; now: () => Instant },
+  input: { principalId: string; packageId: string; source: PackageInstructionsSource },
+): void {
+  try {
+    forgetPackageInstructions(deps, input);
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "package-instructions-forget-failed", packageId: input.packageId, reason: error instanceof Error ? error.message : String(error) })}\n`,
+    );
+  }
+}
+
+/**
+ * At boot: drop every pair whose package is not installed on this node. A pair can outlive its package only when a
+ * node stopped, or a write failed, between an uninstall and its forget; without this, installing or restoring that id
+ * later would state its rules again without a new decision. Answers how many pairs were dropped.
+ */
+export function forgetUninstalledPackageInstructions(
+  deps: Pick<PackageInstructionsDeps, "db" | "nodeId" | "newId" | "principalId">,
+): number {
+  const current = readPackageInstructionsEnabled(deps);
+  if (current.length === 0) return 0;
+  const installed = new Set(installedOf(deps).map((entry) => entry.packageId));
+  const kept = current.filter((entry) => installed.has(entry.packageId));
+  if (kept.length === current.length) return 0;
+  const written = writeRegisteredPreference(
+    { db: deps.db, now: nowInstant },
+    { principalId: deps.principalId, key: PACKAGE_INSTRUCTIONS_PREFERENCE, value: kept, source: "agent" },
+  );
+  if (!written.ok) throw new Error(`could not forget the instructions of packages that are not installed: ${written.message}`);
+  return current.length - kept.length;
+}
+
+/**
  * What an approval is bound to: exactly this package at this version and these bytes, this project and this direction.
  * A package updated or rolled back while the card waited is not what the person was shown, so the card no longer covers
  * it.

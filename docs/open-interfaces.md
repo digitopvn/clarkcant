@@ -1259,11 +1259,14 @@ package.
   is ignored, so a snippet is stated once per session.
 - **Trust.** A package snippet is data: framed with the session's code, its tags defused, and withheld above the
   receiving model's data classes. Its block carries `package="<id>@<version>"` and `source="<id>@<version>/<name>"`, and
-  a host note says such blocks rank after the project's own. Each snippet stated or withheld is written to the audit
-  log as kind `instructions` with the package id, version and snippet name, never its text.
+  a host note says such blocks rank after the project's own. Each snippet stated is written to the audit log as kind
+  `instructions` with the package id, version and snippet name, never its text; a withheld one is written once per
+  conversation.
 - **Removal.** Turning a pair off removes its rules from the next turn. Uninstalling the package removes every pair it
-  had in the same operation, so a package installed or restored again under that id starts with its instructions off
-  everywhere. An upgrade or a rollback keeps the pairs, because the package stays installed.
+  had right after the uninstall, and restoring it or installing it while it was not installed removes any pair left for
+  its id, so the package starts with its instructions off everywhere until the person turns them on again. A node also
+  drops, at start, every pair whose package is not installed. An upgrade or a rollback keeps the pairs, because the
+  package stays installed.
 - `clarkcant instructions check <package folder>` validates the manifest against `packageManifestSchema` and its
   `instructions` facet's rules file and snippets, warns about a `pin` and about a snippet longer than a node states.
 

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
@@ -501,6 +501,85 @@ describe("installed packages on a node", () => {
     expect(stated()).toEqual(["Quy tắc của gói đã cài."]);
   });
 
+  /** Pairs as a node that stopped between an uninstall and its forget would have left them. */
+  function leave(pairs: readonly { project: string; packageId: string }[]): void {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT as Instant },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: PACKAGE_INSTRUCTIONS_PREFERENCE, value: pairs, source: "user" },
+    );
+    expect(written.ok).toBe(true);
+  }
+
+  it("completes an uninstall whose forget fails, says so, and leaves the pairs to the next boot's cleanup", async () => {
+    await installLocal();
+    await installFromGit();
+    await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });
+    await tool().execute({ action: "enable_instructions", packageId: "com.example.fetched", project });
+    const before = effects();
+    // The store refuses this one preference: every other write, the uninstall's own included, still lands.
+    services.runtime.db.exec(`
+      CREATE TRIGGER forget_fails_insert BEFORE INSERT ON preferences WHEN NEW.key = '${PACKAGE_INSTRUCTIONS_PREFERENCE}'
+      BEGIN SELECT RAISE(ABORT, 'injected preference failure'); END;
+      CREATE TRIGGER forget_fails_update BEFORE UPDATE ON preferences WHEN NEW.key = '${PACKAGE_INSTRUCTIONS_PREFERENCE}'
+      BEGIN SELECT RAISE(ABORT, 'injected preference failure'); END;
+    `);
+    const warnings: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      warnings.push(String(chunk));
+      return true;
+    });
+    let uninstalled: GatewayResponse;
+    try {
+      uninstalled = await call("POST", "/packages/com.example.local/uninstall");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(uninstalled.status, JSON.stringify(uninstalled.body)).toBe(200);
+    expect(uninstalled.body).toMatchObject({ action: "uninstall", packageId: "com.example.local" });
+    expect(effects()).toBe(before + 1);
+    expect(warnings.some((line) => line.includes("package-instructions-forget-failed") && line.includes("com.example.local"))).toBe(true);
+    // The pair is still stored, but its package is gone, so nothing is stated from it.
+    expect(enabled()).toEqual([
+      { project, packageId: "com.example.local" },
+      { project, packageId: "com.example.fetched" },
+    ]);
+    expect(stated()).toEqual(["Quy tắc của gói đã cài."]);
+
+    services.runtime.db.exec("DROP TRIGGER forget_fails_insert; DROP TRIGGER forget_fails_update;");
+    services.runtime.close();
+    services = bootNodeServices({ dataDir: dir, label: "package instructions test node" });
+    deps = { services, now: () => AT as Instant };
+    expect(enabled()).toEqual([{ project, packageId: "com.example.fetched" }]);
+    expect((await call("POST", "/packages/com.example.local/restore")).status).toBe(200);
+    expect(stated()).toEqual(["Quy tắc của gói đã cài."]);
+  });
+
+  it("starts a restored package and a freshly installed one with nothing on, whatever pairs were left for its id", async () => {
+    await installLocal();
+    expect((await call("POST", "/packages/com.example.local/uninstall")).status).toBe(200);
+    leave([{ project, packageId: "com.example.local" }]);
+    expect((await call("POST", "/packages/com.example.local/restore")).status).toBe(200);
+    expect(enabled()).toEqual([]);
+    expect(stated()).toEqual([]);
+
+    leave([{ project, packageId: "com.example.fetched" }]);
+    await installFromGit();
+    expect(enabled()).toEqual([]);
+    expect(stated()).toEqual([]);
+  });
+
+  it("drops at boot only the pairs whose package is not installed", async () => {
+    await installLocal();
+    leave([
+      { project, packageId: "com.example.local" },
+      { project, packageId: "com.example.gone" },
+    ]);
+    services.runtime.close();
+    services = bootNodeServices({ dataDir: dir, label: "package instructions test node" });
+    deps = { services, now: () => AT as Instant };
+    expect(enabled()).toEqual([{ project, packageId: "com.example.local" }]);
+    expect(stated()).toEqual(["Quy tắc của gói cục bộ."]);
+  });
   it("keeps a package's projects through an upgrade and a rollback, since it stays installed", async () => {
     await installLocal();
     await tool().execute({ action: "enable_instructions", packageId: "com.example.local", project });

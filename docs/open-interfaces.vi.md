@@ -1268,11 +1268,12 @@ trong gói.
 - **Tin cậy.** Đoạn hướng dẫn của gói là dữ liệu: được bao bằng mã của session, các thẻ của nó bị vô hiệu hoá, và bị giữ
   lại khi vượt quá các lớp dữ liệu của model nhận. Khối của nó mang `package="<id>@<version>"` và
   `source="<id>@<version>/<name>"`, và một ghi chú của host nói rằng các khối như vậy xếp sau hướng dẫn riêng của dự án.
-  Mỗi đoạn được nêu hoặc bị giữ lại đều được ghi vào nhật ký audit với kind `instructions`, kèm id gói, phiên bản và tên
-  đoạn, không bao giờ kèm nội dung.
-- **Gỡ bỏ.** Tắt một cặp sẽ bỏ các quy tắc của nó khỏi lượt kế tiếp. Gỡ cài đặt gói sẽ xoá mọi cặp của gói trong cùng
-  thao tác đó, nên gói được cài lại hoặc khôi phục dưới cùng id sẽ bắt đầu với hướng dẫn tắt ở mọi nơi. Nâng cấp hoặc
-  quay lui giữ nguyên các cặp, vì gói vẫn được cài.
+  Mỗi đoạn được nêu đều được ghi vào nhật ký audit với kind `instructions`, kèm id gói, phiên bản và tên đoạn, không
+  bao giờ kèm nội dung; một đoạn bị giữ lại được ghi một lần mỗi hội thoại.
+- **Gỡ bỏ.** Tắt một cặp sẽ bỏ các quy tắc của nó khỏi lượt kế tiếp. Gỡ cài đặt gói sẽ xoá mọi cặp của gói ngay sau khi
+  gỡ cài đặt, và khôi phục gói hoặc cài gói khi nó chưa được cài sẽ xoá mọi cặp còn sót lại cho id đó, nên gói bắt đầu
+  với hướng dẫn tắt ở mọi nơi cho tới khi người dùng bật lại. Khi khởi động, node cũng bỏ mọi cặp có gói không được cài.
+  Nâng cấp hoặc quay lui giữ nguyên các cặp, vì gói vẫn được cài.
 - `clarkcant instructions check <thư mục gói>` kiểm tra manifest theo `packageManifestSchema`, cùng tệp quy tắc và các
   đoạn hướng dẫn của facet `instructions`, cảnh báo khi có `pin` và khi một đoạn dài hơn mức node nêu.
 

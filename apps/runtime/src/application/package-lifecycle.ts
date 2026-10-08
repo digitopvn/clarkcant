@@ -18,7 +18,7 @@ import {
 } from "@clarkcant/core";
 
 import type { PackageInstallDeps } from "./package-install.ts";
-import { forgetPackageInstructions } from "./package-instructions.ts";
+import { forgetPackageInstructionsQuietly } from "./package-instructions.ts";
 import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
@@ -175,11 +175,7 @@ export function changePackage(
   if (!outcome.ok) {
     return { kind: "refused", status: REFUSAL_STATUS[outcome.code], code: outcome.code, message: outcome.message };
   }
-  // An uninstalled package's instructions are forgotten with it: installed again, under any source, it starts off.
-  // Rollback and restore keep the package installed, and what the person turned on stays on.
-  if (input.action === "uninstall") {
-    forgetPackageInstructions({ db: deps.runtime.db, now: nowInstant }, { principalId, packageId: input.packageId, source: input.source });
-  }
+
   // An uninstalled package's services stop, a restored or rolled-back one's start from the generation now active.
   deps.packagesChanged?.();
   // Tokens its frames hold were issued under code that is no longer running, so they are withdrawn with it.
@@ -202,6 +198,14 @@ export function changePackage(
       ...(input.origin === undefined ? {} : { origin: input.origin }),
     },
   );
+  /*
+   * An uninstalled package's instructions are forgotten right after it, and a restored one starts with none: installed
+   * again, under any source, it states nothing until the person decides again. A rollback keeps the package installed,
+   * so what the person turned on stays on. Last, and never failing the change: the cleanup above is what must run.
+   */
+  if (input.action !== "rollback") {
+    forgetPackageInstructionsQuietly({ db: deps.runtime.db, now: nowInstant }, { principalId, packageId: input.packageId, source: input.source });
+  }
   return {
     kind: "changed",
     action: input.action,

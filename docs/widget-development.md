@@ -217,7 +217,7 @@ snippets are stated after the project's own, within their own slice of the turn'
 code, withheld above the receiving model's data classes, labelled and audited with the package id and version, and
 never pinned: a rule's `pin` is ignored. A snippet grants nothing. Settings → Extensions & widgets lists the projects
 each package's instructions are on in, with Turn off. Uninstalling the package turns its instructions off everywhere, so
-installing it again starts with them off; an upgrade or rollback keeps them on where they were.
+installing or restoring it again starts with them off; an upgrade or rollback keeps them on where they were.
 `clarkcant instructions check <package folder>` validates the manifest and each facet's rules and snippets.
 
 **Reference packages.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) and

@@ -67,6 +67,39 @@ function nextMessage(page: Page): Promise<Request> {
   return page.waitForRequest((request) => request.method() === "POST" && /\/messages(\/stream)?$/u.test(request.url()));
 }
 
+/**
+ * Asks in a new conversation through the gateway, as the composer would, and answers the timeline once the turn has run.
+ * The same request before and after Turn off, so the only thing that differs between the two turns is the pair.
+ */
+async function askInNewConversation(request: APIRequestContext, title: string, message: { text: string; references?: unknown }): Promise<string> {
+  const created = await request.post(`${GATEWAY}/conversations`, { headers: headers(), data: { title } });
+  expect(created.ok()).toBe(true);
+  const conversationId = ((await created.json()) as { conversationId: string }).conversationId;
+  const asked = await request.post(`${GATEWAY}/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    headers: headers(),
+    data: { text: message.text, references: message.references },
+  });
+  expect(asked.ok(), `send answered ${String(asked.status())}: ${await asked.text()}`).toBe(true);
+  let timeline = "";
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(`${GATEWAY}/conversations/${encodeURIComponent(conversationId)}/timeline?after=0`, { headers: headers() });
+        timeline = JSON.stringify(await response.json());
+        return timeline.includes("scripted reply to:");
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  return timeline;
+}
+
+// The package leaves with the test, so a later spec on this node finds the directory as the fixtures list it.
+test.afterEach(async ({ request }) => {
+  const uninstalled = await request.post(`${GATEWAY}/packages/${PACKAGE}/uninstall`, { headers: headers() });
+  expect([200, 404], `uninstall answered ${String(uninstalled.status())}: ${await uninstalled.text()}`).toContain(uninstalled.status());
+});
+
 test("Turn off in Settings removes the project's entry, and the next turn is given no snippet from the package", async ({ page, request }) => {
   await install(request);
   const project = DEMO;
@@ -91,6 +124,10 @@ test("Turn off in Settings removes the project's entry, and the next turn is giv
   const reply = page.locator('.cc-row[data-role="assistant"]').last();
   await expect(reply).toContainText(SNIPPET, { timeout: 20_000 });
   await expect(reply).toContainText(PACKAGE);
+  // The same request the check after Turn off sends is given the snippet while the pair is on: a positive control.
+  const before = await askInNewConversation(request, "Hướng dẫn khi đang bật", body);
+  expect(before).toContain(SNIPPET);
+  expect(before).toContain(PACKAGE);
 
   // Settings lists the project under the package, with a button that names both.
   await page.locator("[data-settings='true']").click();
@@ -106,25 +143,7 @@ test("Turn off in Settings removes the project's entry, and the next turn is giv
   await expect.poll(async () => JSON.stringify((await preference(request, "instructions.packages")) ?? []), { timeout: 10_000 }).toBe("[]");
 
   // A new conversation's turn about the same file is a turn that would state the snippet if it were still on.
-  const created = await request.post(`${GATEWAY}/conversations`, { headers: headers(), data: { title: "Hướng dẫn sau khi tắt" } });
-  expect(created.ok()).toBe(true);
-  const conversationId = ((await created.json()) as { conversationId: string }).conversationId;
-  const asked = await request.post(`${GATEWAY}/conversations/${encodeURIComponent(conversationId)}/messages`, {
-    headers: headers(),
-    data: { text: body.text, references: body.references },
-  });
-  expect(asked.ok(), `send answered ${String(asked.status())}: ${await asked.text()}`).toBe(true);
-  let timeline = "";
-  await expect
-    .poll(
-      async () => {
-        const response = await request.get(`${GATEWAY}/conversations/${encodeURIComponent(conversationId)}/timeline?after=0`, { headers: headers() });
-        timeline = JSON.stringify(await response.json());
-        return timeline.includes("scripted reply to:");
-      },
-      { timeout: 20_000 },
-    )
-    .toBe(true);
+  const timeline = await askInNewConversation(request, "Hướng dẫn sau khi tắt", body);
   // The turn ran, and was told nothing of the package.
   expect(timeline).not.toContain(SNIPPET);
   expect(timeline).not.toContain(PACKAGE);

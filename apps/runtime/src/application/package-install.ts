@@ -67,6 +67,7 @@ import {
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
 import { hostText, ownerLocale } from "../host-text.ts";
+import { forgetPackageInstructionsQuietly } from "./package-instructions.ts";
 import { readNodeDirectory } from "./widget-dev-store.ts";
 
 /**
@@ -1039,6 +1040,8 @@ export async function installPackage(
     };
   });
 
+  // A package installed while none was: whatever pairs an earlier one left are not a decision about this one.
+  const fresh = activeGeneration(coordination, entry.packageId, runtime.identity.nodeId) === undefined;
   const outcome = installFromEntry(coordination, {
     entry: resolvedEntry,
     directory: directoryForInstall,
@@ -1081,6 +1084,8 @@ export async function installPackage(
   // New code is running: tokens its frames were given under the code it replaced, and the declaration that allowed
   // them, end with it. A first install has none, and joining an install already made changes no code.
   if (!outcome.joinedExisting) deps.packageCodeEnded?.(entry.packageId);
+  // Last, and never failing the install: a fresh package's instructions start off, whatever an earlier one left.
+  if (fresh) forgetPackageInstructionsQuietly({ db: runtime.db, now: nowInstant }, { principalId, packageId: entry.packageId, source: "agent" });
   return {
     kind: "installed",
     packageId: entry.packageId,
