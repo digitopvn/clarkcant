@@ -138,3 +138,27 @@ describe("calling the node", () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe("an export from the node", () => {
+  it("answers the bytes, unparsed, with the node's name and type for them", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: async () =>
+        new Response("hello", {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8", "content-disposition": 'attachment; filename="notes.txt"' },
+        }),
+    });
+    const result = await callNode("/artifacts/art_1/export", { method: "POST", body: {}, binary: true });
+    expect(result).toMatchObject({ ok: true, contentType: "text/plain; charset=utf-8", contentDisposition: 'attachment; filename="notes.txt"' });
+    expect(result.ok && "bytes" in result ? Buffer.from(result.bytes as Uint8Array).toString("utf8") : undefined).toBe("hello");
+  });
+
+  it("still reads a refusal as the node's JSON", async () => {
+    const callNode = createNodeCaller({
+      readSession: () => SESSION,
+      fetch: async () => answer(403, { code: "ARTIFACT_NOT_OWNED", message: "not yours" }),
+    });
+    expect(await callNode("/artifacts/art_1/export", { method: "POST", binary: true })).toMatchObject({ ok: false, code: "ARTIFACT_NOT_OWNED" });
+  });
+});

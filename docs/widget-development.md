@@ -2304,7 +2304,16 @@ and with its own token:
 - each state write, answered with what the node committed or with the state it holds;
 - each semantic publish;
 - each press, sent as the person's, as a press in the conversation is. The host resolves the binding's digest from its
-  own newest read.
+  own newest read;
+- each file request (`artifacts@1`). The person answers a pick or a save in the window's own chrome, as in the
+  conversation, and the host opens the OS dialog over the detached window. The bytes go between the disk and the node
+  through the host; the window learns the node's reference and the file's bare name, or whether it was saved, never a
+  path. "Replace original" writes over the file last picked in that window. A file the widget attaches goes into the
+  conversation window's composer;
+- each job read, list and cancel (`jobs@1`);
+- each browser token request (`tokens@1`), only when the widget's package declares browser tokens. The host ends every
+  token session the window's frames were issued under when the window closes, after the lease is given back and before
+  the conversation takes the widget back, and when a read shows a new build of the frame.
 
 The window names neither the conversation nor the instance. Its relays are bounded, and a frame that asks too fast is
 refused rather than queued (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). A relay the node does not answer within 30 seconds
@@ -2317,9 +2326,11 @@ path, inside build messages too: the folder is replaced by `.`, so a file under 
 the widget is detached, the conversation shows a note instead of a second frame, and Clark's performs on it are refused
 with `FRAME_DETACHED` until it is reattached.
 
-Not yet in a detached window: files (`artifacts@1`), jobs (`jobs@1`), browser tokens (`tokens@1`) and the actions
-Clark performs (`offeredActions`). The frame is told they are not offered, and they work again once the widget is
-reattached ([#616](https://github.com/digitopvn/clarkcant/issues/616)). A widget whose package is gone (`frame: null`)
+File, job and token relays have their own buckets, the same as a frame in the conversation, and a pick or a save holds
+one dialog open at a time. A widget gets the same answers and the same refusal codes in both windows.
+
+Not yet in a detached window: the actions Clark performs (`offeredActions`). The frame is told they are not offered,
+and they work again once the widget is reattached. A widget whose package is gone (`frame: null`)
 is not offered Detach; it shows its text alternative in the conversation. The rest of the work is tracked in
 [#577](https://github.com/digitopvn/clarkcant/issues/577) and [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
@@ -2967,8 +2978,18 @@ A local isolated host with:
 The dev host listens only on `127.0.0.1` and has no flag to expose it on the network. It answers only requests
 addressed to `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, and refuses any other `Host` with `403`. That
 blocks a website that points its own name at your machine (DNS rebinding) from reading the shell's state or driving
-it. A `POST` or `DELETE` that names an `Origin` must come from one of those addresses too. Open the URL the dev host
-prints. A custom hostname, a tunnel or a proxy that forwards its own `Host` is refused.
+it. Any request other than `GET`, `HEAD` or `OPTIONS` that names an `Origin` must come from one of those addresses
+too. With `--port 80` a browser leaves the port out, so the bare names `127.0.0.1`, `localhost` and `[::1]` are
+accepted on that port. Open the URL the dev host prints. A custom hostname, a tunnel or a proxy that forwards its own
+`Host` is refused.
+
+The frame's modules are served only under a path that carries the dev host's per-process nonce
+(`/dev/modules/<nonce>/`), and the frame's opaque `null` origin is answered only there and under the frame's own
+`/dev/frame/<nonce>/` path. Vite's bare `/@fs/`, `/@id/`, `/@vite/` and `/src/` paths answer `404`, and no module
+carries `Access-Control-Allow-Origin: *`. A website, including one in its own sandboxed iframe, therefore cannot read
+your workspace through the dev host. In a checkout, Vite reads only the workspace's `packages/` and `node_modules/`,
+not the rest of the repository; an installed CLI reads only its own folder. A control change sent to `/dev/api/action` that is not `{ kind, value }` with a known `kind` is refused
+with `400`, and the shell keeps its state.
 
 For a package, the dev host performs the bridge's real `init` handshake. It sends the selected fixture's props and
 offers `artifacts@1` (§10.1). Its **File picker** control simulates the person's choice. It lists the files in the

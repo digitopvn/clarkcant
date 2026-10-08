@@ -26,16 +26,19 @@ import { randomUUID } from "node:crypto";
 import { SMOKE_FRAME_PATH, startSmokeNode } from "./smoke-node.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import {
   MAX_PICK_BYTES,
   createFileHandles,
+  dispositionFilename,
   fileRefusal,
   mimeForFileName,
   replaceKeepsType,
   reviewPickFileRequest,
+  reviewSaveDialog,
   reviewSaveFileRequest,
   writeFileWhole,
 } from "./file-bridge.mjs";
@@ -53,13 +56,16 @@ import {
   withContentSecurityPolicy,
 } from "./security.mjs";
 import {
+  BROKER_RELAY_VERBS,
   COMPOSER_SURFACE_HEADER,
   DETACHED_LEASE,
   detachedBootstrap,
   detachedWindowOptions,
   redactDevSessionView,
+  RELAY_LIMITS,
   relayBudget,
   reviewDetachedBootstrap,
+  reviewDetachedBrokerRequest,
   reviewDetachedDevSession,
   reviewDetachedFrameAnswer,
   reviewDetachedFrameRead,
@@ -69,6 +75,7 @@ import {
   reviewDetachedStateSave,
   runRelay,
   superviseDetachedWindow,
+  tokenSessions,
 } from "./detached-window.mjs";
 import { createNodeCaller } from "./node-call.mjs";
 import { COMPACT_MIN_SIZE } from "./window-mode.mjs";
@@ -193,6 +200,8 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "getSession",
   "minimizeWindow",
   "notify",
+  "notifyPackagesChanged",
+  "onArtifactAttached",
   "onNotificationClicked",
   "onWidgetReattached",
   "openExternal",
@@ -458,6 +467,30 @@ async function relayForDetached(verb, run) {
 }
 
 /**
+ * End every token session a detached window's frames were issued tokens under, so the node revokes what they were given.
+ *
+ * Run when the window closes — after the lease is released and before the conversation is told — and when a read shows
+ * the frame's document replaced, whose frame is remounted under a session of its own. The host's own cleanup, so it
+ * spends from no budget; each call is bounded in time, and a token whose revoke the node never hears lapses at its expiry.
+ */
+async function endTokenSessions(open) {
+  const sessions = open.tokens.drain();
+  await Promise.allSettled(
+    sessions.map((session) =>
+      callNode(widgetPath(open, `/browser-tokens/${encodeURIComponent(session)}`), {
+        method: "DELETE",
+        timeoutMs: RELAY_LIMITS.tokens.timeoutMs,
+      }),
+    ),
+  );
+}
+
+/** A desktop dialog's refusal (`fileRefusal`) as a relay answers it: marked, so the window words it as the desktop's. */
+function desktopRefusal(refusal) {
+  return { ...refusal, desktop: true };
+}
+
+/**
  * Close the detached window, if one is open, and wait until its lease has been given back.
  *
  * Bounded: a node that does not answer the release must not hold the app open, and the lease lapses on its own.
@@ -467,6 +500,75 @@ async function closeDetachedWindow() {
   if (open === undefined) return;
   open.window.close();
   await Promise.race([open.lease.released, new Promise((resolve) => setTimeout(resolve, 2_000))]);
+}
+
+/**
+ * The OS file picker, parented to the window that asked: the conversation's, or a detached widget window's.
+ *
+ * Answers the chosen file's bare name, the type its name says and its bytes, and — for this process only — its path, so
+ * the caller can remember it under a handle or for a later "replace". Every failure is a fixed code (`fileRefusal`):
+ * the error a file system gives names the path.
+ */
+async function pickFileIn(window, input) {
+  const review = reviewPickFileRequest(input);
+  if (!review.allowed) return fileRefusal("INVALID_REQUEST");
+  if (window === undefined || window.isDestroyed()) return fileRefusal("NO_WINDOW");
+  const outcome = await dialog.showOpenDialog(window, {
+    title: review.title,
+    properties: ["openFile"],
+    ...(review.filters.length === 0 ? {} : { filters: review.filters }),
+  });
+  if (outcome.canceled || outcome.filePaths.length === 0) return { ok: true, canceled: true };
+  const chosen = outcome.filePaths[0];
+  // A file that vanished, is locked or cannot be read answers with a code: the error's message names the path.
+  let bytes;
+  try {
+    const info = await stat(chosen);
+    if (!info.isFile()) return fileRefusal("NOT_A_FILE");
+    if (info.size > MAX_PICK_BYTES) return fileRefusal("FILE_TOO_LARGE");
+    bytes = await readFile(chosen);
+  } catch (cause) {
+    return fileRefusal("READ_FAILED", cause);
+  }
+  if (bytes.byteLength > MAX_PICK_BYTES) return fileRefusal("FILE_TOO_LARGE");
+  const name = basename(chosen);
+  return { ok: true, canceled: false, file: { name, mimeType: mimeForFileName(name), bytes }, path: chosen };
+}
+
+/**
+ * Save bytes where the person chooses, in dialogs parented to the window that asked.
+ *
+ * Save As always asks where. Given `replacePath` — a file this person picked earlier — it writes back over it instead,
+ * after asking, and only with bytes of that file's type. The answer is whether the file was saved and under which bare
+ * name, never where.
+ */
+async function saveFileIn(window, review, bytes, replacePath) {
+  if (window === undefined || window.isDestroyed()) return fileRefusal("NO_WINDOW");
+  let target;
+  if (replacePath !== undefined) {
+    target = replacePath;
+    // Replacing keeps the file's type: a PDF written over notes.md would no longer open as what its name says.
+    if (!replaceKeepsType(basename(target), review.mimeType)) return fileRefusal("REPLACE_TYPE_MISMATCH");
+    const confirm = await dialog.showMessageBox(window, {
+      type: "question",
+      title: review.dialog.replaceTitle,
+      message: review.dialog.replaceMessage.replace("{name}", basename(target)),
+      buttons: [review.dialog.cancel, review.dialog.replace],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (confirm.response !== 1) return { ok: true, canceled: true };
+  } else {
+    const outcome = await dialog.showSaveDialog(window, { defaultPath: review.suggestedName, filters: review.filters });
+    if (outcome.canceled || outcome.filePath === undefined || outcome.filePath === "") return { ok: true, canceled: true };
+    target = outcome.filePath;
+  }
+  try {
+    await writeFileWhole(target, bytes);
+  } catch (cause) {
+    return fileRefusal("WRITE_FAILED", cause);
+  }
+  return { ok: true, canceled: false, saved: true, name: basename(target) };
 }
 
 function registerHandlers() {
@@ -545,33 +647,13 @@ function registerHandlers() {
    * this file later, and names it by the handle minted here; the path stays in `fileHandles`.
    */
   handle("desktop:pickFile", async (input) => {
-    const review = reviewPickFileRequest(input);
-    if (!review.allowed) return fileRefusal("INVALID_REQUEST");
-    const window = liveShellWindow();
-    if (window === undefined) return fileRefusal("NO_WINDOW");
-    const outcome = await dialog.showOpenDialog(window, {
-      title: review.title,
-      properties: ["openFile"],
-      ...(review.filters.length === 0 ? {} : { filters: review.filters }),
-    });
-    if (outcome.canceled || outcome.filePaths.length === 0) return { ok: true, canceled: true };
-    const chosen = outcome.filePaths[0];
-    // A file that vanished, is locked or cannot be read answers with a code: the error's message names the path.
-    let bytes;
-    try {
-      const info = await stat(chosen);
-      if (!info.isFile()) return fileRefusal("NOT_A_FILE");
-      if (info.size > MAX_PICK_BYTES) return fileRefusal("FILE_TOO_LARGE");
-      bytes = await readFile(chosen);
-    } catch (cause) {
-      return fileRefusal("READ_FAILED", cause);
-    }
-    if (bytes.byteLength > MAX_PICK_BYTES) return fileRefusal("FILE_TOO_LARGE");
-    const name = basename(chosen);
+    const picked = await pickFileIn(liveShellWindow(), input);
+    if (!picked.ok || picked.canceled) return picked;
+    const { name, mimeType, bytes } = picked.file;
     return {
       ok: true,
       canceled: false,
-      file: { name, mimeType: mimeForFileName(name), contentBase64: bytes.toString("base64"), handle: fileHandles.remember(chosen) },
+      file: { name, mimeType, contentBase64: bytes.toString("base64"), handle: fileHandles.remember(picked.path) },
     };
   });
 
@@ -587,32 +669,12 @@ function registerHandlers() {
     if (!review.allowed) return fileRefusal("INVALID_REQUEST");
     const window = liveShellWindow();
     if (window === undefined) return fileRefusal("NO_WINDOW");
-    let target;
+    let replacePath;
     if (review.replaceHandle !== undefined) {
-      target = fileHandles.pathFor(review.replaceHandle);
-      if (target === undefined) return fileRefusal("HANDLE_UNKNOWN");
-      // Replacing keeps the file's type: a PDF written over notes.md would no longer open as what its name says.
-      if (!replaceKeepsType(basename(target), review.mimeType)) return fileRefusal("REPLACE_TYPE_MISMATCH");
-      const confirm = await dialog.showMessageBox(window, {
-        type: "question",
-        title: review.dialog.replaceTitle,
-        message: review.dialog.replaceMessage.replace("{name}", basename(target)),
-        buttons: [review.dialog.cancel, review.dialog.replace],
-        defaultId: 0,
-        cancelId: 0,
-      });
-      if (confirm.response !== 1) return { ok: true, canceled: true };
-    } else {
-      const outcome = await dialog.showSaveDialog(window, { defaultPath: review.suggestedName, filters: review.filters });
-      if (outcome.canceled || outcome.filePath === undefined || outcome.filePath === "") return { ok: true, canceled: true };
-      target = outcome.filePath;
+      replacePath = fileHandles.pathFor(review.replaceHandle);
+      if (replacePath === undefined) return fileRefusal("HANDLE_UNKNOWN");
     }
-    try {
-      await writeFileWhole(target, Buffer.from(input.contentBase64, "base64"));
-    } catch (cause) {
-      return fileRefusal("WRITE_FAILED", cause);
-    }
-    return { ok: true, canceled: false, saved: true, name: basename(target) };
+    return saveFileIn(window, review, Buffer.from(input.contentBase64, "base64"), replacePath);
   });
   handle("desktop:requestCredential", async (input) => {
     const review = reviewCredentialRequest(input);
@@ -836,6 +898,10 @@ function registerHandlers() {
       lease: undefined,
       // Every relay this window asks for spends from this, and it goes with the window.
       budget: relayBudget(),
+      // The token sessions this window's frames were issued under, ended when it closes or its frame is replaced.
+      tokens: tokenSessions(),
+      // The file the person last picked in this window, so a save may write back over it. Never sent to the window.
+      picked: undefined,
     };
     detached = opened;
     /*
@@ -859,6 +925,8 @@ function registerHandlers() {
           body: { ownerToken: opened.ownerToken, surface: "detached", leaseMs: DETACHED_LEASE.leaseMs },
         }),
       release: () => callNode(liveOwnerPath(opened), { method: "DELETE", body: { ownerToken: opened.ownerToken } }),
+      // After the release and before the conversation is told: every token the window's frames were given is revoked.
+      afterRelease: () => endTokenSessions(opened),
       refreshMs: detachedLeaseRefreshMs,
       onClosed: () => {
         if (detached === opened) detached = undefined;
@@ -970,6 +1038,12 @@ function registerHandlers() {
       if (!result.ok) return relayRefusal(result);
       const answer = reviewDetachedFrameAnswer(result.body, { instanceId: open.instanceId, baseUrl: session.baseUrl });
       if (!answer.ok) return { ok: false, refused: answer.reason, code: "FRAME_READ_REFUSED", details: {} };
+      /*
+       * A different document is a new generation of the widget: the window remounts its frame under a new token
+       * session, so whatever the old one was given is revoked now rather than when the window closes.
+       */
+      const before = open.bootstrap.live?.frame?.document;
+      if (before !== undefined && before !== answer.live.frame?.document) await endTokenSessions(open);
       open.bootstrap = { ...open.bootstrap, live: answer.live };
       return { ok: true, live: answer.live };
     });
@@ -1020,6 +1094,176 @@ function registerHandlers() {
       }
       return { ok: true, view: redactDevSessionView(result.body) };
     });
+  });
+
+  /*
+   * Files, jobs and browser tokens for the frame, each a verb of its own bound to the instance this window was opened
+   * for. The window names an artifact, a job or its frame's token session, never the instance or the conversation; the
+   * node checks this instance's grant on every call, as it does for the conversation's.
+   */
+
+  /** Register one file, job or token relay: reviewed, then run under the window's budget against its own instance. */
+  const brokerRelay = (verb, run) =>
+    handle(`detached:${verb}`, async (raw) => {
+      const reviewed = reviewDetachedBrokerRequest(verb, raw);
+      if (!reviewed.ok) return { ok: false, refused: reviewed.reason, code: "RELAY_REFUSED", details: {} };
+      return relayForDetached(verb, (open, call) => run(open, call, reviewed.payload));
+    });
+  const artifactPath = (open, artifactId, rest = "") => widgetPath(open, `/artifacts/${encodeURIComponent(artifactId)}${rest}`);
+  /** An answer naming an artifact: the reference the node gave, passed on. The window parses it as the shell does. */
+  const refAnswer = (result) => (result.ok ? { ok: true, artifactRef: result.body?.artifactRef } : relayRefusal(result));
+
+  /*
+   * A file the person picks for the widget, in the OS dialog parented to this window. The bytes go from the disk to the
+   * node without entering the renderer, and what comes back is the node's reference and the file's bare name — never
+   * its path, which this process keeps for a later "replace".
+   */
+  brokerRelay("artifacts.pick", async (open, call, payload) => {
+    const picked = await pickFileIn(open.window, payload);
+    if (!picked.ok) return desktopRefusal(picked);
+    if (picked.canceled) return { ok: true, canceled: true };
+    const { name, mimeType, bytes } = picked.file;
+    const result = await call(widgetPath(open, "/artifacts/pick"), {
+      method: "POST",
+      body: { accept: payload.accept ?? [], name, mimeType, contentBase64: bytes.toString("base64") },
+    });
+    if (!result.ok) return relayRefusal(result);
+    const ref = result.body?.artifactRef;
+    // Remembered as the node typed it, which is what decides whether a later file may be written over it.
+    open.picked = { path: picked.path, mimeType: typeof ref?.mimeType === "string" ? ref.mimeType : mimeType };
+    return { ok: true, canceled: false, artifactRef: ref, original: { name } };
+  });
+
+  brokerRelay("artifacts.describe", async (open, call, payload) =>
+    refAnswer(await call(artifactPath(open, payload.artifactId), { method: "GET" })),
+  );
+
+  brokerRelay("artifacts.create", async (open, call, payload) =>
+    refAnswer(await call(widgetPath(open, "/artifacts"), { method: "POST", body: payload })),
+  );
+
+  brokerRelay("artifacts.read", async (open, call, payload) => {
+    const query = `?offset=${String(payload.offset)}&length=${String(payload.length)}`;
+    const result = await call(artifactPath(open, payload.artifactId, `/content${query}`), { method: "GET" });
+    if (!result.ok) return relayRefusal(result);
+    return { ok: true, artifactRef: result.body?.artifactRef, contentBase64: result.body?.contentBase64, eof: result.body?.eof };
+  });
+
+  brokerRelay("artifacts.write", async (open, call, payload) =>
+    refAnswer(
+      await call(artifactPath(open, payload.artifactId, "/chunks"), {
+        method: "POST",
+        body: { offset: payload.offset, contentBase64: payload.chunkBase64 },
+      }),
+    ),
+  );
+
+  brokerRelay("artifacts.finalize", async (open, call, payload) =>
+    refAnswer(await call(artifactPath(open, payload.artifactId, "/finalize"), { method: "POST", body: {} })),
+  );
+
+  /*
+   * Save As, or writing back over the file the person picked in this window, in dialogs parented to it. The artifact is
+   * described through this instance first, so only a file the widget was given or made can be saved; the bytes come
+   * from the node to this process and go to the disk without entering the renderer.
+   */
+  brokerRelay("artifacts.export", async (open, call, payload) => {
+    const described = await call(artifactPath(open, payload.artifactId), { method: "GET" });
+    if (!described.ok) return relayRefusal(described);
+    const exported = await call(`/artifacts/${encodeURIComponent(payload.artifactId)}/export`, {
+      method: "POST",
+      body: { suggestedName: payload.suggestedName },
+      binary: true,
+    });
+    if (!exported.ok) return relayRefusal(exported);
+    // The type the node sent the bytes as, which is what the file is named and checked by.
+    const sent = exported.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+    const mimeType = sent === "" ? described.body?.artifactRef?.mimeType : sent;
+    const review = reviewSaveDialog({
+      mimeType,
+      suggestedName: dispositionFilename(exported.contentDisposition) ?? payload.suggestedName,
+      labels: payload.labels,
+    });
+    if (!review.allowed) return desktopRefusal(fileRefusal("INVALID_REQUEST"));
+    if (payload.replace === true && open.picked === undefined) return desktopRefusal(fileRefusal("HANDLE_UNKNOWN"));
+    const saved = await saveFileIn(open.window, review, exported.bytes, payload.replace === true ? open.picked.path : undefined);
+    return saved.ok ? saved : desktopRefusal(saved);
+  });
+
+  /*
+   * Offer a finalized file to the conversation. The conversation window is told, so the chip appears in its composer
+   * where the person decides whether to send it; this window only learns that it was attached.
+   */
+  brokerRelay("artifacts.attach", async (open, call, payload) => {
+    const result = await call(artifactPath(open, payload.artifactId, "/attach"), {
+      method: "POST",
+      body: payload.name === undefined ? {} : { name: payload.name },
+    });
+    if (!result.ok) return relayRefusal(result);
+    const attachmentRef = result.body?.attachmentRef;
+    // With the conversation it belongs to, so a shell now showing another one does not put the file in that composer.
+    liveShellWindow()?.webContents.send("desktop:artifactAttached", { conversationId: open.conversationId, attachmentRef });
+    return { ok: true, artifactRef: result.body?.artifactRef, attachmentRef };
+  });
+
+  brokerRelay("artifacts.discard", async (open, call, payload) => {
+    const result = await call(artifactPath(open, payload.artifactId), { method: "DELETE" });
+    return result.ok ? { ok: true } : relayRefusal(result);
+  });
+
+  const jobPath = (open, jobId) => widgetPath(open, `/jobs/${encodeURIComponent(jobId)}`);
+  brokerRelay("jobs.get", async (open, call, payload) => {
+    const result = await call(jobPath(open, payload.jobId), { method: "GET" });
+    return result.ok ? { ok: true, job: result.body?.job } : relayRefusal(result);
+  });
+  brokerRelay("jobs.list", async (open, call) => {
+    const result = await call(widgetPath(open, "/jobs"), { method: "GET" });
+    return result.ok ? { ok: true, jobs: result.body?.jobs } : relayRefusal(result);
+  });
+  brokerRelay("jobs.cancel", async (open, call, payload) => {
+    const result = await call(jobPath(open, payload.jobId), { method: "POST", body: {} });
+    return result.ok ? { ok: true } : relayRefusal(result);
+  });
+
+  /*
+   * A short-lived provider token for the frame mounted under `session`, offered only while the newest read declares
+   * browser tokens. The host records the session it issued under, so it can end it when the window closes or the frame is
+   * replaced; the value goes to the window for that frame and is kept nowhere here.
+   */
+  brokerRelay("tokens.request", async (open, call, payload) => {
+    const declared = open.bootstrap.live?.frame?.browserTokens;
+    if (!Array.isArray(declared) || declared.length === 0) {
+      return { ok: false, refused: "this widget declares no browser tokens", code: "TOKEN_NOT_DECLARED", details: {} };
+    }
+    if (!open.tokens.admits(payload.session)) {
+      return { ok: false, refused: "this window has issued tokens under too many frames", code: "TOKEN_BUSY", details: {} };
+    }
+    /*
+     * Recorded before the call, so the session is ended with the rest even when the window closes before the node
+     * answers. A token issued after that end lapses at its own expiry.
+     */
+    open.tokens.record(payload.session);
+    const result = await call(widgetPath(open, "/browser-tokens"), {
+      method: "POST",
+      body: { session: payload.session, request: payload.request },
+    });
+    return result.ok ? { ok: true, token: result.body?.token } : relayRefusal(result);
+  });
+
+  brokerRelay("tokens.end", async (open, call, payload) => {
+    const result = await call(widgetPath(open, `/browser-tokens/${encodeURIComponent(payload.session)}`), { method: "DELETE" });
+    if (!result.ok) return relayRefusal(result);
+    open.tokens.forget(payload.session);
+    return { ok: true };
+  });
+
+  /*
+   * The shell says the installed packages changed. The detached window re-reads its frame, so a widget whose package was
+   * updated or removed shows what the node now serves; nothing about the change travels with the signal.
+   */
+  handle("desktop:notifyPackagesChanged", async () => {
+    detached?.window.webContents.send("detached:packagesChanged");
+    return { ok: true };
   });
 
   handle("detached:release", async () => {
@@ -1214,7 +1458,19 @@ async function runSmokeTest() {
        */
       "the shell bridge cannot reach the detached window's own channels",
       !observed.bridgeMethods.some((name) =>
-        ["bootstrap", "intent", "release", "frameRead", "saveState", "publishSemantic", "devSession"].includes(name),
+        [
+          "bootstrap",
+          "intent",
+          "release",
+          "frameRead",
+          "saveState",
+          "publishSemantic",
+          "devSession",
+          "artifacts",
+          "jobs",
+          "tokens",
+          "onPackagesChanged",
+        ].includes(name),
       ),
     ],
     ["Node is unreachable from the renderer", observed.nodeReachable === false],
@@ -1291,7 +1547,8 @@ async function runSmokeTest() {
     step = "install the reattach listener";
     await detachShell.webContents.executeJavaScript(
       "window.__reattached = []; window.__reattachedAt = []; " +
-        "window.clarkcant.onWidgetReattached((payload) => { window.__reattached.push(payload); window.__reattachedAt.push(Date.now()); }); true",
+        "window.clarkcant.onWidgetReattached((payload) => { window.__reattached.push(payload); window.__reattachedAt.push(Date.now()); }); " +
+        "window.__attached = []; window.clarkcant.onArtifactAttached((payload) => { window.__attached.push(payload); }); true",
     );
 
     /*
@@ -1359,6 +1616,15 @@ async function runSmokeTest() {
         : await opened.webContents.executeJavaScript(
             "(() => { const bridge = window.clarkcantDetached; " +
               "return bridge === undefined ? [] : Object.keys(bridge).sort(); })()",
+          );
+    // The file, job and token verbs, one function each: no generic call among them.
+    const brokerVerbs =
+      opened === undefined
+        ? []
+        : await opened.webContents.executeJavaScript(
+            "(() => { const bridge = window.clarkcantDetached ?? {}; " +
+              "return ['artifacts', 'jobs', 'tokens'].flatMap((group) => Object.entries(bridge[group] ?? {})" +
+              ".map(([name, value]) => `${group}.${name}:${typeof value}`)).sort(); })()",
           );
 
     step = "subscribe to the detached appearance relay";
@@ -1451,7 +1717,24 @@ async function runSmokeTest() {
       [
         "the detached window reaches only its own verbs and read-only appearance subscription",
         JSON.stringify(verbs) ===
-          JSON.stringify(["bootstrap", "devSession", "frameRead", "intent", "onAppearance", "publishSemantic", "release", "saveState"]),
+          JSON.stringify([
+            "artifacts",
+            "bootstrap",
+            "devSession",
+            "frameRead",
+            "intent",
+            "jobs",
+            "onAppearance",
+            "onPackagesChanged",
+            "publishSemantic",
+            "release",
+            "saveState",
+            "tokens",
+          ]),
+      ],
+      [
+        "the detached window's file, job and token verbs are exactly the relays the host answers",
+        JSON.stringify(brokerVerbs) === JSON.stringify(BROKER_RELAY_VERBS.map((verb) => `${verb}:function`).sort()),
       ],
       ["closing the window gives the lease back", release !== undefined],
       ["and the shell is told to take the instance back", Array.isArray(reattached) && reattached.length === 1],
@@ -1554,11 +1837,85 @@ async function runSmokeTest() {
     const pressed = await inFrameWindow(
       "window.clarkcantDetached.intent({ instanceRef: 'widget_frame_smoke', actionBindingId: 'refresh', expectedRevision: 1, input: {}, invocationId: 'inv_smoke_frame' })",
     );
+    step = "ask for a browser token under the first build's frame session";
+    const tokenRequest = { provider: "example.maps", scopes: ["tiles:read"] };
+    const firstSession = "smoke_session_build_one";
+    const firstToken = await inFrameWindow(
+      `window.clarkcantDetached.tokens.request(${JSON.stringify({ session: firstSession, request: tokenRequest })})`,
+    );
+    const namedInstance = await inFrameWindow(
+      `window.clarkcantDetached.tokens.request(${JSON.stringify({ session: "smoke_session_foreign", request: tokenRequest, instanceId: "widget_other" })})`,
+    );
     step = "read the dev session, start a new build, and read both again";
     const devBefore = await inFrameWindow("window.clarkcantDetached.devSession()");
     node.control.build = 2;
     const devAfter = await inFrameWindow("window.clarkcantDetached.devSession()");
     const reread = await inFrameWindow("window.clarkcantDetached.frameRead()");
+    const tokenEnds = (session) =>
+      node.relays.filter((call) => call.method === "DELETE" && call.path.endsWith(`/browser-tokens/${session}`));
+    const firstEndedOnNewBuild = tokenEnds(firstSession).length === 1;
+
+    /*
+     * Files and jobs, relayed. The OS dialogs are stood in for — a smoke run has nobody to answer them — and record the
+     * window they were parented to, which must be the detached one rather than the conversation's.
+     */
+    step = "relay the frame's files, with the OS dialogs stood in for";
+    const realDialogs = { open: dialog.showOpenDialog, save: dialog.showSaveDialog, box: dialog.showMessageBox };
+    const dialogParents = [];
+    const scratch = join(tmpdir(), `clarkcant-smoke-${randomUUID()}`);
+    mkdirSync(scratch, { recursive: true });
+    const pickedPath = join(scratch, "picked.txt");
+    const savedPath = join(scratch, "saved.txt");
+    writeFileSync(pickedPath, "picked");
+    let files = {};
+    try {
+      dialog.showOpenDialog = async (parent) => {
+        dialogParents.push(parent);
+        return { canceled: false, filePaths: [pickedPath] };
+      };
+      dialog.showSaveDialog = async (parent) => {
+        dialogParents.push(parent);
+        return { canceled: false, filePath: savedPath };
+      };
+      dialog.showMessageBox = async (parent) => {
+        dialogParents.push(parent);
+        return { response: 1 };
+      };
+      const bridge = (script) => inFrameWindow(`window.clarkcantDetached.${script}`);
+      files = {
+        picked: await bridge("artifacts.pick({ accept: ['text/plain'] })"),
+        created: await bridge("artifacts.create({ mimeType: 'text/plain', name: 'notes.txt' })"),
+        written: await bridge("artifacts.write({ artifactId: 'art_smoke_made', offset: 0, chunkBase64: 'aGVsbG8=' })"),
+        finalized: await bridge("artifacts.finalize({ artifactId: 'art_smoke_made' })"),
+        read: await bridge("artifacts.read({ artifactId: 'art_smoke_made', offset: 0, length: 5 })"),
+        described: await bridge("artifacts.describe({ artifactId: 'art_smoke_made' })"),
+        exported: await bridge("artifacts.export({ artifactId: 'art_smoke_made', suggestedName: 'notes.txt' })"),
+        replaced: await bridge("artifacts.export({ artifactId: 'art_smoke_made', suggestedName: 'notes.txt', replace: true })"),
+        attached: await bridge("artifacts.attach({ artifactId: 'art_smoke_made' })"),
+        discarded: await bridge("artifacts.discard({ artifactId: 'art_smoke_made' })"),
+        pathNamed: await bridge("artifacts.read({ artifactId: '../../etc/passwd', offset: 0, length: 5 })"),
+        job: await bridge("jobs.get({ jobId: 'job_smoke' })"),
+        jobs: await bridge("jobs.list()"),
+        cancelled: await bridge("jobs.cancel({ jobId: 'job_smoke' })"),
+        savedBytes: readFileSync(savedPath, "utf8"),
+        pickedBytes: readFileSync(pickedPath, "utf8"),
+      };
+    } finally {
+      dialog.showOpenDialog = realDialogs.open;
+      dialog.showSaveDialog = realDialogs.save;
+      dialog.showMessageBox = realDialogs.box;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+    let attachedInShell = [];
+    for (let attempt = 0; attempt < 40 && attachedInShell.length === 0; attempt += 1) {
+      attachedInShell = await detachShell.webContents.executeJavaScript("window.__attached");
+      if (attachedInShell.length === 0) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    step = "ask for a browser token under the new build's frame session";
+    const secondSession = "smoke_session_build_two";
+    const secondToken = await inFrameWindow(
+      `window.clarkcantDetached.tokens.request(${JSON.stringify({ session: secondSession, request: tokenRequest })})`,
+    );
     step = "look for a credential in the detached window";
     const heldInWindow = await inFrameWindow(
       "JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie })",
@@ -1633,6 +1990,56 @@ async function runSmokeTest() {
         "reads faster than the host relays are refused rather than queued",
         Array.isArray(burst) && burst.some((answer) => answer?.ok === false && answer.code === "RELAY_RATE_LIMITED"),
       ],
+      [
+        "a browser token is relayed for the frame's session, and a request naming an instance is refused unsent",
+        firstToken?.ok === true &&
+          firstToken.token?.token === "smoke-browser-token" &&
+          namedInstance?.ok === false &&
+          !node.relays.some((call) => JSON.stringify(call.body).includes("smoke_session_foreign")),
+      ],
+      ["a read showing a new build ends the token session the old frame was issued under", firstEndedOnNewBuild],
+      [
+        "a pick opens the OS dialog over the detached window, and the window gets the node's reference and no path",
+        files.picked?.ok === true &&
+          files.picked.artifactRef?.artifactId === "art_smoke_picked" &&
+          files.picked.original?.name === "picked.txt" &&
+          !JSON.stringify(files.picked).includes(scratch) &&
+          dialogParents.length > 0 &&
+          dialogParents.every((parent) => parent === frameWindow),
+      ],
+      [
+        "the frame's file reads, writes and attaches are relayed to the bound instance's artifact routes",
+        files.created?.artifactRef?.artifactId === "art_smoke_made" &&
+          files.written?.ok === true &&
+          files.finalized?.artifactRef?.kind === "finalized" &&
+          files.read?.contentBase64 === Buffer.from("hello").toString("base64") &&
+          files.read?.eof === true &&
+          files.described?.ok === true &&
+          files.discarded?.ok === true &&
+          files.pathNamed?.ok === false,
+      ],
+      [
+        "an export is saved by the host, as Save As and over the file the person picked, without the bytes entering the window",
+        files.exported?.ok === true &&
+          files.exported.saved === true &&
+          files.replaced?.ok === true &&
+          files.replaced.saved === true &&
+          files.savedBytes === "hello" &&
+          files.pickedBytes === "hello" &&
+          !JSON.stringify([files.exported, files.replaced]).includes(scratch),
+      ],
+      [
+        "a file the frame attaches appears in the conversation window's composer, not only in the detached window",
+        files.attached?.ok === true &&
+          Array.isArray(attachedInShell) &&
+          attachedInShell.length === 1 &&
+          attachedInShell[0]?.conversationId === "conv_smoke" &&
+          attachedInShell[0]?.attachmentRef?.attachmentId === "att_smoke",
+      ],
+      [
+        "the frame's jobs are read and cancelled through the host",
+        files.job?.job?.jobId === "job_smoke" && Array.isArray(files.jobs?.jobs) && files.cancelled?.ok === true,
+      ],
     );
 
     step = "close the frame's window";
@@ -1645,10 +2052,23 @@ async function runSmokeTest() {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const frameRelease = node.calls.filter((call) => call.method === "DELETE")[releasesBefore];
     const reattachedAt = (await detachShell.webContents.executeJavaScript("window.__reattachedAt"))[reattachedBefore];
-    checks.push([
-      "closing the frame's window gives the lease back before the conversation is told to take the widget back",
-      frameRelease !== undefined && typeof reattachedAt === "number" && frameRelease.at <= reattachedAt,
-    ]);
+    const secondEnded = tokenEnds(secondSession)[0];
+    checks.push(
+      [
+        "closing the frame's window gives the lease back before the conversation is told to take the widget back",
+        frameRelease !== undefined && typeof reattachedAt === "number" && frameRelease.at <= reattachedAt,
+      ],
+      [
+        "closing the frame's window ends its token session after the lease is given back and before the widget goes back",
+        secondToken?.ok === true &&
+          secondEnded !== undefined &&
+          frameRelease !== undefined &&
+          frameRelease.at <= secondEnded.at &&
+          typeof reattachedAt === "number" &&
+          secondEnded.at <= reattachedAt &&
+          tokenEnds(firstSession).length === 1,
+      ],
+    );
 
     // The conversation window closing takes the detached window with it, and the lease is given back on the way.
     step = "detach a third time, then close the conversation window";

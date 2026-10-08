@@ -76,10 +76,11 @@ export function createNodeCaller(deps) {
   /**
    * `headers` adds to the two this always sends and cannot replace them, in any spelling: a caller may say which
    * surface a press came from, never whose credential it carries. `timeoutMs` bounds a call the node accepts and never
-   * finishes answering, the body included.
+   * finishes answering, the body included. `binary` answers an ok response as its bytes (`bytes`, `contentType`,
+   * `contentDisposition`) rather than as JSON; a refusal is read as JSON either way.
    *
    * @param {string} path
-   * @param {{ method?: string, body?: unknown, headers?: Record<string, string>, timeoutMs?: number }} [init]
+   * @param {{ method?: string, body?: unknown, headers?: Record<string, string>, timeoutMs?: number, binary?: boolean }} [init]
    */
   return async function callNode(path, init) {
     const session = deps.readSession();
@@ -110,6 +111,20 @@ export function createNodeCaller(deps) {
           code: "NODE_UNREACHABLE",
           details: {},
         };
+      }
+      if (init?.binary === true && response.ok) {
+        // Bytes for the host to write, never parsed: an export. The node's own name and type for them come along.
+        try {
+          return {
+            ok: true,
+            bytes: Buffer.from(await response.arrayBuffer()),
+            contentType: response.headers.get("content-type") ?? "",
+            contentDisposition: response.headers.get("content-disposition") ?? "",
+          };
+        } catch (error) {
+          if (controller?.signal.aborted === true) return nodeTimeout();
+          return { ok: false, refused: `the node's answer could not be read (${error?.code ?? "unreadable"})`, code: "NODE_UNREACHABLE", details: {} };
+        }
       }
       let body;
       try {

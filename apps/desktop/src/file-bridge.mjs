@@ -171,6 +171,16 @@ export function reviewSaveFileRequest(input) {
   if (input.replaceHandle !== undefined && (typeof input.replaceHandle !== "string" || !/^fh_[a-f0-9]{32}$/.test(input.replaceHandle))) {
     return { allowed: false, reason: "a file handle is one the picker minted in this app" };
   }
+  const dialog = reviewSaveDialog(input);
+  return dialog.allowed ? { ...dialog, replaceHandle: input.replaceHandle } : dialog;
+}
+
+/**
+ * The dialogs a save opens, as the host will draw them: the type the file is saved as, the name Save As offers, and the
+ * words of the replace question. Shared by a save whose bytes the renderer sent and an export whose bytes the host read
+ * from the node itself, so both ask the same question in the same words.
+ */
+export function reviewSaveDialog(input) {
   // The type decides the extension and what may be replaced, so a save names one the node holds.
   if (typeof input.mimeType !== "string" || extensionsForType(input.mimeType) === undefined) {
     return { allowed: false, reason: "a save names the file's type, one the node holds" };
@@ -181,7 +191,6 @@ export function reviewSaveFileRequest(input) {
     allowed: true,
     mimeType: input.mimeType,
     suggestedName: saveNameForType(input.suggestedName, input.mimeType),
-    replaceHandle: input.replaceHandle,
     filters: [{ name: label(labels.filterName, "Files"), extensions }],
     dialog: {
       replaceTitle: label(labels.replaceTitle, "Replace file"),
@@ -190,6 +199,29 @@ export function reviewSaveFileRequest(input) {
       cancel: label(labels.cancel, "Cancel"),
     },
   };
+}
+
+/**
+ * The file name a node's `Content-Disposition` gives an export, as a bare name, or `undefined` when it gives none. The
+ * same reading as the conversation's (`attachmentFilename` in `@clarkcant/conversation-client`), so an export saved from
+ * a detached window is offered under the name the same export gets in the conversation.
+ */
+export function dispositionFilename(header) {
+  if (typeof header !== "string" || header === "") return undefined;
+  let name;
+  const extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header)?.[1];
+  if (extended !== undefined) {
+    try {
+      name = decodeURIComponent(extended.trim());
+    } catch {
+      name = undefined;
+    }
+  }
+  name ??= /filename\s*=\s*"([^"]*)"/i.exec(header)?.[1] ?? /filename\s*=\s*([^;\s]+)/i.exec(header)?.[1];
+  const cleaned = name === undefined
+    ? undefined
+    : [...name].filter((char) => char !== "/" && char !== "\\" && char.charCodeAt(0) >= 0x20).join("").trim();
+  return cleaned === undefined || cleaned === "" || /^\.+$/.test(cleaned) ? undefined : cleaned;
 }
 
 /**

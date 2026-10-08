@@ -195,8 +195,9 @@ A widget in its own frame detaches the same way. The window mounts the same sand
 every read, state write, semantic publish and press the frame makes is a bounded relay the host performs against the
 instance it opened the window for. The frame is mounted afresh, so durable state carries over while view state and
 playback position restart. While it is detached, the conversation shows a note in its place rather than a second frame,
-and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached. Files, jobs and browser tokens are
-not offered in the window yet ([#616](https://github.com/digitopvn/clarkcant/issues/616)), nor are Clark's performs
+and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached. Files, jobs and browser tokens work in
+the window the same way they do in the conversation: each is a host relay for that one instance, so the window never
+holds a token, and an attached file appears in the conversation. Clark's performs are not offered in the window yet
 ([#617](https://github.com/digitopvn/clarkcant/issues/617)).
 
 The lease **moves** rather than duplicates: the shell releases first, the host claims the `detached` surface, and when
@@ -1328,6 +1329,16 @@ Don't show contrast debugging to consumers; put it in the Developer section.
 ### 11.2 AI & Routing
 
 - Current model as a searchable picker.
+- Provider sign-in (shipped): under the provider and model picker, every provider pi can answer with, signed in or
+  not, with only the ways in pi advertises for it — an account sign-in (OAuth) when pi offers one, an API key when pi
+  takes one. A signed-in provider says where its credential comes from: stored by pi, the node's environment (.env
+  or the shell), handed over at startup, pi's models.json, or pi's own fallback. Only a credential pi stored offers
+  Sign out (and Replace API key / Sign in again); the others say they cannot be signed out here and where to remove
+  them. It is the same capability `/login` and `/logout` answer with in the conversation — the same node routes,
+  sign-in registry and client path — so the sign-in is followed in the row (the provider's page to open, a code, a
+  password field for a key) with loading, failure and done states, and what is typed goes straight to pi and is
+  never shown back. A finished sign-in or sign-out reads the provider list and the model catalogue again. A node
+  without pi says there is nothing to sign in to here; a list pi could not read says why and offers Try again.
 - Favorites/recent models.
 - Shortcut order for model cycling.
 - Automatic routing by Jev toggle.

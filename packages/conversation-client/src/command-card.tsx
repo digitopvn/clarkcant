@@ -1,9 +1,10 @@
 import { useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
-import type { CommandCard, ProviderSignInView } from "@clarkcant/contracts";
+import type { CommandCard } from "@clarkcant/contracts";
 
 import type { BlockActions, CommandActionState, FolderEntryReason } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
+import { SignInPanel } from "./provider-sign-in-panel.tsx";
 
 /**
  * The widget a slash command answers with: a host-owned card in the conversation.
@@ -126,7 +127,14 @@ function CommandRow({
           {settled.message}
         </p>
       )}
-      {signIn === undefined ? null : <SignInPanel signIn={signIn} rowKey={rowKey} t={t} actions={actions} />}
+      {signIn === undefined ? null : (
+        <SignInPanel
+          signIn={signIn}
+          t={t}
+          onAnswer={(value) => actions?.onSignInAnswer?.({ key: rowKey, signInId: signIn.signInId, value })}
+          onCancel={() => actions?.onSignInCancel?.({ key: rowKey, signInId: signIn.signInId })}
+        />
+      )}
       {live
         ? row.actions.map((entry) => {
             const key = `${rowKey}/${entry.actionId}`;
@@ -216,110 +224,5 @@ function FolderEntry({
         </button>
       </div>
     </form>
-  );
-}
-
-function SignInPanel({
-  signIn,
-  rowKey,
-  t,
-  actions,
-}: {
-  signIn: ProviderSignInView;
-  rowKey: string;
-  t: (key: MessageKey) => string;
-  actions: BlockActions | undefined;
-}): ReactElement {
-  const [value, setValue] = useState("");
-  const open = signIn.state === "running" || signIn.state === "waiting";
-  const prompt = signIn.prompt;
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (value.trim() === "") return;
-    actions?.onSignInAnswer?.({ key: rowKey, signInId: signIn.signInId, value });
-    setValue("");
-  };
-  return (
-    <div className="cc-card-stack cc-sign-in" data-state={signIn.state}>
-      {signIn.events.map((event, index) => {
-        if (event.type === "auth_url") {
-          return (
-            <p key={index} className="cc-list-subtitle">
-              {event.instructions ?? t("commandCard.signIn.openPage")}{" "}
-              <a href={event.url} target="_blank" rel="noopener noreferrer">
-                {t("commandCard.signIn.openLink")}
-              </a>
-            </p>
-          );
-        }
-        if (event.type === "device_code") {
-          return (
-            <p key={index} className="cc-list-subtitle">
-              {t("commandCard.signIn.deviceCode")} <code className="cc-sign-in-code">{event.userCode}</code>{" "}
-              <a href={event.verificationUri} target="_blank" rel="noopener noreferrer">
-                {t("commandCard.signIn.openLink")}
-              </a>
-            </p>
-          );
-        }
-        return (
-          <p key={index} className="cc-list-subtitle">
-            {event.message}
-          </p>
-        );
-      })}
-      {open && prompt !== undefined ? <p className="cc-list-title">{prompt.message}</p> : null}
-      {open && prompt !== undefined ? (
-        <form className="cc-search-row" onSubmit={submit}>
-          {prompt.type === "select" ? (
-            <select
-              className="cc-field-input"
-              aria-label={prompt.message}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-            >
-              <option value="">{prompt.message}</option>
-              {prompt.options.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              className="cc-field-input"
-              type={prompt.type === "secret" ? "password" : "text"}
-              autoComplete="off"
-              spellCheck={false}
-              aria-label={prompt.message}
-              {...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder })}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-            />
-          )}
-          <button type="submit" className="cc-action" data-emphasis="primary" disabled={value.trim() === ""}>
-            {t("commandCard.signIn.submit")}
-          </button>
-        </form>
-      ) : null}
-      {open ? (
-        <div className="cc-form-foot">
-          <p className="cc-list-subtitle" role="status">
-            {prompt === undefined ? t("commandCard.signIn.waiting") : t("commandCard.signIn.answer")}
-          </p>
-          <button type="button" className="cc-action" onClick={() => actions?.onSignInCancel?.({ key: rowKey, signInId: signIn.signInId })}>
-            {t("commandCard.signIn.cancel")}
-          </button>
-        </div>
-      ) : (
-        <p className="cc-command-status" role="status" data-result={signIn.state === "done" ? "done" : "failed"}>
-          {signIn.state === "done"
-            ? t("commandCard.signIn.done")
-            : signIn.state === "cancelled"
-              ? t("commandCard.signIn.cancelled")
-              : `${t("commandCard.signIn.failed")}${signIn.error === undefined ? "" : ` ${signIn.error}`}`}
-        </p>
-      )}
-    </div>
   );
 }

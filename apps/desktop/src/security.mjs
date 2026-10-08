@@ -58,6 +58,8 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:detachWidget",
   "desktop:attachWidget",
   "desktop:updateAppearance",
+  // The shell says the installed packages changed, so a detached frame re-reads the document it runs.
+  "desktop:notifyPackagesChanged",
   "detached:bootstrap",
   "detached:intent",
   "detached:release",
@@ -65,6 +67,20 @@ export const IPC_CHANNELS = Object.freeze([
   "detached:state.save",
   "detached:semantic.publish",
   "detached:dev.session",
+  "detached:artifacts.pick",
+  "detached:artifacts.describe",
+  "detached:artifacts.create",
+  "detached:artifacts.read",
+  "detached:artifacts.write",
+  "detached:artifacts.finalize",
+  "detached:artifacts.export",
+  "detached:artifacts.attach",
+  "detached:artifacts.discard",
+  "detached:jobs.get",
+  "detached:jobs.list",
+  "detached:jobs.cancel",
+  "detached:tokens.request",
+  "detached:tokens.end",
 ]);
 
 /**
@@ -87,6 +103,24 @@ export const DETACHED_WINDOW_CHANNELS = Object.freeze([
   "detached:state.save",
   "detached:semantic.publish",
   "detached:dev.session",
+  /*
+   * Files, jobs and browser tokens, the same way: one channel per verb, each bound to that instance. A pick and an export
+   * open the OS dialog parented to the detached window, and the bytes and the path stay in the main process.
+   */
+  "detached:artifacts.pick",
+  "detached:artifacts.describe",
+  "detached:artifacts.create",
+  "detached:artifacts.read",
+  "detached:artifacts.write",
+  "detached:artifacts.finalize",
+  "detached:artifacts.export",
+  "detached:artifacts.attach",
+  "detached:artifacts.discard",
+  "detached:jobs.get",
+  "detached:jobs.list",
+  "detached:jobs.cancel",
+  "detached:tokens.request",
+  "detached:tokens.end",
 ]);
 
 /**

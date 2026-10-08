@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { BROKER_RELAY_VERBS } from "../src/detached-window.mjs";
 import {
   contentSecurityPolicy,
   createWindowOptions,
@@ -339,6 +340,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:getStatus",
       "desktop:minimizeWindow",
       "desktop:notify",
+      "desktop:notifyPackagesChanged",
       "desktop:openExternal",
       "desktop:pickDirectory",
       "desktop:pickFile",
@@ -351,19 +353,39 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:setKeepRunning",
       "desktop:setWindowMode",
       "desktop:updateAppearance",
+      "detached:artifacts.attach",
+      "detached:artifacts.create",
+      "detached:artifacts.describe",
+      "detached:artifacts.discard",
+      "detached:artifacts.export",
+      "detached:artifacts.finalize",
+      "detached:artifacts.pick",
+      "detached:artifacts.read",
+      "detached:artifacts.write",
       "detached:bootstrap",
       "detached:dev.session",
       "detached:frame.read",
       "detached:intent",
+      "detached:jobs.cancel",
+      "detached:jobs.get",
+      "detached:jobs.list",
       "detached:release",
       "detached:semantic.publish",
       "detached:state.save",
+      "detached:tokens.end",
+      "detached:tokens.request",
     ]);
   });
 
   it("lets only the detached document use each detached channel, and refuses it every desktop channel", () => {
     const detachedUrl = "file:///Applications/clarkcant/shell.html?detached=1";
-    const relays = ["detached:frame.read", "detached:state.save", "detached:semantic.publish", "detached:dev.session"];
+    const relays = [
+      "detached:frame.read",
+      "detached:state.save",
+      "detached:semantic.publish",
+      "detached:dev.session",
+      ...BROKER_RELAY_VERBS.map((verb) => `detached:${verb}`),
+    ];
     expect(DETACHED_WINDOW_CHANNELS).toEqual(expect.arrayContaining(relays));
     for (const channel of DETACHED_WINDOW_CHANNELS) {
       expect(reviewIpcCall(sender(detachedUrl), channel, SHELL_URL, detachedUrl).allowed).toBe(true);
@@ -382,8 +404,19 @@ describe("IPC is answered only for the shell document (sender validation)", () =
     for (const refused of ["detached:openExternal", "detached:node", "detached:getSession", "detached:pickDirectory", "detached:timeline"]) {
       expect(IPC_CHANNELS).not.toContain(refused);
     }
-    // The relays a later phase adds are absent until they exist.
-    expect(IPC_CHANNELS.some((name) => /^detached:(artifacts|jobs|tokens|perform)/.test(name))).toBe(false);
+    // Clark's performs are not relayed to a detached window yet.
+    expect(IPC_CHANNELS.some((name) => /^detached:perform/.test(name))).toBe(false);
+    // Every file, job and token relay names its own verb: none takes a path, a conversation or an instance to act on.
+    expect(IPC_CHANNELS.filter((name) => /^detached:(artifacts|jobs|tokens)\./.test(name)).sort()).toEqual(
+      BROKER_RELAY_VERBS.map((verb) => `detached:${verb}`).sort(),
+    );
+  });
+
+  it("lets only the conversation's document tell the desktop the packages changed", () => {
+    const detachedUrl = "file:///Applications/clarkcant/shell.html?detached=1";
+    expect(reviewIpcCall(sender(SHELL_URL), "desktop:notifyPackagesChanged", SHELL_URL, detachedUrl).allowed).toBe(true);
+    expect(reviewIpcCall(sender(detachedUrl), "desktop:notifyPackagesChanged", SHELL_URL, detachedUrl).allowed).toBe(false);
+    expect(reviewIpcCall(sender(SHELL_URL, frame(SHELL_URL)), "desktop:notifyPackagesChanged", SHELL_URL, detachedUrl).allowed).toBe(false);
   });
 });
 

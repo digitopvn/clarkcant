@@ -23,7 +23,8 @@ export const SMOKE_FRAME_PATH = "/frame/smoke-grant/index.html";
  * Start the stand-in on a free loopback port.
  *
  * Loopback only, and it answers exactly the live-owner route, the routes a detached frame's relays reach (its live read,
- * state, semantic and actions, and its widget dev session), a blank page and one widget document: anything else is a
+ * state, semantic and actions, its files, jobs and browser tokens, an export, and its widget dev session), a blank page
+ * and one widget document: anything else is a
  * 404, so a host that called the wrong path would fail loudly here rather than being quietly served something plausible.
  *
  * @returns {Promise<{ url: string, calls: { method: string, path: string, body: Record<string, unknown>, at: number }[], relays: { method: string, path: string, body: Record<string, unknown>, authorization: string | undefined, surface: string | undefined, at: number }[], control: { refuseClaims: boolean, build: number }, close: () => Promise<void> }>}
@@ -76,7 +77,10 @@ export async function startSmokeNode() {
       };
       const widgetRoute = /^\/conversations\/[^/]+\/widgets\/[^/]+\/(live|state|semantic|actions)$/.exec(path);
       const devRoute = /^\/widget-dev\/sessions\/[^/]+$/.test(path);
-      if (widgetRoute !== null || devRoute) {
+      // The file, job and token routes of a widget, and the one unbound route an export reaches.
+      const brokerRoute = /^\/conversations\/[^/]+\/widgets\/[^/]+\/(artifacts|jobs|browser-tokens)(\/[^?]*)?(\?.*)?$/.exec(path);
+      const exportRoute = /^\/artifacts\/([^/]+)\/export$/.exec(path);
+      if (widgetRoute !== null || devRoute || brokerRoute !== null || exportRoute !== null) {
         const header = (name) => {
           const value = request.headers[name];
           return Array.isArray(value) ? value.join(",") : value;
@@ -105,6 +109,7 @@ export async function startSmokeNode() {
             isolation: "sandboxed-frame",
             grantedCapabilities: [],
             allowedOrigins: [],
+            browserTokens: [{ provider: "example.maps", scopes: ["tiles:read"], purpose: "Draws the map." }],
           },
           bindings: [{ actionBindingId: "refresh", label: "Refresh", effectCategory: "read", bindingDigest: "sha256:smoke-binding" }],
           props: {},
@@ -133,6 +138,66 @@ export async function startSmokeNode() {
       }
       if (widgetRoute?.[1] === "actions" && request.method === "POST") {
         json(200, { invocationId: body["invocationId"], revision: 1, duplicate: false, timeline: [] });
+        return;
+      }
+      if (brokerRoute !== null) {
+        const [, family, rest = ""] = brokerRoute;
+        // Shaped as the node's own references, which the window reads as strictly as the conversation does.
+        const digest = `sha256:${"5".repeat(64)}`;
+        const ref = (artifactId, extra = {}) => {
+          const made = { v: 1, artifactId, kind: "working", mimeType: "text/plain", sizeBytes: 5, name: "notes.txt", ...extra };
+          return made.kind === "working" ? made : { ...made, digest };
+        };
+        if (family === "artifacts") {
+          const id = /^\/([^/]+)/.exec(rest)?.[1];
+          const tail = id === undefined ? rest : rest.slice(id.length + 1);
+          if (rest === "" && request.method === "POST") return json(200, { artifactRef: ref("art_smoke_made") });
+          if (rest === "/pick" && request.method === "POST") {
+            return json(200, { artifactRef: ref("art_smoke_picked", { kind: "attachment", name: String(body["name"] ?? "") }) });
+          }
+          if (id !== undefined && tail === "" && request.method === "GET") return json(200, { artifactRef: ref(decodeURIComponent(id)) });
+          if (id !== undefined && tail === "" && request.method === "DELETE") return json(200, { discarded: true });
+          if (id !== undefined && tail.startsWith("/content") && request.method === "GET") {
+            return json(200, { artifactRef: ref(decodeURIComponent(id)), contentBase64: Buffer.from("hello").toString("base64"), eof: true });
+          }
+          if (id !== undefined && tail === "/chunks" && request.method === "POST") return json(200, { artifactRef: ref(decodeURIComponent(id)) });
+          if (id !== undefined && tail === "/finalize" && request.method === "POST") {
+            return json(200, { artifactRef: ref(decodeURIComponent(id), { kind: "finalized" }) });
+          }
+          if (id !== undefined && tail === "/attach" && request.method === "POST") {
+            return json(200, {
+              artifactRef: ref(decodeURIComponent(id), { kind: "finalized" }),
+              attachmentRef: {
+                attachmentId: "att_smoke",
+                filename: "notes.txt",
+                mime: "text/plain",
+                kind: "text",
+                sizeBytes: 5,
+                sha256: digest,
+                blobRef: `${"a".repeat(32)}.txt`,
+              },
+            });
+          }
+        }
+        const job = (jobId) => ({ jobId, status: "running", resultRefs: [], createdAt: "2026-01-01T00:00:00.000Z" });
+        if (family === "jobs" && rest === "" && request.method === "GET") return json(200, { jobs: [job("job_smoke")] });
+        if (family === "jobs" && rest !== "" && request.method === "GET") return json(200, { job: job(decodeURIComponent(rest.slice(1))) });
+        if (family === "jobs" && rest !== "" && request.method === "POST") return json(200, { cancelled: true });
+        if (family === "browser-tokens" && rest === "" && request.method === "POST") {
+          // Not a credential: a fixed string the smoke test can look for in what the window was handed.
+          return json(200, {
+            token: { provider: "example.maps", token: "smoke-browser-token", scopes: ["tiles:read"], expiresAt: "2026-01-01T01:00:00.000Z" },
+          });
+        }
+        if (family === "browser-tokens" && rest !== "" && request.method === "DELETE") return json(200, { ended: true });
+        return json(404, { code: "NOT_FOUND", message: "the smoke node does not serve that route" });
+      }
+      if (exportRoute !== null && request.method === "POST") {
+        response.writeHead(200, {
+          "content-type": "text/plain; charset=utf-8",
+          "content-disposition": "attachment; filename=\"notes.txt\"",
+        });
+        response.end("hello");
         return;
       }
       if (devRoute && request.method === "GET") {

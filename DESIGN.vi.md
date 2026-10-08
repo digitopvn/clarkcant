@@ -195,8 +195,9 @@ Widget chạy trong khung riêng cũng tách ra theo cùng cách. Cửa sổ mou
 lần đọc, ghi state, publish semantic và bấm của frame đều là một relay có giới hạn do host thực hiện cho instance mà nó
 đã mở cửa sổ này. Frame được mount mới, nên state bền được giữ còn view state và vị trí phát bắt đầu lại. Trong lúc
 widget đang tách, hội thoại hiện một ghi chú ở chỗ của nó thay vì một frame thứ hai, và các lần perform của Clark trên
-widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại. Tệp, job và browser token chưa được cung cấp
-trong cửa sổ này ([#616](https://github.com/digitopvn/clarkcant/issues/616)), các lần perform của Clark cũng vậy
+widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại. Tệp, job và browser token hoạt động
+trong cửa sổ giống hệt trong hội thoại: mỗi thứ là một relay của host cho đúng instance đó, nên cửa sổ không bao giờ
+giữ token, và tệp được đính kèm sẽ hiện trong hội thoại. Các lần perform của Clark chưa được cung cấp trong cửa sổ này
 ([#617](https://github.com/digitopvn/clarkcant/issues/617)).
 
 Lease **chuyển** chứ không nhân bản: shell release trước, host claim surface `detached`, và khi cửa sổ đóng thì host
@@ -1313,6 +1314,17 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
 ### 11.2 AI & Routing
 
 - Current model as searchable picker.
+- Đăng nhập nhà cung cấp (đã ship): ngay dưới ô chọn nhà cung cấp và model, liệt kê mọi nhà cung cấp mà pi có thể
+  dùng để trả lời, dù đã đăng nhập hay chưa, chỉ với những cách đăng nhập pi công bố cho nhà cung cấp đó — đăng nhập
+  tài khoản (OAuth) khi pi có, API key khi pi nhận. Nhà cung cấp đã đăng nhập cho biết thông tin đăng nhập đến từ
+  đâu: do pi lưu, biến môi trường của node (.env hoặc shell), được trao lúc khởi động, models.json của pi, hoặc khoá
+  pi tự tìm thấy. Chỉ thông tin đăng nhập do pi lưu mới có Đăng xuất (và Thay API key / Đăng nhập lại); các loại khác
+  nói rõ không đăng xuất được ở đây và phải gỡ ở đâu. Đây là cùng một capability mà `/login` và `/logout` trả lời
+  trong cuộc trò chuyện — cùng route của node, cùng sổ đăng nhập và cùng đường đi phía client — nên quá trình đăng
+  nhập hiện ngay trong hàng (trang của nhà cung cấp để mở, một mã, ô mật khẩu cho khoá) với trạng thái đang chạy,
+  thất bại và hoàn tất, và những gì người dùng nhập đi thẳng tới pi, không bao giờ hiện lại. Đăng nhập hoặc đăng
+  xuất xong thì danh sách nhà cung cấp và danh mục model được đọc lại. Node không có pi nói rằng ở đây không có gì
+  để đăng nhập; danh sách pi không đọc được thì nói lý do và có nút Thử lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.
 - Automatic routing by Jev toggle.

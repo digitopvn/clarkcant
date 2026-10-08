@@ -6,13 +6,15 @@ import {
   semanticProposalSchema,
 } from "@clarkcant/contracts";
 import { compileAppearance } from "@clarkcant/design-tokens";
-import { DETACHED_RELAY_LIMITS, FRAME_MESSAGE_MAX_BYTES } from "@clarkcant/widget-host/session";
+import { DETACHED_RELAY_LIMITS, FRAME_BROKER_LIMITS, FRAME_MESSAGE_MAX_BYTES } from "@clarkcant/widget-host/session";
 
 import {
+  BROKER_RELAY_VERBS,
   COMPOSER_SURFACE_HEADER,
   DETACHED_CHANNELS,
   DETACHED_LEASE,
   PRIVILEGED_FIELDS,
+  RELAY_BUCKETS,
   RELAY_LIMITS,
   detachedBootstrap,
   detachedBounds,
@@ -27,10 +29,12 @@ import {
   reviewDetachedFrameRead,
   reviewDetachedIntent,
   reviewDetachedAppearance,
+  reviewDetachedBrokerRequest,
   reviewDetachedSemanticPublish,
   reviewDetachedStateSave,
   runRelay,
   superviseDetachedWindow,
+  tokenSessions,
 } from "../src/detached-window.mjs";
 import { createNodeCaller } from "../src/node-call.mjs";
 
@@ -415,6 +419,11 @@ describe("the relay limits and schema, against the packages they copy", () => {
     expect(JSON.parse(JSON.stringify(RELAY_LIMITS))).toEqual(JSON.parse(JSON.stringify(DETACHED_RELAY_LIMITS)));
     // A press is a frame message, so its ceiling is the frame session's own.
     expect(RELAY_LIMITS.intent.maxBytes).toBe(FRAME_MESSAGE_MAX_BYTES);
+    // A widget's files, jobs and tokens are spent from the same buckets in the detached window as in the conversation.
+    for (const bucket of ["artifacts", "jobs", "tokens"] as const) {
+      const { timeoutMs: _timeout, ...rate } = RELAY_LIMITS[bucket];
+      expect(rate).toEqual(FRAME_BROKER_LIMITS[bucket]);
+    }
   });
 
   it("holds the semantic proposal schema equal to the contract", () => {
@@ -900,5 +909,199 @@ describe("the detached window as the main process wires its lease", () => {
     expect(window.isDestroyed()).toBe(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+});
+
+const SESSION = "s".repeat(32);
+const BROKER_ACCEPTED: Record<string, Record<string, unknown>> = {
+  "artifacts.pick": { accept: ["text/plain", "image/*"], title: "Timer wants a file", filterName: "Files" },
+  "artifacts.describe": { artifactId: "art_1" },
+  "artifacts.create": { mimeType: "text/plain", name: "notes.txt" },
+  "artifacts.read": { artifactId: "art_1", offset: 0, length: 262_144 },
+  "artifacts.write": { artifactId: "art_1", offset: 5, chunkBase64: "aGVsbG8=" },
+  "artifacts.finalize": { artifactId: "art_1" },
+  "artifacts.export": {
+    artifactId: "art_1",
+    suggestedName: "notes.txt",
+    replace: true,
+    labels: { filterName: "Files", replaceTitle: "Replace?", replaceMessage: "Replace it?", replace: "Replace", cancel: "Cancel" },
+  },
+  "artifacts.attach": { artifactId: "art_1", name: "notes.txt" },
+  "artifacts.discard": { artifactId: "art_1" },
+  "jobs.get": { jobId: "job_1" },
+  "jobs.list": {},
+  "jobs.cancel": { jobId: "job_1" },
+  "tokens.request": { session: SESSION, request: { provider: "example.maps", scopes: ["tiles:read"], ttlSeconds: 300 } },
+  "tokens.end": { session: SESSION },
+};
+const BROKER_REFUSED: Record<string, Array<Record<string, unknown>>> = {
+  "artifacts.pick": [{ accept: ["../etc/passwd"] }, { accept: Array.from({ length: 17 }, () => "text/plain") }, { title: 3 }],
+  "artifacts.describe": [{ artifactId: "../art_1" }, {}],
+  "artifacts.create": [{ mimeType: "x" }, { mimeType: "text/plain", name: "" }, { mimeType: "text/plain", name: "n".repeat(201) }],
+  "artifacts.read": [{ artifactId: "art_1", offset: -1, length: 1 }, { artifactId: "art_1", offset: 0, length: 262_145 }, { artifactId: "art_1", offset: 0.5, length: 1 }],
+  "artifacts.write": [{ artifactId: "art_1", offset: 0, chunkBase64: "not base64!" }, { artifactId: "art_1", offset: 0, chunkBase64: "A".repeat(349_532) }],
+  "artifacts.finalize": [{ artifactId: 7 }],
+  "artifacts.export": [
+    { artifactId: "art_1", suggestedName: "" },
+    { artifactId: "art_1", suggestedName: "a.txt", replace: "yes" },
+    { artifactId: "art_1", suggestedName: "a.txt", labels: { path: "C:\\" } },
+    // The path is the host's: a save names a file to replace by asking, never by where it is.
+    { artifactId: "art_1", suggestedName: "a.txt", path: "C:\\Users\\me\\a.txt" },
+  ],
+  "artifacts.attach": [{ artifactId: "art_1", name: "" }, { artifactId: "art_1", conversationId: "conv_1" }],
+  "artifacts.discard": [{ artifactId: "job_1" }],
+  "jobs.get": [{ jobId: "art_1" }, {}],
+  "jobs.list": [{ jobId: "job_1" }],
+  "jobs.cancel": [{ jobId: "" }],
+  "tokens.request": [
+    { session: "short", request: { provider: "example.maps", scopes: ["tiles:read"] } },
+    { session: SESSION, request: { provider: "Example Maps", scopes: ["tiles:read"] } },
+    { session: SESSION, request: { provider: "example.maps", scopes: [] } },
+    { session: SESSION, request: { provider: "example.maps", scopes: ["tiles:read"], ttlSeconds: 10 } },
+    { session: SESSION, request: { provider: "example.maps", scopes: ["tiles:read"], audience: "elsewhere" } },
+  ],
+  "tokens.end": [{ session: "x" }, {}],
+};
+
+describe("the file, job and token relays", () => {
+  it("cover every verb, each in its own bucket with a bound in time", () => {
+    expect([...BROKER_RELAY_VERBS].sort()).toEqual(Object.keys(BROKER_ACCEPTED).sort());
+    expect(Object.keys(RELAY_BUCKETS).sort()).toEqual([...BROKER_RELAY_VERBS].sort());
+    for (const verb of BROKER_RELAY_VERBS) {
+      for (const bucket of RELAY_BUCKETS[verb as keyof typeof RELAY_BUCKETS]) {
+        const limits = RELAY_LIMITS[bucket as keyof typeof RELAY_LIMITS] as { timeoutMs?: number };
+        expect(typeof limits.timeoutMs === "number" && limits.timeoutMs > 0 && limits.timeoutMs <= 60_000, `${verb} ${bucket}`).toBe(true);
+      }
+    }
+  });
+
+  it.each(Object.entries(BROKER_ACCEPTED))("accept %s with exactly its own fields", (verb, payload) => {
+    expect(reviewDetachedBrokerRequest(verb, payload)).toEqual({ ok: true, payload });
+  });
+
+  it.each(Object.entries(BROKER_REFUSED))("refuse a malformed %s", (verb, payloads) => {
+    for (const [index, payload] of payloads.entries()) expect(reviewDetachedBrokerRequest(verb, payload).ok, `${verb} #${String(index)}`).toBe(false);
+  });
+
+  it("refuse every privileged field and every id on every verb, by name", () => {
+    for (const verb of BROKER_RELAY_VERBS) {
+      for (const field of SMUGGLED) {
+        const reviewed = reviewDetachedBrokerRequest(verb, { ...BROKER_ACCEPTED[verb], [field]: "x" });
+        expect(reviewed.ok, `${verb} ${field}`).toBe(false);
+        expect("reason" in reviewed ? String(reviewed.reason) : "").toContain(field);
+      }
+    }
+  });
+
+  it("refuse a verb the host does not relay, such as a generic node call", () => {
+    expect(reviewDetachedBrokerRequest("node", { path: "/conversations" }).ok).toBe(false);
+    expect(reviewDetachedBrokerRequest("perform", {}).ok).toBe(false);
+  });
+});
+
+describe("the file dialog budget", () => {
+  it("spends a pick from the file bucket and the dialog's, and holds one dialog open at a time", () => {
+    const budget = relayBudget({ now: () => 0 });
+    const first = budget.take("artifacts.export");
+    expect(first.ok).toBe(true);
+    expect(budget.take("artifacts.pick")).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+    // A read is not a dialog: it goes on while the person answers one.
+    const read = budget.take("artifacts.read");
+    expect(read.ok).toBe(true);
+    if (first.ok) first.done();
+    expect(budget.take("artifacts.pick").ok).toBe(true);
+  });
+
+  it("refuses a dialog past its burst without spending the file bucket", () => {
+    let now = 0;
+    const budget = relayBudget({ now: () => now });
+    for (let index = 0; index < RELAY_LIMITS["artifacts.dialog"].burst; index += 1) {
+      const taken = budget.take("artifacts.pick");
+      expect(taken.ok).toBe(true);
+      if (taken.ok) taken.done();
+    }
+    expect(budget.take("artifacts.pick")).toMatchObject({ ok: false, code: "RELAY_RATE_LIMITED" });
+    // Every other file request still has the whole burst less the dialogs it shared.
+    const spent = RELAY_LIMITS["artifacts.dialog"].burst;
+    for (let index = 0; index < RELAY_LIMITS.artifacts.burst - spent; index += 1) {
+      const taken = budget.take("artifacts.describe");
+      expect(taken.ok, String(index)).toBe(true);
+      if (taken.ok) taken.done();
+    }
+    expect(budget.take("artifacts.describe")).toMatchObject({ ok: false, code: "RELAY_RATE_LIMITED" });
+    now += 1000 / RELAY_LIMITS["artifacts.dialog"].refillPerSecond;
+    expect(budget.take("artifacts.pick").ok).toBe(true);
+  });
+
+  it("holds the token requests in flight to the frame host's own bound", () => {
+    const budget = relayBudget({ now: () => 0 });
+    const held = Array.from({ length: RELAY_LIMITS.tokens.inFlight }, () => budget.take("tokens.request"));
+    expect(held.every((taken) => taken.ok)).toBe(true);
+    expect(budget.take("tokens.request")).toMatchObject({ ok: false, code: "RELAY_BUSY" });
+  });
+});
+
+describe("the token sessions a detached window was issued under", () => {
+  it("are each ended once, and none is issued past the bound rather than forgotten", () => {
+    const sessions = tokenSessions(2);
+    sessions.record("a");
+    sessions.record("a");
+    sessions.record("b");
+    expect(sessions.admits("a")).toBe(true);
+    expect(sessions.admits("c")).toBe(false);
+    sessions.record("c");
+    expect(sessions.list()).toEqual(["a", "b"]);
+    sessions.forget("a");
+    expect(sessions.admits("c")).toBe(true);
+    expect(sessions.drain()).toEqual(["b"]);
+    expect(sessions.drain()).toEqual([]);
+  });
+
+  it("are ended after the lease is released and before the conversation takes the widget back", async () => {
+    const closed: Array<() => void> = [];
+    const window = { on: (_event: "closed", listener: () => void) => closed.push(listener), close: () => undefined, isDestroyed: () => false };
+    const order: string[] = [];
+    const supervised = superviseDetachedWindow({
+      window,
+      isCurrent: () => true,
+      claim: async () => ({ ok: true }),
+      release: async () => {
+        order.push("lease released");
+      },
+      afterRelease: async () => {
+        order.push("tokens ended");
+      },
+      onEnded: () => order.push("reattach sent"),
+    });
+    await supervised.begin();
+    for (const listener of closed) listener();
+    await supervised.released;
+    await Promise.resolve();
+    expect(order).toEqual(["lease released", "tokens ended", "reattach sent"]);
+  });
+
+  it("cannot keep the widget from going back when the node never answers the revoke", async () => {
+    vi.useFakeTimers();
+    try {
+      const closed: Array<() => void> = [];
+      const window = { on: (_event: "closed", listener: () => void) => closed.push(listener), close: () => undefined, isDestroyed: () => false };
+      const onEnded = vi.fn();
+      const supervised = superviseDetachedWindow({
+        window,
+        isCurrent: () => true,
+        claim: async () => ({ ok: true }),
+        release: async () => undefined,
+        afterRelease: () => new Promise(() => undefined),
+        onEnded,
+      });
+      await supervised.begin();
+      for (const listener of closed) listener();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onEnded).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(DETACHED_LEASE.endWithinMs);
+      expect(onEnded).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

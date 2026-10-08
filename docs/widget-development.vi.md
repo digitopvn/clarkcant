@@ -2300,7 +2300,16 @@ Desktop host chuyển tiếp từng yêu cầu của frame, cho đúng một ins
 - mỗi lần ghi state, được trả lời bằng những gì node đã lưu hoặc bằng state node đang giữ;
 - mỗi lần publish semantic;
 - mỗi lần bấm, được gửi như của người dùng, giống một lần bấm trong hội thoại. Host tự phân giải digest của binding từ
-  lần đọc mới nhất của nó.
+  lần đọc mới nhất của nó;
+- mỗi yêu cầu về tệp (`artifacts@1`). Người dùng trả lời một lần chọn hay lưu tệp ngay trong khung của cửa sổ, như trong
+  hội thoại, và host mở hộp thoại của hệ điều hành bên trên cửa sổ tách rời. Các byte đi giữa ổ đĩa và node qua host;
+  cửa sổ chỉ biết tham chiếu của node và tên trần của tệp, hoặc tệp đã được lưu hay chưa, không bao giờ biết đường dẫn.
+  "Thay tệp gốc" ghi đè lên tệp được chọn gần nhất trong cửa sổ đó. Tệp mà widget đính kèm được đưa vào ô soạn tin của
+  cửa sổ hội thoại;
+- mỗi lần đọc, liệt kê và huỷ job (`jobs@1`);
+- mỗi yêu cầu browser token (`tokens@1`), chỉ khi package của widget khai báo browser token. Host kết thúc mọi phiên
+  token mà các frame của cửa sổ đã được cấp khi cửa sổ đóng, sau khi trả lease và trước khi hội thoại nhận lại widget, và
+  khi một lần đọc cho thấy frame đã có bản dựng mới.
 
 Cửa sổ không nêu tên hội thoại lẫn instance. Các relay có giới hạn, và frame hỏi quá nhanh thì bị từ chối chứ không
 xếp hàng (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). Relay mà node không trả lời trong 30 giây (10 giây với publish semantic)
@@ -2313,9 +2322,11 @@ bên trong thông báo lỗi dựng: thư mục được thay bằng `.`, nên m
 với package. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai, và các lần perform của
 Clark trên widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại.
 
-Cửa sổ tách rời chưa có: tệp (`artifacts@1`), job (`jobs@1`), browser token (`tokens@1`) và các hành động Clark thực
-hiện (`offeredActions`). Frame được báo là chúng không được cung cấp, và chúng chạy lại khi widget được gắn lại
-([#616](https://github.com/digitopvn/clarkcant/issues/616)). Widget mà package đã mất (`frame: null`) không có nút
+Relay tệp, job và token có các giới hạn riêng, giống hệt một frame trong hội thoại, và một lần chọn hay lưu tệp chỉ giữ
+một hộp thoại mở tại một thời điểm. Widget nhận cùng câu trả lời và cùng mã từ chối ở cả hai cửa sổ.
+
+Cửa sổ tách rời chưa có: các hành động Clark thực hiện (`offeredActions`). Frame được báo là chúng không được cung cấp,
+và chúng chạy lại khi widget được gắn lại. Widget mà package đã mất (`frame: null`) không có nút
 detach; nó hiện văn bản thay thế trong hội thoại. Phần việc còn lại được theo dõi ở
 [#577](https://github.com/digitopvn/clarkcant/issues/577) và [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
@@ -2954,9 +2965,19 @@ Local isolated host có:
 
 Dev host chỉ lắng nghe trên `127.0.0.1` và không có cờ nào để mở nó ra mạng. Nó chỉ trả lời các yêu cầu gửi tới
 `127.0.0.1:<port>`, `localhost:<port>` hoặc `[::1]:<port>`, và từ chối mọi `Host` khác bằng `403`. Nhờ vậy, một trang
-web trỏ tên miền của chính nó về máy bạn (DNS rebinding) không thể đọc trạng thái của shell hay điều khiển nó. Một yêu
-cầu `POST` hoặc `DELETE` có ghi `Origin` cũng phải đến từ một trong các địa chỉ đó. Hãy mở URL mà dev host in ra. Một
-tên máy tự đặt, một tunnel hay một proxy chuyển tiếp `Host` của riêng nó sẽ bị từ chối.
+web trỏ tên miền của chính nó về máy bạn (DNS rebinding) không thể đọc trạng thái của shell hay điều khiển nó. Mọi yêu
+cầu không phải `GET`, `HEAD` hay `OPTIONS` mà có ghi `Origin` cũng phải đến từ một trong các địa chỉ đó. Với
+`--port 80`, trình duyệt bỏ số cổng đi, nên trên cổng đó các tên trần `127.0.0.1`, `localhost` và `[::1]` cũng được
+chấp nhận. Hãy mở URL mà dev host in ra. Một tên máy tự đặt, một tunnel hay một proxy chuyển tiếp `Host` của riêng nó
+sẽ bị từ chối.
+
+Các module của frame chỉ được phục vụ dưới một đường dẫn mang nonce riêng của tiến trình dev host
+(`/dev/modules/<nonce>/`), và origin mờ `null` của frame chỉ được trả lời ở đó và dưới đường dẫn
+`/dev/frame/<nonce>/` của chính frame. Các đường dẫn trần `/@fs/`, `/@id/`, `/@vite/` và `/src/` của Vite trả về `404`,
+và không module nào mang `Access-Control-Allow-Origin: *`. Vì vậy một trang web, kể cả khi nằm trong iframe sandbox của
+chính nó, không thể đọc workspace của bạn qua dev host. Trong một bản checkout, Vite chỉ đọc
+`packages/` và `node_modules/` của workspace, không đọc phần còn lại của repository; CLI đã cài chỉ đọc thư mục của chính nó. Một thay đổi điều khiển gửi tới `/dev/api/action` mà không phải `{ kind, value }` với
+một `kind` đã biết sẽ bị từ chối bằng `400`, và shell giữ nguyên trạng thái.
 
 Với một package, dev host thực hiện bắt tay `init` thật của bridge. Nó gửi props của fixture đang chọn và đưa ra
 `artifacts@1` (§10.1). Control **File picker** của nó giả lập lựa chọn của người dùng. Control này liệt kê các tệp
