@@ -4,6 +4,7 @@ import {
   type InstallState,
   type Instant,
   type PackageGeneration,
+  type RecordedSkippedFacet,
   canTransitionInstall,
   consentStillValid,
   legalInstallTargets,
@@ -255,6 +256,8 @@ export function activateGeneration(
     snapshotDigest?: string;
     /** The directory source the installed listing came from; see `PackageGeneration.directorySource`. */
     directorySource?: DirectorySourceRef;
+    /** The facets the install skipped, kept inert for this generation; see `PackageGeneration.skippedFacets`. */
+    skippedFacets?: readonly RecordedSkippedFacet[];
     nativeExtensionChanged: boolean;
     skillOrPromptChanged: boolean;
   },
@@ -290,6 +293,7 @@ export function activateGeneration(
       ...(input.widgetIds === undefined ? {} : { widgetIds: [...input.widgetIds] }),
       ...(input.snapshotDigest === undefined ? {} : { snapshotDigest: input.snapshotDigest }),
       ...(input.directorySource === undefined ? {} : { directorySource: { ...input.directorySource } }),
+      ...(input.skippedFacets === undefined ? {} : { skippedFacets: input.skippedFacets.map((facet) => ({ ...facet })) }),
       // Carried from the plan rather than re-derived: what is running and what was consented to are two rows.
       ...(input.currentPlan.lockRef === undefined
         ? {}

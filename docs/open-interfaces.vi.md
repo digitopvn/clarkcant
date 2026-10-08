@@ -849,6 +849,15 @@ chuyển đổi hay bị xoá. Các thư mục tạm mà một lần cài bị d
 xoá khi chúng đã cũ hơn một giờ; ngoài ra bộ nhớ đệm gói không có cơ chế dọn rác, với snapshot cũng như với artifact git
 và npm, nên một snapshot không còn generation nào dùng vẫn nằm trên đĩa cho tới khi bộ nhớ đệm được xoá bằng tay.
 
+Gói có manifest khai báo một facet thuộc loại mà node này không biết sẽ được cài mà không có facet đó
+([phát triển widget §4](widget-development.vi.md#4-package-manifest)). Generation của nó ghi facet đó vào
+`skippedFacets` (`[{ kind, id?, isolation? }]`), `GET /packages` lặp lại trường này trên gói, và `lane` của gói ở đó tính
+cả lane mà facet khai báo, hoặc `trusted-native` khi facet không nêu lane nào, giống như lúc cấp capability. Mọi nơi đọc
+gói đã cài đều để facet đã ghi ra ngoài trong generation đó, kể cả trên một node sau này được cập nhật để hiểu loại ấy,
+Cài lại cùng version đang chạy sẽ nhập vào lần cài đó, còn khôi phục một gói đã gỡ thì mang bản ghi trở lại; chỉ một lần cập nhật lên version khác, hoặc gỡ rồi cài mới, mới xoá bản ghi. Bản ghi mà node không phân tích được được báo là `"unreadable"`, được tính là `trusted-native`, và khiến mọi nơi đọc coi gói là không đọc được. Bước cài từ chối với `400 HOST_API_MISMATCH` manifest mà chính `hostApi` của
+nó không bao gồm node này, và thông báo `409 DECLARED_REACH_MISMATCH` nói rõ khi phạm vi tiếp cận trong listing có thể
+tính cả những facet node không đọc được.
+
 Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
@@ -1327,8 +1336,9 @@ trong gói.
   gỡ cài đặt, và khôi phục gói hoặc cài gói khi nó chưa được cài sẽ xoá mọi cặp còn sót lại cho id đó, nên gói bắt đầu
   với hướng dẫn tắt ở mọi nơi cho tới khi người dùng bật lại. Khi khởi động, node cũng bỏ mọi cặp có gói không được cài.
   Nâng cấp hoặc quay lui giữ nguyên các cặp, vì gói vẫn được cài.
-- `clarkcant instructions check <thư mục gói>` kiểm tra manifest theo `packageManifestSchema`, cùng tệp quy tắc và các
-  đoạn hướng dẫn của facet `instructions`, cảnh báo khi có `pin` và khi một đoạn dài hơn mức node nêu.
+- `clarkcant instructions check <thư mục gói>` đọc manifest theo cách node đọc (`readPackageManifest`), rồi kiểm tra
+  tệp quy tắc và các đoạn hướng dẫn của facet `instructions`. Lệnh cảnh báo khi có `pin`, khi một đoạn dài hơn mức node
+  nêu, và khi có facet thuộc loại mà bản build này không biết (node sẽ bỏ qua facet đó).
 
 ## Thay đổi một bề mặt
 

@@ -229,6 +229,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
             listed.source.kind === "local"
               ? resolveLocalSource(listed, join(runtime.dataDir, "package-cache"), entry)
               : listed.source,
+          skippedAtInstall: entry.skippedFacets,
         });
         return read.ok
           ? {

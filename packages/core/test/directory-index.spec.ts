@@ -130,6 +130,26 @@ describe("readDirectoryIndex", () => {
     expect(searchDirectory({ entries: state.entries, query: "newer" }).map((listed) => listed.packageId)).toEqual(["com.acme.newer"]);
   });
 
+  it("reads past a facet kind it does not know, and leaves out a listing made only of such kinds", () => {
+    const mixed = {
+      ...entry({ packageId: "com.acme.mixed" }),
+      facets: ["ui", "agents"],
+      isolations: [{ facetKind: "ui", isolation: "isolated-ui" }, { facetKind: "agents", isolation: "service" }],
+      riskTier: "service",
+    };
+    const only = { ...entry({ packageId: "com.acme.later" }), facets: ["agents"], isolations: [{ facetKind: "agents", isolation: "service" }] };
+    // Known facets, but isolations that name only an unknown kind: left out on its own too, not the whole index.
+    const unlaned = { ...entry({ packageId: "com.acme.unlaned" }), isolations: [{ facetKind: "agents", isolation: "service" }] };
+    const state = readDirectoryIndex(writeIndex(JSON.stringify([entry({ packageId: "com.acme.ok" }), mixed, only, unlaned])));
+    expect(state.kind).toBe("configured");
+    if (state.kind !== "configured") return;
+    expect(state.entries.map((listed) => listed.packageId)).toEqual(["com.acme.ok", "com.acme.mixed"]);
+    const read = state.entries[1];
+    expect(read?.facets).toEqual(["ui"]);
+    expect(read?.riskTier).toBe("service");
+    expect(read === undefined ? undefined : unreadFieldsOf(state, read)).toEqual({ count: 1, names: ["facets.agents"] });
+  });
+
   it("still refuses the file when a field it knows has a bad value, next to an unknown one", () => {
     // Tolerance is for fields this node has never heard of, not for the ones it checks.
     const tooLong = { ...entry({ packageId: "com.acme.long" }), version: `1.0.0-${"a".repeat(80)}`, futureField: 1 };

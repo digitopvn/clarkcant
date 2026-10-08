@@ -1,10 +1,12 @@
 import {
   compareReach,
   reachSnapshotOfListing,
+  readSkippedFacetsRecord,
   reachSnapshotOfManifest,
   type DirectoryEntry,
   type Notice,
   type ReachChangeView,
+  type SkippedFacetsRecord,
   type UnreadListingFields,
 } from "@clarkcant/contracts";
 import { unreadFieldsOf, type DirectoryIndexState } from "@clarkcant/core";
@@ -39,13 +41,29 @@ export function noticeUnreadFields(notice: Notice, index: DirectoryIndexState): 
   return entry === undefined ? undefined : unreadFieldsOf(index, entry);
 }
 
-function installedVersion(runtime: Runtime, packageId: string): { package_id: string; version: string; digest: string } | undefined {
-  return oneRow<{ package_id: string; version: string; digest: string }>(
+function installedVersion(
+  runtime: Runtime,
+  packageId: string,
+): { package_id: string; version: string; digest: string; skippedFacets: SkippedFacetsRecord } | undefined {
+  const row = oneRow<{ package_id: string; version: string; digest: string; skipped: string | null }>(
     runtime.db,
-    "SELECT package_id, version, digest FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+    "SELECT package_id, version, digest, document -> '$.skippedFacets' AS skipped FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
     packageId,
     runtime.identity.nodeId,
   );
+  if (row === undefined) return undefined;
+  // What the install skipped stays out of what it is compared as reaching, as it stays out of what runs; a record that
+  // does not parse makes the installed manifest unreadable, so the change is shown as unknown rather than guessed.
+  const skippedFacets = row.skipped === null ? [] : readSkippedFacetsRecord(parseRecord(row.skipped));
+  return { package_id: row.package_id, version: row.version, digest: row.digest, skippedFacets };
+}
+
+function parseRecord(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -68,7 +86,7 @@ export function reachChangeAgainstInstalled(
   const installed = installedVersion(runtime, entry.packageId);
   if (installed === undefined || installed.version === entry.version) return undefined;
   const manifest = installedManifest(
-    { packageId: installed.package_id, version: installed.version, digest: installed.digest },
+    { packageId: installed.package_id, version: installed.version, digest: installed.digest, skippedFacets: installed.skippedFacets },
     runtime.dataDir,
     index,
   );

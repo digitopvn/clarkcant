@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 import {
   applyStateMigrationOps,
+  describeSkippedFacet,
   isHostOwnedBlock,
   normalizeSemanticDoc,
   stateMigrationGaps,
@@ -97,10 +98,27 @@ function originsInEntry(path: string): string[] {
   return [...found];
 }
 
+/**
+ * A facet kind this clark does not know fails here, although a host reads past it (`readPackageManifest`): to an
+ * author it is more often a misspelling than a newer kind, and a package published from tools that cannot read one of
+ * its facets would be listed as less than it is. A newer kind needs a newer clark.
+ */
+export function skippedFacetChecks(pkg: WidgetPackage): ConformanceCheck[] {
+  return pkg.skippedFacets.map((facet) => ({
+    id: `schema.facet.understood:${String(facet.index)}`,
+    group: "schema",
+    name: "every facet kind is one this clark understands",
+    status: "fail",
+    detail:
+      `${describeSkippedFacet(facet)}. A host from this version on installs the package without it. ` +
+      "Fix the kind if it is misspelled, or update clark if it is a newer kind.",
+  }));
+}
+
 export function runConformance(root: string, options: { frames?: FrameFacts } = {}): ConformanceReport {
   const frames = options.frames;
   const pkg = readPackage(root);
-  const checks: ConformanceCheck[] = [];
+  const checks: ConformanceCheck[] = [...skippedFacetChecks(pkg)];
   const add = (
     id: string,
     group: ConformanceCheck["group"],

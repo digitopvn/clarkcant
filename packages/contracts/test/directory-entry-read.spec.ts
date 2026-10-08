@@ -62,6 +62,47 @@ describe("readDirectoryEntry", () => {
   it("leaves publishing strict: the schema itself still refuses an unknown field", () => {
     expect(directoryEntrySchema.safeParse({ ...ENTRY, rating: 5 }).success).toBe(false);
   });
+
+  it("skips a facet kind it does not know in the facets and the isolations, names it once, and keeps the listed lane", () => {
+    const read = readDirectoryEntry({
+      ...ENTRY,
+      facets: ["ui", "agents"],
+      isolations: [...ENTRY.isolations, { facetKind: "agents", isolation: "trusted-native" }],
+      riskTier: "trusted-native",
+    });
+    expect(read.success).toBe(true);
+    if (!read.success) return;
+    expect(read.data.facets).toEqual(["ui"]);
+    expect(read.data.isolations).toEqual(ENTRY.isolations);
+    expect(read.data.riskTier).toBe("trusted-native");
+    expect(read.unreadFields).toEqual({ names: ["facets.agents"], unnamed: 0 });
+    expect(directoryEntrySchema.safeParse({ ...ENTRY, facets: ["ui", "agents"] }).success).toBe(false);
+  });
+
+  it("still refuses a known kind with an unknown lane, and a kind that is not a plain name", () => {
+    expect(readDirectoryEntry({ ...ENTRY, isolations: [{ facetKind: "ui", isolation: "kernel" }] }).success).toBe(false);
+    expect(readDirectoryEntry({ ...ENTRY, facets: ["ui", "has space"] }).success).toBe(false);
+  });
+
+  it("marks an entry with no facet kind it knows, so an index can leave that one listing out", () => {
+    const read = readDirectoryEntry({ ...ENTRY, facets: ["agents"], isolations: [{ facetKind: "agents", isolation: "declarative" }] });
+    expect(read.success).toBe(false);
+    if (read.success) return;
+    expect(read.onlyUnknownFacets).toBe(true);
+    expect(read.error.issues[0]?.message).toContain("lists no facet kind this node understands (agents)");
+    expect(readDirectoryEntry({ ...ENTRY, facets: [] }).success).toBe(false);
+    const empty = readDirectoryEntry({ ...ENTRY, facets: [] });
+    expect(empty.success === false && empty.onlyUnknownFacets).toBeFalsy();
+  });
+
+  it("marks an entry whose isolations name only kinds it does not know, rather than failing on the list skipping emptied", () => {
+    const read = readDirectoryEntry({ ...ENTRY, isolations: [{ facetKind: "agents", isolation: "declarative" }] });
+    expect(read.success).toBe(false);
+    if (read.success) return;
+    expect(read.onlyUnknownFacets).toBe(true);
+    expect(read.error.issues[0]?.path).toEqual(["isolations"]);
+    expect(read.error.issues[0]?.message).toContain("lists no facet isolation this node understands (agents)");
+  });
 });
 
 describe("unreadListingFields", () => {

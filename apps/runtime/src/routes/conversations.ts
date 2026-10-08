@@ -39,6 +39,7 @@ import {
   activeGenerations,
   activePackageVersions,
   installedDirectoryEntries,
+  skippedAtInstallFor,
   notInstalledAsListedMessage,
   brokeredCapabilities,
   claimLiveOwner,
@@ -278,6 +279,8 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
     // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
     // cache root here must match the one the install route fetched into.
     cacheRoot,
+    // A widget its generation's install skipped stays inert for that generation, here and for its browser tokens.
+    skippedAtInstallOf: skippedAtInstallFor(generations),
   });
   if (!found.ok) {
     // A widget whose running package is withheld is refused as not installed, rather than reported as unknown.

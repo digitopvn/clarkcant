@@ -669,7 +669,7 @@ export function createWidgetDevSessions(
     }
     const stored = update(sessionId, (current) => ({ ...current, pending: { generation: latest.generation, listing: latest.listing } }));
     if (stored === undefined) return;
-    const scope = devConsentScopeOf(latest.listing, latest.manifest);
+    const scope = devConsentScopeOf(latest.listing, { ...latest.manifest, skippedFacets: latest.skippedFacets });
     const consentApproval = stored.consent?.scope === scope ? stored.consent.approvalId : undefined;
     const granted =
       consentApproval === undefined

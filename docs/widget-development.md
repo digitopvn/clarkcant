@@ -165,6 +165,45 @@ needs 3; the tools write the lowest version a package needs, so a package withou
 host that reads only version 2. Such a host refuses a version 3 package as a whole, with a message that names the
 version, rather than install it without the facet. A host that reads version 3 validates the facet like any other.
 
+**Facet kinds a host does not know.** From the host that added this rule on, a host reads past a facet whose `kind` is
+a lowercase name (letters, digits and hyphens) it does not know (`readPackageManifest` in
+`packages/contracts/src/install.ts`). It installs the facets it knows and leaves that facet out. The facet is reported
+as declared but not understood by the author's tools (below), by `clarkcant instructions check`, in a listing's unread
+fields, and as `skippedFacets` on the package in `GET /packages`; the install answer and the install card do not show it
+yet. The node never runs, lists or grants anything for that facet. The generation records it (its kind, id and declared
+isolation), and every reader of an installed package leaves it out for that generation, so a host updated later to
+understand the kind still keeps the facet inert. Installing the same version again while it runs joins that install and keeps the record, and restoring an uninstalled package brings its record back; only an update to another version, or an uninstall followed by a fresh install, installs the package anew under new consent (as does reinstalling a package listed by a path whose files changed). A record the node cannot parse holds back every facet of the package, which is then read as unreadable.
+
+The facet's declared `isolation` counts toward the lane the package's requested capabilities are granted in, and a
+facet that names no known lane counts as `trusted-native`, so the facet can only make a grant harder. The lane decides
+how capabilities are granted, not whether the package installs. The package's lane in `GET /packages`, and a widget dev
+session's lane check, listing and consent scope, count the facet the same way.
+
+A listing that names such a kind in `facets` or `isolations` is read the same way, and the kind is named in the
+listing's unread fields. A listing left with no kind the host knows, in either list, is left out of the directory rather
+than making the directory unreadable. A listing's `declaredReach` cannot be checked against a facet the host cannot
+read: when it differs from the reach of the facets the host knows, the install is refused with
+`DECLARED_REACH_MISMATCH`, and the message says the package also declares facets this version does not understand, so
+updating ClarkCant may be the fix. The install checks the manifest's own `hostApi` as well as the listing's. Hosts from
+before this rule refuse such a package as a whole.
+
+Only the facet kind is tolerated. A known kind with a field or value the host does not accept, an unknown top-level
+field, a `schemaVersion` the host does not read, and a manifest whose facets are all of unknown kinds are still
+refused. So are a kind with an uppercase letter or an underscore, the version 1 kind `widget` in a version 2 or 3
+manifest (the message says to name it `ui`), and a skipped facet whose `id` repeats another facet's. A top-level field
+can qualify every facet (what the package reaches, the resources it runs with), so a host cannot tell that skipping one
+is safe; a facet is one part the host can decline as a whole. This gives the rule for changing the format:
+
+- a new facet kind is added within the current `schemaVersion`, and hosts from this rule on skip it;
+- a new field in an existing facet or at the top level needs a new `schemaVersion`, which an older host refuses with a
+  message that says to update ClarkCant;
+- a package whose purpose depends on a newer facet raises `hostApi.min`, so an older host does not list or install it.
+
+The author's tools stay strict: `clark widget test`, `clark theme test`, `pack` and `publish` fail a facet kind they do
+not know, since to an author it is more often a misspelling than a newer kind, and a listing made without it would
+describe less than the package holds. These checks catch a misspelled kind before it is published; a manifest written or
+packed by other means can still carry a kind a host skips. `clarkcant instructions check` warns about it.
+
 A `tools` facet declares its capabilities in the manifest, so consent can show them before any of the package's code
 runs. Installing the package is the consent to what it declares; each call is still decided by the execution policy.
 
