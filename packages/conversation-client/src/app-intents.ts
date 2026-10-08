@@ -461,6 +461,12 @@ export interface RunAtOnceDeps {
    * conversation, would describe something that is no longer on screen.
    */
   watchStart?: () => () => boolean;
+  /**
+   * Said in place of a remark the page moved on from, so what only that remark told — the conversation left behind is
+   * kept, and `/sessions` reopens it — is not lost when the person sent before the node answered. Worded about the
+   * conversation left behind, never about the screen, so it stays true over whatever is on it now.
+   */
+  onMovedOn?: () => void;
 }
 
 /**
@@ -475,15 +481,19 @@ export interface RunAtOnceDeps {
  * read-back would have said: the conversation left behind is kept, and `/sessions` reopens it.
  *
  * Either remark is said only while the page is still where the intent left it (`watchStart`); a late one is dropped
- * with a trace.
+ * with a trace, and `onMovedOn` says what still holds.
  */
 export function runAppIntentAtOnce(kind: AppIntentKind, deps: RunAtOnceDeps): Promise<void> {
   deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
   const stillThere = deps.watchStart?.() ?? (() => true);
   const say = (remark: (() => void) | undefined): void => {
     if (remark === undefined) return;
-    if (stillThere()) remark();
-    else console.info(`the remark about the ${kind} arrived after the page had moved on; it is not shown`);
+    if (stillThere()) {
+      remark();
+      return;
+    }
+    console.info(`the remark about the ${kind} arrived after the page had moved on; it is not shown`);
+    deps.onMovedOn?.();
   };
   return deps.ask().then(
     (decision) => {

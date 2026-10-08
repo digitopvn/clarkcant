@@ -405,7 +405,7 @@ describe("a click on the page's own controls", () => {
     expect(node.ran).toHaveLength(1);
   });
 
-  it("says the read-back or what was kept only while the page is still on the start it made", async () => {
+  it("says the read-back or what was kept only while the page is still on the start it made, and what still holds once it moved on", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
@@ -418,6 +418,7 @@ describe("a click on the page's own controls", () => {
             ...node.deps,
             onRecorded: () => said.push("recorded"),
             onUnrecorded: () => said.push("unrecorded"),
+            onMovedOn: () => said.push("moved on"),
             // Read right after the click ran, as the page's own mark is.
             watchStart: () => {
               const at = mark;
@@ -428,7 +429,7 @@ describe("a click on the page's own controls", () => {
           if (movedOn) mark += 1;
           node.release();
           await going;
-          expect(said, `${answer() instanceof Error ? "failed" : "answered"}, moved on: ${String(movedOn)}`).toHaveLength(movedOn ? 0 : 1);
+          expect(said, `${answer() instanceof Error ? "failed" : "answered"}, moved on: ${String(movedOn)}`).toEqual(movedOn ? ["moved on"] : [answer() instanceof Error ? "unrecorded" : "recorded"]);
         }
       }
       expect(info).toHaveBeenCalledTimes(2);
