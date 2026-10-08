@@ -323,17 +323,20 @@ function VirtualTranscriptComponent(props: VirtualTranscriptProps): ReactElement
       typeof ResizeObserver === "undefined"
         ? undefined
         : new ResizeObserver((entries) => {
-            let changed = false;
             for (const entry of entries) {
               const target = entry.target as HTMLElement;
               const id = target.dataset.rowId;
               if (id === undefined) continue;
-              const height = (entry.borderBoxSize[0]?.blockSize ?? target.getBoundingClientRect().height) + gap.current;
-              if (Math.abs((heights.current.get(id) ?? -1) - height) < 0.5) continue;
-              heights.current.set(id, height);
-              changed = true;
+              heights.current.set(id, (entry.borderBoxSize[0]?.blockSize ?? target.getBoundingClientRect().height) + gap.current);
             }
-            if (changed) holdPlace();
+            /*
+             * Held on every report, not only when a height differs from the one kept. A row mounted again is laid out
+             * first at the height the browser assumes for content it has not drawn yet (`content-visibility`'s intrinsic
+             * size), and the place is held against that layout when it mounts. The browser then draws it at its real
+             * height, and the observer's first report is that height: the same as the one kept from before, yet every
+             * row below it moved by the difference.
+             */
+            holdPlace();
           }),
     [holdPlace],
   );
