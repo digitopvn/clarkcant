@@ -55,10 +55,13 @@ describe("a listing whose files changed after it was made", () => {
   });
 
   it("is refused with the node's reason for any other refusal, or a mismatch on a press that sent no digest", () => {
+    const vi = (key: MessageKey) => CATALOGS.vi[key];
     const unreadable = new GatewayError(400, "LOCAL_SOURCE_UNREADABLE", "could not be read");
-    expect(installRefusalState(unreadable, LISTED, en)).toEqual({ status: "refused", message: unreadable.message });
+    // In the reader's words with the node's reason, never `CODE: message`.
+    expect(installRefusalState(unreadable, LISTED, en)).toEqual({ status: "refused", message: "Could not install this package: could not be read" });
+    expect(installRefusalState(unreadable, LISTED, vi)).toEqual({ status: "refused", message: "Không cài được gói này: could not be read" });
     const republished = new GatewayError(409, "DIGEST_MISMATCH", "no longer the artifact");
-    expect(installRefusalState(republished, undefined, en)).toEqual({ status: "refused", message: republished.message });
+    expect(installRefusalState(republished, undefined, en)).toEqual({ status: "refused", message: "Could not install this package: no longer the artifact" });
     expect(installRefusalState("offline", undefined, en)).toEqual({
       status: "refused",
       message: CATALOGS.en["shell.package.installFailed"],

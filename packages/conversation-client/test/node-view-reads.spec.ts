@@ -7,9 +7,10 @@ import {
 } from "@clarkcant/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CLARK_VERSION_MAX, GatewayClient, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
+import { CLARK_VERSION_MAX, GatewayClient, GatewayError, NODE_VIEW_UNREADABLE, NodeViewUnreadable } from "../src/api.ts";
+import { COMMAND_ACTION_PHASE } from "../src/command-card.tsx";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
-import { nodeViewRefusalText } from "../src/node-view-refusal.ts";
+import { liveActionRefusal, nodeViewRefusalText } from "../src/node-view-refusal.ts";
 import { developStartRefused } from "../src/use-block-actions.ts";
 
 /**
@@ -262,17 +263,34 @@ describe("a refused answer says which Clark each side runs", () => {
 });
 
 describe("the /develop card after a start this app cannot read", () => {
-  it("says the session started rather than that it failed, and never with the schema's text", async () => {
+  it("says the session started rather than that it failed, never with the schema's text, and never as a success", async () => {
     const started = nodeAnswering({ sessionId: "wdev_1", status: "hibernating", root: "/home/me/timer", startedAt: AT, activation: { state: "none" }, showingLastKnownGood: false }, { nodeVersion: "0.3.0", appVersion: "0.2.1" });
     const error = await refusal(started.startWidgetDevSession({ root: "/home/me/timer" }));
     expect(developStartRefused(error, en)).toEqual({
-      status: "done",
+      status: "unknown",
       message: "The session started, but this app can't read its state. The node runs Clark 0.3.0, which is newer than this app (Clark 0.2.1). Update the app to read it.",
     });
-    expect(developStartRefused(error, vi_)).toMatchObject({ status: "done", message: expect.stringMatching(/^Phiên đã bắt đầu/) });
+    expect(developStartRefused(error, vi_)).toMatchObject({ status: "unknown", message: expect.stringMatching(/^Phiên đã bắt đầu/) });
+    // What the session is doing is not known, so the row is drawn partial, as the status contract says.
+    expect(COMMAND_ACTION_PHASE[developStartRefused(error, en).status]).toBe("partial");
   });
 
   it("still reports a start the node refused as failed", () => {
-    expect(developStartRefused(new Error("FOLDER_NOT_CHOSEN: choose the folder first"), en)).toEqual({ status: "failed", message: "FOLDER_NOT_CHOSEN: choose the folder first" });
+    // The node's reason in the reader's words, never its code.
+    expect(developStartRefused(new GatewayError(409, "FOLDER_NOT_CHOSEN", "choose the folder first"), en)).toEqual({
+      status: "failed",
+      message: en("commandCard.develop.startFailed").replace("{reason}", "choose the folder first"),
+    });
+  });
+});
+
+describe("a pinned live widget's refusal", () => {
+  it("says the view was stale when the node moved on, read from the code", () => {
+    const error = new GatewayError(409, "REVISION_MISMATCH", "invocation expected revision 3 but the instance is at 4; re-read before acting");
+    expect(liveActionRefusal(error, en)).toBe(en("shell.live.revisionMismatch"));
+  });
+
+  it("shows the node's reason for any other refusal, never its code", () => {
+    expect(liveActionRefusal(new GatewayError(403, "PERSON_ONLY", "only the person may do this"), en)).toBe("only the person may do this");
   });
 });

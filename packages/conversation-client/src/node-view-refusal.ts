@@ -1,6 +1,25 @@
-import { NodeViewUnreadable } from "./api.ts";
+import { GatewayError, NodeViewUnreadable } from "./api.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+
+/**
+ * The node's own sentence for a refusal, without the code in front of it: what a person reads, not a log. A surface
+ * puts it after its own words for what did not happen, in the reader's language (`settings.providers.startFailed`,
+ * `commandCard.thinking.failed`, ...), so a refusal never reads as `CODE: message`.
+ */
+export function refusalReason(error: unknown): string {
+  if (error instanceof GatewayError) return error.reason;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A refusal as one sentence in the reader's language: `withReason` filled with the node's reason (`refusalReason`), or
+ * `fallback` alone when the failure carried no sentence of its own (it was not an `Error`).
+ */
+export function refusalSentence(error: unknown, t: (key: MessageKey) => string, withReason: MessageKey, fallback: MessageKey): string {
+  if (!(error instanceof Error)) return t(fallback);
+  return fillMessage(t(withReason), { reason: refusalReason(error) });
+}
 
 /**
  * The words for an answer from the node this app does not read (`NodeViewUnreadable`), in the reader's language, or
@@ -23,4 +42,13 @@ export function nodeViewRefusalText(cause: unknown, t: (key: MessageKey) => stri
         ? fillMessage(t("shell.nodeView.notNewer"), versions)
         : t("shell.nodeView.unknown");
   return `${t(lead)} ${next}`;
+}
+
+/**
+ * What a pinned live widget says when the node refuses a press or a queued state event: the stale-view notice when the
+ * node moved on (`REVISION_MISMATCH`, read from the code, never the sentence), otherwise the node's own reason.
+ */
+export function liveActionRefusal(cause: unknown, t: (key: MessageKey) => string): string {
+  if (cause instanceof GatewayError && cause.code === "REVISION_MISMATCH") return t("shell.live.revisionMismatch");
+  return refusalReason(cause);
 }

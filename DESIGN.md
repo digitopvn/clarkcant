@@ -865,15 +865,20 @@ whether it can be retried, and whether it is still current.
   before the answer arrives: `error` is assertive, any other change of phase is
   polite, and the same phase again, `loading`, or anything already on screen at
   mount (a reload, a scroll back) is not announced.
-- **Late answers and retry (contract helpers, adopted surface by surface).**
-  The contract's `settleSurfaceStatus` drops an answer for an earlier attempt
-  and keeps the first outcome of an attempt, so neither a late "still working"
-  nor a later outcome replaces it; its `canRetry` offers a retry only for
-  `error` or `partial` when the domain names `retry` or `check-again`. No
-  built-in miniapp calls them yet: today's retries (press again on a task stop,
-  try again on a credential) and late answers on command-card rows still follow
-  each surface's own rules, and move onto these helpers as those surfaces are
-  reworked.
+- **A cancel is not a failure.** A sign-in the person cancelled reads
+  `cancelled`, a reply this app cannot read reads `partial`, and a refusal says
+  the node's reason in the person's words, never `CODE: message`. The client
+  keeps the node's code apart from its sentence, so a built-in surface that
+  shows a refusal shows words; only a widget's wire puts the code in front, for
+  the widget's program to read.
+- **Late answers and retry.** The contract's `settleSurfaceStatus` drops an
+  answer for an earlier attempt and keeps the first outcome of an attempt, so
+  neither a late "still working" nor a later outcome replaces it. Command-card
+  rows and the credential card settle every press through it, each press being
+  a new attempt; a row shows its latest press among its buttons. A surface
+  whose retry repeats the same answer passes through `pending` first, so the
+  same failure twice is said twice. `canRetry` offers a retry only for `error`
+  or `partial` when the domain names `retry` or `check-again`.
 
 ### 8.4 Local vs effect actions
 

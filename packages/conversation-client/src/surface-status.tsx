@@ -89,13 +89,19 @@ export interface LivePlacement {
  * The first placement is what the note mounted with. Anything on screen at mount is history — a reload, a scroll back,
  * another tab opening the conversation — and is placed outside every live region, so it is shown and never announced.
  * A later change of phase is placed in the region the contract's policy names; the same phase again keeps its place,
- * so a re-render never moves text into a region and announces it twice.
+ * so a re-render never moves text into a region and announces it twice. While `restored` is true the surface is still
+ * bringing back what was already true before it mounted (a terminal reading its shell after a reload), so a change of
+ * phase is shown in place and not announced either.
  */
-export function nextLivePlacement(current: LivePlacement | undefined, phase: SurfacePhase | undefined): LivePlacement {
+export function nextLivePlacement(
+  current: LivePlacement | undefined,
+  phase: SurfacePhase | undefined,
+  restored = false,
+): LivePlacement {
   if (current === undefined) return { phase, politeness: "off" };
   if (current.phase === phase) return current;
   if (phase === undefined) return { phase, politeness: "off" };
-  return { phase, politeness: surfaceAnnouncement(current.phase, phase, { restored: false }) };
+  return { phase, politeness: surfaceAnnouncement(current.phase, phase, { restored }) };
 }
 
 /**
@@ -111,16 +117,19 @@ export function LiveNote({
   phase,
   children,
   className = "cc-freshness",
+  restored = false,
   ...data
 }: {
   phase: SurfacePhase | undefined;
   children?: ReactNode;
   className?: string;
+  /** The surface is still reading back a state that was true before it mounted: shown, not announced. */
+  restored?: boolean;
 } & DataMarkers): ReactElement {
   const [placement, setPlacement] = useState<LivePlacement>(() => nextLivePlacement(undefined, phase));
   // Derived from the previous render, the way React keeps state that follows a prop: set during render, applied before
   // anything is painted.
-  const next = nextLivePlacement(placement, phase);
+  const next = nextLivePlacement(placement, phase, restored);
   if (next !== placement) setPlacement(next);
 
   const note =

@@ -108,6 +108,96 @@ test("a stopped task is said once, politely, on a phone with reduced motion, and
   await expect(announced(page)).toHaveCount(0);
 });
 
+/** The newest card a slash command answered with. */
+function commandCard(page: Page, command: string): Locator {
+  return page.locator(`.cc-row[data-role="assistant"] [data-command="${command}"]`).last();
+}
+
+async function sendCommand(page: Page, text: string): Promise<void> {
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await composer.fill(text);
+  await composer.press("Enter");
+}
+
+test("a command card press is said once from a region that was already there, and a cancelled sign-in is not a failure", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openApp(page);
+
+  await sendCommand(page, "/thinking");
+  const thinking = commandCard(page, "thinking");
+  await expect(thinking).toBeVisible({ timeout: 20_000 });
+  const high = thinking.locator('[data-row-id="high"]');
+  // The row's regions exist, empty, before the press: the answer is a change a screen reader hears.
+  await expect(high.locator("[data-surface-live] [role='status']")).toHaveCount(1);
+  await expect(high.locator("[data-surface-live] [role='alert']")).toHaveCount(1);
+  await expect(high.locator("[data-surface-live] p")).toHaveCount(0);
+
+  await high.getByRole("button").click();
+  const set = high.locator("[role='status'] .cc-command-status[data-surface-phase='success']");
+  await expect(set).toContainText("Đã đặt", { timeout: 10_000 });
+  await expect(high.locator("[role='alert'] p")).toHaveCount(0);
+  const overflow = await thinking.evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  // Back to the model's default, so the rest of the suite runs as it always has.
+  await sendCommand(page, "/thinking");
+  const again = commandCard(page, "thinking");
+  await expect(again.locator('[data-row-id="high"]')).toHaveAttribute("data-current", "true", { timeout: 20_000 });
+  await again.locator('[data-row-id="default"]').getByRole("button").click();
+  await expect(again.locator('[data-row-id="default"] .cc-command-status')).toContainText("Đã đặt", { timeout: 10_000 });
+
+  await sendCommand(page, "/login");
+  const login = commandCard(page, "login");
+  await expect(login).toBeVisible({ timeout: 20_000 });
+  // The node's badge carries a mark as well as a colour, and nothing about it moves under reduced motion.
+  const signedIn = login.locator('[data-row-id="fake"] .cc-badge');
+  await expect(signedIn).toHaveAttribute("data-surface-phase", "success");
+  const mark = await badgeMark(signedIn);
+  expect(mark.content).toContain("✓");
+  expect(mark.animation).toBe("none");
+
+  const other = login.locator('[data-row-id="fake-other"]');
+  await other.getByRole("button", { name: "Dùng API key" }).click();
+  await expect(other.locator('.cc-sign-in input[type="password"]')).toBeVisible({ timeout: 10_000 });
+  await other.locator(".cc-sign-in").getByRole("button", { name: "Hủy" }).click();
+
+  // Cancelled reads as cancelled — said politely, marked cancelled — never as a failure.
+  const cancelled = other.locator(".cc-sign-in [role='status'] [data-sign-in-status='cancelled']");
+  await expect(cancelled).toHaveAttribute("data-result", "cancelled", { timeout: 10_000 });
+  await expect(cancelled).toHaveAttribute("data-surface-phase", "cancelled");
+  await expect(cancelled).toContainText("Đã hủy");
+  await expect(other.locator("[role='alert'] p")).toHaveCount(0);
+
+  // A reload draws the cards again and announces none of what already happened.
+  await page.reload();
+  await expect(commandCard(page, "login")).toBeVisible({ timeout: 20_000 });
+  await expect(announced(page)).toHaveCount(0);
+});
+
+test("a command card press in English is said in English", async ({ page }) => {
+  await openApp(page);
+  await switchToEnglish(page);
+
+  await sendCommand(page, "/thinking");
+  const thinking = commandCard(page, "thinking");
+  await expect(thinking).toBeVisible({ timeout: 20_000 });
+  const high = thinking.locator('[data-row-id="high"]');
+  await high.getByRole("button").click();
+  await expect(high.locator("[role='status'] .cc-command-status[data-surface-phase='success']")).toContainText("Set.", {
+    timeout: 10_000,
+  });
+
+  await sendCommand(page, "/thinking");
+  const again = commandCard(page, "thinking");
+  await expect(again.locator('[data-row-id="high"]')).toHaveAttribute("data-current", "true", { timeout: 20_000 });
+  await again.locator('[data-row-id="default"]').getByRole("button").click();
+  await expect(again.locator('[data-row-id="default"] .cc-command-status')).toContainText("Set.", { timeout: 10_000 });
+});
+
 test("an approval answered in English is said once, and a reload draws the decision without announcing it", async ({
   page,
 }) => {

@@ -81,7 +81,9 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       await page.locator('[data-accent-scheme="light"]').fill("#FFFFFF");
       await page.locator("[data-accent-save]").click();
       await expect(page.locator('[data-theme-customization] [role="status"]')).toContainText(/không|not|could/i);
-      await expect(page.locator('[data-accent-refused]')).toContainText("THEME_LOW_CONTRAST");
+      // The node's own reason is behind the details, as words: its code is for the program, never the person.
+      await expect(page.locator('[data-accent-refused]')).toContainText("the accent would hide text or protected states");
+      await expect(page.locator('[data-accent-refused]')).not.toContainText("THEME_LOW_CONTRAST");
       const saved = await (await request.get(`${gateway}/appearance`, { headers })).json();
       expect(saved.customization.accent).toEqual({ dark: "#7AA2F7", light: "#2453A8" });
       await page.locator("[data-theme-customization-reset]").click();

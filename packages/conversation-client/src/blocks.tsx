@@ -36,7 +36,7 @@ import { type ObjectUrls, useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { useSurfaceViewState } from "./surface-view-state.tsx";
-import { TerminalCardBlock } from "./terminal-card.tsx";
+import { TerminalCardBlock, type TerminalFirstState } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
 import type { ModelPickerPort } from "./model-picker.tsx";
 import { ChangelogCardBlock } from "./changelog-card.tsx";
@@ -567,8 +567,13 @@ export interface BlockActions extends ModelPickerPort {
     requestId: string;
     fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
   }) => void;
-  /** What the node said about the last submission for one request, in words a reader can act on. */
-  credentialStatus?: { requestId: string; message: string };
+  /**
+   * Where the last submission for each request stands, keyed by request id, in words a reader can act on. The phase is
+   * carried rather than read back from the words, so a failure stays a failure in any language; `attempt` counts
+   * submissions, so a save that fails twice is said twice and an answer for an earlier submission of the same card never
+   * replaces a newer one. One entry per card, so two cards saving at once each keep their own answer.
+   */
+  credentialStatus?: Readonly<Record<string, CredentialSaveStatus>>;
   /** Which approval is waiting on the node, so its own card says so rather than all of them. */
   decidingApprovalId?: string;
   /**
@@ -687,6 +692,12 @@ export interface BlockActions extends ModelPickerPort {
    */
   onTerminalShare?: (input: { text: string }) => void;
   /**
+   * Whether a terminal card mounting now announces the state it first settles on (`TerminalAnnouncements`): only for a
+   * terminal a message that arrived while the person was here opened, and only until that state has been told once. Any
+   * other terminal card was drawn again (from history, or by a scroll back), so its first state is shown and not said.
+   */
+  terminalFirstState?: TerminalFirstState;
+  /**
    * A button on a slash command's card (`command-card`): open a conversation, choose a thinking level, sign in to or
    * out of a provider. Carried out through the capability the rest of the app uses for the same thing; absent in a
    * snapshot, where the card shows what it listed and offers nothing to press.
@@ -743,16 +754,30 @@ export type FeedbackCardState =
   /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
   | { status: "failed"; message: string; reportId?: string; requestKey?: string };
 
+/** A secret's save on a credential card: on its way, kept, or refused. Never the value itself. */
+export interface CredentialSaveStatus {
+  requestId: string;
+  phase: "pending" | "success" | "error";
+  message: string;
+  attempt: number;
+}
+
 /** Why a row asks for a folder's path in words rather than in the OS dialog. */
 export type FolderEntryReason = "browser" | "remote-node" | "dialog-failed";
 
-/** What one press on a command card came to. */
-export type CommandActionState =
+/**
+ * What one press on a command card came to.
+ *
+ * `attempt` orders presses: a row shows the latest press among its buttons, and an answer for an earlier press that
+ * arrives late is dropped rather than replacing the newer one (`settleCommandAction`). Absent reads as the first.
+ */
+export type CommandActionState = (
   | { status: "pending" }
   | { status: "done"; message: string }
   | { status: "failed"; message: string }
   /** The node answered, but this app cannot read what it did: neither success nor failure is claimed. */
-  | { status: "unknown"; message: string };
+  | { status: "unknown"; message: string }
+) & { attempt?: number };
 
 /**
  * What the node said about a browser session after a verb was applied to it.
@@ -1236,7 +1261,8 @@ export function CredentialCardBlock({
   // store, so a credential card scrolled far enough away to be unmounted forgets what was typed into it.
   const [values, setValues] = useState<Record<string, string>>({});
   const complete = fields.length > 0 && fields.every((field) => (values[field.name] ?? "") !== "");
-  const status = actions?.credentialStatus?.requestId === requestId ? actions.credentialStatus.message : undefined;
+  const saves = actions?.credentialStatus;
+  const status = saves !== undefined && Object.hasOwn(saves, requestId) ? saves[requestId] : undefined;
 
   return (
     <section className="cc-card" data-host-card="credential" data-owner="host">
@@ -1320,14 +1346,11 @@ export function CredentialCardBlock({
           </form>
         )}
         {/*
-          What became of the save, said once. The status carries only its sentence, so the failure is told apart by the
-          one sentence the save writes when it fails; anything else is the node's receipt naming what it kept.
+          What became of the save, said once: saving, then the node's receipt naming what it kept, or the failure.
+          Each submission passes through saving, so a second identical failure is a change of phase and is said again.
         */}
-        <LiveNote
-          phase={status === undefined ? undefined : status === t("shell.credential.saveFailed") ? "error" : "success"}
-          data-credential-status="true"
-        >
-          {status}
+        <LiveNote phase={status?.phase} data-credential-status="true">
+          {status?.message}
         </LiveNote>
         {/* The value is entered in a host-owned field; it never enters the transcript. */}
         <p className="cc-freshness" style={{ margin: 0 }}>

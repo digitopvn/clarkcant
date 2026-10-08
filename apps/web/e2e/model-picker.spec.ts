@@ -218,7 +218,7 @@ test("after a key sign-in, the /login card names the provider and offers its mod
   await openApp(page);
   const row = await signInOther(page, "key");
 
-  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  await expect(row.locator(".cc-sign-in [data-sign-in-status]")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
   // What was typed never comes back into the page.
   await expect(page.locator("body")).not.toContainText("e2e-picker-key");
   const after = row.locator("[data-after-sign-in='ready']");
@@ -243,7 +243,7 @@ test("after a key sign-in, the /login card names the provider and offers its mod
 test("after an account sign-in, keeping the current model changes nothing", async ({ page }) => {
   await openApp(page);
   const row = await signInOther(page, "oauth");
-  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  await expect(row.locator(".cc-sign-in [data-sign-in-status]")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
   const after = row.locator("[data-after-sign-in='ready']");
   const keep = after.getByRole("button", { name: "Giữ model hiện tại" });
   await expect(keep).toBeVisible({ timeout: 10_000 });
@@ -260,7 +260,7 @@ test("a provider with no models after sign-in is said plainly, with a way to che
   );
   await openApp(page);
   const row = await signInOther(page, "key");
-  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  await expect(row.locator(".cc-sign-in [data-sign-in-status]")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
   const none = row.locator("[data-after-sign-in='no-models']");
   await expect(none).toContainText("Fake Other chưa có model nào Clark chạy được", { timeout: 10_000 });
   await expect(row.getByRole("button", { name: "Chọn model của Fake Other" })).toHaveCount(0);
@@ -282,7 +282,7 @@ test("a failed sign-in offers no model to choose", async ({ page }) => {
   try {
     await openApp(page);
     const row = await signInOther(page, "key");
-    await expect(row.locator(".cc-sign-in > .cc-command-status[data-result='failed']")).toContainText("Đăng nhập không thành công", { timeout: 10_000 });
+    await expect(row.locator(".cc-sign-in [data-sign-in-status][data-result='failed']")).toContainText("Đăng nhập không thành công", { timeout: 10_000 });
     await expect(row.locator(".cc-after-sign-in")).toHaveCount(0);
     await expect(row.getByRole("button", { name: "Chọn model của Fake Other" })).toHaveCount(0);
     await expect(page.locator("body")).not.toContainText("e2e-picker-key");
@@ -304,7 +304,7 @@ test("a sign-in from Settings offers the same next step: that provider's models,
   await field.fill("e2e-settings-picker-key");
   await row.getByRole("button", { name: "Gửi" }).click();
 
-  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  await expect(row.locator(".cc-sign-in [data-sign-in-status]")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
   const after = row.locator("[data-after-sign-in='ready']");
   await after.getByRole("button", { name: "Chọn model của Fake Other" }).click({ timeout: 10_000 });
   const picker = row.locator(".cc-model-picker[data-state='ready']");
@@ -411,7 +411,7 @@ test("by keyboard, focus lands on the next step after Cancel and Switch model, n
 test("a second sign-in on the same row is a fresh step, and by keyboard Keep and Choose each leave focus on what comes next", async ({ page }) => {
   await openApp(page);
   const row = await signInOther(page, "key");
-  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  await expect(row.locator(".cc-sign-in [data-sign-in-status]")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
   const keep = row.getByRole("button", { name: "Giữ model hiện tại" });
   await expect(keep).toBeVisible({ timeout: 10_000 });
   await keep.focus();
@@ -427,7 +427,7 @@ test("a second sign-in on the same row is a fresh step, and by keyboard Keep and
   await expect(field).toBeVisible({ timeout: 10_000 });
   await field.fill("e2e-picker-key-again");
   await row.getByRole("button", { name: "Gửi" }).click();
-  await expect(row.locator(".cc-sign-in > .cc-command-status")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
+  await expect(row.locator(".cc-sign-in [data-sign-in-status]")).toHaveText("Đã đăng nhập Fake Other.", { timeout: 10_000 });
 
   // The step asks again rather than opening on what was chosen after the first sign-in.
   const after = row.locator("[data-after-sign-in='ready']");

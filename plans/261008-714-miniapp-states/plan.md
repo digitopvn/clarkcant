@@ -31,8 +31,10 @@ retries the same way on every card; failures are never drawn as successes and mi
 
 ## Phases
 
-1. [phase-01-audit-and-contract.md](phase-01-audit-and-contract.md) — in review: audit matrix, contract, card
+1. [phase-01-audit-and-contract.md](phase-01-audit-and-contract.md) — merged in #730: audit matrix, contract, card
    changes, tests, docs.
+2. [phase-02-command-cards-and-terminal.md](phase-02-command-cards-and-terminal.md) — in review: command cards,
+   sign-in panel, credential card and terminal adopt the contract; `/logout` refusal text.
 
 ## Acceptance criteria
 

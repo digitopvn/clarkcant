@@ -140,13 +140,13 @@
     },
     {
       "path": "widget-development.md",
-      "bytes": 322228,
-      "sha256": "6ed98012c3012863cf7aa3f608cd2f7b556504fbe55f16d93578b824019ceffa"
+      "bytes": 322306,
+      "sha256": "c74683621d391bef9cf6f77a9688e97ec8c34b85ca7ff47ef4e677872e69f8d1"
     },
     {
       "path": "widget-development.vi.md",
-      "bytes": 390398,
-      "sha256": "9914aaf66b7924ac6274b0b3ffb8d0e66ae16046c835c972fe46602315289ef9"
+      "bytes": 390491,
+      "sha256": "cd58ff1fad0aceaa772e1f6f0645c429262a8069d497ca1f5a1fd9d09e184999"
     },
     {
       "path": "widgets-and-extensions.md",
