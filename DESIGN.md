@@ -438,7 +438,7 @@ Keep orb + prompt, but the suggestion chips should be **dynamic recent intents**
 
 Each chip must indicate if it's a demo/sample.
 
-The hero disappears once the user starts working, but the logo/home lets them return to it.
+The hero disappears once the user starts working, but the logo/home lets them return to it. The logo takes effect at once, even while a reply is being written: that reply goes on in the conversation left behind, and what the user types next belongs to the new conversation, never checked against the old one or cleared when the node's record of the click arrives.
 
 ### 6.3 Composer
 

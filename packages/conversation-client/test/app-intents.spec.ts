@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { type AppIntentDecision, type SettingsTab } from "@clarkcant/contracts";
+import { type AppIntentDecision, type AppIntentResolution, type SettingsTab } from "@clarkcant/contracts";
 
-import { NOT_DESKTOP_SAY, runAppIntent, type AppIntentHost } from "../src/app-intents.ts";
+import { NOT_DESKTOP_SAY, clickAppIntent, runAppIntent, type AppIntentHost } from "../src/app-intents.ts";
 
 /**
  * The one executor.
@@ -292,5 +292,71 @@ describe("what the executor will not do", () => {
       host,
     );
     expect(run.say).toBe("Mở phần cài đặt nhé.");
+  });
+});
+
+describe("a click on the page's own controls", () => {
+  /** A node whose answer arrives only when the test lets it, so a test can act inside the round trip. */
+  function slowNode(answer: () => AppIntentResolution | Error) {
+    let release: () => void = () => undefined;
+    const answered = new Promise<void>((done) => (release = done));
+    const ran: AppIntentDecision[] = [];
+    const lookupFailures: number[] = [];
+    const deps = {
+      ask: async () => {
+        await answered;
+        const value = answer();
+        if (value instanceof Error) throw value;
+        return value;
+      },
+      run: (decision: AppIntentDecision) => ran.push(decision),
+      onLookupFailed: () => lookupFailures.push(1),
+    };
+    return { deps, ran, lookupFailures, release };
+  }
+  const HOME: AppIntentDecision = { kind: "intent", intent: { kind: "nav.home" }, requiresConfirmation: false, readBack: "Going back to the start screen." };
+
+  it("goes home at once, before the node has answered, so what is typed next belongs to the new conversation", async () => {
+    const node = slowNode(() => HOME);
+    const clicked = clickAppIntent("nav.home", node.deps);
+    expect(node.ran).toEqual([{ kind: "intent", intent: { kind: "nav.home" }, requiresConfirmation: false, readBack: "" }]);
+    // The node's answer is its record of the click: carrying it out again would restart a second time and empty a
+    // composer the person has started typing in.
+    node.release();
+    await clicked;
+    expect(node.ran).toHaveLength(1);
+  });
+
+  it("still says the node's refusal of a click it already carried out", async () => {
+    const node = slowNode(() => ({ kind: "refused", say: "Không được." }));
+    const clicked = clickAppIntent("nav.home", node.deps);
+    node.release();
+    await clicked;
+    expect(node.ran.map((decision) => decision.kind)).toEqual(["intent", "refused"]);
+  });
+
+  it("stays home when the node cannot be asked, with nothing to correct on screen", async () => {
+    const node = slowNode(() => new Error("Failed to fetch"));
+    const clicked = clickAppIntent("nav.home", node.deps);
+    node.release();
+    await clicked;
+    expect(node.ran).toHaveLength(1);
+    expect(node.lookupFailures).toEqual([]);
+  });
+
+  it("waits for the node's decision on any other click, and says when it could not ask", async () => {
+    const settings = slowNode(() => ({ kind: "intent", intent: { kind: "settings.open" }, requiresConfirmation: false, readBack: "" }));
+    const opening = clickAppIntent("settings.open", settings.deps);
+    expect(settings.ran).toEqual([]);
+    settings.release();
+    await opening;
+    expect(settings.ran).toHaveLength(1);
+
+    const unreachable = slowNode(() => new Error("Failed to fetch"));
+    const failing = clickAppIntent("settings.open", unreachable.deps);
+    unreachable.release();
+    await failing;
+    expect(unreachable.ran).toEqual([]);
+    expect(unreachable.lookupFailures).toEqual([1]);
   });
 });

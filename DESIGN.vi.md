@@ -436,7 +436,7 @@ Giữ orb + prompt, nhưng suggestion chips nên là **dynamic recent intents** 
 
 Mỗi chip phải cho biết nếu là demo/sample.
 
-Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại.
+Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại. Logo có hiệu lực ngay, kể cả khi một câu trả lời đang được viết: câu trả lời đó tiếp tục trong hội thoại vừa rời, và những gì user gõ tiếp theo thuộc về hội thoại mới, không bị đối chiếu với hội thoại cũ hay bị xoá khi node ghi nhận cú bấm.
 
 ### 6.3 Composer
 

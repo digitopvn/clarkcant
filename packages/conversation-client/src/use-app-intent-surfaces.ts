@@ -9,7 +9,7 @@ import {
   requestMinimize,
   requestWindowMode,
 } from "./desktop-compact.ts";
-import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
+import { clickAppIntent, runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import {
   type AppIntentDecision,
   type AppIntentKind,
@@ -83,7 +83,10 @@ export interface AppIntentSurfacesState {
   setIntentNotice: (message: string) => void;
   /** Carry out a decision, whichever way it arrived (click, voice, or a typed command). */
   runIntent: (decision: AppIntentDecision) => void;
-  /** Ask the node what a click means, then do it. `inboxTarget` goes only with `inbox.open`. */
+  /**
+   * Ask the node what a click means, then do it; the logo goes home at once and tells the node at the same time
+   * (`clickAppIntent`). `inboxTarget` goes only with `inbox.open`.
+   */
   clickIntent: (kind: AppIntentKind, extra?: { inboxTarget?: string }) => void;
   /** A command a typed message resolved to, to be carried out once the send that produced it settles. */
   pendingIntent: AppIntentDecision | undefined;
@@ -462,17 +465,18 @@ export function useAppIntentSurfaces({
   const clickIntent = useCallback(
     (kind: AppIntentKind, extra?: { inboxTarget?: string }): void => {
       if (client === undefined) return;
-      void client
-        .sendAppIntent({
-          kind,
-          source: "click",
-          ...(conversationId === undefined ? {} : { conversationId }),
-          ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
-        })
-        .then((decision) => {
-          if (decision.kind !== "none") runIntent(decision);
-        })
-        .catch(() => setIntentNotice(t("intents.commandLookupFailed")));
+      // The conversation the click was made in, read now: the logo leaves it before the node has answered.
+      const request = {
+        kind,
+        source: "click" as const,
+        ...(conversationId === undefined ? {} : { conversationId }),
+        ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
+      };
+      void clickAppIntent(kind, {
+        ask: () => client.sendAppIntent(request),
+        run: runIntent,
+        onLookupFailed: () => setIntentNotice(t("intents.commandLookupFailed")),
+      });
     },
     [client, conversationId, runIntent, setIntentNotice, t],
   );
