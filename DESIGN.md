@@ -195,8 +195,9 @@ A widget in its own frame detaches the same way. The window mounts the same sand
 every read, state write, semantic publish and press the frame makes is a bounded relay the host performs against the
 instance it opened the window for. The frame is mounted afresh, so durable state carries over while view state and
 playback position restart. While it is detached, the conversation shows a note in its place rather than a second frame,
-and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached. Files, jobs and browser tokens are
-not offered in the window yet ([#616](https://github.com/digitopvn/clarkcant/issues/616)), nor are Clark's performs
+and Clark's performs on it are refused with `FRAME_DETACHED` until it is reattached. Files, jobs and browser tokens work in
+the window the same way they do in the conversation: each is a host relay for that one instance, so the window never
+holds a token, and an attached file appears in the conversation. Clark's performs are not offered in the window yet
 ([#617](https://github.com/digitopvn/clarkcant/issues/617)).
 
 The lease **moves** rather than duplicates: the shell releases first, the host claims the `detached` surface, and when

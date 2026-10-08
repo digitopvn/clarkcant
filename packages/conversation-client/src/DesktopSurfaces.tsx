@@ -12,7 +12,6 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 import {
   type FrameStateStatus,
   type GatewayClient,
-  GatewayError,
   type IsolatedFrameLiveResponse,
   type LiveWidgetResponse,
   type Timeline,
@@ -22,9 +21,16 @@ import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent, composedImageRefs } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
-import { frameHostCallbacks } from "./frame-host-callbacks.ts";
+import {
+  frameHostCallbacks,
+  frameJobBroker,
+  frameTokenBroker,
+  offersBrowserTokens,
+  shellJobTransport,
+  shellTokenTransport,
+} from "./frame-host-callbacks.ts";
 import { markFrameDetached } from "./frame-performs.ts";
-import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
+import { shellArtifactFiles, useWidgetArtifactHost } from "./widget-artifacts.tsx";
 import { WidgetDevStatus } from "./widget-dev-status.tsx";
 import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
@@ -273,7 +279,8 @@ export function PinnedLiveSurface({
    * Files for a widget in its own frame: requests the node answers against this instance's grant, and a pick or a save
    * the person answers in host chrome drawn beside the frame (`widget-artifacts.tsx`).
    */
-  const artifactHost = useWidgetArtifactHost({ client, conversationId, instanceId, widgetTitle: title, onAttach: onAttachArtifact });
+  const artifactFiles = useMemo(() => shellArtifactFiles(client, conversationId, instanceId), [client, conversationId, instanceId]);
+  const artifactHost = useWidgetArtifactHost({ files: artifactFiles, widgetTitle: title, onAttach: onAttachArtifact });
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);
@@ -878,41 +885,8 @@ export function PinnedLiveSurface({
             openExternal: () => undefined,
           }}
           artifacts={artifactHost.broker}
-          jobs={async (request) => {
-            try {
-              if (request.op === "list") return { status: "ok", jobs: await client.listWidgetJobs(conversationId, instanceId) };
-              if (request.op === "cancel") await client.cancelWidgetJob(conversationId, instanceId, request.jobId);
-              const job = await client.getWidgetJob(conversationId, instanceId, request.jobId);
-              return { status: "ok", job };
-            } catch (cause) {
-              return {
-                status: "refused",
-                code: cause instanceof GatewayError ? cause.code : "JOB_UNAVAILABLE",
-                message: cause instanceof Error ? cause.message : "the job is unavailable to this widget",
-              };
-            }
-          }}
-          tokens={
-            frame.browserTokens === undefined
-              ? undefined
-              : {
-                  request: async (request, session) => {
-                    try {
-                      return { status: "ok", token: await client.requestBrowserToken(conversationId, instanceId, session, request) };
-                    } catch (cause) {
-                      return {
-                        status: "refused",
-                        code: cause instanceof GatewayError ? cause.code : "TOKEN_UNAVAILABLE",
-                        message: cause instanceof Error ? cause.message : "no token is available to this widget",
-                      };
-                    }
-                  },
-                  // The frame is gone either way; a failed revoke still lapses at the token's own expiry.
-                  release: (session) => {
-                    void client.endBrowserTokens(conversationId, instanceId, session).catch(() => undefined);
-                  },
-                }
-          }
+          jobs={frameJobBroker(shellJobTransport(client, conversationId, instanceId))}
+          tokens={offersBrowserTokens(frame) ? frameTokenBroker(shellTokenTransport(client, conversationId, instanceId)) : undefined}
         />
         )}
         {frame !== null && !detachedOpen && artifactHost.chrome}

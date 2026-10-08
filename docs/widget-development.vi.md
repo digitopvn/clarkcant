@@ -2285,7 +2285,16 @@ Desktop host chuyển tiếp từng yêu cầu của frame, cho đúng một ins
 - mỗi lần ghi state, được trả lời bằng những gì node đã lưu hoặc bằng state node đang giữ;
 - mỗi lần publish semantic;
 - mỗi lần bấm, được gửi như của người dùng, giống một lần bấm trong hội thoại. Host tự phân giải digest của binding từ
-  lần đọc mới nhất của nó.
+  lần đọc mới nhất của nó;
+- mỗi yêu cầu về tệp (`artifacts@1`). Người dùng trả lời một lần chọn hay lưu tệp ngay trong khung của cửa sổ, như trong
+  hội thoại, và host mở hộp thoại của hệ điều hành bên trên cửa sổ tách rời. Các byte đi giữa ổ đĩa và node qua host;
+  cửa sổ chỉ biết tham chiếu của node và tên trần của tệp, hoặc tệp đã được lưu hay chưa, không bao giờ biết đường dẫn.
+  "Thay tệp gốc" ghi đè lên tệp được chọn gần nhất trong cửa sổ đó. Tệp mà widget đính kèm được đưa vào ô soạn tin của
+  cửa sổ hội thoại;
+- mỗi lần đọc, liệt kê và huỷ job (`jobs@1`);
+- mỗi yêu cầu browser token (`tokens@1`), chỉ khi package của widget khai báo browser token. Host kết thúc mọi phiên
+  token mà các frame của cửa sổ đã được cấp khi cửa sổ đóng, sau khi trả lease và trước khi hội thoại nhận lại widget, và
+  khi một lần đọc cho thấy frame đã có bản dựng mới.
 
 Cửa sổ không nêu tên hội thoại lẫn instance. Các relay có giới hạn, và frame hỏi quá nhanh thì bị từ chối chứ không
 xếp hàng (`RELAY_RATE_LIMITED`, `RELAY_BUSY`). Relay mà node không trả lời trong 30 giây (10 giây với publish semantic)
@@ -2298,9 +2307,11 @@ bên trong thông báo lỗi dựng: thư mục được thay bằng `.`, nên m
 với package. Trong lúc widget đang tách, hội thoại hiện một ghi chú thay cho frame thứ hai, và các lần perform của
 Clark trên widget đó bị từ chối với `FRAME_DETACHED` cho tới khi nó được gắn lại.
 
-Cửa sổ tách rời chưa có: tệp (`artifacts@1`), job (`jobs@1`), browser token (`tokens@1`) và các hành động Clark thực
-hiện (`offeredActions`). Frame được báo là chúng không được cung cấp, và chúng chạy lại khi widget được gắn lại
-([#616](https://github.com/digitopvn/clarkcant/issues/616)). Widget mà package đã mất (`frame: null`) không có nút
+Relay tệp, job và token có các giới hạn riêng, giống hệt một frame trong hội thoại, và một lần chọn hay lưu tệp chỉ giữ
+một hộp thoại mở tại một thời điểm. Widget nhận cùng câu trả lời và cùng mã từ chối ở cả hai cửa sổ.
+
+Cửa sổ tách rời chưa có: các hành động Clark thực hiện (`offeredActions`). Frame được báo là chúng không được cung cấp,
+và chúng chạy lại khi widget được gắn lại. Widget mà package đã mất (`frame: null`) không có nút
 detach; nó hiện văn bản thay thế trong hội thoại. Phần việc còn lại được theo dõi ở
 [#577](https://github.com/digitopvn/clarkcant/issues/577) và [#617](https://github.com/digitopvn/clarkcant/issues/617).
 
