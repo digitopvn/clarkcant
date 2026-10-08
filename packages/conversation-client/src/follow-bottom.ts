@@ -44,6 +44,37 @@ export function noteLayoutScroll(node: object, delta: number): void {
 	if (delta !== 0) layoutMoves.set(node, (layoutMoves.get(node) ?? 0) + delta);
 }
 
+/** A smooth scroll the transcript started and the view has not finished: where it goes, and how far it has got. */
+interface Glide {
+	target: number;
+	landed: number;
+}
+
+/** The transcript's glide under way in each scroller, if any. */
+const glides = new WeakMap<object, Glide>();
+
+/**
+ * Record the steps of the transcript's glide the view has made since it was last read, as the transcript's moves.
+ *
+ * A glide only travels towards its target. A view that has moved further that way has made more of it, up to the target,
+ * and that part is the transcript's. A view that has moved back the other way has left the glide - the browser ends a
+ * smooth scroll when the reader scrolls - and the move back is not recorded, so it counts as the reader's.
+ */
+function landGlide(node: object & { scrollTop: number }): void {
+	const glide = glides.get(node);
+	if (glide === undefined) return;
+	const direction = Math.sign(glide.target - glide.landed);
+	const travelled = (node.scrollTop - glide.landed) * direction;
+	if (travelled < -1) {
+		glides.delete(node);
+		return;
+	}
+	const step = Math.min(Math.max(travelled, 0), Math.abs(glide.target - glide.landed)) * direction;
+	noteLayoutScroll(node, step);
+	glide.landed += step;
+	if (Math.abs(glide.target - glide.landed) < 1) glides.delete(node);
+}
+
 /**
  * Scroll the view as the transcript rather than as the reader - to keep the row being read in place, or to follow the
  * bottom - and record the move (`noteLayoutScroll`), so it is not taken for the reader's.
@@ -51,14 +82,28 @@ export function noteLayoutScroll(node: object, delta: number): void {
  * Unrecorded, a scroll down to follow the reply would hide a scroll up the reader makes before the browser reports the
  * first one: measured from the last report, the view would not have moved.
  *
- * Only the part of the move made by the time the call returns is recorded, which is all of an instant scroll. A smooth
- * one moves the view over the next frames, and each step is reported on its own frame, so what goes unrecorded is at
- * most one frame's step of the glide.
+ * An instant scroll is recorded whole when the call returns. A smooth one moves the view over the next frames, and each
+ * step is recorded as it lands, whenever the view's position is next read (`reportScroll`, `stillFollowsBottom`,
+ * `followsAfterScroll`): no step the view has made goes unrecorded. Recording the whole glide up front instead would read
+ * the part still to travel as the reader scrolling up.
+ *
+ * What remains is a reader's scroll up that lands in the same frame as a step of the glide, which the browser shows as one
+ * move: if the step was the larger, the view is still further along the glide than where it was last read, and the
+ * reader's move hides inside the step. It is bounded by that one frame's step - never more than the glide's length, one
+ * screen at most (`followScrollBehavior`), and about a third of it at the steepest frame of a Chromium glide. The browser
+ * ends a smooth scroll as the reader starts one, so from the next frame on the view stays where the reader left it.
+ *
+ * Any scroll ends a smooth one under way, so a new one records what the last glide made and starts from there.
  */
-export function scrollAsTranscript(node: { scrollTop: number; scrollTo(options: ScrollToOptions): void }, options: ScrollToOptions): void {
+export function scrollAsTranscript(node: ScrollMetrics & { scrollTo(options: ScrollToOptions): void }, options: ScrollToOptions): void {
+	landGlide(node);
+	glides.delete(node);
 	const from = node.scrollTop;
 	node.scrollTo(options);
 	noteLayoutScroll(node, node.scrollTop - from);
+	if (options.top === undefined) return;
+	const target = Math.min(Math.max(options.top, 0), Math.max(0, node.scrollHeight - node.clientHeight));
+	if (Math.abs(target - node.scrollTop) >= 1) glides.set(node, { target, landed: node.scrollTop });
 }
 
 /** What a scroll event said: where the view was, and how far the layout had moved it by then. */
@@ -68,7 +113,28 @@ export interface ScrollReport {
 }
 
 export function reportScroll(node: ScrollMetrics & object): ScrollReport {
+	landGlide(node);
 	return { top: node.scrollTop, layout: layoutMoves.get(node) ?? 0 };
+}
+
+/** Where the view would be had only the layout and the transcript moved it since the report. */
+function expectedTop(report: ScrollReport, node: object): number {
+	return report.top + (layoutMoves.get(node) ?? 0) - report.layout;
+}
+
+/**
+ * Whether the reader follows the bottom, read as a scroll event arrives, against the report before it.
+ *
+ * A view at the bottom follows it, whoever brought it there. A view above the bottom follows it only if it was following
+ * and nothing but the transcript and the layout has moved it since: a step of the transcript's glide reported after more
+ * of the reply landed below puts the view far from the new bottom, but the reader did not leave it. Any scroll up of the
+ * reader's own stops the following, however small: the slack is for where a reader stops at the bottom, not for how far
+ * they may scroll away from it.
+ */
+export function followsAfterScroll(followed: boolean, report: ScrollReport, node: ScrollMetrics & object): boolean {
+	landGlide(node);
+	if (followsBottom(node)) return true;
+	return followed && expectedTop(report, node) - node.scrollTop < 1;
 }
 
 /**
@@ -85,10 +151,10 @@ export function reportScroll(node: ScrollMetrics & object): ScrollReport {
  * has not left it whatever moved it there.
  */
 export function stillFollowsBottom(followed: boolean, report: ScrollReport, node: ScrollMetrics & object, slack = BOTTOM_FOLLOW_SLACK_PX): boolean {
+	landGlide(node);
 	if (!followed) return false;
 	if (followsBottom(node, slack)) return true;
-	const expectedTop = report.top + (layoutMoves.get(node) ?? 0) - report.layout;
-	return expectedTop - node.scrollTop <= slack;
+	return expectedTop(report, node) - node.scrollTop <= slack;
 }
 
 /**

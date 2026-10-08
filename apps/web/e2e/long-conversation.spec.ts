@@ -711,6 +711,44 @@ test("rows above the screen collapsing while a reply arrives do not stop the tra
   await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
 });
 
+test("more of the reply arriving while the transcript glides down to it is followed too", async ({ page }) => {
+  const { conversationId } = await seedConversation();
+  await scriptReply(page);
+  await openConversation(page, conversationId);
+  await expect(rows(page)).toHaveAttribute("data-rows-total", "200");
+  await startReply(page);
+
+  // The reply grows and the transcript glides down to it. A step of the glide is reported while the view is still more
+  // than the slack from the bottom, and more of the reply lands before the glide ends: the reader never left the bottom.
+  const reportedAt = await page.evaluate(async (texts) => {
+    // SAFETY: the seam installed by `scriptReply`.
+    const seam = (window as unknown as { __scriptedReply: { push: (frame: string) => void } }).__scriptedReply;
+    const node = document.querySelector<HTMLElement>(".cc-scroll");
+    if (node === null) throw new Error("no transcript");
+    const distance = (): number => node.scrollHeight - node.scrollTop - node.clientHeight;
+    const start = node.scrollTop;
+    // Listened to after the transcript's own listeners, so a step heard here has been reported to them.
+    const reported = new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no step of the glide was reported far from the bottom")), 5_000);
+      const onScroll = (): void => {
+        if (node.scrollTop <= start || distance() <= 48) return;
+        node.removeEventListener("scroll", onScroll);
+        clearTimeout(timer);
+        resolve(distance());
+      };
+      node.addEventListener("scroll", onScroll);
+    });
+    seam.push(`event: delta\ndata: ${JSON.stringify({ text: texts[0] })}\n\n`);
+    const at = await reported;
+    seam.push(`event: delta\ndata: ${JSON.stringify({ text: texts[1] })}\n\n`);
+    return at;
+  }, [paragraph("đoạn một"), paragraph("đoạn hai")]);
+  expect(reportedAt).toBeGreaterThan(48);
+  await expect(page.locator("[data-live]")).toContainText("đoạn hai");
+  await settle(page);
+  await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
+});
+
 test("a reader who scrolls up while rows above collapse is not taken back down", async ({ page }) => {
   const { conversationId } = await seedConversation();
   await scriptReply(page);
@@ -818,9 +856,14 @@ async function startReply(page: Page): Promise<void> {
   await expect.poll(() => distanceToBottom(page)).toBeLessThanOrEqual(2);
 }
 
+/** Several lines more of the streamed reply, under `marker`. */
+function paragraph(marker: string): string {
+  return ` ${marker}: ${"Một dòng nữa của câu trả lời đang được viết ra. ".repeat(12)}`;
+}
+
 /** Several lines more of the streamed reply, drawn. */
 async function growReply(page: Page, marker: string): Promise<void> {
-  await frame(page, "delta", { text: ` ${marker}: ${"Một dòng nữa của câu trả lời đang được viết ra. ".repeat(12)}` });
+  await frame(page, "delta", { text: paragraph(marker) });
   await expect(page.locator("[data-live]")).toContainText(marker);
   await settle(page);
 }

@@ -4,6 +4,7 @@ import {
   BOTTOM_FOLLOW_SLACK_PX,
   distanceFromBottom,
   followScrollBehavior,
+  followsAfterScroll,
   followsBottom,
   noteLayoutScroll,
   reportScroll,
@@ -156,6 +157,77 @@ describe("following the bottom of the transcript", () => {
     scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
     // The view has not moved yet: counting the whole glide would read the view as far above where it was expected.
     expect(stillFollowsBottom(true, report, node)).toBe(true);
+  });
+
+  it("records each step of its glide as it lands, so a reader's scroll up after a step is seen", () => {
+    // Reported at the bottom; the reply grows by 400px and the transcript glides down to it. A step of 300px lands and is
+    // read before the browser reports it, then the reader scrolls up by 100px, ending the glide.
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    node.scrollTop = 1700;
+    expect(stillFollowsBottom(true, report, node)).toBe(true);
+    node.scrollTop = 1600;
+    // Measured from the report alone the view moved 200px down; the glide took it 300px, so the reader moved up 100px.
+    expect(stillFollowsBottom(true, report, node)).toBe(false);
+  });
+
+  it("nets a reader's scroll up against a glide step that lands in the same frame, hiding no more than the step", () => {
+    // Read only once both moves have landed: a 300px step and the reader's scroll up of 400px, which ends the glide.
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    node.scrollTop = 1400 + 300 - 400;
+    expect(stillFollowsBottom(true, report, node)).toBe(false);
+    expect(followsAfterScroll(true, report, node)).toBe(false);
+  });
+
+  it("does not count the glide past its target, or a reader's scroll on from there", () => {
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    // The glide arrived at 1800; more of the reply landed and the reader scrolled up by 100px from the glide's end.
+    node.scrollTop = 1800;
+    expect(reportScroll(node).top).toBe(1800);
+    node.scrollHeight = 3000;
+    node.scrollTop = 1700;
+    expect(followsAfterScroll(true, report, node)).toBe(false);
+  });
+
+  it("keeps following when a step of its own glide is reported after more of the reply landed below", () => {
+    // The glide is still on its way when the reply grows again: the step's report puts the view far from the new bottom.
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    node.scrollHeight = 2530;
+    node.scrollTop = 1402;
+    expect(followsAfterScroll(true, report, node)).toBe(true);
+    // A reader who was not following is not made to.
+    expect(followsAfterScroll(false, report, node)).toBe(false);
+  });
+
+  it("keeps following when the transcript held the row being read in place, and the reply grew below", () => {
+    const node = view(1400);
+    const report = reportScroll(node);
+    node.scrollTop -= 300;
+    noteLayoutScroll(node, -300);
+    node.scrollHeight += 400;
+    expect(followsAfterScroll(true, report, node)).toBe(true);
+  });
+
+  it("stops following on a reported scroll up of the reader's own, however small, once the view is above the bottom", () => {
+    const node = view(1400);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    node.scrollTop = 1390;
+    expect(followsAfterScroll(true, report, node)).toBe(false);
+    // At the bottom, a reader follows it whatever brought them there.
+    node.scrollTop = 1800 - BOTTOM_FOLLOW_SLACK_PX;
+    expect(followsAfterScroll(false, reportScroll(node), node)).toBe(true);
   });
 
   it("keeps the layout's moves of one scroller apart from another's", () => {
