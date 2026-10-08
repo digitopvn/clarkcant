@@ -62,6 +62,15 @@ interface Form {
   term: RecognitionTerm;
   rule: Rule;
 }
+/** A span of tokens `from..to` that matched one or more terms. */
+interface Hit {
+  from: number;
+  to: number;
+  candidates: Form[];
+  near: boolean;
+  /** The shorter exact form at `from` that words running together into a longer term passed over. */
+  passedOver?: Hit | undefined;
+}
 interface Lexicon {
   forms: Map<string, Form[]>;
   longest: number;
@@ -115,24 +124,16 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   const lexicon = lexiconFor(context);
   const codeSwitched = VIETNAMESE_LETTERS.test(text);
 
-  type Hit = { from: number; to: number; candidates: Form[]; near: boolean };
-  const hits: Hit[] = [];
-  for (let index = 0; index < tokens.length; ) {
-    const hit = matchAt(tokens, text, index, lexicon);
-    if (hit === undefined) {
-      index += 1;
-      continue;
-    }
-    hits.push({ ...hit, candidates: withCaseVariants(hit.candidates, lexicon) });
-    index = hit.to;
-  }
+  const hits = hitsBetween(tokens, text, 0, tokens.length, lexicon);
 
   // Evidence that the utterance is about code, by position, so a span never counts as its own evidence.
   const anchors: number[] = [];
   tokens.forEach((token, index) => {
     if (TECHNICAL_CUES.has(token.lower)) anchors.push(index);
   });
-  for (const hit of hits) {
+  // Words a run-together term absorbed, kept apart, since they support fewer spans: see `supported`.
+  const absorbed: number[] = [];
+  const addEvidence = (hit: Hit, into: number[]): void => {
     const unique = distinctTerms(hit.candidates);
     const source = text.slice(tokens[hit.from]!.start, tokens[hit.to - 1]!.end);
     // Only a term heard in its own spelling, case aside, is evidence: a corrected span supporting another correction
@@ -145,10 +146,28 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
       source.toLowerCase() === term.text.toLowerCase() &&
       unique.some((candidate) => source === candidate.text || isDistinctive(candidate))
     ) {
-      for (let at = hit.from; at < hit.to; at += 1) anchors.push(at);
+      for (let at = hit.from; at < hit.to; at += 1) into.push(at);
+      return;
     }
-  }
-  const supported = (from: number, to: number): boolean => codeSwitched || anchors.some((at) => at < from || at >= to);
+    // Words that ran together into a longer term are evidence still, exactly as they would have been on their own:
+    // "web" heard exactly says the sentence is about code whether or not "web app" goes on to read as `webapp`. Only
+    // a shorter form starting the span opens it up; the exact matches after that form count too.
+    if (hit.passedOver !== undefined) {
+      addEvidence(hit.passedOver, absorbed);
+      for (const inner of hitsBetween(tokens, text, hit.passedOver.to, hit.to, lexicon)) addEvidence(inner, absorbed);
+    }
+  };
+  for (const hit of hits) addEvidence(hit, anchors);
+  const outside = (at: number, hit: Hit): boolean => at < hit.from || at >= hit.to;
+  // Absorbed words support only a span whose change no run-together span can rest on: one that absorbed no words and
+  // holds no evidence of its own. One that absorbed words too would take its own with it ("the web app and the web app"
+  // would vouch for itself). One holding evidence already supports every run-together span outside it, so their absorbed
+  // words are rewritten away: "Follow-up" heard for the tool follow-up, or the cue "code" in "code review" for
+  // `codeReview`, would turn "web app" into `webapp`, then be rewritten itself on the "web" that change took away.
+  const supported = (hit: Hit): boolean =>
+    codeSwitched ||
+    anchors.some((at) => outside(at, hit)) ||
+    (hit.passedOver === undefined && anchors.every((at) => outside(at, hit)) && absorbed.some((at) => outside(at, hit)));
 
   const result: NormalizationResult = { text, changes: [], abstained: [], technical: [] };
   const replacements: Array<{ start: number; end: number; to: string }> = [];
@@ -194,7 +213,7 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // word starting a sentence, so lowering it needs the same evidence as any plain word.
     const needsContext =
       rule !== "casing" || (lowers && isWordLikeTool(term)) || !(isDistinctive(term) || (lowers && term.kind === "command"));
-    if (needsContext && !supported(hit.from, hit.to)) continue;
+    if (needsContext && !supported(hit)) continue;
     if (result.changes.length >= MAX_NORMALIZATION_CHANGES) continue;
 
     replacements.push({ start, end, to: term.text });
@@ -213,33 +232,50 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   return result;
 }
 
+/** Every match over tokens `from..end`, left to right, each with its spellings told apart only by case. */
+function hitsBetween(tokens: readonly Token[], text: string, from: number, end: number, lexicon: Lexicon): Hit[] {
+  const hits: Hit[] = [];
+  for (let index = from; index < end; ) {
+    const hit = matchAt(tokens, text, index, end, lexicon);
+    if (hit === undefined) {
+      index += 1;
+      continue;
+    }
+    hits.push(withCaseVariantsOf(hit, lexicon));
+    index = hit.to;
+  }
+  return hits;
+}
+
+function withCaseVariantsOf(hit: Hit, lexicon: Lexicon): Hit {
+  const passedOver = hit.passedOver === undefined ? undefined : withCaseVariantsOf(hit.passedOver, lexicon);
+  return { ...hit, candidates: withCaseVariants(hit.candidates, lexicon), passedOver };
+}
+
 /**
- * The longest exact match starting at `index`: a known form, or words that run together into a term. A near match is
- * tried only when neither starts there.
+ * The longest exact match starting at `index` and ending by `end`: a known form, or words that run together into a
+ * term. A near match is tried only when neither starts there. When words run together into a term longer than the
+ * form starting there, the form is kept as `passedOver`, since what those words are on their own is still evidence.
  */
-function matchAt(
-  tokens: readonly Token[],
-  text: string,
-  index: number,
-  lexicon: Lexicon,
-): { from: number; to: number; candidates: Form[]; near: boolean } | undefined {
-  let form: { from: number; to: number; candidates: Form[]; near: boolean } | undefined;
-  for (let length = Math.min(lexicon.longest, tokens.length - index); length >= 1 && form === undefined; length -= 1) {
+function matchAt(tokens: readonly Token[], text: string, index: number, end: number, lexicon: Lexicon): Hit | undefined {
+  let form: Hit | undefined;
+  for (let length = Math.min(lexicon.longest, end - index); length >= 1 && form === undefined; length -= 1) {
     if (!joinedBySeparators(tokens, text, index, length)) continue;
     const key = tokens.slice(index, index + length).map((token) => token.lower).join(" ");
     const forms = lexicon.forms.get(key);
     if (forms !== undefined) form = { from: index, to: index + length, candidates: forms, near: false };
   }
-  for (let length = Math.min(3, tokens.length - index); length >= 1; length -= 1) {
+  for (let length = Math.min(3, end - index); length >= 1; length -= 1) {
     // A form at least as long as the words left to try wins: the longer exact match is the one the person said.
     if (form !== undefined && length <= form.to - index) return form;
     if (!joinedBySeparators(tokens, text, index, length)) continue;
     const compact = tokens.slice(index, index + length).map((token) => token.lower).join("");
     // Words that run together into the term exactly ("clark cant web" for clarkcant-web) are a spacing variant, and
-    // one word longer than a form that starts the same way ("clark cant" for ClarkCant) is the longer term.
+    // longer than the form found at this position ("clark cant" for ClarkCant) they are the longer term.
     const joined = length > 1 ? lexicon.compacts.filter((entry) => entry.compact === compact && entry.term.kind !== "command") : [];
     if (joined.length > 0) {
-      return { from: index, to: index + length, candidates: joined.map((entry) => ({ term: entry.term, rule: "spacing" })), near: false };
+      const candidates = joined.map((entry): Form => ({ term: entry.term, rule: "spacing" }));
+      return { from: index, to: index + length, candidates, near: false, passedOver: form };
     }
     // A near match is a guess, and never outranks an exact form, however short.
     if (form !== undefined) continue;
