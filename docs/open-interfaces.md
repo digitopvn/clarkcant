@@ -1031,10 +1031,11 @@ reading as live:
     folder and develops it from there.
 
   `stopCode` is optional. A session stopped before nodes kept it has none, and a code the client does not know gets
-  the reason alone, with advice that holds for every case. The session view is parsed with a strict schema, so the
-  client and the node ship as one build rather than tolerating each other's unknown fields. The code is what the check
-  found at that restart and is not checked again while the session stays stopped; a start checks the folder as it is
-  then.
+  the reason alone, with advice that holds for every case. The client parses the session view with a strict schema, so
+  it refuses a view with a field it does not know, such as `stopCode` sent to a client older than the field. Keep a
+  desktop app on the same build as the node it connects to, including a node on another machine; letting the client
+  read such views while leaving unknown fields out is tracked in issue #673. The code is what the check found at that
+  restart and is not checked again while the session stays stopped; a start checks the folder as it is then.
 
   **Downgrade.** `sessions.json` is read with a strict schema too. A build older than a field the store holds, such as
   `stopCode` or `chosenFolderId`, finds the whole file does not match, moves it aside as
