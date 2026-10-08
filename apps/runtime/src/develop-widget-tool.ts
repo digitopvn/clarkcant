@@ -51,15 +51,17 @@ export function describeDevSession(view: WidgetDevSessionView): string {
       "watch-failed": "watching its folder failed (the platform stopped reporting changes, or the folder could not be read for 30 s; the node's log names the error)",
       "folder-gone": "its folder is gone",
       capacity: "the node already watches as many folders as it can",
-      "root-refused": "its folder failed the check a start makes when the node started again",
+      "root-refused": "the node could no longer watch its folder when it started again",
     }[view.stopReason];
     const refusedCode = widgetDevRootRefusedCode(view);
     const next =
       refusedCode === "ROOT_NOT_LOCAL" || refusedCode === "ROOT_IN_DATA_FOLDER"
         ? `the folder now ${refusedCode === "ROOT_NOT_LOCAL" ? "resolves to a network share or device path" : "holds or lies inside the node's data folder"}, which no start may watch, so choosing it again is refused too; ask the person to copy the project into the widget workspace or another local project folder`
-        : view.stopReason === "root-refused"
+        : refusedCode === "ROOT_NOT_OWNED"
           ? "ask the person to choose its folder themselves (they can type /develop), or develop it in the widget workspace"
-          : "start it again to resume";
+          : view.stopReason === "root-refused"
+            ? "ask the person to develop it again with /develop; if that is refused too, ask them to copy the project into the widget workspace"
+            : "start it again to resume";
     lines.push(`It stopped watching because ${why}; ${next}.`);
   }
   if (view.latest?.delta.verdict === "wider") lines.push("The newest build asks to reach more than the one before it.");

@@ -150,9 +150,9 @@ describe("the widget dev status line", () => {
 
     // A stop recorded before nodes kept the code, or a code this surface does not know, gets the line that holds for every case.
     for (const line of [refused(), refused("ROOT_SOMETHING_NEW")]) {
-      expect(line(en)).toContain("failed the check a start makes");
+      expect(line(en)).toContain("it could no longer watch this folder");
       expect(line(en)).toContain("if that is refused too, copy the project into Clark's widget workspace");
-      expect(line(vi)).toContain("không qua được bước kiểm");
+      expect(line(vi)).toContain("không thể theo dõi thư mục này nữa");
     }
     // The code means something only with root-refused.
     expect(widgetDevStatusLine(view({ status: "stopped", stopReason: "capacity", stopCode: "ROOT_NOT_LOCAL" }), en).text).toContain("as many folders as it can");

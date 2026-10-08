@@ -1030,8 +1030,17 @@ reading as live:
     offers no **Develop again**; the person copies the project into the widget workspace or another local project
     folder and develops it from there.
 
-  `stopCode` is additive and optional. A session stopped before nodes kept it has none, and a reader may meet a code it
-  does not know from a newer node; either way it says the reason alone, with advice that holds for every case.
+  `stopCode` is optional. A session stopped before nodes kept it has none, and a code the client does not know gets
+  the reason alone, with advice that holds for every case. The session view is parsed with a strict schema, so the
+  client and the node ship as one build rather than tolerating each other's unknown fields. The code is what the check
+  found at that restart and is not checked again while the session stays stopped; a start checks the folder as it is
+  then.
+
+  **Downgrade.** `sessions.json` is read with a strict schema too. A build older than a field the store holds, such as
+  `stopCode` or `chosenFolderId`, finds the whole file does not match, moves it aside as
+  `sessions.json.unreadable-<time>` and starts with no sessions (see **The store** above). Nothing is lost from the
+  file, but the sessions, and the folders the person chose, are not seen until a build that knows those fields reads
+  the file again (move it back by hand).
 
 A folder that is still there with another identity does not stop the session. The node compares the folder's device and
 file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by

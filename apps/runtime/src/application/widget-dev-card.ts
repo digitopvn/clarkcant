@@ -145,7 +145,8 @@ export function developFolderCard(input: {
     // Stopped when the node started again because the folder failed the start check. Which check decides what helps: a
     // folder Clark is no longer allowed to watch on its own (a chosen folder deleted and made again, which is another
     // folder, or one the person forgot) is chosen again by the person's own start; a folder that now resolves to a network
-    // share or into the data folder is refused for anyone, so the row offers no button that could only fail.
+    // share or into the data folder is refused for anyone, so the row offers no button that could only fail. The code is
+    // what that restart found: a press of Another folder, or of a row that has one, checks the folder again as it is now.
     const refusedCode = widgetDevRootRefusedCode(session);
     const nowhere = refusedCode === "ROOT_NOT_LOCAL" || refusedCode === "ROOT_IN_DATA_FOLDER";
     const refused =
@@ -153,13 +154,13 @@ export function developFolderCard(input: {
         ? undefined
         : refusedCode === "ROOT_NOT_LOCAL"
           ? say(
-              "Thư mục này giờ dẫn tới một thư mục chia sẻ qua mạng hoặc một đường dẫn thiết bị, nơi không phát triển từ đó được, nên chọn lại nó cũng bị từ chối; những gì nó đã dựng vẫn chạy. Hãy chép dự án vào không gian widget của Clark hoặc vào một thư mục trên ổ đĩa của máy này, rồi chọn thư mục đó.",
-              "This folder now leads to a network share or device path, which is not developed from, so choosing it again is refused too; what it built keeps running. Copy the project into Clark's widget workspace or into a folder on this machine's own drives, then choose that folder.",
+              "Thư mục này giờ dẫn tới một thư mục chia sẻ qua mạng hoặc một đường dẫn thiết bị, nơi Clark không phát triển widget được, nên chọn lại nó cũng bị từ chối; những gì nó đã dựng vẫn chạy. Hãy chép dự án vào không gian widget của Clark hoặc vào một thư mục trên ổ đĩa của máy này, rồi chọn thư mục đó.",
+              "This folder now leads to a network share or device path, where Clark can't develop widgets, so choosing it again is refused too; what it built keeps running. Copy the project into Clark's widget workspace or into a folder on this machine's own drives, then choose that folder.",
             )
           : refusedCode === "ROOT_IN_DATA_FOLDER"
             ? say(
-                "Thư mục này giờ chứa hoặc nằm trong thư mục dữ liệu của Clark, nơi không phát triển từ đó được, nên chọn lại nó cũng bị từ chối; những gì nó đã dựng vẫn chạy. Hãy chép dự án vào không gian widget của Clark hoặc vào một thư mục dự án khác, rồi chọn thư mục đó.",
-                "This folder now holds or lies inside Clark's data folder, which is not developed from, so choosing it again is refused too; what it built keeps running. Copy the project into Clark's widget workspace or into another project folder, then choose that folder.",
+                "Thư mục này giờ chứa hoặc nằm trong thư mục dữ liệu của Clark, nơi Clark không phát triển widget được, nên chọn lại nó cũng bị từ chối; những gì nó đã dựng vẫn chạy. Hãy chép dự án vào không gian widget của Clark hoặc vào một thư mục dự án khác, rồi chọn thư mục đó.",
+                "This folder now holds or lies inside Clark's data folder, where Clark can't develop widgets, so choosing it again is refused too; what it built keeps running. Copy the project into Clark's widget workspace or into another project folder, then choose that folder.",
               )
             : refusedCode === "ROOT_NOT_OWNED"
               ? say(
@@ -167,8 +168,8 @@ export function developFolderCard(input: {
                   "Clark is no longer allowed to watch this folder on its own (for example, it was deleted and made again after you chose it); what it built keeps running. Press Develop again to choose the folder again.",
                 )
               : say(
-                  "Khi Clark khởi động lại, thư mục này không qua được bước kiểm mà một lần bắt đầu thực hiện; những gì nó đã dựng vẫn chạy. Bấm Phát triển lại để thử lại; nếu bị từ chối, hãy chép dự án vào không gian widget của Clark.",
-                  "When Clark started again, this folder failed the check a start makes; what it built keeps running. Press Develop again to try again; if that is refused, copy the project into Clark's widget workspace.",
+                  "Khi Clark khởi động lại, nó không thể theo dõi thư mục này nữa; những gì nó đã dựng vẫn chạy. Bấm Phát triển lại để thử lại; nếu bị từ chối, hãy chép dự án vào không gian widget của Clark.",
+                  "When Clark restarted, it could no longer watch this folder; what it built keeps running. Press Develop again to try again; if that is refused, copy the project into Clark's widget workspace.",
                 );
     const note = [named, refused].filter((part): part is string => part !== undefined).join(" · ");
     rows.push({

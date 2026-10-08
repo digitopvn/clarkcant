@@ -870,8 +870,14 @@ describe("a widget dev session", () => {
       "Bấm Phát triển lại để chọn lại thư mục",
     );
 
-    // That press, the person's own start, chooses the folder now at the path.
-    session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    // That press, the person's own start, chooses the folder now at the path, and the stop and its code are gone.
+    const again = session(await call("POST", "/widget-dev/sessions", { root: elsewhere }));
+    expect(again).toMatchObject({ sessionId: chosen.sessionId, status: "live" });
+    expect(again.stopReason).toBeUndefined();
+    expect(again.stopCode).toBeUndefined();
+    const restarted = readDevSessions(join(dir, "node")).find((stored) => stored.sessionId === chosen.sessionId);
+    expect(restarted?.stopReason).toBeUndefined();
+    expect(restarted?.stopCode).toBeUndefined();
     expect(services.widgetDev.chosen()).toEqual([elsewhere]);
   });
 

@@ -67,10 +67,10 @@ describe("the develop card's row for a session refused at a restart", () => {
   it("says what holds for every case when the stop names no code it knows", () => {
     for (const code of [undefined, "ROOT_SOMETHING_NEW"]) {
       const en = refusedRow(code, "en");
-      expect(en.note).toContain("failed the check a start makes");
+      expect(en.note).toContain("it could no longer watch this folder");
       expect(en.note).toContain("if that is refused, copy the project into Clark's widget workspace");
       expect(en.actions).toMatchObject([{ action: { kind: "develop-folder" } }]);
-      expect(refusedRow(code, "vi").note).toContain("không qua được bước kiểm");
+      expect(refusedRow(code, "vi").note).toContain("không thể theo dõi thư mục này nữa");
     }
   });
 });
@@ -86,5 +86,14 @@ describe("what Clark is told about a session refused at a restart", () => {
     }
     expect(describeDevSession(refusedSession("ROOT_NOT_LOCAL"))).toContain("network share");
     expect(describeDevSession(refusedSession("ROOT_IN_DATA_FOLDER"))).toContain("data folder");
+  });
+
+  it("says what holds for every case when the stop names no code it knows", () => {
+    for (const code of [undefined, "ROOT_SOMETHING_NEW"]) {
+      const said = describeDevSession(refusedSession(code));
+      expect(said, code).toContain("the node could no longer watch its folder");
+      expect(said, code).toContain("ask the person to develop it again with /develop; if that is refused too, ask them to copy the project into the widget workspace");
+      expect(said, code).not.toContain("choose its folder themselves");
+    }
   });
 });
