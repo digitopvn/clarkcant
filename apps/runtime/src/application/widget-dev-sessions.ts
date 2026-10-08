@@ -132,6 +132,7 @@ export interface WidgetDevSessions {
    * Stop watching every folder, then wait for the work each session already started (a build being followed, a
    * superseded snapshot being removed) to finish, for at most `closeWaitMs`, so the caller can let go of the database and
    * the data folder without pulling them from under a removal. Past the bound it resolves anyway: a shutdown never hangs.
+   * It never rejects. Once called, nothing new is watched: a later `start` is refused and a `resume` still going stops.
    */
   close(): Promise<void>;
 }
@@ -147,7 +148,9 @@ export const SNAPSHOT_REMOVAL = { recursive: true, force: true, maxRetries: 5, r
 
 /**
  * The longest `close` waits for work already started: one snapshot's removal with all its retries, with room to spare,
- * and well inside the node's shutdown grace.
+ * and well inside the node's shutdown grace. One removal is all it has to cover: once `close` is called a prune starts
+ * no further removal, so a session with several held snapshots left over waits only for the one in flight, and the rest
+ * stay on its list for the next prune after an install.
  */
 export const WIDGET_DEV_CLOSE_WAIT_MS = 2_000;
 
@@ -159,9 +162,14 @@ interface LiveSession {
   baseline: PackageManifest | undefined;
 }
 
+/** Stop a session's answer poll and its engine. An engine that fails to let go is said, never thrown: the others still end. */
 function end(session: LiveSession): void {
   clearInterval(session.answerPoll);
-  session.engine.close();
+  try {
+    session.engine.close();
+  } catch (cause) {
+    process.stderr.write(`widget dev: ${session.sessionId} could not stop watching: ${messageOf(cause)}\n`);
+  }
 }
 
 const refusal = (status: number, code: string, message: string) => ({ ok: false as const, status, code, message });
@@ -224,6 +232,11 @@ export function createWidgetDevSessions(
   } = {},
 ): WidgetDevSessions {
   const live = new Map<string, LiveSession>();
+  /**
+   * Set by `close`: nothing watches a folder again, neither a late start nor a resume still going through the store, and
+   * no prune starts another removal. A session left reading as live in the store is resumed at the next boot.
+   */
+  let closed = false;
   /** One chain per session: builds, approvals and placement of one session never interleave. */
   const chains = new Map<string, Promise<unknown>>();
 
@@ -746,6 +759,11 @@ export function createWidgetDevSessions(
     };
     keepDigest(stored.running?.generation.digest);
     keepDigest(stored.pending?.generation.digest);
+    /*
+     * The engine's newest build, which neither runs nor waits while the session waits on a question about an older one.
+     * After `close` no engine is found here, and nothing is lost: a prune starts no removal once `close` is called, and
+     * a build made while a prune or an install ran is remembered only later on this chain, so it is not on the list yet.
+     */
     keepDigest(live.get(sessionId)?.engine.latest()?.generation.digest);
 
     const packageId = stored.running?.listing.packageId ?? stored.pending?.listing.packageId;
@@ -785,6 +803,9 @@ export function createWidgetDevSessions(
           digest,
         );
         if (stillRecorded !== undefined) continue;
+        // A closing node removes no more: each removal may wait out its retries, and `close` waits for the one in flight
+        // only (`WIDGET_DEV_CLOSE_WAIT_MS`). What is left stays on the list for the next prune.
+        if (closed) break;
         const path = cachedLocalSnapshotPath(cacheRoot(), digest);
         if (path === undefined) {
           removed.push(digest);
@@ -929,6 +950,7 @@ export function createWidgetDevSessions(
 
   return {
     async start(input) {
+      if (closed) return refusal(503, "WIDGET_DEV_UNAVAILABLE", "this node is closing, so it starts no widget dev session; start it again once the node is back");
       const initiative = input.initiative ?? { kind: "person" };
       const checked = checkRoot(input.root, initiative);
       if (!checked.ok) return checked;
@@ -1108,6 +1130,8 @@ export function createWidgetDevSessions(
         process.stderr.write(`widget dev: could not create the widget workspace: ${messageOf(cause)}\n`);
       }
       for (const stored of readDevSessions(dataDir())) {
+        // Closed while an earlier session's first build was followed: the rest stay live in the store for the next boot.
+        if (closed) return;
         if (stored.status !== "live" || live.has(stored.sessionId)) continue;
         // The folder is checked again as a start checks it (where its path resolves to now, for whoever started the
         // session): what was allowed then, such as a root the person has since removed, is not taken as allowed now.
@@ -1131,6 +1155,7 @@ export function createWidgetDevSessions(
     },
 
     async close() {
+      closed = true;
       for (const session of live.values()) end(session);
       live.clear();
       // Each chain already settles rather than rejects; work queued behind a closed session finds it gone and returns.

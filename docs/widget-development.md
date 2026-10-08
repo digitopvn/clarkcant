@@ -2222,8 +2222,13 @@ as a percentage`, goes to Clark's voice turn like any other sentence, whatever t
 offers actions Clark can perform and the session's page sent `widgetPerform: 1`, the turn's data also lists the widget
 and each offered action: its binding id, label, description and input schema. The list is read when the turn starts,
 so a turn that waited behind another one gets none if the widget was closed or another one focused meanwhile. A
-description is listed only from a definition the widget could have been placed from: a running package, with the
-instance's version and digest, declaring the action with the label and input schema its binding recorded. The widget
+description is listed only from the exact package generation its binding was placed from, while that generation runs:
+`place_widget` records it on each offered action's binding (`packageGeneration`), and the definition must still have
+the instance's version and digest and declare the action with the label and input schema the binding recorded. A
+look-alike package that copies the widget id, version, schemas and label runs as another generation and supplies no
+description; neither does a binding made before perform bindings recorded their generation. A reinstall, repair or
+widget dev-session rebuild at the same version also starts a new generation, so it too hides the descriptions until the
+widget is placed again. The widget
 id, labels, descriptions and schemas are the package's own words, each quoted on one line as data, never as instructions. Clark may then perform one through
 `perform_widget_action`, the same tool, schema, execution policy and host card as a typed request. A card it places is
 read out in the person's language. The host adds no matching rules, a package declares no phrasings, and neither the

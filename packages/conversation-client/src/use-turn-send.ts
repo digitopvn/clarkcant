@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { GatewayError, type GatewayClient, type ResolvedDataset, type SnapshotPresentationResponse, type Timeline } from "./api.ts";
-import { readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
+import {
+  GatewayError,
+  type GatewayClient,
+  type ResolvedDataset,
+  type SendMessageResult,
+  type SnapshotPresentationResponse,
+  type Timeline,
+} from "./api.ts";
+import { chipsAfterAnswer, readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
@@ -23,6 +30,11 @@ export interface TurnSendState {
   busy: boolean;
   error: string | undefined;
   setError: (message: string | undefined) => void;
+  /**
+   * Whether the files on the composer are there because a command answered the last message: commands carry no
+   * files, so they were kept for the next one, and the composer says so beside them.
+   */
+  chipsKept: boolean;
   /** The message the user just sent, drawn before the node has confirmed anything about it. */
   pendingUser: { text: string } | undefined;
   /** The reply as it arrives, in the order the turn produces it. */
@@ -73,7 +85,7 @@ export interface TurnSendDeps {
   timeline: Timeline | undefined;
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
-  dispatchChips: (action: { type: "sent" }) => void;
+  dispatchChips: (action: { type: "sent" } | { type: "cleared" }) => void;
   /**
    * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
    * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
@@ -132,6 +144,12 @@ export function useTurnSend({
 }: TurnSendDeps): TurnSendState {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [chipsKept, setChipsKept] = useState(false);
+  // Once the person has removed the files that were kept, there is nothing left for the note to be about; a file added
+  // after that is a new one, not one a command left behind.
+  useEffect(() => {
+    if (!chips.some((chip) => chip.state === "ready")) setChipsKept(false);
+  }, [chips]);
   const [pendingUser, setPendingUser] = useState<{ text: string } | undefined>(undefined);
   const [live, setLive] = useState<LiveSegment[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
@@ -218,7 +236,10 @@ export function useTurnSend({
       setError(undefined);
       // Cleared here, after the guard above: a send refused for being empty or for arriving while
       // another turn is busy keeps its text. A send that fails later gets it back from `onSendFailed`.
-      if (!standalone) clearDraft();
+      if (!standalone) {
+        clearDraft();
+        setChipsKept(false);
+      }
       // Drawn from here rather than from the node's answer: the user's own message is not in
       // doubt, and waiting for the round trip to show it makes the interface feel slower than it
       // is.
@@ -229,6 +250,8 @@ export function useTurnSend({
       setLive([]);
       beginHeroExit();
       const generation = sessionGeneration.current;
+      /** The node's answer, read once the stream has ended: it says whether a message was stored or a command answered. */
+      let answered: SendMessageResult | undefined;
       try {
         const attachmentIds = standalone ? [] : readyAttachmentIds(chips);
         const references = options.references ?? liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
@@ -266,6 +289,7 @@ export function useTurnSend({
               setLive((segments) => applyLiveEvent(segments, event));
             },
             onDone: (result) => {
+              answered = result;
               if (sessionGeneration.current !== generation) return;
               // The node's own record replaces both placeholders in one update, so the reply is
               // never on screen twice: the stored message and the text that stood in for it change
@@ -286,9 +310,14 @@ export function useTurnSend({
           { ...(options.demo === undefined ? {} : { demo: options.demo }), attachmentIds, references: [...references] },
         );
         // Cleared only after the send succeeded: a failed send leaves the chips stored on the node,
-        // so the person can press send again rather than attaching the same file a second time.
-        if (!standalone) {
-          dispatchChips({ type: "sent" });
+        // so the person can press send again rather than attaching the same file a second time. A command the host
+        // answered carries no files, so they stay for the next message, and the composer says why they are still there.
+        // A reply from a session the person already restarted away from touches nothing here: the restart dropped that
+        // session's chips, and the ones on screen now belong to the new conversation.
+        if (!standalone && sessionGeneration.current === generation) {
+          const keep = attachmentIds.length > 0 && answered !== undefined && chipsAfterAnswer(answered) === "kept";
+          if (keep) setChipsKept(true);
+          else dispatchChips({ type: "sent" });
           onReferencesSent();
         }
       } catch (cause) {
@@ -336,6 +365,9 @@ export function useTurnSend({
     setDatasets({});
     setSnapshots({});
     clearDraft();
+    // A new conversation starts without the files that were waiting in the one left behind.
+    dispatchChips({ type: "cleared" });
+    setChipsKept(false);
     setError(undefined);
     setBusy(false);
     // Back to the start screen, with the orb returning to the middle: the phase is the same fact as
@@ -343,7 +375,7 @@ export function useTurnSend({
     setPendingUser(undefined);
     setLive([]);
     onSessionReset?.();
-  }, [clearDraft, onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
+  }, [clearDraft, dispatchChips, onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
 
   const stop = useCallback(async (): Promise<boolean> => {
     // Nothing to stop before the conversation exists or once the reply has ended: a quiet no-op, not an error.
@@ -356,5 +388,5 @@ export function useTurnSend({
     }
   }, [busy, client, conversationId, t]);
 
-  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
+  return { busy, error, setError, chipsKept, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
 }

@@ -188,7 +188,11 @@ The origin stays with the work it started:
   its request may be about them and a background run carries only words, so the message is stored with its files and
   answered as a turn, with its text as typed. A bare `/background` gets its usage hint either way. A sentence shaped
   like a command that names none is answered "not understood" without attachments; with attachments it is stored with
-  them and answered as a turn.
+  them and answered as a turn. A client tells the two apart from the stream's `done` frame: `resolution: "app-intent"`
+  means the host answered a command and no file was attached; anything else means the message was stored with them.
+  The bundled composer keeps the file chips for the next message after any command, with a short note that commands
+  don't carry files, including a command that is refused or declined. Starting over, by a command or the header's
+  button, drops them, so they never ride into the new conversation.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A
@@ -903,7 +907,7 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
   all still run what they built. Older stopped sessions that run nothing are forgotten first to make room.
 - `409 NOT_ACTIVE`, `400 NO_SUCH_WIDGET` and `409 NOT_PLACED` are for a place with nothing running, a widget the package
   does not declare, or a widget that cannot be placed.
-- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions.
+- `503 WIDGET_DEV_UNAVAILABLE` is for a node that is not running sessions, or is closing.
 
 **Which folders.** `root` is resolved to its real path (symbolic links and junctions followed) before it is checked:
 
