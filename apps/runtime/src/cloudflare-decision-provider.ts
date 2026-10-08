@@ -1,4 +1,9 @@
-import { CLOUDFLARE_ACCOUNT_ID_PATTERN, CLOUDFLARE_DECISION_MODELS as MODELS, DECISION_CREDENTIAL_NAMES } from "@clarkcant/contracts";
+import {
+  CLOUDFLARE_ACCOUNT_ID_PATTERN,
+  CLOUDFLARE_DECISION_MODELS as MODELS,
+  DECISION_CREDENTIAL_NAMES,
+  type DecisionReasonCode,
+} from "@clarkcant/contracts";
 import { z } from "zod";
 
 import { validateProviderEndpoint } from "./decision-transport.ts";
@@ -40,8 +45,8 @@ export function workersAiEndpoint(accountId: string, model: CloudflareDecisionMo
   return `${WORKERS_AI_ORIGIN}/client/v4/accounts/${accountId}/ai/run/${MODEL_NAMESPACE}${model}`;
 }
 
-function refused(model: string, reason: string): DecisionProviderConnection {
-  return { apiKey: undefined, endpoint: WORKERS_AI_ORIGIN, endpointRefusal: reason, model };
+function refused(model: string, code: DecisionReasonCode, reason: string): DecisionProviderConnection {
+  return { apiKey: undefined, endpoint: WORKERS_AI_ORIGIN, endpointRefusal: reason, endpointRefusalCode: code, model };
 }
 
 const envelopeSchema = z.object({
@@ -57,20 +62,21 @@ export const cloudflareDecisionProvider: DecisionProvider = {
     if (!isCloudflareDecisionModel(requested)) {
       return refused(
         UNCONFIGURED_MODEL,
+        "cloudflare-model-missing",
         `the Cloudflare decision provider needs CLARKCANT_DECISION_MODEL set to ${CLOUDFLARE_DECISION_MODELS.join(" or ")}`,
       );
     }
     const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
     if (accountId === "") {
-      return refused(requested, "the Cloudflare decision provider needs CLOUDFLARE_ACCOUNT_ID");
+      return refused(requested, "cloudflare-account-missing", "the Cloudflare decision provider needs CLOUDFLARE_ACCOUNT_ID");
     }
     if (!ACCOUNT_ID_SHAPE.test(accountId)) {
       // The value is not repeated back: it is operator configuration, but a reason line is not the place to echo it.
-      return refused(requested, "CLOUDFLARE_ACCOUNT_ID is not a Cloudflare account id (32 hexadecimal characters)");
+      return refused(requested, "cloudflare-account-invalid", "CLOUDFLARE_ACCOUNT_ID is not a Cloudflare account id (32 hexadecimal characters)");
     }
     // Validated a second time by the same policy every endpoint passes, so a built URL gets no exemption from it.
     const endpointCheck = validateProviderEndpoint(workersAiEndpoint(accountId, requested));
-    if (!endpointCheck.ok) return refused(requested, endpointCheck.reason);
+    if (!endpointCheck.ok) return refused(requested, "endpoint-invalid", endpointCheck.reason);
 
     // The token saved in this provider's own card wins, then the environment. The card writes a host-owned vault name
     // (`decision:cloudflare`) the generic store refuses, so a `cloudflare` secret somebody stored for a deploy command

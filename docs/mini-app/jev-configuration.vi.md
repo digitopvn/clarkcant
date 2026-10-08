@@ -71,7 +71,10 @@ TypeSafe Jev vẫn là mặc định. Có hai cách chọn provider khác, và c
 1. **Trong Cài đặt → AI & Định tuyến → Nhà cung cấp quyết định**, cạnh mục Đăng nhập nhà cung cấp và
    tách biệt với mô hình trò chuyện. Mục này cho thấy provider và model đang có hiệu lực, một nhãn cho
    biết ai đã chọn chúng (Cài đặt, môi trường hay mặc định), trạng thái kèm lý do và việc cần làm (ví dụ
-   "nhập account id Cloudflare bên dưới"), và lần gọi gần nhất kể từ khi node khởi động. Người dùng chọn
+   "nhập account id Cloudflare bên dưới"), và lần gọi gần nhất kể từ khi node khởi động. Node gửi mỗi lý
+   do dưới dạng một mã (`reasonCode`, bên cạnh câu `reason` tiếng Anh dành cho log và client máy), và thẻ
+   diễn đạt mã đó bằng ngôn ngữ giao diện, nên thẻ tiếng Việt không bao giờ hiện câu tiếng Anh của node;
+   một lần lưu bị từ chối cũng được diễn đạt như vậy. Người dùng chọn
    "Theo môi trường", TypeSafe Jev, Cloudflare Clef hoặc OpenRouter; Cloudflare có hai model và một ô
    account id, còn OpenRouter có một ô model slug, chỉ được lưu khi đã nhập slug. Mỗi provider có một thẻ
    key cho biết key đến từ đâu (lưu ở đây, môi trường, hoặc chưa có) cùng nút Lưu và Gỡ; key đã nhập được
@@ -85,7 +88,9 @@ TypeSafe Jev vẫn là mặc định. Có hai cách chọn provider khác, và c
    `{"selection": {"provider": "typesafe"}}` hoặc `{"selection": null}`. Key được gửi tới
    `PUT /decision-provider/credential` với `{provider, value}` và được xoá bằng
    `DELETE /decision-provider/credential/<provider>`. Mọi thao tác ghi này chỉ con người được làm: một
-   AI client hay một bề mặt máy khác không thể chọn bên thứ ba nào nhận quyết định.
+   AI client hay một bề mặt máy khác không thể chọn bên thứ ba nào nhận quyết định. Các route credential
+   chung, vốn cũng lưu khoá `typesafe` (`POST /credentials`, `DELETE /credentials/<name>`), cũng chỉ con
+   người được dùng, nên chúng không phải đường vòng qua quy tắc đó.
 2. **Trong môi trường**, cho người vận hành cấu hình node mà không qua Cài đặt:
 
 ```bash

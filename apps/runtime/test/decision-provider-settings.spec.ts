@@ -8,8 +8,10 @@ import {
   DECISION_PROVIDER_PREFERENCE,
   type DecisionProviderSelection,
   type Instant,
+  DECISION_REASON_CODES,
   PERSON_ONLY_REFUSAL,
   isPersonOnlyRoute,
+  personOnlyRefusal,
 } from "@clarkcant/contracts";
 import { type Database, credentialNames, getSecretMetadata, migrate, openDatabase, readCredential } from "@clarkcant/storage";
 
@@ -17,7 +19,7 @@ import { decisionProviderView } from "../src/application/decision-provider-setti
 import { storeCredentialFields } from "../src/application/credential-vault.ts";
 import { decisionConfigFromEnv, liveDecisionConfig, readDecisionSelection } from "../src/decision-config.ts";
 import type { DecisionTransport } from "../src/decision-transport.ts";
-import { createJevBudget, selectTemplate } from "../src/jev-selector.ts";
+import { type JevTelemetry, createJevBudget, selectTemplate } from "../src/jev-selector.ts";
 import type { MiniAppCandidateSet } from "../src/mini-app-candidates.ts";
 import { handleDecisionProviderRoutes } from "../src/routes/decision-provider.ts";
 import type { GatewayRequest } from "../src/routes/http.ts";
@@ -284,6 +286,29 @@ describe("who may change it", () => {
     // A machine client refused here is told what it was refused.
     expect(PERSON_ONLY_REFUSAL.message).toContain("decision provider");
   });
+
+  it("keeps every stored credential the person's to write or take back, through the generic routes too", () => {
+    // `typesafe` is a decision provider key stored under a generic name: the generic routes must not be a way around
+    // the person-only decision provider routes, and no other stored credential is a machine client's to change either.
+    expect(isPersonOnlyRoute("POST", "/credentials")).toBe(true);
+    expect(isPersonOnlyRoute("PUT", "/credentials")).toBe(true);
+    expect(isPersonOnlyRoute("DELETE", "/credentials/typesafe")).toBe(true);
+    expect(isPersonOnlyRoute("delete", "//credentials//gemini/?x=1")).toBe(true);
+    expect(isPersonOnlyRoute("GET", "/credentials")).toBe(false);
+  });
+
+  it("says which surface refused a credential write and why", () => {
+    const relay = personOnlyRefusal("relay", "DELETE", "/credentials/typesafe?x=1");
+    expect(relay).toMatchObject({ code: "PERSON_ONLY", surface: "relay" });
+    expect(relay.message).toContain("WebSocket relay");
+    expect(relay.message).toContain("DELETE /credentials/typesafe");
+    expect(relay.message).not.toContain("?x=1");
+    expect(relay.message).toContain("person");
+    expect(personOnlyRefusal("mcp", "POST", "/credentials").message).toContain("MCP");
+    expect(personOnlyRefusal("cli-api", "POST", "/credentials").message).toContain("clarkcant api");
+    // A refusal of any other person-only route keeps the general explanation.
+    expect(personOnlyRefusal("relay", "PUT", "/decision-provider").message).toContain(PERSON_ONLY_REFUSAL.message);
+  });
 });
 
 describe("the view", () => {
@@ -300,5 +325,59 @@ describe("the view", () => {
     });
     expect(view.lastCall).toEqual({ event: "error", status: "unavailable", model: "jev-1.13.0", durationMs: 12, reason: "the provider is rate limiting this node" });
     expect(view.credential).toEqual({ name: "typesafe", source: "vault" });
+  });
+
+  it("gives every state that is not ready a reason code the card words in the person's language", () => {
+    const view = (env: Record<string, string>, selection: DecisionProviderSelection | null = null) =>
+      decisionProviderView({ config: decisionConfigFromEnv(env, undefined, selection), selection, env, vault: [], telemetry: [] });
+    expect(view({})).toMatchObject({ status: "no-credential", reasonCode: "no-credential" });
+    expect(view({ CLARKCANT_JEV_LOCAL_ONLY: "1", TYPESAFE_API_KEY: "ts" })).toMatchObject({ status: "local-only", reasonCode: "local-only" });
+    expect(view({ CLARKCANT_JEV_ENABLED: "0", TYPESAFE_API_KEY: "ts" })).toMatchObject({ status: "disabled", reasonCode: "disabled" });
+    expect(view({ CLOUDFLARE_API_TOKEN: "cf" }, { provider: "cloudflare", model: "clef" })).toMatchObject({
+      status: "misconfigured",
+      reasonCode: "cloudflare-account-missing",
+    });
+    expect(view({ CLOUDFLARE_API_TOKEN: "cf", CLOUDFLARE_ACCOUNT_ID: "not-hex" }, { provider: "cloudflare", model: "clef" })).toMatchObject({
+      status: "misconfigured",
+      reasonCode: "cloudflare-account-invalid",
+    });
+    expect(view({ CLARKCANT_DECISION_PROVIDER: "elsewhere", TYPESAFE_API_KEY: "ts" })).toMatchObject({
+      status: "misconfigured",
+      reasonCode: "provider-unknown",
+    });
+    expect(view({ CLARKCANT_DECISION_PROVIDER: "openrouter", CLARKCANT_DECISION_MODEL: "openrouter/auto", OPENROUTER_API_KEY: "or" })).toMatchObject({
+      status: "misconfigured",
+      reasonCode: "openrouter-model-router",
+    });
+    expect(view({ TYPESAFE_API_KEY: "ts" }).reasonCode).toBeUndefined();
+  });
+
+  it("codes why a call got no answer, and the view carries the code", async () => {
+    const candidates: MiniAppCandidateSet = {
+      locale: "en-US",
+      templates: [
+        { templateId: "overview", templateVersion: "1", label: "Work overview", slots: ["trend"] },
+        { templateId: "focused", templateVersion: "1", label: "One chart only", slots: ["trend"] },
+      ],
+      definitions: [],
+      data: [],
+    };
+    const config = decisionConfigFromEnv({ TYPESAFE_API_KEY: "ts" });
+    const seen: JevTelemetry[] = [];
+    for (const [status, code] of [
+      [401, "provider-rejected-key"],
+      [429, "provider-rate-limited"],
+      [503, "provider-http-error"],
+    ] as const) {
+      const transport: DecisionTransport = async () => ({ status, body: undefined });
+      await selectTemplate(
+        { config, transport, onTelemetry: (event) => seen.push(event) },
+        { intent: "overview", candidateSet: candidates, budget: createJevBudget(config) },
+      );
+      expect(seen.at(-1)).toMatchObject({ status: "unavailable", reasonCode: code });
+    }
+    for (const event of seen) expect(DECISION_REASON_CODES).toContain(event.reasonCode);
+    const view = decisionProviderView({ config, selection: null, env: {}, vault: ["typesafe"], telemetry: seen });
+    expect(view.lastCall?.reasonCode).toBe("provider-http-error");
   });
 });

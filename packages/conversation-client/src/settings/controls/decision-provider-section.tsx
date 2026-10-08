@@ -8,6 +8,7 @@ import {
   type DecisionProviderId,
   type DecisionProviderSelection,
   type DecisionProviderView,
+  type DecisionReasonCode,
 } from "@clarkcant/contracts";
 
 import { GatewayError, type GatewayClient } from "../../api.ts";
@@ -67,10 +68,30 @@ const SELECTED_BY: Record<DecisionProviderView["selectedBy"], MessageKey> = {
   default: "settings.decision.selectedBy.default",
 };
 
-/** The node's own sentence for a refusal, without the code in front of it. */
+/** The node's own sentence for a failed read, kept for diagnostics; the card itself never shows the node's English. */
 function reasonOf(error: unknown): string {
   if (error instanceof GatewayError) return error.reason;
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Why the decider is in its state, or why its last call got no answer, in the person's language.
+ *
+ * The node sends a code beside its English sentence; the card words the code and never inserts the sentence, so a
+ * Vietnamese card does not carry English. A node too old to send a code gets the generic wording.
+ */
+export function decisionReasonText(code: DecisionReasonCode | undefined, t: (key: MessageKey) => string): string {
+  return t(code === undefined ? "settings.decision.reason.unknown" : `settings.decision.reason.${code}`);
+}
+
+/**
+ * What a refused write says, in the person's language: the node's 400 for a selection is a choice it would not take,
+ * for a key it is a key outside the accepted length; anything else is a request that did not complete.
+ */
+export function decisionWriteFailure(slot: DecisionOutcomeSlot, error: unknown, t: (key: MessageKey) => string): string {
+  const refused = error instanceof GatewayError && error.status === 400;
+  const why = !refused ? "settings.decision.failed.other" : slot === "selection" ? "settings.decision.failed.selection" : "settings.decision.failed.key";
+  return fillMessage(t("settings.decision.writeFailed"), { reason: t(why) });
 }
 
 /** Whether a slug is one the node would accept as an OpenRouter decision model, so the form refuses it before sending. */
@@ -108,7 +129,7 @@ export function selectionFor(choice: DecisionChoice, view: DecisionProviderView)
 /** What the card says about the provider's state: the decider's reason, and what to do about it. */
 export function decisionHint(view: DecisionProviderView, t: (key: MessageKey) => string): string {
   const provider = t(PROVIDER_NAME[view.provider]);
-  const reason = view.reason ?? "";
+  const reason = decisionReasonText(view.reasonCode, t);
   switch (view.status) {
     case "ready":
       return fillMessage(t("settings.decision.hint.ready"), { host: view.endpointHost });
@@ -130,7 +151,7 @@ export function decisionHint(view: DecisionProviderView, t: (key: MessageKey) =>
 export function lastCallLine(view: DecisionProviderView, t: (key: MessageKey) => string): string {
   const last = view.lastCall;
   if (last === undefined) return t("settings.decision.lastCall.none");
-  const values = { model: last.model, ms: last.durationMs, reason: last.reason ?? last.event };
+  const values = { model: last.model, ms: last.durationMs, reason: decisionReasonText(last.reasonCode, t) };
   if (last.status === "answered") return fillMessage(t("settings.decision.lastCall.answered"), values);
   if (last.status === "abstained") return fillMessage(t("settings.decision.lastCall.abstained"), values);
   return fillMessage(t("settings.decision.lastCall.unavailable"), values);
@@ -167,7 +188,7 @@ export function DecisionProviderSection({ client }: { client: GatewayClient }): 
     slot: DecisionOutcomeSlot,
     request: Promise<{ decisionProvider: DecisionProviderView }>,
     done: string,
-    failed: (error: unknown) => string = (error) => fillMessage(t("settings.decision.writeFailed"), { reason: reasonOf(error) }),
+    failed: (error: unknown) => string = (error) => decisionWriteFailure(slot, error, t),
   ): Promise<boolean> => {
     settle(slot, { status: "pending" });
     return request.then(
@@ -224,7 +245,7 @@ export function DecisionProviderSection({ client }: { client: GatewayClient }): 
           (error) =>
             error instanceof GatewayError && error.code === "RESOURCE_NOT_FOUND"
               ? fillMessage(t("settings.decision.key.removeNothing"), { provider: name })
-              : fillMessage(t("settings.decision.writeFailed"), { reason: reasonOf(error) }),
+              : decisionWriteFailure(`key:${provider}`, error, t),
         );
       }}
     />
@@ -285,7 +306,7 @@ export function DecisionProviderCard({
       ) : listing.status === "failed" ? (
         <div className="cc-panel-row" data-decision-state="failed">
           <p className="cc-panel-note" role="alert">
-            {t("settings.decision.readFailed")} {listing.reason}
+            {t("settings.decision.readFailed")}
           </p>
           <button type="button" className="cc-chip" onClick={onRetry}>
             {t("settings.decision.retry")}

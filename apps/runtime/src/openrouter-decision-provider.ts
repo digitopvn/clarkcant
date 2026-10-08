@@ -1,4 +1,9 @@
-import { DECISION_CREDENTIAL_NAMES, OPENROUTER_DECISION_MODEL_PATTERN, isOpenrouterRouterSlug } from "@clarkcant/contracts";
+import {
+  DECISION_CREDENTIAL_NAMES,
+  type DecisionReasonCode,
+  OPENROUTER_DECISION_MODEL_PATTERN,
+  isOpenrouterRouterSlug,
+} from "@clarkcant/contracts";
 
 import { validateProviderEndpoint } from "./decision-transport.ts";
 import type { DecisionProvider, DecisionProviderConnection } from "./decision-provider.ts";
@@ -32,8 +37,8 @@ export const OPENROUTER_DECISIONS_ENDPOINT = "https://openrouter.ai/api/alpha/de
 const UNCONFIGURED_MODEL = "unconfigured";
 const DATED_SNAPSHOT = /^-\d{8}$/;
 
-function refused(model: string, reason: string): DecisionProviderConnection {
-  return { apiKey: undefined, endpoint: OPENROUTER_DECISIONS_ENDPOINT, endpointRefusal: reason, model };
+function refused(model: string, code: DecisionReasonCode, reason: string): DecisionProviderConnection {
+  return { apiKey: undefined, endpoint: OPENROUTER_DECISIONS_ENDPOINT, endpointRefusal: reason, endpointRefusalCode: code, model };
 }
 
 export const openrouterDecisionProvider: DecisionProvider = {
@@ -42,23 +47,25 @@ export const openrouterDecisionProvider: DecisionProvider = {
   connection(env, stored) {
     const requested = env.CLARKCANT_DECISION_MODEL?.trim() ?? "";
     if (requested === "") {
-      return refused(UNCONFIGURED_MODEL, "the OpenRouter decision provider needs CLARKCANT_DECISION_MODEL set to a pinned model slug");
+      return refused(UNCONFIGURED_MODEL, "openrouter-model-missing", "the OpenRouter decision provider needs CLARKCANT_DECISION_MODEL set to a pinned model slug");
     }
     if (!OPENROUTER_DECISION_MODEL_PATTERN.test(requested)) {
       // Not repeated back beyond a bound: it is configuration, but a reason line is not the place to echo it at length.
       return refused(
         UNCONFIGURED_MODEL,
+        "openrouter-model-invalid",
         "CLARKCANT_DECISION_MODEL is not a pinned OpenRouter model slug (vendor/model, lower case, no ~ alias)",
       );
     }
     if (isOpenrouterRouterSlug(requested)) {
       return refused(
         UNCONFIGURED_MODEL,
+        "openrouter-model-router",
         "CLARKCANT_DECISION_MODEL names an OpenRouter router, which picks a different model per request and never answers as one pinned model",
       );
     }
     const endpointCheck = validateProviderEndpoint(OPENROUTER_DECISIONS_ENDPOINT);
-    if (!endpointCheck.ok) return refused(requested, endpointCheck.reason);
+    if (!endpointCheck.ok) return refused(requested, "endpoint-invalid", endpointCheck.reason);
     const credentialName = DECISION_CREDENTIAL_NAMES.openrouter;
     const apiKey = resolveProviderCredential({
       stored: stored?.("openrouter"),

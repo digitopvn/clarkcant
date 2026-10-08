@@ -1,4 +1,9 @@
-import { DECISION_PROVIDER_PREFERENCE, type DecisionProviderSelection, decisionProviderPreferenceSchema } from "@clarkcant/contracts";
+import {
+  DECISION_PROVIDER_PREFERENCE,
+  type DecisionProviderSelection,
+  type DecisionReasonCode,
+  decisionProviderPreferenceSchema,
+} from "@clarkcant/contracts";
 import { type PreferenceDeps, readRegisteredPreference } from "@clarkcant/core";
 
 import {
@@ -37,6 +42,8 @@ export interface DecisionConfig {
   endpoint: string;
   /** Set when the configured endpoint is not one this node will call. */
   endpointRefusal: string | undefined;
+  /** The refusal as a code a card words in the person's language; set whenever `endpointRefusal` is. */
+  endpointRefusalCode?: DecisionReasonCode | undefined;
   /** The exact model id the provider's answer must name; resolved by the provider's adapter. */
   model: string;
   /** Total budget for every call made while composing one turn, including waits. */
@@ -136,7 +143,7 @@ export function decisionConfigFromEnv(
   const resolved = decisionProviderFor(provider).connection(effectiveEnv, stored);
   const connection: DecisionProviderConnection = selected.ok
     ? resolved
-    : { ...resolved, apiKey: undefined, endpointRefusal: selected.reason };
+    : { ...resolved, apiKey: undefined, endpointRefusal: selected.reason, endpointRefusalCode: "provider-unknown" };
   const localOnly = flag(env.CLARKCANT_JEV_LOCAL_ONLY);
   const explicit = env.CLARKCANT_JEV_ENABLED === undefined ? undefined : flag(env.CLARKCANT_JEV_ENABLED);
   const timeoutMs = Number.parseInt(env.CLARKCANT_JEV_TIMEOUT_MS ?? "4000", 10);
@@ -149,6 +156,7 @@ export function decisionConfigFromEnv(
     apiKey: connection.apiKey,
     endpoint: connection.endpoint,
     endpointRefusal: connection.endpointRefusal,
+    endpointRefusalCode: connection.endpointRefusalCode,
     model: connection.model,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 4000,
     maxCallsPerTurn: 2,
@@ -161,7 +169,7 @@ export function decisionConfigFromEnv(
 }
 
 /** The fields a key, a Settings choice or a removed key can change while the node runs. */
-const LIVE_FIELDS = ["provider", "selectedBy", "apiKey", "enabled", "endpoint", "endpointRefusal", "model"] as const;
+const LIVE_FIELDS = ["provider", "selectedBy", "apiKey", "enabled", "endpoint", "endpointRefusal", "endpointRefusalCode", "model"] as const;
 
 /** How a live configuration resolves itself, kept beside it so `currentDecisionConfig` can take one consistent reading. */
 const resolvers = new WeakMap<DecisionConfig, () => DecisionConfig>();
@@ -225,9 +233,16 @@ export function readDecisionSelection(deps: PreferenceDeps, principalId: string)
  * processing must not have that decision reversed by a key appearing in the environment.
  */
 export function decisionCallRefusal(config: DecisionConfig): string | undefined {
-  if (config.localOnly) return "this node is configured local-only, so no intent is sent to a provider";
-  if (config.endpointRefusal !== undefined) return config.endpointRefusal;
-  if (!config.enabled) return "the selector is disabled on this node";
-  if (config.apiKey === undefined) return "no provider credential is configured on this node";
+  return decisionCallRefusalDetail(config)?.reason;
+}
+
+/** `decisionCallRefusal` with its code, so a refusal recorded for the Settings card can be worded in the person's language. */
+export function decisionCallRefusalDetail(config: DecisionConfig): { code: DecisionReasonCode; reason: string } | undefined {
+  if (config.localOnly) return { code: "local-only", reason: "this node is configured local-only, so no intent is sent to a provider" };
+  if (config.endpointRefusal !== undefined) {
+    return { code: config.endpointRefusalCode ?? "endpoint-invalid", reason: config.endpointRefusal };
+  }
+  if (!config.enabled) return { code: "disabled", reason: "the selector is disabled on this node" };
+  if (config.apiKey === undefined) return { code: "no-credential", reason: "no provider credential is configured on this node" };
   return undefined;
 }

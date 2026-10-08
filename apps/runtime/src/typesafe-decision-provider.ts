@@ -44,6 +44,7 @@ export const typesafeDecisionProvider: DecisionProvider = {
         apiKey,
         endpoint,
         endpointRefusal: `the decision model ${model.slice(0, 64)} is ${owner === "cloudflare" ? "a Cloudflare model" : "an OpenRouter model slug"}, which TypeSafe does not serve; set CLARKCANT_DECISION_PROVIDER=${owner} or unset CLARKCANT_DECISION_MODEL`,
+        endpointRefusalCode: "model-other-provider",
         model,
       };
     }
@@ -51,6 +52,7 @@ export const typesafeDecisionProvider: DecisionProvider = {
       apiKey,
       endpoint,
       endpointRefusal: endpointCheck.ok ? undefined : endpointCheck.reason,
+      ...(endpointCheck.ok ? {} : { endpointRefusalCode: "endpoint-invalid" as const }),
       model,
     };
   },
