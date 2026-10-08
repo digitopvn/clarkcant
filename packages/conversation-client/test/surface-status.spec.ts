@@ -173,6 +173,23 @@ describe("a connection card", () => {
     expect(html).toContain('data-surface-phase="needs-action"');
   });
 
+  it("draws a revoked or denied connection as unavailable, not as stopped, and names reconnecting as the next step", () => {
+    for (const status of ["revoked", "denied"]) {
+      const english = inLocale("en", createElement(ConnectionCardBlock, { block: { ...CONNECTION, status } }));
+      const vi = inLocale("vi", createElement(ConnectionCardBlock, { block: { ...CONNECTION, status } }));
+      expect(english).toContain('data-tone="warn" data-surface-phase="unavailable"');
+      expect(english).toContain('data-connection-next="reconnect"');
+      expect(english).toContain(MESSAGES_EN["blocks.connection.next.reconnect"]);
+      expect(vi).toContain(MESSAGES_VI["blocks.connection.next.reconnect"]);
+      expect(english).not.toContain('data-connection-next="sign-in"');
+    }
+  });
+
+  it("names no next step where the card has none to offer", () => {
+    const html = inLocale("en", createElement(ConnectionCardBlock, { block: { ...CONNECTION, status: "connected" } }));
+    expect(html).not.toContain("data-connection-next");
+  });
+
   it("shows a status a newer node sent as it was sent, without claiming how it went", () => {
     const html = inLocale("en", createElement(ConnectionCardBlock, { block: { ...CONNECTION, status: "quantum_entangled" } }));
     expect(html).toContain("quantum_entangled");

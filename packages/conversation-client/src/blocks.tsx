@@ -17,11 +17,13 @@ import {
   type FeedbackRequestInput,
   type ProviderSignInView,
   APPROVAL_PHASE,
+  CONNECTION_NEXT_ACTION,
   CONNECTION_PHASE,
   RECONNECT_PHASE,
   SYSTEM_CARD_PHASE,
   TASK_OVERVIEW_PHASE,
   TASK_PROGRESS_PHASE,
+  taskSummaryCardSchema,
   taskSummaryPhase,
 } from "@clarkcant/contracts";
 
@@ -1143,6 +1145,9 @@ export function ConnectionCardBlock({ block }: { block: Record<string, unknown> 
   const account = typeof block.account === "string" ? block.account : undefined;
   const missing = Array.isArray(block.missingScopes) ? (block.missingScopes as string[]) : [];
   const phase = phaseOf(CONNECTION_PHASE, status);
+  const next = Object.hasOwn(CONNECTION_NEXT_ACTION, status)
+    ? CONNECTION_NEXT_ACTION[status as keyof typeof CONNECTION_NEXT_ACTION]
+    : undefined;
   const statusKey = `blocks.connection.status.${status}`;
   const lastProbeAt = typeof block.lastProbeAt === "string" ? block.lastProbeAt : undefined;
   const lastProbeResult = typeof block.lastProbeResult === "string" ? block.lastProbeResult : undefined;
@@ -1171,9 +1176,14 @@ export function ConnectionCardBlock({ block }: { block: Record<string, unknown> 
             <time dateTime={lastProbeAt}>{t(probeKey as MessageKey).replace("{time}", () => readableInstant(lastProbeAt, locale))}</time>
           </p>
         )}
-        {(status === "needs_reauth" || status === "expired") && (
+        {next === "sign-in" && (
           <p className="cc-freshness" style={{ margin: 0 }} data-connection-next="sign-in">
             {t("blocks.connection.next.signIn")}
+          </p>
+        )}
+        {next === "reconnect" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-connection-next="reconnect">
+            {t("blocks.connection.next.reconnect")}
           </p>
         )}
       </div>
@@ -1338,8 +1348,9 @@ const STEP_MARK: Record<string, string> = {
   skipped: "—",
 };
 
-const TASK_OUTCOMES = ["succeeded", "failed", "cancelled", "not-verified"] as const;
-const TASK_EVIDENCE = ["verified", "not-verified", "contradicted"] as const;
+// Read from the schema, so a state added to the task summary cannot drift from what the card recognises.
+const TASK_OUTCOMES = taskSummaryCardSchema.shape.outcome.options;
+const TASK_EVIDENCE = taskSummaryCardSchema.shape.evidence.options;
 
 function isTaskOutcome(value: string): value is (typeof TASK_OUTCOMES)[number] {
   return (TASK_OUTCOMES as readonly string[]).includes(value);
