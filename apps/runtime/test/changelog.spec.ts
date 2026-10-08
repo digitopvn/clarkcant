@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,10 @@ import {
   CHANGELOG_FALLBACK_URL,
   RELEASE_NOTES_FILE,
   type ReleaseHistoryRead,
+  SOURCE_RELEASE_NOTES_FILE,
+  chooseReleaseHistory,
+  clarkVersion,
+  commitReachesHead,
   describeChangelog,
   parseReleaseHistory,
   readChangelog,
@@ -90,6 +95,97 @@ describe("the embedded release notes", () => {
     const wrong = parseReleaseHistory(JSON.stringify({ schemaVersion: 2 }));
     expect(wrong.ok).toBe(false);
     if (!wrong.ok) expect(wrong.reason).toMatch(/contract/);
+  });
+
+  it("give the Clark version peers are told, and say unknown rather than guess when they cannot be read", () => {
+    expect(clarkVersion(fixture)).toBe("1.5.0");
+    expect(clarkVersion(() => ({ ok: false, reason: "gone", missing: true }))).toBe("unknown");
+  });
+});
+
+describe("a checkout run from source reading the releases its tags reach", () => {
+  const baseline = {
+    version: "0.2.1",
+    kind: "baseline",
+    date: "2026-10-01",
+    previousVersion: null,
+    commitRange: { from: null, to: RANGE.from },
+    notes: "history",
+    entries: [],
+    omittedEntries: 0,
+    artifacts: [],
+  };
+  const history = (build: { version: string; channel: string }, releases: unknown[]) =>
+    JSON.stringify({ schemaVersion: 1, build, source: SOURCE, releases });
+  const committed = parseReleaseHistory(history({ version: "0.2.1", channel: "source" }, [baseline]));
+  const rebuilt = history({ version: "0.2.1", channel: "source" }, [
+    { ...record("0.3.0", "0.2.1", "keep the queued message"), commitRange: { from: RANGE.from, to: RANGE.to } },
+    baseline,
+  ]);
+  const reaches = (): boolean => true;
+
+  it("answers from the rebuilt record, so a release published after the baseline is listed and its commit is named", () => {
+    const answer = readChangelog({}, () => chooseReleaseHistory(committed, rebuilt, reaches));
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    expect(answer.view.installed).toEqual({ version: "0.2.1", channel: "source" });
+    expect(answer.view.releases.map((release) => release.version)).toEqual(["0.3.0", "0.2.1"]);
+    expect(answer.view.notesCover).toEqual({ commit: RANGE.to, date: "2026-10-06" });
+    expect(describeChangelog(answer.view)).toContain("keep the queued message");
+  });
+
+  it("keeps the committed record when there is no rebuilt one, or it breaks its contract", () => {
+    expect(chooseReleaseHistory(committed, undefined, reaches)).toBe(committed);
+    expect(chooseReleaseHistory(committed, "{", reaches)).toBe(committed);
+    expect(chooseReleaseHistory(committed, JSON.stringify({ schemaVersion: 1 }), reaches)).toBe(committed);
+  });
+
+  it("never lets a rebuilt record change which version or channel is installed", () => {
+    const otherVersion = history({ version: "0.3.0", channel: "source" }, [baseline]);
+    expect(chooseReleaseHistory(committed, otherVersion, reaches)).toBe(committed);
+    const published = history({ version: "0.2.1", channel: "stable" }, [baseline]);
+    expect(chooseReleaseHistory(committed, published, reaches)).toBe(committed);
+  });
+
+  it("keeps the committed record once the checkout no longer holds the newest release the rebuilt one lists", () => {
+    const asked: string[] = [];
+    const movedBack = (commit: string): boolean => {
+      asked.push(commit);
+      return false;
+    };
+    expect(chooseReleaseHistory(committed, rebuilt, movedBack)).toBe(committed);
+    expect(asked).toEqual([RANGE.to]);
+  });
+
+  it("asks git whether a commit is HEAD or behind it, and answers no when git cannot tell", () => {
+    const repo = mkdtempSync(join(tmpdir(), "clark-reaches-head-"));
+    try {
+      const git = (...args: string[]): string =>
+        execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], {
+          encoding: "utf8",
+        }).trim();
+      git("init", "-q");
+      git("commit", "-q", "--allow-empty", "-m", "first");
+      const first = git("rev-parse", "HEAD");
+      git("commit", "-q", "--allow-empty", "-m", "second");
+      const second = git("rev-parse", "HEAD");
+      expect(commitReachesHead(first, repo)).toBe(true);
+      expect(commitReachesHead(second, repo)).toBe(true);
+      git("checkout", "-q", "--detach", first);
+      expect(commitReachesHead(second, repo)).toBe(false);
+      expect(commitReachesHead("0".repeat(40), repo)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+    expect(commitReachesHead(RANGE.to, tmpdir())).toBe(false);
+  });
+
+  it("is ignored by a published build, which is exactly what its own record describes", () => {
+    expect(chooseReleaseHistory(FIXTURE, rebuilt, reaches)).toBe(FIXTURE);
+  });
+
+  it("is read from beside the committed record", () => {
+    expect(SOURCE_RELEASE_NOTES_FILE.pathname.endsWith("/apps/runtime/release-notes.local.json")).toBe(true);
   });
 });
 

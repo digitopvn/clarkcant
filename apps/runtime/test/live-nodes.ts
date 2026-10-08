@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { PEER_FEATURES } from "@clarkcant/contracts";
 import { outboundPeerToken, peerTokenHash } from "../src/peers.ts";
 import { createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Real nodes for a test: each its own data directory, database and port, with real HTTP between them.
@@ -68,7 +69,7 @@ export function liveNodes(): {
         await node.stop();
         node.services.runtime.close();
       }
-      for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      for (const dir of dirs.splice(0)) await removeTestDirectory(dir);
     },
   };
 }

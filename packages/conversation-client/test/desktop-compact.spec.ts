@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canPickFolder,
   desktopBridge,
   hasCloseControl,
   hasDesktopChrome,
   hasWindowControls,
+  pickFolderOnDesktop,
   readShellWindow,
   requestClose,
   requestFullScreen,
@@ -236,5 +238,38 @@ describe("the window strip's pin, mode and close", () => {
       },
     });
     expect(await requestClose(scope)).toEqual({ ok: false, refused: "the desktop shell did not answer" });
+  });
+});
+
+describe("choosing a folder in the OS dialog", () => {
+  it("has no dialog in a browser, and fails rather than inventing a folder", async () => {
+    expect(canPickFolder({})).toBe(false);
+    expect(await pickFolderOnDesktop("Choose", {})).toEqual({ kind: "failed" });
+  });
+
+  it("answers the folder the person picked, or that they cancelled", async () => {
+    const titles: unknown[] = [];
+    const picked = scopeWith({
+      pickDirectory: async (input: unknown) => {
+        titles.push(input);
+        return { ok: true, path: "/home/me/timer" };
+      },
+    });
+    expect(canPickFolder(picked)).toBe(true);
+    expect(await pickFolderOnDesktop("Choose a folder", picked)).toEqual({ kind: "picked", path: "/home/me/timer" });
+    expect(titles).toEqual([{ title: "Choose a folder" }]);
+    expect(await pickFolderOnDesktop("x", scopeWith({ pickDirectory: async () => ({ ok: true, canceled: true }) }))).toEqual({ kind: "cancelled" });
+  });
+
+  it("reads the shell's answer as untrusted: a refusal, a throw or a malformed answer is a failure", async () => {
+    for (const answer of [{ ok: false, refused: "no portal" }, null, "C:/x", { ok: true }, { ok: true, path: "  " }, { ok: true, path: 7 }]) {
+      expect(await pickFolderOnDesktop("x", scopeWith({ pickDirectory: async () => answer }))).toEqual({ kind: "failed" });
+    }
+    const throws = scopeWith({
+      pickDirectory: async () => {
+        throw new Error("dialog unavailable");
+      },
+    });
+    expect(await pickFolderOnDesktop("x", throws)).toEqual({ kind: "failed" });
   });
 });

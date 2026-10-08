@@ -9,6 +9,7 @@ import { catalogEntry } from "@clarkcant/widget-catalog";
 import { runCli } from "../src/cli.ts";
 import { createDevArtifactBroker, readFixtureFiles, type DevFixtureFile } from "../src/dev-artifacts.ts";
 import { startDevHost } from "../src/dev-host.ts";
+import { serviceStatus } from "../src/service-simulator.ts";
 import {
   DEV_VIEWPORTS,
   applyShellAction,
@@ -196,12 +197,12 @@ describe("the accessibility audit", () => {
 });
 
 describe("the dev host server", () => {
-  async function started(): Promise<{ url: string; stop: () => Promise<void>; host: Awaited<ReturnType<typeof startDevHost>> }> {
+  async function started(): Promise<{ url: string; root: string; stop: () => Promise<void>; host: Awaited<ReturnType<typeof startDevHost>> }> {
     const root = await tempPackage();
     // Watching is off in tests: the reload path is asserted through the counter, not through the filesystem's
     // timing, which differs per platform.
     const host = await startDevHost({ root, port: 0, watchFiles: false });
-    return { url: host.url, stop: host.close, host };
+    return { url: host.url, root, stop: host.close, host };
   }
 
   it("serves the shell with the package's fixtures on it", async () => {
@@ -217,6 +218,34 @@ describe("the dev host server", () => {
       expect(html).toContain("Capability simulator");
       expect(html).toContain("Action log");
       expect(html).toContain("Semantic");
+    } finally {
+      await stop();
+    }
+  });
+
+  it("keeps the last good build on screen when a change does not read as a package, and says so", async () => {
+    const { url, root, stop, host } = await started();
+    try {
+      const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { facets: { kind: string; definition?: string }[] };
+      const definitionPath = join(root, manifest.facets.find((facet) => facet.kind === "ui")?.definition ?? "");
+      const definition = readFileSync(definitionPath, "utf8");
+      expect(host.build()?.ok).toBe(true);
+
+      writeFileSync(definitionPath, "{ not json");
+      const failed = await host.rebuild();
+
+      // No reload: the frame keeps the version that worked, and the shell is told what failed instead.
+      expect(failed?.ok).toBe(false);
+      expect(host.reloads()).toBe(0);
+      const reported = (await (await fetch(`${url}dev/api/build`)).json()) as { build: { ok: boolean; diagnostics: unknown[] } };
+      expect(reported.build.ok).toBe(false);
+      expect(reported.build.diagnostics.length).toBeGreaterThan(0);
+
+      writeFileSync(definitionPath, definition);
+      writeFileSync(join(root, "fixtures", "touched.json"), "{}");
+      const fixed = await host.rebuild();
+      expect(fixed?.ok).toBe(true);
+      expect(host.reloads()).toBe(1);
     } finally {
       await stop();
     }
@@ -285,6 +314,29 @@ describe("the dev host server", () => {
       expect(((await response.json()) as DevShellState).viewport).toBe("narrow-320");
     } finally {
       await stop();
+    }
+  });
+
+  it("keeps a held service restart loading until it is finished", async () => {
+    const host = await startDevHost({ root: `${process.cwd()}/apps/web/e2e/fixtures/notes-service`, port: 0, watchFiles: false, serviceRestart: "held" });
+    try {
+      expect(host.finishServiceRestart()).toBe(false);
+      host.apply({ kind: "service-readiness", capabilityRef: "com.example.notes.add@1", status: "ready", reason: "", value: true });
+      const response = await fetch(`${host.url}dev/api/action`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "service-restart", value: true }),
+      });
+      expect(response.status).toBe(200);
+      const statuses = () => Object.values(host.state().serviceReadiness).map((entry) => serviceStatus(entry));
+      expect(statuses().length).toBeGreaterThan(0);
+      expect(statuses().every((status) => status === "loading")).toBe(true);
+
+      expect(host.finishServiceRestart()).toBe(true);
+      expect(statuses().every((status) => status === "ready")).toBe(true);
+      expect(host.finishServiceRestart()).toBe(false);
+    } finally {
+      await host.close();
     }
   });
 

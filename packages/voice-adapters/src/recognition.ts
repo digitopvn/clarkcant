@@ -63,5 +63,10 @@ export interface SpeechSynthesisAdapter {
     /** The provider's own voice name. Omitted: the provider's default. */
     voice?: string;
     tokenProvider: () => Promise<string>;
-  }): Promise<{ audio: Uint8Array; mimeType: string }>;
+  }): Promise<{
+    audio: Uint8Array;
+    mimeType: string;
+    /** The rate the clip is actually in, as the provider reported it; callers needing another rate resample. */
+    sampleRateHz: number;
+  }>;
 }

@@ -26,4 +26,5 @@ export { createFrameGrantFixture } from "./fixture-frame-grant.ts";
 export { createBrowserTokenFixture, type BrowserTokenFixture } from "./fixture-browser-tokens.ts";
 export { fixtureProjectSessions } from "./fixture-session.ts";
 export { createUpdateCheckFixture } from "./fixture-update-check.ts";
+export { createFakeGithub, type FakeGithub } from "./fake-github.ts";
 export { createVoiceFixture, type VoiceFixture } from "./fixture-voice.ts";

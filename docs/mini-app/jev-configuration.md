@@ -49,8 +49,9 @@ selected, and `jev` as a value of `CLARKCANT_SEARCH_DECIDER` or `CLARKCANT_CONTE
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. The TypeSafe key can also be typed into the settings card; it is used when the
-environment has none, and a variable set in the environment wins. The Cloudflare token is read from
+referenced from code. The TypeSafe key can also be typed into the settings card. When both hold one,
+the key saved in the card wins, the rule every provider credential follows; the environment's key is
+used when the card holds none. Saving or removing the key in the card takes effect from the next decision, without a restart; with no key left in either place the selector is disabled. The node's readiness answer (`GET /readiness`, field `sources`) says which of the two is in effect, never the value. The Cloudflare token is read from
 the environment only: there is no settings card for it, and a secret stored for another purpose is
 never used as the decision provider's credential.
 
@@ -69,7 +70,7 @@ CLOUDFLARE_API_TOKEN=<a token allowed to run Workers AI>
 |---|---|---|
 | Receives the request | `https://api.typesafe.ai/v1/systemone`, or `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, built from the two validated values; there is no endpoint override |
 | Model | `jev-1.13.0` unless overridden | `clef` or `clef-flash`, always named explicitly |
-| Credential | `TYPESAFE_API_KEY`, else the key from the settings card | `CLOUDFLARE_API_TOKEN` only |
+| Credential | The key from the settings card, else `TYPESAFE_API_KEY` | `CLOUDFLARE_API_TOKEN` only |
 | Request body | System One: `{state, model, questions}` | The same body |
 | Response | System One answer | The same answer inside Cloudflare's REST envelope; only `success: true` is unwrapped |
 
@@ -231,7 +232,9 @@ selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
 
-The second form appears only when Cloudflare is selected.
+The second form appears only when Cloudflare is selected. The line describes the node at start-up: a
+TypeSafe key saved or removed in the settings card later changes what the selector does without changing
+that line.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one

@@ -4,11 +4,17 @@ import {
   attachmentRefSchema,
   changelogCardSchema,
   commandCardSchema,
+  feedbackCardSchema,
   modelNoteSchema,
   referenceBlockSchema,
   referenceToken,
   type AttachmentRef,
   type CommandCardAction,
+  type DiagnosticLine,
+  type FeedbackDraft,
+  type FeedbackPublication,
+  type FeedbackPublishIntent,
+  type FeedbackRequestInput,
   type ProviderSignInView,
 } from "@clarkcant/contracts";
 
@@ -24,6 +30,7 @@ import { useSurfaceViewState } from "./surface-view-state.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
 import { ChangelogCardBlock } from "./changelog-card.tsx";
+import { FeedbackCardBlock } from "./feedback-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
@@ -690,7 +697,47 @@ export interface BlockActions {
   /** The person's answer to what a sign-in asks. Sent to the node and dropped from the card at once. */
   onSignInAnswer?: (input: { key: string; signInId: string; value: string }) => void;
   onSignInCancel?: (input: { key: string; signInId: string }) => void;
+  /**
+   * Rows of a `/develop` card that ask for a folder's path in words, keyed `cardId/rowId/actionId`: in a browser, for a
+   * node on another machine, or when the folder dialog did not open. The value says why, so the card can say it.
+   */
+  folderEntries?: Readonly<Record<string, FolderEntryReason>>;
+  /** The path the person typed for such a row: starts the session as theirs, as the dialog's answer would. */
+  onFolderEntrySubmit?: (input: { cardId: string; rowId: string; actionId: string; root: string }) => void;
+  onFolderEntryCancel?: (input: { key: string }) => void;
+  /**
+   * The Feedback Composer's Preview (`feedback-card`): prepare the report and show the issue exactly as it would be
+   * filed. Nothing is filed. Absent in a snapshot, where the composer is drawn as a record.
+   */
+  onFeedbackPreview?: (input: { cardId: string; request: FeedbackRequestInput }) => void;
+  /**
+   * Create issue on the composer, Send again on a result (`intent: "send"`, the default), Check again (`"check"`,
+   * which only finds out and never sends), or Send anyway on an outcome checking cannot settle (`"send-anyway"`, which
+   * may file twice): the person's own press, through the person-only publish route. With
+   * `reportId` it acts on that report; with `request` it prepares the report first, unless the preview — or an earlier
+   * press that did not get through — already did for the same words.
+   */
+  onFeedbackCreate?: (input: { cardId: string; request?: FeedbackRequestInput; reportId?: string; intent?: FeedbackPublishIntent }) => void;
+  /** What each feedback card's press came to, keyed by card id. */
+  feedback?: Readonly<Record<string, FeedbackCardState>>;
+  /**
+   * Feedback cards a later result card answers. Messages are never rewritten, so a used composer or an older result
+   * still reads as pressable in storage; the answer in the transcript is what says otherwise, including after a reload.
+   */
+  answeredFeedbackCards?: readonly string[];
 }
+
+/** Where a press on a feedback card stands. The outcome itself arrives as a new result card in the transcript. */
+export type FeedbackCardState =
+  | { status: "preparing" }
+  | { status: "prepared"; requestKey: string; draft: FeedbackDraft; diagnostics: DiagnosticLine[] }
+  | { status: "publishing"; intent: FeedbackPublishIntent }
+  | { status: "done"; publication: FeedbackPublication }
+  /** `reportId`: the report the press prepared or acted on, so pressing again acts on it rather than a new one. */
+  | { status: "failed"; message: string; reportId?: string; requestKey?: string };
+
+/** Why a row asks for a folder's path in words rather than in the OS dialog. */
+export type FolderEntryReason = "browser" | "remote-node" | "dialog-failed";
 
 /** What one press on a command card came to. */
 export type CommandActionState =
@@ -2019,6 +2066,13 @@ export function renderBlock(
       // Read through the contract, like the command card: a card that does not match it draws nothing.
       const card = changelogCardSchema.safeParse(block);
       return card.success ? <ChangelogCardBlock key={index} block={card.data} t={t} /> : null;
+    }
+    case "feedback-card": {
+      // Read through the contract, like the command card: a card that does not match it draws nothing.
+      const card = feedbackCardSchema.safeParse(block);
+      return card.success ? (
+        <FeedbackCardBlock key={index} block={card.data} t={t} {...(actions === undefined ? {} : { actions })} />
+      ) : null;
     }
     case "terminal-session-card":
       return (

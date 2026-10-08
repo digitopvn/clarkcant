@@ -2146,23 +2146,41 @@ không, lần bấm bị từ chối trước khi có gì được gửi, và ng
 trước khi yêu cầu được gửi đi được ghi là chưa gửi, không phải kết quả chưa rõ. Câu trả lời của widget, sau một lần bấm
 trực tiếp hay sau một lời “đồng ý”, được đọc lên như lời của widget (“Widget báo: …”), trên một dòng, bằng ngôn ngữ của
 người dùng, với dấu ngoặc kép được vô hiệu hóa và các ký tự điều khiển hướng chữ hay ký tự độ rộng bằng không bị loại
-bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục. Bộ phân
-giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như `định dạng chỗ này thành phần trăm`, chưa
-được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục.
+
+Bộ phân giải giọng nói chỉ khớp theo nhãn. Một câu không nói nhãn nào của widget đang mở, như `định dạng chỗ này thành
+phần trăm`, được chuyển cho lượt giọng nói của Clark như mọi câu khác, dù widget cho phép gì. Khi widget đó có hành
+động Clark thực hiện được và trang của phiên đã gửi `widgetPerform: 1`, dữ liệu của lượt còn liệt kê widget và từng
+hành động được cho phép: binding id, nhãn, mô tả và schema input. Danh sách được đọc khi lượt bắt đầu, nên một lượt
+phải chờ sau lượt khác sẽ không nhận được gì nếu trong lúc đó widget đã đóng hoặc một widget khác được chọn. Mô tả chỉ
+được liệt kê từ một định nghĩa mà widget có thể đã được đặt từ đó: một gói đang chạy, cùng phiên bản và digest của
+instance, khai báo hành động với đúng nhãn và schema input mà binding của nó đã ghi lại. Id widget, nhãn, mô tả và
+schema là lời của chính gói, mỗi phần được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có thể thực hiện một hành động qua
+`perform_widget_action`, cùng công cụ, schema, chính sách thực thi và thẻ của host như một yêu cầu gõ chữ. Thẻ mà lượt
+đặt ra được đọc lên bằng ngôn ngữ của người dùng. Host không thêm quy tắc khớp nào, gói không khai báo cách nói nào, và
+cả lượt lẫn widget đều không thể tự duyệt hành động. Chỉ khi node không có agent để trả lời thì câu đó mới bị từ chối,
+bằng ngôn ngữ của người dùng, bằng cách nêu những gì widget cho phép hoặc nói rằng không có widget nào đang mở
+([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:
 
 - [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts): hành động chưa khai báo, input sai schema,
   frame chưa mount, bên gọi không thực hiện được, lời từ chối của trang và của widget, lỗi, hết thời gian chờ, Dừng,
   chặn khi kết quả chưa rõ, chính sách và thẻ phê duyệt, giọng nói, danh sách nút bấm, các công cụ và việc đặt widget.
+  Nó cũng bao quát một câu nói không nêu nhãn nào: lượt và dữ liệu của nó, thẻ được trả lời bằng lời nói, tiếng Anh,
+  widget bị bỏ chọn, bị đổi hay bị đóng, khi không có agent, và lời của gói được vô hiệu hóa.
+- [turn-control.spec.ts](../apps/runtime/test/turn-control.spec.ts): dữ liệu được đọc khi một lượt đang chờ bắt đầu.
 - [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts): báo cáo của trang.
 - [frame-performs.spec.ts](../packages/conversation-client/test/frame-performs.spec.ts): việc trang tìm frame và trả
   lời.
 - [session.spec.ts](../packages/widget-host/test/session.spec.ts) và
   [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts): bridge.
 - Hành trình trên trình duyệt [widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts): định dạng một vùng
-  bảng tính và thay đoạn đang chọn của trình soạn thảo từ điều người dùng gõ trong ô soạn tin. Nó cũng kiểm tra rằng
-  một stream HTTP thuần và một widget đã đóng đều bị từ chối với `FRAME_NOT_MOUNTED`.
+  bảng tính và thay đoạn đang chọn của trình soạn thảo từ điều người dùng gõ trong ô soạn tin. Nó cũng định dạng một
+  vùng từ một câu nói không nêu nhãn nào, qua socket giọng nói. Nó cũng kiểm tra rằng một stream HTTP thuần và một
+  widget đã đóng đều bị từ chối với `FRAME_NOT_MOUNTED`.
+- Hành trình trên trình duyệt [voice-widget-action.spec.ts](../apps/web/e2e/voice-widget-action.spec.ts): một câu nói
+  không nêu nhãn nào của một surface đến được lượt của Clark và để nguyên surface.
 
 ---
 
@@ -2180,6 +2198,15 @@ Các surface còn lại:
 Detach không reset state/subscription/media.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
+
+Cửa sổ detached giữ lease live-owner của instance dưới bề mặt `detached` và làm mới nó trong lúc còn mở. Cửa sổ đóng lại,
+và trả instance về, khi phần hiển thị trong hội thoại đã mở nó biến mất, khi cửa sổ hội thoại đóng, khi ứng dụng thoát,
+hoặc khi một bề mặt khác đã lấy lease.
+
+Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
+thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
+semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
+Việc detach một isolated frame được theo dõi ở [#577](https://github.com/digitopvn/clarkcant/issues/577).
 
 Audio/call/player không được duplicate playback khi chuyển surface.
 
@@ -2872,6 +2899,56 @@ không mở được gì, còn **Provider unavailable** trả về `TOKEN_PROVID
 và log chỉ ghi nhà cung cấp và kết quả, không bao giờ ghi giá trị
 ([dev-resources.spec.ts](../packages/widget-cli/test/dev-resources.spec.ts)).
 
+#### Phát triển trong cuộc hội thoại
+
+Dev host mô phỏng một node. Để xem widget trên chính node, hãy nhờ Clark phát triển một widget ("làm cho tôi một widget
+hẹn giờ"), hoặc gọi `POST /widget-dev/sessions` với tư cách chủ máy
+([giao diện mở](open-interfaces.vi.md#phiên-phát-triển-widget)). Node theo dõi thư mục bằng cùng build engine mà dev host
+dùng: mỗi thay đổi đọc được thành một gói trở thành một generation bất biến mang tên theo digest các tệp của nó, được sao
+chép vào bộ nhớ đệm gói của node, chỉ được liệt kê cho riêng node này, và được cài qua đường cài thông thường. Các listing
+đó mang nguồn riêng, `widget-dev`, được ghi lên generation đã cài, nên bấm Cài trên một dòng marketplace liệt kê cùng id
+và version sẽ bị từ chối thay vì cài các tệp của phiên. Không có gì
+đi qua npm, Marketplace hay một directory index, và không có gì được phát hành. Thư mục `node_modules` ở gốc bị loại khỏi
+mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
+
+Clark phát triển widget trong không gian widget riêng của mình (`<dataDir>/widget-workspace`), nơi Clark dựng khung một
+widget mới. Để Clark làm việc với một dự án widget bạn đã có, hãy tự chọn thư mục của nó: gõ `/develop` (hoặc
+`/develop <thư mục>`, hoặc nhờ Clark), rồi bấm **Chọn thư mục…** trên thẻ trả lời. Ứng dụng desktop mở hộp chọn thư mục
+của hệ thống; trình duyệt, hoặc ứng dụng desktop nối với một node trên máy khác, sẽ hỏi đường dẫn đầy đủ của thư mục trên
+máy chạy node. Nếu Clark muốn phát triển một thư mục bạn chưa chọn, không có gì được bắt đầu và chính thẻ đó hiện ra với
+nút **Phát triển thư mục này**. Thẻ nêu thư mục mà đường dẫn thật sự dẫn tới, và nói rõ khi nó khác đường dẫn được đưa
+ra; đường dẫn không tìm thấy thì không có nút. Lần bấm chỉ giữ thư mục làm lựa chọn của bạn nếu lúc bấm đường dẫn vẫn
+chính là thư mục đó, nên một liên kết được đặt vào chỗ nó trong lúc chờ không được gì. Khi bạn đã bắt đầu một thư mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi
+lại, cho tới khi bạn thu hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh
+thư mục đó. Thu hồi không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua
+thư mục đó (câu trả lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn
+thu hồi được. Chỉ tin nhắn do bạn gửi mới khiến Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
+phiên, nhưng Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển,
+và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
+dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
+
+Widget hiện trong cuộc hội thoại bằng frame của bản chính thức, với đúng sandbox, bridge, state và migration của bản
+chính thức. Một generation mới chỉ mount lại frame; instance và state của nó được giữ, và state đi qua các migration của
+chính gói khi phiên bản thay đổi. Cạnh frame, host nói bản dựng nào đang hiện và, khi đó không phải bản mới nhất, lý do:
+bản dựng mới bị lỗi (kèm các lỗi), nó đang chờ người dùng trong hộp thư, hoặc chính sách đã từ chối nó. Câu "đang hiện bản
+dựng thành công gần nhất" được nói đúng khi đó là thứ cuộc hội thoại đang hiện.
+
+Chính sách thực thi quyết định mỗi lần cài như mọi lần cài khác. Một phiên do Clark bắt đầu được quyết định như đề xuất
+của chính Clark, nên chế độ có kiểm soát hỏi trước lần cài đầu tiên của nó; còn phiên bắt đầu qua route của chủ máy là
+yêu cầu của bạn. Khi chế độ yêu cầu hỏi, lần cài đầu tiên là một câu hỏi, và mỗi lần dựng làm đổi những gì gói tiếp cận cũng vậy:
+reach đã khai báo, tài nguyên, lane của facet, các facet, quyền, hoặc các capability gói yêu cầu. Một lần dựng chỉ đổi mã
+hay UI dùng lại câu trả lời đó và chạy ngay. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp
+cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
+đã duyệt trong hộp thư thì đã được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một
+thứ khác trên node: một gói đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
+
+Dừng một phiên là dừng theo dõi thư mục; bản dựng cuối vẫn chạy ở nơi nó đã được đặt. Khi node tự dừng theo dõi, dòng
+trạng thái cạnh frame nói lý do. Có thể bộ theo dõi đã bị lỗi, hoặc thư mục đã bị xoá hay đổi tên; node kiểm tra thư mục
+mỗi giây, vì Windows không báo gì. Cũng có thể node đã theo dõi số thư mục tối đa. Sau một lần khởi động lại, thư mục có
+thể không còn là thư mục mà phiên được theo dõi. Một lần dựng có thư mục quá lớn, hoặc chứa liên kết trỏ ra ngoài, sẽ nói
+điều đó và cần đổi gì. Các bản dựng đã bị thay thế được dọn dẹp khi bản mới được cài. Node giữ bản dựng đang chạy và bản mà thao tác quay lại bản
+trước sẽ trở về.
+
 ### test
 
 Chạy conformance suite.
@@ -3217,6 +3294,13 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
   `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
+- Phiên phát triển widget trong cuộc hội thoại (§16, "Phát triển trong cuộc hội thoại"): một build engine dùng chung với
+  dev host, generation bất biến, giữ bản dựng tốt gần nhất, lần cài do chính sách quyết định theo một phạm vi đồng ý gắn
+  với phạm vi tiếp cận, phiên do Clark bắt đầu chỉ được dùng không gian widget và thư mục gốc dự án do người dùng cấu hình và được quyết định như đề
+  xuất của Clark, chỉ facet frame và dữ liệu, dọn dẹp các bản dựng đã bị thay thế, chỉ mount lại frame, và trạng thái
+  bản dựng do host sở hữu. Ghim một widget đang phát triển đã
+  chạy được; tách một widget cách ly ra cửa sổ riêng, cùng các điều khiển fixture, viewport, theme và reduced motion của
+  dev host đặt cạnh một frame trên node, thì chưa có.
 - State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).
 - Gỡ / khôi phục / quay về package từ Settings và qua `manage_package` trong hội thoại; dữ liệu được giữ.
 - Câu hỏi capability đang chờ được trả lời trong Settings (do host sở hữu; model không duyệt được). Frame chỉ
@@ -3239,7 +3323,8 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   listing bằng đường dẫn trên máy này còn mang `contentDigest`, digest các tệp của nó lúc được liệt kê, mà nút gửi lại
   để lần cài bị từ chối nếu các tệp đã đổi từ đó; khi ấy dòng đó cho thấy chúng đã đổi và mời tìm lại thay vì cùng nút
   Cài. Lần cài sao chép các tệp vào cache package và package chạy từ bản sao đó, nên những chỉnh sửa sau này ở đường dẫn
-  không thay đổi gì cho tới khi nó được cài lại; vòng chỉnh sửa trực tiếp là `clark widget dev`. Mỗi dòng còn lặp lại
+  không thay đổi gì cho tới khi nó được cài lại; vòng chỉnh sửa trực tiếp là `clark widget dev` hoặc một phiên phát
+  triển widget trong cuộc hội thoại (§16). Mỗi dòng còn lặp lại
   `declaredReach` (những gì gói được phép chạm tới khi cài) và các khai báo `widgetAppearance` của listing, theo đúng
   schema của mục trong directory, nên dòng đó hiển thị chúng trước khi bấm Cài. Một card không khớp với contract của nó
   bị bỏ khỏi câu trả lời, và node ghi log `host card dropped` kèm loại card và đường dẫn các trường lỗi, không bao giờ
@@ -3570,8 +3655,8 @@ soạn thảo không bao giờ bỏ tệp mà người dùng đã chọn. Ctrl+S
 rồi gọi `attachToConversation`.
 
 *Ghi đè tệp gốc* chỉ được đưa ra trong frame nơi tệp được chọn, và chỉ cho đến khi frame đó được tải lại: host giữ
-handle của máy tính cho tệp đã chọn trong bộ nhớ, bên cạnh đúng frame đó, và không bao giờ lưu nó lại. Sau khi tải lại,
-trong một bản đã ghim hoặc trong một cửa sổ tách riêng, máy tính chỉ đưa ra Lưu thành.
+handle của máy tính cho tệp đã chọn trong bộ nhớ, bên cạnh đúng frame đó, và không bao giờ lưu nó lại. Sau khi tải lại
+hoặc trong một bản đã ghim, máy tính chỉ đưa ra Lưu thành.
 
 **Những gì Clark được cho xem.** Trình soạn thảo công bố một câu tóm tắt ("Editing notes.txt: 3 lines, with unsaved
 changes.") và các giá trị `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` và

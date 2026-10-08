@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
@@ -975,6 +975,15 @@ describe("a secret a person types", () => {
     expect(readCredential(services.runtime.db, owner(), "typesafe")).toBe("second");
   });
 
+  it("refuses a value made only of spaces, so the vault never holds a key nothing can use", async () => {
+    // Readiness says "vault" whenever the vault holds the name; a blank stored value would make it claim a key in use
+    // while the environment's key answered.
+    const response = await request("POST", "/credentials", { body: { fields: [{ name: "gemini", value: "   " }] } });
+
+    expect(response.status).toBe(400);
+    expect(readCredential(services.runtime.db, owner(), "gemini")).toBeUndefined();
+  });
+
   it("refuses a body it cannot use without repeating what it got", async () => {
     const response = await request("POST", "/credentials", {
       body: { fields: [{ name: "", value: "secret-shaped" }] },
@@ -982,6 +991,48 @@ describe("a secret a person types", () => {
 
     expect(response.status).toBe(400);
     expect(JSON.stringify(response.body)).not.toContain("secret-shaped");
+  });
+
+  it("is the key in effect when the environment holds one too, and readiness says so without either value", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "env-gemini-not-a-real-key");
+    vi.stubEnv("TYPESAFE_API_KEY", "env-typesafe-not-a-real-key");
+    try {
+      await request("POST", "/credentials", { body: { fields: [{ name: "gemini", value: "AIza-saved-not-a-real-key" }] } });
+      const response = await request("GET", "/readiness");
+
+      expect(response.status).toBe(200);
+      const body = response.body as { credentials?: string[]; sources?: Record<string, string> };
+      expect(body.credentials).toEqual(["gemini", "typesafe"]);
+      expect(body.sources).toEqual({ gemini: "vault", typesafe: "environment" });
+      const text = JSON.stringify(body);
+      for (const value of ["env-gemini-not-a-real-key", "env-typesafe-not-a-real-key", "AIza-saved-not-a-real-key"]) {
+        expect(text).not.toContain(value);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("reaches the running decider when saved, and stops it when removed, without a restart", async () => {
+    // A blank variable is no key, so the decider starts with none and only the card can change that.
+    vi.stubEnv("TYPESAFE_API_KEY", "");
+    vi.stubEnv("CLARKCANT_DECISION_PROVIDER", "");
+    vi.stubEnv("CLARKCANT_JEV_LOCAL_ONLY", "");
+    try {
+      // The configuration the decider was built with, before anything was saved; the same object every decision reads.
+      const config = services.jev.deps.config;
+      expect(config.apiKey).toBeUndefined();
+
+      await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "saved-not-a-real-key" }] } });
+      expect(config.apiKey).toBe("saved-not-a-real-key");
+
+      const removed = await request("DELETE", "/credentials/typesafe");
+      expect(removed.status).toBe(200);
+      expect(config.apiKey).toBeUndefined();
+      expect(config.enabled).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

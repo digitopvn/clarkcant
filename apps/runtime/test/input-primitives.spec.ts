@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,7 @@ import { compileLayout } from "../src/compose-layout.ts";
 import type { ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A form and a list, placed the way a model's `show_view` places them, and used the way a person uses them.
@@ -176,9 +177,9 @@ beforeEach(() => {
     .run(conversationId, services.runtime.identity.nodeId, AT, AT);
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("the model's vocabulary", () => {

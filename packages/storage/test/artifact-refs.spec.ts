@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,6 +28,7 @@ import {
   sealWorkingArtifact,
   upsertArtifact,
 } from "../src/repositories/index.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The artifact store a widget reaches by ref.
@@ -45,9 +46,9 @@ beforeEach(() => {
   migrate(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 const T0 = "2026-09-30T10:00:00.000Z" as Instant;

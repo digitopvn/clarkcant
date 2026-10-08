@@ -438,6 +438,22 @@ describe("live ownership route", () => {
     expect(body.recovered).toBeUndefined();
   });
 
+  it("keeps a detached window's claim as detached and names it to a competing claim", async () => {
+    const seeds = seedComposition();
+    const path = `/conversations/${conversationId}/widgets/${seeds.instanceId}/live-owner`;
+
+    const detached = await call("POST", path, { body: { ownerToken: "token_window", surface: "detached", leaseMs: 90_000 } });
+    expect(detached.status).toBe(200);
+    expect(data<{ surface: string }>(detached).surface).toBe("detached");
+
+    const pin = await call("POST", path, { body: { ownerToken: "token_pin", surface: "pin" } });
+    expect(pin.status).toBe(409);
+    expect(data<{ heldBySurface: string }>(pin).heldBySurface).toBe("detached");
+    expect(buildTimeline(services, { conversationId }).instances.find((instance) => instance.instanceId === seeds.instanceId)?.ownerSurface).toBe(
+      "detached",
+    );
+  });
+
   it("never puts an owner token in the timeline it returns", async () => {
     const seeds = seedComposition();
     const path = `/conversations/${conversationId}/widgets/${seeds.instanceId}/live-owner`;

@@ -15,6 +15,12 @@ import { join } from "node:path";
 
 export const RELEASE_NOTES_PATH = "apps/runtime/release-notes.json";
 
+/**
+ * The record a checkout run from source rebuilds from its own release tags (`history.mjs --source`). Git-ignored and
+ * never stamped: it carries the same build version as the committed record, which the runtime requires before reading it.
+ */
+export const SOURCE_RELEASE_NOTES_PATH = "apps/runtime/release-notes.local.json";
+
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 /** Repository-relative paths of the manifests that carry the Clark version, the canonical root first. */
@@ -73,7 +79,10 @@ function writeJsonFile(path, value) {
  * committed tree keeps the version line of its last baseline. Key order in each manifest is kept.
  *
  * @param {string} repoRoot
- * @param {{ version: string, channel: "stable" | "beta" | "source", releases?: unknown[] }} build
+ * Releases and their `source` are replaced together: a record whose source still pointed at the baseline's commits
+ * after a release was added would send readers to the wrong place.
+ *
+ * @param {{ version: string, channel: "stable" | "beta" | "source", releases?: unknown[], source?: string }} build
  */
 export function stampVersion(repoRoot, build) {
   if (!SEMVER.test(build.version)) throw new Error(`${JSON.stringify(build.version)} is not a version`);
@@ -86,6 +95,10 @@ export function stampVersion(repoRoot, build) {
   const notesPath = join(repoRoot, RELEASE_NOTES_PATH);
   const history = readJsonFile(notesPath);
   history.build = { version: build.version, channel: build.channel };
-  if (build.releases !== undefined) history.releases = build.releases;
+  if (build.releases !== undefined) {
+    if (typeof build.source !== "string") throw new Error("stamped releases need the source that matches them");
+    history.source = build.source;
+    history.releases = build.releases;
+  }
   writeJsonFile(notesPath, history);
 }

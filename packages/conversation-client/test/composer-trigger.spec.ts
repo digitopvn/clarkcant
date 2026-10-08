@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ComposerReference } from "@clarkcant/contracts";
+import { type ComposerReference, parseSlashCommand, referenceToken } from "@clarkcant/contracts";
 
 import { activeTrigger, commandFullyTyped, liveReferences, replaceToken, tokenPresent, withoutToken } from "../src/composer-trigger.ts";
 
@@ -48,6 +48,33 @@ describe("where a trigger opens the picker", () => {
   });
 });
 
+describe("a skill named like a slash command", () => {
+  const newSkill: ComposerReference = { kind: "skill", skillId: "new", source: "personal", revision: "b".repeat(64), label: "new" };
+
+  it("is written as /skill:<name>, which is the skill when sent and never the command", () => {
+    const active = at("/ne");
+    if (active === undefined) throw new Error("expected a trigger");
+    const chosen = replaceToken("/ne", active, referenceToken(newSkill));
+    expect(chosen.draft).toBe("/skill:new ");
+    const sent = `${chosen.draft}một app ghi chú`;
+    expect(parseSlashCommand(sent)).toBeUndefined();
+    expect(liveReferences(sent, [{ ref: newSkill }])).toEqual([{ ref: newSkill }]);
+  });
+
+  it("does not read the /skill of /skill:new as a skill called skill", () => {
+    const skillSkill: ComposerReference = { kind: "skill", skillId: "skill", source: "personal", revision: "c".repeat(64), label: "skill" };
+    expect(liveReferences("/skill:new xem", [{ ref: newSkill }, { ref: skillSkill }])).toEqual([{ ref: newSkill }]);
+    // A colon followed by a space still ends a token, as after a project being named.
+    expect(liveReferences("/skill: xem", [{ ref: skillSkill }])).toEqual([{ ref: skillSkill }]);
+    expect(withoutToken("/skill:new /skill xem", "/skill")).toBe("/skill:new xem");
+  });
+
+  it("leaves a typed /new to the command, with no skill riding along", () => {
+    expect(parseSlashCommand("/new")).toEqual({ command: "new", argument: "" });
+    expect(liveReferences("/new", [{ ref: newSkill }])).toEqual([]);
+  });
+});
+
 describe("choosing a row", () => {
   it("replaces exactly the token and leaves a space after it", () => {
     const draft = "đọc @cla giúp";
@@ -76,6 +103,17 @@ describe("what a message carries", () => {
     expect(tokenPresent("xem /reviewer", "/review")).toBe(false);
     expect(tokenPresent("@clarkcant/src/app.ts", "@clarkcant")).toBe(false);
     expect(tokenPresent("so với (@clarkcant)", "@clarkcant")).toBe(true);
+  });
+
+  it("keeps a reference written right before a colon, as in a line number, a path or a time", () => {
+    const main: ComposerReference = { kind: "file", projectId: "proj_1", path: "main.ts", label: "main.ts" };
+    const proj: ComposerReference = { kind: "project", projectId: "proj_2", label: "proj" };
+    const team: ComposerReference = { kind: "project", projectId: "proj_3", label: "team" };
+    expect(liveReferences("xem @main.ts:42", [{ ref: main }])).toEqual([{ ref: main }]);
+    expect(liveReferences("@proj:C:\\x", [{ ref: proj }])).toEqual([{ ref: proj }]);
+    expect(liveReferences("họp @team:10:30", [{ ref: team }])).toEqual([{ ref: team }]);
+    expect(liveReferences("/review:xem", [{ ref: skill }])).toEqual([{ ref: skill }]);
+    expect(withoutToken("xem @main.ts:42", "@main.ts")).toBe("xem :42");
   });
 
   it("drops a reference whose token was deleted, and keeps several that are still there", () => {

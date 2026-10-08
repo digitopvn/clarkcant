@@ -65,6 +65,7 @@ import {
 } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { wordsBesideReferences } from "./composer-references.ts";
 import { channelToolWords } from "./channels/channel-tool-gate.ts";
 import { hostText } from "./host-text.ts";
 import { type ContextReader, type ContextSource, readContextTool } from "./context-bundle.ts";
@@ -1113,6 +1114,11 @@ export async function createModelTurn(options: {
       skillBody: (name: string, revision: string) => Promise<PiSkillBody>,
       messageId: string | undefined,
     ) => Promise<string>;
+    /**
+     * The skills the same message names by reference, read the same way. The host includes them itself, so pi is not
+     * handed a leading `/skill:<name>` of theirs to expand again (`wordsBesideReferences`).
+     */
+    skillsFor?: (conversationId: string, messageId: string | undefined) => readonly string[];
   };
   /**
    * The widgets a person changed in this conversation, each with what it means now and its revision (#195).
@@ -2272,7 +2278,8 @@ export async function createModelTurn(options: {
   }
 
   /** One message's turn; see `answer`, which holds the conversation's stop scope around it. */
-  const answerHeld = async (input: ModelTurnInput): Promise<ModelTurnReply> => {
+  const answerHeld = async (received: ModelTurnInput): Promise<ModelTurnReply> => {
+    let input = received;
     if (!availability.available) {
       throw new Error(
         `this node is configured for ${describe()} but that model is not reachable: ${availability.reason ?? "no reason given"}`,
@@ -2307,7 +2314,11 @@ export async function createModelTurn(options: {
      * without them; a spoken one is answered as speech, not folded into a typed reply.
      */
     const steerable =
-      (input.note ?? "") === "" && (input.data ?? "") === "" && input.attached !== true && input.channel !== "voice";
+      (input.note ?? "") === "" &&
+      (input.data ?? "") === "" &&
+      input.dataAtStart === undefined &&
+      input.attached !== true &&
+      input.channel !== "voice";
     let claimed = await claimTurn(input.conversationId, input.principal, input.origin, stop);
     /*
      * A turn is already running. A second prompt on a session that is answering is refused by Pi, and it would make
@@ -2332,6 +2343,16 @@ export async function createModelTurn(options: {
       if ((await Promise.race([ended, untilAborted(stop, ended)])) === "stopped") return stoppedBeforeStart();
       claimed = await claimTurn(input.conversationId, input.principal, input.origin, stop);
     }
+    // Read now that this turn holds the conversation: what it describes may have changed while it waited. A hook that
+    // throws gives no data rather than an error here, before the run's `finally`, that would keep the conversation busy.
+    const atStart = ((): string => {
+      try {
+        return input.dataAtStart?.()?.trim() ?? "";
+      } catch {
+        return "";
+      }
+    })();
+    if (atStart !== "") input = { ...input, data: [input.data?.trim() ?? "", atStart].filter((part) => part !== "").join("\n\n") };
     const turn = claimed.turn;
     const preparedResolve = claimed.prepared;
     const endRun = claimed.endRun;
@@ -2581,7 +2602,9 @@ export async function createModelTurn(options: {
       // What this run's system prompt is given of the person's instructions: the value checked above, for this session.
       pinPersonal(promptedSession, personal);
       const promptText = promptForTurn({
-        text: input.text,
+        text: participant
+          ? input.text
+          : wordsBesideReferences(input.text, options.references?.skillsFor?.(input.conversationId, input.userMessageId) ?? []),
         ...(note === undefined ? {} : { note }),
         ...(brief === "" ? {} : { brief }),
         ...(data === "" ? {} : { data }),

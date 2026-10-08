@@ -3,6 +3,7 @@ import { type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -12,6 +13,7 @@ import { EXECUTION_POLICY_PREFERENCE_KEY, createInstance, pinInstance, writeRegi
 import { TABLE } from "@clarkcant/data-canvas";
 import { appendMessage, getNotification, listArtifactsForConversation, listAuditEvents, nextMessageSequence } from "@clarkcant/storage";
 
+import { readClarkVersion } from "../../../tools/release/clark-version.mjs";
 import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
 import { isWidgetArtifactWritePayload } from "../src/application/machine-artifact-writes.ts";
 import { isWidgetPerformPayload } from "../src/application/widget-actions.ts";
@@ -173,7 +175,9 @@ describe("MCP endpoint", () => {
       params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
     });
     expect(initialized.status).toBe(200);
-    expect(initialized.body).toMatchObject({ id: 1, result: { protocolVersion: "2025-03-26", serverInfo: { name: "clarkcant" } } });
+    // The server introduces itself as this build of Clark: the one canonical version, not a literal of its own.
+    const clark = readClarkVersion(fileURLToPath(new URL("../../../", import.meta.url)));
+    expect(initialized.body).toMatchObject({ id: 1, result: { protocolVersion: "2025-03-26", serverInfo: { name: "clarkcant", version: clark } } });
 
     const unknownVersion = await mcp({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "1999-01-01" } });
     expect(unknownVersion.body).toMatchObject({ result: { protocolVersion: MCP_PROTOCOL_VERSIONS[0] } });
@@ -580,6 +584,14 @@ describe("WebSocket gateway", () => {
       "/packages/install",
       "//packages//install/",
       "/packages/install?packageId=com.example.x",
+      // A widget dev session installs a folder's package, and so do its rebuild and placement.
+      "/widget-dev/sessions",
+      "//widget-dev//sessions/",
+      "/widget-dev/sessions/wdev_x/rebuild",
+      "/widget-dev/sessions/wdev_x/place",
+      // Taking back which folders Clark may develop in is the person's, as choosing them is.
+      "/widget-dev/chosen-folders/forget",
+      "//widget-dev//chosen-folders//forget/",
       "/conversations/conv_x/delete",
       "//conversations//conv_x//delete/?ignored=1",
     ];

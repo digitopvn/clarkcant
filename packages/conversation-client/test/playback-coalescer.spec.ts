@@ -163,6 +163,14 @@ describe("sending the write a page makes as it goes away", () => {
     expect(planViewWrite({ inFlight: true, revision: 4 }, 4, true)).toEqual({ send: true, expectedRevision: 5, keepalive: true });
   });
 
+  it("sends a change made before the page drew the last answer at the revision the node answered with", () => {
+    // The node answered 5; the page still holds 4 until it draws that answer.
+    expect(planViewWrite({ inFlight: false, revision: 5 }, 4, false)).toEqual({ send: true, expectedRevision: 5, keepalive: false });
+    expect(planViewWrite({ inFlight: false, revision: 5 }, 4, true)).toEqual({ send: true, expectedRevision: 5, keepalive: true });
+    // A newer timeline, another device's change or the model's, is what the page draws, and wins.
+    expect(planViewWrite({ inFlight: false, revision: 5 }, 7, false)).toEqual({ send: true, expectedRevision: 7, keepalive: false });
+  });
+
   it("asks the browser to keep the request alive past the page only when told to", async () => {
     const inits: (RequestInit | undefined)[] = [];
     const client = new GatewayClient({

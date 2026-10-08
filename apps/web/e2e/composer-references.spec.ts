@@ -62,6 +62,21 @@ function nextMessage(page: Page): Promise<Request> {
   return page.waitForRequest((request) => request.method() === "POST" && /\/messages(\/stream)?$/u.test(request.url()));
 }
 
+test("a bare slash lists the person's skills beside the node's commands", async ({ page }) => {
+  await openApp(page);
+  await composer(page).click();
+  await page.keyboard.type("/");
+
+  await expect(picker(page)).toBeVisible();
+  // However many commands the node has, its skills are not pushed out of the first list.
+  await expect(picker(page).locator('[data-reference-kind="command"][data-reference-option="new"]')).toBeVisible();
+  await expect(option(page, "release-notes")).toBeVisible();
+  await expect(option(page, "review")).toBeVisible();
+  await expect(picker(page).locator('[data-reference-kind="skill"]')).toHaveCount(3);
+  await page.keyboard.press("Escape");
+  await expect(composer(page)).toHaveValue("/");
+});
+
 test("a skill chosen after a slash with the keyboard is sent, shown and briefed to the turn", async ({ page }) => {
   await openApp(page);
   await composer(page).click();
@@ -100,6 +115,44 @@ test("a skill chosen after a slash with the keyboard is sent, shown and briefed 
   await expect(reply).toContainText("Tham chiếu là con trỏ, không phải quyền");
   // The message was sent: its chip went with it.
   await expect(page.locator("[data-reference-chips]")).toHaveCount(0);
+});
+
+test("a skill named like a command is invoked when its row is chosen, and the command does not run", async ({ page }) => {
+  await openApp(page);
+  await composer(page).click();
+  await page.keyboard.type("/new");
+
+  // The fixture node has a skill called `new` beside the `/new` command: both rows, the command first.
+  const commandRow = picker(page).locator('[data-reference-kind="command"][data-reference-option="new"]');
+  const skillRow = picker(page).locator('[data-reference-kind="skill"][data-reference-option="new"]');
+  await expect(commandRow).toContainText("/new");
+  // The skill's row shows what choosing it writes, which no command can be read from.
+  await expect(skillRow).toContainText("/skill:new");
+
+  await skillRow.click();
+  await expect(composer(page)).toHaveValue("/skill:new ");
+  await expect(page.locator('[data-reference-chip="new"]')).toContainText("/skill:new");
+
+  await page.keyboard.type("một app ghi chú");
+  const sent = nextMessage(page);
+  await page.keyboard.press("Enter");
+  const request = await sent;
+  const body = request.postDataJSON() as { text: string; references?: { items: { kind: string; skillId?: string }[] } };
+  expect(body.text).toBe("/skill:new một app ghi chú");
+  expect(body.references?.items).toEqual([expect.objectContaining({ kind: "skill", skillId: "new", label: "new" })]);
+
+  // The turn was briefed with the skill's instructions: the skill was invoked.
+  const reply = page.locator('.cc-row[data-role="assistant"]').last();
+  await expect(reply).toContainText("Fixture: lượt này được đưa phần tham chiếu sau.");
+  await expect(reply).toContainText('<skill name="new">');
+  await expect(reply).toContainText("ba gạch đầu dòng");
+  // And `/new` did not run: no host answer, no move to a fresh conversation.
+  const answered = (await (await request.response())?.text()) ?? "";
+  expect(answered).not.toContain("nav.home");
+  await expect(page.locator(".cc-row").filter({ hasText: /Đã mở cuộc trò chuyện mới|Started a new conversation/u })).toHaveCount(0);
+  const userRow = page.locator('.cc-row[data-role="user"]').last();
+  await expect(userRow).toContainText("một app ghi chú");
+  await expect(userRow.locator('[data-reference-block="new"]')).toContainText("/skill:new");
 });
 
 test("a file inside a project is reached by opening folders with Tab and sent with Enter", async ({ page }) => {
@@ -172,7 +225,8 @@ test("the pointer chooses a row and opens a folder, and removing a chip takes it
   await expect(page.locator('[data-reference-chip="demo-app/docs"]')).toBeVisible();
   await expect(composer(page)).toBeFocused();
 
-  await page.keyboard.type("và /");
+  // A bare slash fills the capped list with host commands first, so the skill is narrowed to by name.
+  await page.keyboard.type("và /rel");
   await option(page, "release-notes").click();
   await expect(composer(page)).toHaveValue("@demo-app/docs và /release-notes ");
   await expect(page.locator("[data-reference-chip]")).toHaveCount(2);

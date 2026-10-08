@@ -83,6 +83,9 @@ export interface EffectAction {
  *   the grant and this node's owner allowed that peer; anything else waits for this node's owner.
  * - `persistent`: an automation a person set up earlier. It is their intent, but only for the effects they gave
  *   it; anything outside `allowedCategories` is treated as the agent's own initiative.
+ * - `proposed`: Clark chose this effect on its own during a person's turn: the person asked for an outcome, not for this
+ *   act. Decided as the agent's initiative: Ask asks, Guarded asks unless a rule lets the category run, and Autonomous
+ *   runs it only when it stays on this machine. `origin` is the turn's, as for `interactive`.
  * - `system`: the node's own work, which nobody asked for.
  *
  * An interactive intent carries who asked for the turn (`TurnOrigin`), as the node recorded it when it accepted the
@@ -93,6 +96,7 @@ export type ExecutionIntent =
   | { kind: "interactive"; origin?: TurnOrigin }
   | { kind: "delegated"; allowedCategories: readonly EffectCategory[] }
   | { kind: "persistent"; allowedCategories: readonly EffectCategory[] }
+  | { kind: "proposed"; origin?: TurnOrigin }
   | { kind: "system" };
 
 /** Whether a person's instruction stands behind an effect of this category. */
@@ -103,6 +107,7 @@ export function intentCovers(intent: ExecutionIntent, category: EffectCategory):
     case "delegated":
     case "persistent":
       return intent.allowedCategories.includes(category);
+    case "proposed":
     case "system":
       return false;
     default:
@@ -346,6 +351,14 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
           `guarded mode asks where the effect category or a rule requires it`,
         );
       }
+      // Guarded keeps the person in the loop for what Clark decided to do on its own, even on this machine.
+      if (question.intent.kind === "proposed") {
+        return askFor(
+          action,
+          `Clark proposed this ${action.category} effect on its own`,
+          "guarded mode asks before an effect the person did not ask for by name",
+        );
+      }
       return {
         kind: "execute",
         reason: `${action.category} stays on this machine and no rule asks about it`,
@@ -572,6 +585,8 @@ export function recordEffectExecution(
     action?: BrowserPress;
     /** Who asked for the turn that caused it, when a turn did. */
     origin?: TurnOrigin;
+    /** Who let it run: the policy, unless the person's own press on a host card was the decision. */
+    approvedBy?: "policy" | "person";
   },
 ): number {
   return appendEvent(deps.db, {
@@ -589,7 +604,7 @@ export function recordEffectExecution(
       ...(input.action === undefined ? {} : { action: input.action }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       because: input.decision.reason,
-      approvedBy: "policy",
+      approvedBy: input.approvedBy ?? "policy",
     },
     occurredAt: deps.now(),
   });

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import type { Instant } from "@clarkcant/contracts";
 import { appendAuditEvent, listAuditEvents } from "../src/audit.ts";
 import { openDatabase, type Database } from "../src/db.ts";
 import { currentSchemaVersion, migrate } from "../src/migrate.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The audit trail.
@@ -28,9 +29,9 @@ beforeEach(() => {
   migrate(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 function append(overrides: Partial<Parameters<typeof appendAuditEvent>[1]> = {}): void {
@@ -56,9 +57,10 @@ describe("what is written down", () => {
     // into the colour-scheme preference; 37 records the files a task handed to a paired node brought back; 38 holds the files a widget holds by reference;
     // 39 lets a person delete a conversation; 40 keeps package jobs; 41 keeps the accounts package services connect to;
     // 42 lets a finished install plan whose generation no longer runs leave the live set.
-    // 43 records which surface asked for each audited action; 44 keeps external messaging channels.
+    // 43 records which surface asked for each audited action; 44 keeps external messaging channels; 45 keeps product
+    // reports until GitHub holds them; 46 records whose token sent each report.
     // The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(44);
+    expect(currentSchemaVersion(db)).toBe(46);
   });
 
   it("reads back newest first, with the fields it was given", () => {

@@ -6,6 +6,7 @@ import {
   type ComposerSuggestion,
   type ComposerSuggestionsResponse,
   type ComposerTrigger,
+  SKILL_TOKEN_PREFIX,
   SLASH_COMMANDS,
   nowInstant,
   projectRelativePathSchema,
@@ -63,7 +64,8 @@ interface Candidate {
  * gave.
  *
  * With no query every candidate is a match, so opening the picker shows recent things rather than nothing, and each
- * kind gets its share of the rows: a node with fifty conversations still offers its projects.
+ * kind gets its share of the rows: a node with fifty conversations still offers its projects, and a node with many
+ * commands still offers its skills.
  */
 export function rankCandidates<T extends { match: string; recency?: number; group?: number }>(
   candidates: readonly T[],
@@ -160,9 +162,11 @@ async function skillSuggestions(services: ReferenceServices, query: string): Pro
     services.runtime.identity.ownerPrincipalId,
   );
   // The node's own commands first, then pi's skills: a command is answered here, a skill is something the turn uses.
+  // Two kinds, so a bare slash gives each its share of the rows: the person's own skills stay as findable as the
+  // built-in commands however many commands there are, and a share one kind cannot fill goes to the other.
   const commands: Candidate[] = SLASH_COMMANDS.map((command, index) => ({
     match: command,
-    // One kind of row with the skills, ranked ahead of them, so opening the picker shows every command.
+    group: 0,
     recency: index,
     suggestion: {
       key: `command:${command}`,
@@ -177,11 +181,17 @@ async function skillSuggestions(services: ReferenceServices, query: string): Pro
     .filter((skill) => skill.name.length <= LABEL_MAX)
     .map((skill) => ({
       match: skill.name,
+      group: 1,
       suggestion: row(
         { kind: "skill", skillId: skill.name, source: skill.source, revision: skill.revision, label: skill.name },
         { note: `${SKILL_SOURCE[skill.source] ?? skill.source} · ${skill.description}` },
       ),
     }));
+  // `/skill:<name>` names a skill and never a command, so after `skill:` only skills are offered, matched by the rest.
+  const qualified = SKILL_TOKEN_PREFIX.slice(1);
+  if (query.toLowerCase().startsWith(qualified)) {
+    return rankCandidates(candidates, query.slice(qualified.length)).map((candidate) => candidate.suggestion);
+  }
   return rankCandidates([...commands, ...candidates], query).map((candidate) => candidate.suggestion);
 }
 

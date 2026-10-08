@@ -191,6 +191,12 @@ Lease **chuyển** chứ không nhân bản: shell release trước, host claim 
 release rồi shell claim lại — nên không có thời điểm nào có hai owner. Đóng cửa sổ cũng chính là đường reattach, kể cả
 khi người dùng chỉ bấm nút đóng của hệ điều hành.
 
+Host giữ claim đó còn hiệu lực bằng chính các con số của hội thoại (làm mới mỗi 30 giây, lease 90 giây), và node ghi
+nhận nó là `detached`, nên một claim cạnh tranh được biết widget đang mở trong cửa sổ riêng. Khi cửa sổ đang mở, hội
+thoại không tự làm mới lease của mình. Một lần làm mới bị từ chối vì một bề mặt khác đã giữ instance sẽ đóng cửa sổ.
+Cửa sổ không bao giờ sống lâu hơn hội thoại đã mở nó: đóng phần hiển thị đó (mở hội thoại khác, đóng pin), đóng cửa sổ
+hội thoại hoặc thoát ứng dụng đều đóng cửa sổ detached, và lease của nó được trả lại trên đường đóng.
+
 ### 2.3 Wake phrase
 
 Target UX: local wake phrase **“Hey Clark”** mở voice mode.
@@ -427,10 +433,11 @@ Bắt buộc:
   một danh sách do textarea điều khiển như combobox (mũi tên để di chuyển, Enter để thêm, Tab để mở project hay thư mục,
   Escape để đóng danh sách mà giữ nguyên bản nháp; chọn bằng chuột hay chạm cũng được). Lựa chọn ghi token vào bản nháp
   và hiện thành chip cạnh chip tệp; xoá token hay chip là bỏ luôn reference, nên tin nhắn không bao giờ mang theo thứ
-  người dùng không nhìn thấy. Reference là con trỏ, không phải quyền: node kiểm lại lúc gửi, và nếu nó đã cũ thì từ chối
-  lượt gửi, nói rõ reference nào, đồng thời giữ nguyên bản nháp. Khi bộ gõ đang ghép một chữ, Enter của nó chỉ để hoàn
-  tất chữ đó: không chọn dòng nào và không gửi. Shift+Enter xuống dòng dù danh sách đang mở hay đóng. Đây là tính năng
-  bổ trợ, không phải navigation chính.
+  người dùng không nhìn thấy. Skill trùng tên với một lệnh gạch chéo được ghi là `/skill:<tên>`, cả trên dòng của nó lẫn
+  trong bản nháp, nên chọn nó luôn gọi skill đó, còn gõ `/new` thì luôn chạy lệnh. Reference là con trỏ, không phải
+  quyền: node kiểm lại lúc gửi, và nếu nó đã cũ thì từ chối lượt gửi, nói rõ reference nào, đồng thời giữ nguyên bản
+  nháp. Khi bộ gõ đang ghép một chữ, Enter của nó chỉ để hoàn tất chữ đó: không chọn dòng nào và không gửi. Shift+Enter
+  xuống dòng dù danh sách đang mở hay đóng. Đây là tính năng bổ trợ, không phải navigation chính.
 - Markdown cơ bản được đánh dấu ngay khi gõ — đậm, nghiêng, gạch ngang, code inline, khối code, tiêu đề, danh sách,
   trích dẫn và liên kết — cú pháp vẫn hiện nhưng nhạt đi, nên thứ được gửi chính là thứ người dùng thấy và vẫn sửa
   như văn bản thường. Ô nhập vẫn là textarea gốc (con trỏ, vùng chọn, undo, kiểm tra chính tả và bộ gõ không đổi)

@@ -252,7 +252,7 @@ export function Conversation({
     stop,
     restartSession,
     scroller,
-    followBottom,
+    followsBottomNow,
   } = useTurnSend({
     client,
     conversationId,
@@ -560,7 +560,7 @@ export function Conversation({
                   undoIndex={undoIndex}
                   undoRow={noticeUndoRow}
                   scroller={scroller}
-                  followBottom={followBottom}
+                  followsBottomNow={followsBottomNow}
                   hasOlder={hasOlder}
                   olderLoading={olderLoading}
                   olderFailed={olderFailed}

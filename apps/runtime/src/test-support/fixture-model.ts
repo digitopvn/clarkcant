@@ -32,7 +32,7 @@ import {
   setPreference,
 } from "@clarkcant/core";
 import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
-import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
+import { DEFAULT_FAKE_SKILLS, FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 
 import { providerAuthPort } from "../application/provider-sign-in.ts";
 import {
@@ -79,7 +79,7 @@ import { type NodeServices } from "../services.ts";
 import { createTaskBrowserBroker, taskProfileDir } from "../task-browser.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
-import { conversationOfferedActions, createPerformWidgetActionTool, createPlaceWidgetTool } from "../widget-perform-tool.ts";
+import { OFFERED_BINDING_KEY, conversationOfferedActions, createPerformWidgetActionTool, createPlaceWidgetTool } from "../widget-perform-tool.ts";
 
 /** The job capability the reference image generator's button calls. */
 const IMAGE_GENERATE = "com.clarkcant.reference.image-generator.image.generate@1" as CapabilityRef;
@@ -346,6 +346,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     channel?: "voice" | "chat";
     note?: string;
     data?: string;
+    dataAtStart?: () => string | undefined;
     origin?: TurnOrigin;
     /** The turn's interface language; the host-written parts of a scripted reply follow it. Vietnamese when absent. */
     locale?: AppIntentLocale;
@@ -2124,15 +2125,23 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     /*
      * Clark performing an action a widget in this conversation offers, through the `perform_widget_action` tool: the
      * spreadsheet's format on the range the person selected, and the text editor's replace on the text they selected.
-     * The binding is found the way the model finds it (the tool's list), and the editor's replacement is computed from
-     * the selection the host read from the widget's semantic document — what the model would see — never from the page.
+     * The binding is found the way the model finds it: typed, from the tool's list; spoken, from the focused widget's
+     * actions the host put in the turn's data — so a spoken turn that lost that data performs nothing. The editor's
+     * replacement is computed from the selection the host read from the widget's semantic document — what the model
+     * would see — never from the page.
      */
     const formatting = /^(?:format this as a percentage|định dạng phần trăm cho vùng này)$/iu.test(input.text.trim());
     const upper = /^(?:uppercase the selection|viết hoa đoạn đang chọn)$/iu.test(input.text.trim());
     if (formatting || upper) {
       const services = deps.services();
       const wanted = formatting ? "format" : "replaceSelection";
-      const target = conversationOfferedActions(services, input.conversationId).find((entry) => entry.action === wanted);
+      const offered = conversationOfferedActions(services, input.conversationId);
+      const spokenData = [input.data ?? "", input.dataAtStart?.() ?? ""].join("\n");
+      const spokenBinding = new RegExp(`^- ${OFFERED_BINDING_KEY}(\\S+), action ${wanted}:`, "mu").exec(spokenData)?.[1];
+      const target =
+        input.channel === "voice"
+          ? offered.find((entry) => entry.actionBindingId === spokenBinding)
+          : offered.find((entry) => entry.action === wanted);
       let performInput: Record<string, unknown> | undefined;
       if (target !== undefined && formatting) performInput = { format: "percent" };
       if (target !== undefined && upper) {
@@ -3472,8 +3481,19 @@ export function arrangeModelNode(deps: { services: NodeServices; dataDir: string
   const fakeProviderAuth = providerAuthPort(new FakePiAdapter());
   if (fakeProviderAuth !== undefined) services.providerAuth ??= fakeProviderAuth;
 
-  // The fake adapter's skills, for the composer's slash: the same list a node with the fake model would offer.
-  const skillSource = new FakePiAdapter();
+  // The fake adapter's skills, for the composer's slash: the same list a node with the fake model would offer, plus one
+  // that shares its name with the `/new` command, so a journey can choose a skill a command's name would shadow.
+  const skillSource = new FakePiAdapter({
+    skills: [
+      ...DEFAULT_FAKE_SKILLS,
+      {
+        name: "new",
+        description: "Phác thảo một ý tưởng mới thành vài gạch đầu dòng.",
+        source: "personal",
+        body: "Biến ý tưởng người dùng đưa ra thành ba gạch đầu dòng: vấn đề, cách làm, bước đầu tiên.",
+      },
+    ],
+  });
   services.skills ??= {
     list: () => skillSource.skills(),
     body: (name, revision) => skillSource.skillBody(name, revision),

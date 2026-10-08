@@ -203,6 +203,9 @@ export class BrowserDriver {
   readonly #profileDir: string;
   #context: BrowserContext | undefined;
   #page: Page | undefined;
+  /** The browser start under way, shared by every caller that needs the page meanwhile and awaited by `close`. */
+  #launching: Promise<Page> | undefined;
+  #closed = false;
   #epoch = 0;
   #observations = new Map<string, Observation>();
   #stopped = false;
@@ -313,8 +316,21 @@ export class BrowserDriver {
     await session.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
   }
 
-  async #ensurePage(): Promise<Page> {
-    if (this.#page) return this.#page;
+  /**
+   * The page, starting the browser the first time. Callers that arrive while it is starting share that one start, and
+   * `close` waits for it: a browser still starting when the driver was closed is closed as soon as it is up, never
+   * handed out, and nothing is started after a close.
+   */
+  #ensurePage(): Promise<Page> {
+    if (this.#closed) return Promise.reject(new Error("this browser driver was closed; no browser will be started"));
+    if (this.#page) return Promise.resolve(this.#page);
+    this.#launching ??= this.#launch().finally(() => {
+      this.#launching = undefined;
+    });
+    return this.#launching;
+  }
+
+  async #launch(): Promise<Page> {
     mkdirSync(this.#profileDir, { recursive: true });
     const context = await chromium.launchPersistentContext(this.#profileDir, {
       headless: true,
@@ -323,14 +339,17 @@ export class BrowserDriver {
         : { args: [`--host-resolver-rules=${this.#hostResolverRules.join(",")}`] }),
     });
     this.#context = context;
-    const [existing] = context.pages();
-    const page = existing ?? (await context.newPage());
+    let page: Page;
     /*
      * One page. A script cannot open a window, and a new tab that opens anyway (a link's `target`) is closed at once.
      * The page's documents are held to the declared sites before they load; where the page ended up is still checked
-     * after every navigation and before every observation. A page these could not be set up on is never handed out.
+     * after every navigation and before every observation. A page these could not be set up on is never handed out,
+     * and a browser whose page could not even be opened is closed here, so it does not keep holding the profile while
+     * the next call starts another one on it.
      */
     try {
+      const [existing] = context.pages();
+      page = existing ?? (await context.newPage());
       await context.addInitScript(() => {
         window.open = () => null;
       });
@@ -338,6 +357,9 @@ export class BrowserDriver {
         if (opened !== page) void opened.close().catch(() => undefined);
       });
       await this.#stopForeignDocuments(page, context);
+      // Closed while it was starting: the close is waiting on this start, so the browser is shut here, before it
+      // returns, rather than left running with nobody holding it.
+      if (this.#closed) throw new Error("this browser driver was closed while its browser was starting");
     } catch (cause) {
       this.#context = undefined;
       await context.close().catch(() => undefined);
@@ -873,7 +895,13 @@ export class BrowserDriver {
     return ref;
   }
 
+  /**
+   * Close the browser, and for good: a start still under way is waited for and its browser closed, and nothing is
+   * started afterwards. A closed driver is not reopened; a caller that needs a browser again makes a new driver.
+   */
   async close(): Promise<void> {
+    this.#closed = true;
+    await this.#launching?.catch(() => undefined);
     await this.#context?.close();
     this.#context = undefined;
     this.#page = undefined;

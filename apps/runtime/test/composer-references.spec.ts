@@ -4,20 +4,36 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type ComposerReference, type ComposerReferenceSuggestion, type ComposerSuggestion, type ComposerSuggestionsResponse, type MessageRecord, SLASH_COMMANDS } from "@clarkcant/contracts";
+import {
+  type ComposerReference,
+  type ComposerReferenceSuggestion,
+  type ComposerSuggestion,
+  type ComposerSuggestionsResponse,
+  type MessageRecord,
+  SLASH_COMMANDS,
+  parseSlashCommand,
+  referenceToken,
+} from "@clarkcant/contracts";
 import { setPreference } from "@clarkcant/core";
 import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcant/pi-adapter";
 import {
   appendMessage,
   dismissNotification,
   getNotification,
+  listConversations,
   messagesSince,
   nextMessageSequence,
   recordNotification,
   upsertProject,
 } from "@clarkcant/storage";
 
-import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
+import {
+  referenceBrief,
+  referencedSkillIds,
+  referencesForLastUserMessage,
+  resolveComposerReferences,
+  wordsBesideReferences,
+} from "../src/composer-references.ts";
 import { COMPOSER_SUGGESTIONS_MAX, MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createModelTurn } from "../src/model-turn.ts";
@@ -101,6 +117,7 @@ beforeEach(async () => {
           skillBody,
           notice: (noticeId) => getNotification(services.runtime.db, services.runtime.identity.ownerPrincipalId, noticeId)?.notice,
         }),
+      skillsFor: (id) => referencedSkillIds(referencesForLastUserMessage({ db: services.runtime.db, conversationId: id })),
     },
   });
   if (turn === undefined) throw new Error("the test environment did not configure a model");
@@ -358,14 +375,92 @@ function refsOf(rows: readonly ComposerSuggestion[]): ComposerReference[] {
   return referenceRows(rows).map((row) => row.ref);
 }
 
+describe("a skill that shares its name with a command", () => {
+  const NEW_SKILL = { name: "new", description: "Phác thảo ý tưởng mới.", source: "personal" as const, body: "Ba gạch đầu dòng: vấn đề, cách làm, bước đầu." };
+  const newRef: ComposerReference = { kind: "skill", skillId: "new", source: "personal", revision: fakeSkillRevision(NEW_SKILL), label: "new" };
+
+  beforeEach(() => {
+    adapter.setSkills([...DEFAULT_FAKE_SKILLS, NEW_SKILL]);
+  });
+
+  it("is written as /skill:<name> when chosen, so the picker row never reads as the command", async () => {
+    expect(referenceToken(newRef)).toBe("/skill:new");
+    expect(parseSlashCommand(`${referenceToken(newRef)} một app ghi chú`)).toBeUndefined();
+    // A skill no command shadows keeps its short token.
+    expect(referenceToken(reviewRef)).toBe("/review");
+
+    // Typing the qualified form lists that skill and no command.
+    const qualified = (await suggest("/", "skill:ne")).body as ComposerSuggestionsResponse;
+    expect(qualified.suggestions.map((row) => `${row.kind}:${row.label}`)).toEqual(["skill:new"]);
+    expect(refsOf(qualified.suggestions)).toEqual([newRef]);
+  });
+
+  it("invokes the skill when its row is sent, and starts no new conversation", async () => {
+    const before = listConversations(services.runtime.db, 50).length;
+    const response = await send("/skill:new một app ghi chú", [newRef]);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    // A turn the model answered, not the host's `/new` answer and its move to a fresh conversation.
+    expect(response.body).toMatchObject({ resolution: "model" });
+    expect(response.body).not.toHaveProperty("appIntent");
+    expect(listConversations(services.runtime.db, 50)).toHaveLength(before);
+
+    const [stored] = userMessages();
+    expect(stored?.blocks.filter((block) => block.type === "reference")).toEqual([{ type: "reference", reference: newRef }]);
+    const prompt = adapter.allPrompts()[0] ?? "";
+    expect(prompt).toContain('<skill name="new">');
+    expect(prompt).toContain(NEW_SKILL.body);
+    // The host briefed the skill, so pi is not handed a leading `/skill:` to expand a second time.
+    expect(prompt.startsWith(" /skill:new một app ghi chú")).toBe(true);
+  });
+
+  it("hands pi a leading /skill: only when the message does not name that skill by reference", () => {
+    const words = "/skill:new một app ghi chú";
+    // Chosen in the picker: the host includes the skill, so pi is told the words with a space in front.
+    expect(wordsBesideReferences(words, ["new"])).toBe(` ${words}`);
+    // Typed by hand, or beside a different skill: pi expands it, as it always has.
+    expect(wordsBesideReferences(words, [])).toBe(words);
+    expect(wordsBesideReferences(words, ["review"])).toBe(words);
+    // Not a leading `/skill:` token: nothing for pi to expand.
+    expect(wordsBesideReferences("/new", ["new"])).toBe("/new");
+    expect(wordsBesideReferences("xem /skill:new", ["new"])).toBe("xem /skill:new");
+    expect(wordsBesideReferences("/skill: rỗng", ["new"])).toBe("/skill: rỗng");
+  });
+
+  it("keeps pi from inserting the current file when the chosen revision is gone by the time the turn runs", async () => {
+    const blocks = [{ type: "reference" as const, reference: newRef }];
+    // The skill changed after the message was sent: the host says it was not inserted.
+    const brief = await referenceBrief({
+      blocks,
+      projects: services.projects,
+      skillBody: async () => ({ ok: false, reason: "changed" }),
+    });
+    expect(brief).toContain("Kỹ năng /skill:new: đã thay đổi hoặc bị gỡ sau khi gửi, nên không được chèn.");
+    expect(brief).not.toContain('<skill name="new">');
+    // Decided from the message's references, not from the brief: pi must not insert the file as it is now either.
+    expect(wordsBesideReferences("/skill:new một app ghi chú", referencedSkillIds(blocks))).toBe(" /skill:new một app ghi chú");
+  });
+
+  it("leaves a typed /new to the command", async () => {
+    const response = await send("/new", []);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body).toMatchObject({ accepted: true, appIntent: { kind: "intent", intent: { kind: "nav.home" } } });
+    expect(adapter.allPrompts()).toEqual([]);
+  });
+});
+
 describe("the picker", () => {
   it("offers the node's commands and then skills after a slash, best match first", async () => {
     const all = await suggest("/", "");
     expect(all.status).toBe(200);
     const body = all.body as ComposerSuggestionsResponse;
-    // Commands first, then skills, up to the picker's eight rows: a bare slash shows the commands and the first skill,
-    // and typing reaches the rest.
-    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS, "release-notes", "review"].slice(0, COMPOSER_SUGGESTIONS_MAX));
+    // Commands first, then skills, up to the picker's eight rows. Both skills are shown however many commands there
+    // are; commands fill the rows the skills do not need, and typing reaches the rest.
+    expect(body.suggestions.map((row) => row.label)).toEqual([
+      ...SLASH_COMMANDS.slice(0, COMPOSER_SUGGESTIONS_MAX - 2),
+      "release-notes",
+      "review",
+    ]);
+    expect(referenceRows(body.suggestions).every((row) => row.ref.kind === "skill")).toBe(true);
     // A command row writes the command, not a reference.
     expect(body.suggestions[0]).toMatchObject({ kind: "command", command: "new", trigger: "/" });
     expect(body.suggestions[0]).not.toHaveProperty("ref");
@@ -376,6 +471,23 @@ describe("the picker", () => {
     const narrowed = (await suggest("/", "rev")).body as ComposerSuggestionsResponse;
     expect(narrowed.suggestions.map((row) => row.label)).toEqual(["review"]);
     expect(refsOf(narrowed.suggestions)[0]).toEqual(reviewRef);
+  });
+
+  it("gives the person's skills an equal share of a bare slash, however many commands the node has", async () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({ ...REVIEW, name: `skill-${String(index).padStart(2, "0")}` }));
+    adapter.setSkills(many);
+    const half = COMPOSER_SUGGESTIONS_MAX / 2;
+
+    const body = (await suggest("/", "")).body as ComposerSuggestionsResponse;
+
+    expect(body.suggestions).toHaveLength(COMPOSER_SUGGESTIONS_MAX);
+    // Grouped as ranked: the first commands, then the first skills, half the rows each.
+    expect(body.suggestions.map((row) => row.label)).toEqual([...SLASH_COMMANDS.slice(0, half), ...many.slice(0, half).map((skill) => skill.name)]);
+
+    // With no skills the commands take every row: a share one kind cannot fill goes to the other.
+    adapter.setSkills([]);
+    const bare = (await suggest("/", "")).body as ComposerSuggestionsResponse;
+    expect(bare.suggestions.map((row) => row.label)).toEqual(SLASH_COMMANDS.slice(0, COMPOSER_SUGGESTIONS_MAX));
   });
 
   it("offers projects and titled conversations after an at sign, leaving out the one being written in", async () => {

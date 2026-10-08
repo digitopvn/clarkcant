@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 
+import { chromiumTestArgs } from "../../../tools/chromium-test-args.ts";
 import { runCli } from "../src/cli.ts";
 import { startDevHost, type DevHost } from "../src/dev-host.ts";
 import { runConformance } from "../src/conformance.ts";
@@ -53,7 +54,7 @@ describe("detach against a real browser", () => {
     devHost = await startDevHost({ root, port: 0, watchFiles: false });
     const baseUrl = devHost.url;
 
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
     const context = await browser.newContext();
     const shell = await context.newPage();
     await shell.goto(baseUrl);
