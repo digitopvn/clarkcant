@@ -16,6 +16,13 @@ import {
   type FeedbackPublishIntent,
   type FeedbackRequestInput,
   type ProviderSignInView,
+  APPROVAL_PHASE,
+  CONNECTION_PHASE,
+  RECONNECT_PHASE,
+  SYSTEM_CARD_PHASE,
+  TASK_OVERVIEW_PHASE,
+  TASK_PROGRESS_PHASE,
+  taskSummaryPhase,
 } from "@clarkcant/contracts";
 
 import { CodeBlock, Markdown, linkedText } from "./markdown.tsx";
@@ -25,7 +32,7 @@ import { downloadObjectUrl } from "./download.ts";
 import { useAttachmentUrls } from "./use-attachment-urls.ts";
 import { type ObjectUrls, useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
-import { useT } from "./i18n/locale-context.tsx";
+import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { useSurfaceViewState } from "./surface-view-state.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { CommandCardBlock } from "./command-card.tsx";
@@ -36,6 +43,7 @@ import { askedByKey } from "./turn-origin-words.ts";
 import { effectCategoryLabels } from "./inbox/inbox-model.ts";
 import { UnreadListingFieldsNote, readUnreadFields } from "./unread-listing-fields.tsx";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
+import { LiveNote, PhaseBadge, phaseOf } from "./surface-status.tsx";
 
 /**
  * The Vietnamese catalog lookup, used as the default for cards that accept `t` as a prop rather than
@@ -338,17 +346,6 @@ export function ArtifactBlock({
     </div>
   );
 }
-const CARD_TONE: Record<string, string> = {
-  "needs-decision": "warn",
-  blocked: "danger",
-  failed: "danger",
-  ready: "ok",
-  done: "ok",
-  working: "",
-  downloading: "",
-  verifying: "",
-  "needs-sign-in": "warn",
-};
 
 /**
  * A turn's duration as a person reads a wait.
@@ -497,9 +494,7 @@ export function SystemCardBlock({
     <section className="cc-card" data-host-card="system" data-owner="host" data-status={status} data-subject={subject}>
       <header className="cc-card-head">
         <span className="cc-card-title">{title}</span>
-        <span className="cc-badge" data-tone={CARD_TONE[status] ?? ""}>
-          {cardStatusLabel(status, t)}
-        </span>
+        <PhaseBadge phase={phaseOf(SYSTEM_CARD_PHASE, status)}>{cardStatusLabel(status, t)}</PhaseBadge>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{detail}</p>
@@ -1003,6 +998,15 @@ export function ApprovalCardBlock({
   const decided = approvalId !== "" && actions?.decidedApprovals?.includes(approvalId) === true;
   const denied = decided && actions?.deniedApprovals?.includes(approvalId) === true;
   const canDecide = decision === "pending" && !decided && approvalId !== "" && actions?.onApprovalDecide !== undefined;
+  // How the card ended, from what this session decided first and then from the record; `undefined` while it still asks.
+  const shownDecision: "granted" | "denied" | "expired" | undefined =
+    denied || decision === "denied"
+      ? "denied"
+      : decided || decision === "granted"
+        ? "granted"
+        : decision === "expired"
+          ? "expired"
+          : undefined;
 
   return (
     <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision} data-approval-id={approvalId}>
@@ -1071,16 +1075,31 @@ export function ApprovalCardBlock({
         ) : (
           // What was decided, in words: a granted card says approved, and one read back from history says what its record
           // says rather than the wire's value.
-          <span className="cc-badge" data-approval-decision={denied ? "denied" : decided ? "answered" : decision}>
-            {denied || decision === "denied"
+          <PhaseBadge
+            phase={shownDecision === undefined ? undefined : APPROVAL_PHASE[shownDecision]}
+            data-approval-decision={denied ? "denied" : decided ? "answered" : decision}
+          >
+            {shownDecision === "denied"
               ? t("blocks.approval.denied")
-              : decided || decision === "granted"
+              : shownDecision === "granted"
                 ? t("blocks.approval.granted")
-                : decision === "expired"
+                : shownDecision === "expired"
                   ? t("blocks.approval.expired")
                   : t("blocks.approval.decided")}
-          </span>
+          </PhaseBadge>
         )}
+        {/*
+          The press, answered: said once in a live region while the decision is on its way and when it lands, and never
+          for a card drawn from history, whose decision is old news.
+        */}
+        <LiveNote
+          phase={deciding ? "pending" : decided ? (denied ? "cancelled" : "success") : undefined}
+          // The badge above already shows the decision; the note is for a screen reader, so it is not drawn twice.
+          className="cc-sr-only"
+          data-approval-live="true"
+        >
+          {deciding ? t("blocks.approval.running") : decided ? (denied ? t("blocks.approval.denied") : t("blocks.approval.granted")) : undefined}
+        </LiveNote>
       </div>
     </section>
   );
@@ -1117,19 +1136,24 @@ function isTilePolicyPayload(payload: string): boolean {
 
 export function ConnectionCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
   const t = useT();
+  const locale = useLocale();
   if (block.owner !== "host") return null;
   const provider = typeof block.provider === "string" ? block.provider : "connection";
   const status = typeof block.status === "string" ? block.status : "unconfigured";
   const account = typeof block.account === "string" ? block.account : undefined;
   const missing = Array.isArray(block.missingScopes) ? (block.missingScopes as string[]) : [];
+  const phase = phaseOf(CONNECTION_PHASE, status);
+  const statusKey = `blocks.connection.status.${status}`;
+  const lastProbeAt = typeof block.lastProbeAt === "string" ? block.lastProbeAt : undefined;
+  const lastProbeResult = typeof block.lastProbeResult === "string" ? block.lastProbeResult : undefined;
+  const probeKey = `blocks.connection.lastProbe.${lastProbeResult ?? ""}`;
 
   return (
     <section className="cc-card" data-host-card="connection" data-owner="host" data-status={status}>
       <header className="cc-card-head">
         <span className="cc-card-title">{provider}</span>
-        <span className="cc-badge" data-tone={status === "connected" ? "ok" : status === "revoked" ? "danger" : "warn"}>
-          {status}
-        </span>
+        {/* In the reader's words; a state this build has no words for is shown as sent, never dropped. */}
+        <PhaseBadge phase={phase}>{statusKey in MESSAGES_VI ? t(statusKey as MessageKey) : status}</PhaseBadge>
       </header>
       <div className="cc-card-body">
         {/* A partial grant is stated, never smoothed over into "connected". */}
@@ -1139,6 +1163,17 @@ export function ConnectionCardBlock({ block }: { block: Record<string, unknown> 
         {missing.length > 0 && (
           <p className="cc-freshness" style={{ margin: 0 }} data-missing-scopes="true">
             {t("blocks.connection.missingScopesLabel")}: {missing.join(", ")}
+          </p>
+        )}
+        {/* The card is a snapshot of the connection, so it says when the connection was last checked and how. */}
+        {lastProbeAt !== undefined && probeKey in MESSAGES_VI && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-connection-probe={lastProbeResult}>
+            <time dateTime={lastProbeAt}>{t(probeKey as MessageKey).replace("{time}", () => readableInstant(lastProbeAt, locale))}</time>
+          </p>
+        )}
+        {(status === "needs_reauth" || status === "expired") && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-connection-next="sign-in">
+            {t("blocks.connection.next.signIn")}
           </p>
         )}
       </div>
@@ -1264,11 +1299,16 @@ export function CredentialCardBlock({
             </div>
           </form>
         )}
-        {status !== undefined && (
-          <p className="cc-freshness" data-credential-status="true" style={{ margin: 0 }}>
-            {status}
-          </p>
-        )}
+        {/*
+          What became of the save, said once. The status carries only its sentence, so the failure is told apart by the
+          one sentence the save writes when it fails; anything else is the node's receipt naming what it kept.
+        */}
+        <LiveNote
+          phase={status === undefined ? undefined : status === t("shell.credential.saveFailed") ? "error" : "success"}
+          data-credential-status="true"
+        >
+          {status}
+        </LiveNote>
         {/* The value is entered in a host-owned field; it never enters the transcript. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
           {t("blocks.credential.notInTranscript")}
@@ -1298,17 +1338,16 @@ const STEP_MARK: Record<string, string> = {
   skipped: "—",
 };
 
-const TASK_STATUS_TONE: Record<string, string> = {
-  // Quoted because a hyphen in an unquoted key is a subtraction, not a property name.
-  "needs-decision": "warn",
-  blocked: "danger",
-  failed: "danger",
-  cancelled: "",
-  done: "ok",
-  succeeded: "ok",
-  queued: "",
-  working: "",
-};
+const TASK_OUTCOMES = ["succeeded", "failed", "cancelled", "not-verified"] as const;
+const TASK_EVIDENCE = ["verified", "not-verified", "contradicted"] as const;
+
+function isTaskOutcome(value: string): value is (typeof TASK_OUTCOMES)[number] {
+  return (TASK_OUTCOMES as readonly string[]).includes(value);
+}
+
+function isTaskEvidence(value: string): value is (typeof TASK_EVIDENCE)[number] {
+  return (TASK_EVIDENCE as readonly string[]).includes(value);
+}
 
 /**
  * A task status in the reader's words. A status this build has no words for is shown as sent rather than hidden, so
@@ -1401,9 +1440,7 @@ export function TaskProgressCardBlock({
     <section className="cc-card" data-host-card="task-progress" data-owner="host" data-status={status}>
       <header className="cc-card-head">
         <span className="cc-card-title">{goal}</span>
-        <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
-          {taskStatusLabel(status, t)}
-        </span>
+        <PhaseBadge phase={phaseOf(TASK_PROGRESS_PHASE, status)}>{taskStatusLabel(status, t)}</PhaseBadge>
       </header>
       <div className="cc-card-body">
         {steps.length > 0 && (
@@ -1455,18 +1492,29 @@ export function TaskProgressCardBlock({
             </button>
           </div>
         ) : null}
-        {stopState === undefined || stopState.status === "pending" ? null : stopState.status === "failed" ? (
-          <p className="cc-freshness" data-task-stop-error="true">
+        {/*
+          What the Stop press did, in a live region: a confirmed stop is an ending, a stop that is only requested is still
+          on its way, and a refused one is an error the person can press again.
+        */}
+        {stopState === undefined || stopState.status === "pending" ? (
+          <LiveNote
+            phase={stopState === undefined ? undefined : "pending"}
+            className="cc-sr-only"
+            data-task-stop-pending="true"
+          >
+            {stopState === undefined ? undefined : t("blocks.task.stopSending")}
+          </LiveNote>
+        ) : stopState.status === "failed" ? (
+          <LiveNote phase="error" data-task-stop-error="true">
             {stopState.message}
-          </p>
+          </LiveNote>
         ) : (
-          <p
-            className="cc-freshness"
-            data-task-stop-outcome={stopState.state}
-            data-task-stop-confirmed={String(stopState.confirmed)}
+          <LiveNote
+            phase={stopState.confirmed ? "cancelled" : "pending"}
+            data-task-stop-outcome={stopState.state} data-task-stop-confirmed={String(stopState.confirmed)}
           >
             {stopState.confirmed ? t("blocks.task.stoppedConfirmed") : t("blocks.task.stopRequested")}
-          </p>
+          </LiveNote>
         )}
       </div>
     </section>
@@ -1493,17 +1541,25 @@ export function TaskSummaryCardBlock({
   const goal = fieldText(block.goal);
   const outcome = fieldText(block.outcome, "not-verified");
   const evidence = fieldText(block.evidence, "not-verified");
-  const durationMs = typeof block.durationMs === "number" ? block.durationMs : 0;
+  // A duration the node did not report is left out, not shown as zero seconds.
+  const durationMs = typeof block.durationMs === "number" ? block.durationMs : undefined;
   const changes = listOf(block.changes);
   const summary = fieldText(block.summary);
+  // The badge reads outcome and evidence together, so a run that says it succeeded against contradicting evidence is
+  // never drawn as a success. An outcome or verdict this build does not know is drawn plain.
+  const phase = isTaskOutcome(outcome) && isTaskEvidence(evidence) ? taskSummaryPhase(outcome, evidence) : undefined;
 
   return (
-    <section className="cc-card" data-host-card="task-summary" data-owner="host" data-outcome={outcome}>
+    <section
+      className="cc-card"
+      data-host-card="task-summary"
+      data-owner="host"
+      data-outcome={outcome}
+      data-surface-phase={phase ?? "unknown"}
+    >
       <header className="cc-card-head">
         <span className="cc-card-title">{goal}</span>
-        <span className="cc-badge" data-tone={TASK_STATUS_TONE[outcome] ?? ""}>
-          {taskStatusLabel(outcome, t)}
-        </span>
+        <PhaseBadge phase={phase}>{taskStatusLabel(outcome, t)}</PhaseBadge>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{summary}</p>
@@ -1511,8 +1567,19 @@ export function TaskSummaryCardBlock({
           <span className="cc-badge" data-tone={evidence === "verified" ? "ok" : evidence === "contradicted" ? "danger" : "warn"}>
             {evidenceLabel(evidence, t)}
           </span>
-          <span className="cc-freshness">{readableDuration(durationMs, locale, t("settings.ai.turnCap.seconds"))}</span>
+          {durationMs !== undefined && (
+            <span className="cc-freshness">{readableDuration(durationMs, locale, t("settings.ai.turnCap.seconds"))}</span>
+          )}
         </p>
+        {outcome === "succeeded" && evidence === "contradicted" ? (
+          <p className="cc-freshness" style={{ margin: 0 }} data-task-summary-warning="contradicted">
+            {t("blocks.taskSummary.contradicted")}
+          </p>
+        ) : outcome === "succeeded" && evidence !== "verified" ? (
+          <p className="cc-freshness" style={{ margin: 0 }} data-task-summary-warning="unverified">
+            {t("blocks.taskSummary.unverified")}
+          </p>
+        ) : null}
         {changes.length > 0 && (
           <ul className="cc-changes">
             {changes.map((change, index) => (
@@ -1557,19 +1624,23 @@ export function TaskOverviewCardBlock({
         <span className="cc-badge">{tasks.length}</span>
       </header>
       <div className="cc-card-body">
-        <p className="cc-freshness" style={{ margin: 0 }} data-unfinished-count={unfinished}>
-          {unfinished === 0
-            ? t("blocks.taskOverview.noneRunning")
-            : t("blocks.taskOverview.unfinishedCount").replace("{count}", String(unfinished))}
-        </p>
+        {tasks.length === 0 ? (
+          <p className="cc-freshness" style={{ margin: 0 }} data-surface-phase="empty" data-task-overview-empty="true">
+            {t("blocks.taskOverview.empty")}
+          </p>
+        ) : (
+          <p className="cc-freshness" style={{ margin: 0 }} data-unfinished-count={unfinished}>
+            {unfinished === 0
+              ? t("blocks.taskOverview.noneRunning")
+              : t("blocks.taskOverview.unfinishedCount").replace("{count}", String(unfinished))}
+          </p>
+        )}
         <ul className="cc-task-list">
           {tasks.map((task, index) => {
             const status = fieldText(task.status, "queued");
             return (
               <li key={index} data-task-status={status}>
-                <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
-                  {taskStatusLabel(status, t)}
-                </span>
+                <PhaseBadge phase={phaseOf(TASK_OVERVIEW_PHASE, status)}>{taskStatusLabel(status, t)}</PhaseBadge>
                 <span>{fieldText(task.goal)}</span>
                 <span className="cc-freshness">{readableInstant(fieldText(task.updatedAt), locale)}</span>
               </li>
@@ -1770,9 +1841,9 @@ export function ReconnectCardBlock({
     <section className="cc-card" data-host-card="reconnect" data-owner="host" data-status={status}>
       <header className="cc-card-head">
         <span className="cc-card-title">{t("blocks.reconnect.lostTo").replace("{node}", nodeLabel)}</span>
-        <span className="cc-badge" data-tone={status === "failed" ? "danger" : "warn"}>
-          {status}
-        </span>
+        <PhaseBadge phase={phaseOf(RECONNECT_PHASE, status)}>
+          {phaseOf(RECONNECT_PHASE, status) === undefined ? status : t(`blocks.reconnect.status.${status}` as MessageKey)}
+        </PhaseBadge>
       </header>
       <div className="cc-card-body">
         <dl className="cc-fields">
@@ -2667,9 +2738,9 @@ export function ControlSessionCardBlock({
       )}
       <header className="cc-card-head">
         <span className="cc-card-title">{label}</span>
-        <span className="cc-badge" data-tone={stopped ? "" : "ok"}>
+        <PhaseBadge phase={stopped ? "cancelled" : "pending"}>
           {stopped ? t("blocks.session.stopped") : t("blocks.session.running")}
-        </span>
+        </PhaseBadge>
       </header>
       <div className="cc-card-body">
         <dl className="cc-fields">
@@ -2724,23 +2795,31 @@ export function ControlSessionCardBlock({
           question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
           thing twice.
         */}
+        {/*
+          The notice sits in a live region so a press that was answered is heard; a stop that was already on the card
+          when it mounted (a reload) is shown and not announced.
+        */}
         {state?.status === "failed" ? (
-          <p className="cc-freshness" data-control-error="true">
+          <LiveNote phase="error" data-control-error="true">
             {state.message}
-          </p>
+          </LiveNote>
         ) : !running ? (
-          <p className="cc-freshness" data-control-notice="stopped">
+          <LiveNote phase="cancelled" data-control-notice="stopped">
             {state?.status === "stopped" ? t("blocks.session.stoppedByYou") : t("blocks.session.stoppedOther")}
-          </p>
+          </LiveNote>
         ) : state?.status === "taken-over" ? (
           /*
            * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
            * planned action was refused, because that is the part that makes the browser theirs.
            */
-          <p className="cc-freshness" data-control-notice="taken-over">
+          <LiveNote phase="success" data-control-notice="taken-over">
             {t("blocks.session.takenOverNotice")}
-          </p>
-        ) : null}
+          </LiveNote>
+        ) : (
+          <LiveNote phase={busy ? "pending" : undefined} className="cc-sr-only" data-control-pending="true">
+            {busy ? t("blocks.session.switching") : undefined}
+          </LiveNote>
+        )}
       </div>
     </section>
   );
