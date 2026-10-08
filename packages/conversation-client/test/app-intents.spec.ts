@@ -1,8 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { type AppIntentDecision, type AppIntentResolution, type SettingsTab } from "@clarkcant/contracts";
+import {
+  APP_INTENT_KINDS,
+  CONFIRMATION_REQUIRED_KINDS,
+  SLASH_COMMANDS,
+  type AppIntentDecision,
+  type AppIntentResolution,
+  type SettingsTab,
+} from "@clarkcant/contracts";
 
-import { NOT_DESKTOP_SAY, clickAppIntent, runAppIntent, type AppIntentHost } from "../src/app-intents.ts";
+import {
+  INTENTS_RUN_AT_ONCE,
+  NOT_DESKTOP_SAY,
+  clickAppIntent,
+  runAppIntent,
+  runAppIntentAtOnce,
+  runsAtOnce,
+  typedCommandRunAtOnce,
+  type AppIntentHost,
+} from "../src/app-intents.ts";
 
 /**
  * The one executor.
@@ -327,21 +343,46 @@ describe("a click on the page's own controls", () => {
     expect(node.ran).toHaveLength(1);
   });
 
-  it("still says the node's refusal of a click it already carried out", async () => {
-    const node = slowNode(() => ({ kind: "refused", say: "Không được." }));
-    const clicked = clickAppIntent("nav.home", node.deps);
-    node.release();
-    await clicked;
-    expect(node.ran.map((decision) => decision.kind)).toEqual(["intent", "refused"]);
+  it("leaves a trace, not a contradiction on screen, if the node ever answered otherwise for a click it already carried out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const node = slowNode(() => ({ kind: "refused", say: "Không được." }));
+      const clicked = clickAppIntent("nav.home", node.deps);
+      node.release();
+      await clicked;
+      // "Refused" said over the start screen would contradict what is on it; the node's answer is logged instead.
+      expect(node.ran.map((decision) => decision.kind)).toEqual(["intent"]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
-  it("stays home when the node cannot be asked, with nothing to correct on screen", async () => {
-    const node = slowNode(() => new Error("Failed to fetch"));
-    const clicked = clickAppIntent("nav.home", node.deps);
-    node.release();
-    await clicked;
+  it("stays home when the node cannot be asked, with nothing to correct on screen but a trace that it went unrecorded", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const node = slowNode(() => new Error("Failed to fetch"));
+      const clicked = clickAppIntent("nav.home", node.deps);
+      node.release();
+      await clicked;
+      expect(node.ran).toHaveLength(1);
+      expect(node.lookupFailures).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hands the node's own record to a caller that says its read-back, and runs it only once", async () => {
+    const recorded: AppIntentDecision[] = [];
+    const node = slowNode(() => HOME);
+    const going = runAppIntentAtOnce("nav.home", { ...node.deps, onRecorded: (decision) => recorded.push(decision) });
     expect(node.ran).toHaveLength(1);
-    expect(node.lookupFailures).toEqual([]);
+    expect(recorded).toEqual([]);
+    node.release();
+    await going;
+    expect(recorded).toEqual([HOME]);
+    expect(node.ran).toHaveLength(1);
   });
 
   it("waits for the node's decision on any other click, and says when it could not ask", async () => {
@@ -358,5 +399,21 @@ describe("a click on the page's own controls", () => {
     await failing;
     expect(unreachable.ran).toEqual([]);
     expect(unreachable.lookupFailures).toEqual([1]);
+  });
+});
+
+describe("what the page carries out before the node has answered", () => {
+  it("never includes an intent the node may ask the person to confirm", () => {
+    for (const kind of INTENTS_RUN_AT_ONCE) expect(CONFIRMATION_REQUIRED_KINDS.includes(kind), kind).toBe(false);
+    for (const kind of APP_INTENT_KINDS) {
+      if (CONFIRMATION_REQUIRED_KINDS.includes(kind)) expect(runsAtOnce(kind), kind).toBe(false);
+    }
+  });
+
+  it("is /new among the typed commands, the same intent as the logo, and nothing else", () => {
+    expect(typedCommandRunAtOnce({ command: "new", argument: "" })).toBe("nav.home");
+    const others = SLASH_COMMANDS.filter((command) => command !== "new");
+    for (const command of others) expect(typedCommandRunAtOnce({ command, argument: "" }), command).toBeUndefined();
+    expect(typedCommandRunAtOnce(undefined)).toBeUndefined();
   });
 });

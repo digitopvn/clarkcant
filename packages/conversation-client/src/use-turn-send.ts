@@ -14,6 +14,7 @@ import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followScrollBehavior, followsAfterScroll, reportScroll, scrollAsTranscript, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
+import { runAppIntentAtOnce, typedCommandRunAtOnce } from "./app-intents.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -98,6 +99,11 @@ export interface TurnSendDeps {
   setDatasets: (datasets: Record<string, ResolvedDataset>) => void;
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
+  /**
+   * The one executor, run now rather than after the next render: `/new` during a reply goes home before anything typed
+   * after it can land in the conversation being left.
+   */
+  runIntent: (decision: AppIntentDecision) => void;
   /** A short remark beside the composer, such as why a command typed during a reply has to wait for it. */
   onNotice: (text: string) => void;
   /**
@@ -140,6 +146,7 @@ export function useTurnSend({
   setDatasets,
   setSnapshots,
   setPendingIntent,
+  runIntent,
   onNotice,
   clearDraft,
   onSendFailed,
@@ -233,11 +240,26 @@ export function useTurnSend({
           if (slash !== undefined) onNotice(t("intents.commandWaits").replace("{command}", `/${slash.command}`));
           return;
         }
+        /*
+         * `/new` is the logo: the new conversation starts now, through the same path, and the node is told at the same
+         * time. Waiting for its answer left a window in which a message typed next was checked as a command in the
+         * conversation being left, and the late restart then emptied the composer. The node's read-back still says
+         * that the reply goes on in the conversation left behind, which /sessions reopens.
+         */
+        const atOnce = typedCommandRunAtOnce(slash);
+        if (atOnce !== undefined) {
+          void runAppIntentAtOnce(atOnce, {
+            ask: () => client.sendAppIntent({ text: trimmed, source: "chat", conversationId }),
+            run: runIntent,
+            onRecorded: (decision) => onNotice(decision.readBack),
+          });
+          return;
+        }
         const decision = await client
           .sendAppIntent({ text: trimmed, source: "chat", conversationId })
           .catch(() => undefined);
         /*
-         * `/settings` and `/new` are app intents and come back as one. Any other slash command is answered in the
+         * `/settings` is an app intent and comes back as one. Any other slash command is answered in the
          * conversation, which has to wait for this reply: it stays in the draft, and the person is told why, rather than
          * Enter seeming to do nothing.
          */
@@ -246,9 +268,6 @@ export function useTurnSend({
           return;
         }
         clearDraft();
-        // `/new` leaves a reply that is still being written. Nothing on the new start screen would say so, so the node's
-        // read-back does: the reply goes on in the conversation left behind, which /sessions reopens.
-        if (slash?.command === "new" && decision.kind === "intent") onNotice(decision.readBack);
         setPendingIntent(decision);
         return;
       }
@@ -379,6 +398,7 @@ export function useTurnSend({
       resetHero,
       setConversationId,
       setPendingIntent,
+      runIntent,
       t,
       timeline,
     ],
