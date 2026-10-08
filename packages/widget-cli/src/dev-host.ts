@@ -133,6 +133,31 @@ function isPackageFrameRequest(request: IncomingMessage, framePrefix: string): b
 }
 
 /**
+ * Why a request is refused before it reaches any route, or `undefined` when it may be answered.
+ *
+ * Binding to `127.0.0.1` keeps other machines out, but not other websites. A page can point its own hostname at
+ * `127.0.0.1` (DNS rebinding) and then, as a same-origin page, read the shell's state with the bridge nonce, open the
+ * event stream and post controls. Its requests still carry its own name in `Host`, so only the loopback names this
+ * host listens on, with the port the request arrived on, are answered, the way Vite's `server.allowedHosts` refuses
+ * any other name. A state-changing request that names its `Origin` must come from one of those same addresses: a
+ * browser always names it on a cross-site `POST`, and the shell's own requests are same-origin. The sandboxed frame
+ * (`Origin: null`) never posts here; the shell relays what it says.
+ */
+function refusedRequest(request: IncomingMessage): string | undefined {
+  const port = String(request.socket.localPort ?? "");
+  const authorities = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+  if (!authorities.includes(request.headers.host?.toLowerCase() ?? "")) {
+    return "refused: this dev host answers only to its loopback address\n";
+  }
+  const origin = request.headers.origin;
+  const safe = request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS";
+  if (!safe && origin !== undefined && !authorities.some((authority) => origin.toLowerCase() === `http://${authority}`)) {
+    return "refused: a change to this dev host must come from its own page\n";
+  }
+  return undefined;
+}
+
+/**
  * The in-page script.
  *
  * It collects facts and forwards control changes; every decision is a function in `dev-shell.ts`. Kept small on
@@ -795,6 +820,13 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   };
 
   const server: Server = createServer(async (request, response) => {
+    // Every path, the frame's and Vite's included: the shell page, the stream and `/dev/api/*` all lead to the nonce.
+    const refusal = refusedRequest(request);
+    if (refusal !== undefined) {
+      response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      response.end(refusal);
+      return;
+    }
     const url = new URL(request.url ?? "/", "http://localhost");
     const path = url.pathname;
     const framePath = path.startsWith(`${framePrefix}/`) ? path.slice(framePrefix.length) : undefined;
