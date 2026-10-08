@@ -3013,8 +3013,9 @@ Chính sách thực thi quyết định mỗi lần cài như mọi lần cài k
 của chính Clark, nên chế độ có kiểm soát hỏi trước lần cài đầu tiên của nó; còn phiên bắt đầu qua route của chủ máy là
 yêu cầu của bạn. Khi chế độ yêu cầu hỏi, lần cài đầu tiên là một câu hỏi, và mỗi lần dựng làm đổi những gì gói tiếp cận cũng vậy:
 reach đã khai báo, tài nguyên, lane của facet, các facet, quyền, hoặc các capability gói yêu cầu. Một lần dựng chỉ đổi mã
-hay UI dùng lại câu trả lời đó và chạy ngay. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp
-cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
+hay UI dùng lại câu trả lời đó và chạy ngay; khi bạn duyệt một lần dựng trong hộp thư trong lúc đã có những lần dựng mới
+hơn đang chờ, lần dựng bạn duyệt được cài trước, rồi đến lần dựng mới nhất khi câu trả lời của bạn bao trùm những gì nó
+tiếp cận. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
 đã duyệt trong hộp thư thì đã được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một
 thứ khác trên node: một gói đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
 

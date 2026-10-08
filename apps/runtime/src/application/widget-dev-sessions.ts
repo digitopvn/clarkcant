@@ -38,7 +38,7 @@ import { containingRoot, ownedResources } from "../preflight.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
-import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
+import { INSTALL_APPROVAL_STREAM, installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
 import { developFolderCard, type ProposedFolder } from "./widget-dev-card.ts";
 import {
   WIDGET_DEV_DIRECTORY_SOURCE,
@@ -140,6 +140,13 @@ export interface WidgetDevSessions {
 
 /** How often a session waiting on the person's answer looks for it, so an approval in the inbox is followed promptly. */
 const ANSWER_POLL_MS = 2_000;
+
+/**
+ * The longest a session waits, after the person grants its question in the inbox, for the install that grant runs to
+ * end. Until then it installs nothing newer and prunes nothing (`answerInstalling`). Past it, an install whose ending was
+ * never recorded is taken as over, so a session never waits on it for good.
+ */
+const ANSWER_INSTALL_WAIT_MS = 60_000;
 
 /**
  * How a superseded snapshot is removed: the promise form of `rm`, retrying a file still held open (on Windows) after 100,
@@ -278,6 +285,29 @@ export function createWidgetDevSessions(
     if (row === undefined) return undefined;
     const decision = row.decision === "pending" && row.expires_at <= nowInstant() ? "expired" : row.decision;
     return { decision, operationDigest: row.operation_digest };
+  };
+
+  /**
+   * Whether the install a grant in the inbox runs is still going: the approval is granted, no outcome of that install is
+   * recorded yet (`INSTALL_APPROVAL_STREAM` holds the question and, once the install ends, how it ended), and the grant
+   * is recent (`ANSWER_INSTALL_WAIT_MS`). That install copies the generation it was asked about from the session's
+   * snapshot, so installing a newer build meanwhile would race it, and the prune after would remove what it copies.
+   */
+  const answerInstalling = (approvalId: string): boolean => {
+    const node = services();
+    const decided = oneRow<{ decided_at: string | null }>(node.runtime.db, "SELECT decided_at FROM approvals WHERE approval_id = ?", approvalId)?.decided_at;
+    if (decided === undefined || decided === null || Date.now() - Date.parse(decided) > ANSWER_INSTALL_WAIT_MS) return false;
+    const ended = oneRow<{ found: number }>(
+      node.runtime.db,
+      `SELECT 1 AS found FROM events
+        WHERE source_node_id = ? AND stream = ? AND json_extract(document, '$.approvalId') = ?
+          AND json_extract(document, '$.result') <> 'asked'
+        LIMIT 1`,
+      node.runtime.identity.nodeId,
+      INSTALL_APPROVAL_STREAM,
+      approvalId,
+    );
+    return ended === undefined;
   };
 
   const installDeps = () => {
@@ -539,6 +569,8 @@ export function createWidgetDevSessions(
       const scope = devConsentScopeOf(asked.listing);
       if (approval?.decision === "granted" && approval.operationDigest === scope) {
         const active = activeGeneration(installDeps(), asked.listing.packageId, services().runtime.identity.nodeId);
+        // The inbox is still installing what the person granted: the session looks again on its next poll, still asking.
+        if (active?.snapshotDigest !== asked.generation.digest && answerInstalling(asked.approvalId)) return;
         const approvalId = asked.approvalId;
         stored = update(sessionId, (current) => {
           const { pending: _answered, ...rest } = current;

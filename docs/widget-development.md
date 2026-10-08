@@ -3027,8 +3027,9 @@ The execution policy decides each install as it decides any other. A session Cla
 proposal, so guarded mode asks before its first install, while a session started on the owner's route is your request. When the
 mode asks, the first install is a question, and so is every build that changes what the package reaches: declared
 reach, resources, facet lanes, facets, permissions, or the capabilities it requests. A build that only changes code or UI
-reuses that answer and runs at once. A mode that does not ask runs every build. When such a build reaches more than the
-one before it, and nobody was asked about it, the conversation says so with what it added; a build you approved in the
+reuses that answer and runs at once; when you approve a build in the inbox while newer ones are waiting, the build you
+approved is installed first, and the newest one after it when your answer covers what it reaches. A mode that does not
+ask runs every build. When such a build reaches more than the one before it, and nobody was asked about it, the conversation says so with what it added; a build you approved in the
 inbox was already shown to you with that. A build is also refused when its package id belongs to something else on the
 node: a listed package, another session, or a package installed the ordinary way.
 
