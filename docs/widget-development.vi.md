@@ -2980,7 +2980,9 @@ sẽ bị từ chối.
 Các module của frame chỉ được phục vụ dưới một đường dẫn mang nonce riêng của tiến trình dev host
 (`/dev/modules/<nonce>/`), và origin mờ `null` của frame chỉ được trả lời ở đó và dưới đường dẫn
 `/dev/frame/<nonce>/` của chính frame. Các đường dẫn trần `/@fs/`, `/@id/`, `/@vite/` và `/src/` của Vite trả về `404`,
-và không module nào mang `Access-Control-Allow-Origin: *`. Vì vậy một trang web, kể cả khi nằm trong iframe sandbox của
+và không module nào mang `Access-Control-Allow-Origin: *`. CLI đã cài phục vụ các runtime frame đã đóng gói của bản
+phát hành dưới cùng nonce đó, `/dev/frame/<nonce>/widget-runtime.js` cho một package và
+`/dev/frame/<nonce>/catalog-runtime.js` cho một widget catalog; các đường dẫn trần `/runtime/` trả về `404`. Vì vậy một trang web, kể cả khi nằm trong iframe sandbox của
 chính nó, không thể đọc workspace của bạn qua dev host. Trong một bản checkout, Vite chỉ đọc
 `packages/` và `node_modules/` của workspace, không đọc phần còn lại của repository; CLI đã cài chỉ đọc thư mục của chính nó. Một thay đổi điều khiển gửi tới `/dev/api/action` mà không phải `{ kind, value }` với
 một `kind` đã biết sẽ bị từ chối bằng `400`, và shell giữ nguyên trạng thái.

@@ -820,6 +820,20 @@ describe("the dev host serving a catalog widget", () => {
     }
   });
 
+  it("answers no opaque origin on the bare runtime path, which any website can name", async () => {
+    const { url, stop } = await started("canvas.note@1");
+    try {
+      for (const path of ["/runtime/catalog-runtime.js", "/runtime/dev-frame-runtime.js"]) {
+        const answer = await fetch(new URL(path, url), { headers: { origin: "null", "sec-fetch-dest": "script" } });
+        await answer.text();
+        expect(answer.headers.get("access-control-allow-origin"), path).toBeNull();
+        expect(answer.status, path).toBe(404);
+      }
+    } finally {
+      await stop();
+    }
+  });
+
   it("refuses an id the catalog does not have, by name", async () => {
     await expect(startDevHost({ builtin: "canvas.nope@1", port: 0, watchFiles: false })).rejects.toThrow(
       /canvas\.nope@1 is not a definition in the catalog/,
