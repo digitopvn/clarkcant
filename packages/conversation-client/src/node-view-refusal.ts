@@ -13,6 +13,15 @@ export function refusalReason(error: unknown): string {
 }
 
 /**
+ * A refusal as one sentence in the reader's language: `withReason` filled with the node's reason (`refusalReason`), or
+ * `fallback` alone when the failure carried no sentence of its own (it was not an `Error`).
+ */
+export function refusalSentence(error: unknown, t: (key: MessageKey) => string, withReason: MessageKey, fallback: MessageKey): string {
+  if (!(error instanceof Error)) return t(fallback);
+  return fillMessage(t(withReason), { reason: refusalReason(error) });
+}
+
+/**
  * The words for an answer from the node this app does not read (`NodeViewUnreadable`), in the reader's language, or
  * undefined for any other failure.
  *

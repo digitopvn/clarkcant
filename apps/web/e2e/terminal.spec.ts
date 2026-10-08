@@ -123,6 +123,22 @@ test("a shell ended by a press is said aloud, and the same card after a reload s
   await expect(stateNote(again)).toHaveAttribute("data-surface-live", "off");
 });
 
+test("a terminal just asked for that cannot be reached says so at once, rather than showing it silently", async ({ page }) => {
+  // The card's socket is closed before the shell is attached: the first state this new card settles on is a failure.
+  await page.routeWebSocket((url) => url.pathname === "/terminal", (socket) => socket.close());
+  await openApp(page);
+  const composer = page.locator("textarea[aria-label='Nhập tin nhắn']");
+  await composer.click();
+  await composer.fill("mở terminal giúp tôi");
+  await composer.press("Enter");
+  const card = page.locator("[data-host-card='terminal-session']").last();
+  await expect(card).toHaveAttribute("data-terminal-mode", "live", { timeout: 20_000 });
+  await expect(card.locator("[data-terminal-notice='disconnected']")).toBeVisible({ timeout: 15_000 });
+  // Asked for just now, so its first state is news: an error interrupts. Only a card drawn again from history is quiet.
+  await expect(card.locator(".cc-terminal-status .cc-live-note").first()).toHaveAttribute("data-surface-live", "assertive");
+  await expect(card.locator("[role='alert'] [data-terminal-notice='disconnected']")).toBeVisible();
+});
+
 test("the card fits a narrow window without scrolling the page sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "reduce" });

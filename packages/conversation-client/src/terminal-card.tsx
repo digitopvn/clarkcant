@@ -41,6 +41,8 @@ import {
 
 export interface TerminalCardActions {
   onTerminalShare?: (input: { text: string }) => void;
+  /** Terminals opened by a message that arrived while the person was here (`BlockActions.freshTerminalIds`). */
+  freshTerminalIds?: readonly string[];
 }
 
 type Viewing = { kind: "own" } | { kind: "terminal"; terminalId: string; title: string } | { kind: "session"; ref: string; title: string };
@@ -204,7 +206,8 @@ export function TerminalCardBlock({
     );
   }
 
-  return <LiveTerminal terminalId={terminalId} title={title} cwd={cwd} client={client} share={share} t={t} />;
+  const fresh = actions?.freshTerminalIds?.includes(terminalId) === true;
+  return <LiveTerminal terminalId={terminalId} title={title} cwd={cwd} client={client} share={share} fresh={fresh} t={t} />;
 }
 
 function LiveTerminal({
@@ -213,6 +216,7 @@ function LiveTerminal({
   cwd,
   client,
   share,
+  fresh,
   t,
 }: {
   terminalId: string;
@@ -220,6 +224,8 @@ function LiveTerminal({
   cwd: string;
   client: GatewayClient;
   share: (input: { text: string }) => void;
+  /** The person asked for this terminal while here, so the state it first settles on is news. */
+  fresh: boolean;
   t: (key: MessageKey) => string;
 }): ReactElement {
   const screenRef = useRef<HTMLDivElement | null>(null);
@@ -243,11 +249,13 @@ function LiveTerminal({
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
   /**
-   * True until the card first settles after it mounts. Whatever the shell is in then — gone, exited, unreachable, the
-   * terminal code that failed to load — was already true before this card was drawn (a reload, a scroll back), so it
-   * is shown and not announced. Every later change is announced, a load that fails after Reconnect included.
+   * For a card drawn again from history (a reload, a conversation opened again, a scroll back), true until it first
+   * settles after it mounts: whatever the shell is in then — gone, exited, unreachable, the terminal code that failed to
+   * load — was already true before this card was drawn, so it is shown and not announced. A terminal the person just
+   * asked for (`fresh`) announces its first state too, a failure to load or connect included. Every later change is
+   * announced, a load that fails after Reconnect included.
    */
-  const [restoring, setRestoring] = useState(true);
+  const [restoring, setRestoring] = useState(!fresh);
   const settling = phase.kind === "loading" || phase.kind === "connecting";
   useEffect(() => {
     if (!settling) setRestoring(false);
@@ -634,8 +642,8 @@ function LiveTerminal({
       {/*
         The terminal's state and a failed kill, each in live regions mounted with the card: losing the shell or failing
         to stop it interrupts, and anything else waits its turn. The state is read from the node after the card mounts,
-        so the state it first settles on (`restoring`) is shown without being said: it was already true before the card
-        was drawn. A kill only fails after a press, so its failure is always said.
+        so on a card drawn again from history the state it first settles on (`restoring`) is shown without being said:
+        it was already true before the card was drawn. A kill only fails after a press, so its failure is always said.
       */}
       <div className="cc-terminal-status">
         <LiveNote

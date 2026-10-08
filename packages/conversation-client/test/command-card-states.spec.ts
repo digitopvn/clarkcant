@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { COMMAND_BADGE_PHASE, type CommandCard, type ProviderSignInView, SIGN_IN_PHASE, instantSchema } from "@clarkcant/contracts";
 
-import { GatewayError } from "../src/api.ts";
+import { GatewayError, type Timeline } from "../src/api.ts";
 import { type BlockActions, type CommandActionState, CredentialCardBlock, type CredentialSaveStatus, type FolderEntryReason } from "../src/blocks.tsx";
 import { COMMAND_ACTION_PHASE, CommandCardBlock, latestCommandAction, settleCommandAction } from "../src/command-card.tsx";
 import { LocaleProvider } from "../src/i18n/locale-context.tsx";
@@ -14,11 +14,19 @@ import { SignInPanel, signInStatusText } from "../src/provider-sign-in-panel.tsx
 import { TERMINAL_NOTICE_PHASE, TERMINAL_SHELL_PHASE, terminalNotice } from "../src/terminal-card.tsx";
 import {
   type CommandPressDeps,
+  type ConversationOpening,
+  artifactOpenRefused,
+  browserSessionRefused,
   commandPresses,
   developStartRefused,
+  feedbackRefusalReason,
   forgetRefused,
+  freshTerminalIds,
+  installRefusalState,
+  nextConversationOpening,
   settleCredentialSave,
   submitCredentialSave,
+  taskStopRefused,
 } from "../src/use-block-actions.ts";
 import { signInStartRefused, signOutRefused, signOutSettled } from "../src/use-provider-sign-ins.ts";
 
@@ -192,6 +200,76 @@ describe("a refused /develop start or folder Forget", () => {
         message: t("commandCard.develop.forgetFailed").replace("{reason}", "that folder is outside what Clark may use"),
       });
     }
+  });
+});
+
+describe("a refused task stop, artifact reopen, browser-session change, feedback press or install", () => {
+  const refusal = new GatewayError(409, "TASK_NOT_RUNNING", "the task already ended");
+
+  it("says the node's reason in the reader's words, never 'CODE: message'", () => {
+    const messageOf = (state: object): unknown => (state as { message?: unknown }).message;
+    const cases: [(t: (key: MessageKey) => string) => object, MessageKey][] = [
+      [(t) => taskStopRefused(refusal, t), "shell.task.stopRefused"],
+      [(t) => artifactOpenRefused(refusal, t), "shell.artifact.openRefused"],
+      [(t) => browserSessionRefused(refusal, t), "shell.control.sessionChangeRefused"],
+      [(t) => installRefusalState(refusal, undefined, t), "shell.package.installRefused"],
+    ];
+    for (const t of [en, vi]) {
+      for (const [state, key] of cases) {
+        expect(messageOf(state(t))).toBe(t(key).replace("{reason}", "the task already ended"));
+        expect(messageOf(state(t))).not.toContain("TASK_NOT_RUNNING");
+      }
+    }
+    expect(taskStopRefused(refusal, en).status).toBe("failed");
+    expect(artifactOpenRefused(refusal, en).status).toBe("failed");
+    expect(browserSessionRefused(refusal, en).status).toBe("failed");
+    expect(installRefusalState(refusal, undefined, en).status).toBe("refused");
+  });
+
+  it("gives the feedback card the node's reason without its code, for its own sentence around it", () => {
+    expect(feedbackRefusalReason(refusal, en)).toBe("the task already ended");
+    expect(feedbackRefusalReason(new Error("offline"), en)).toBe("offline");
+    expect(feedbackRefusalReason("offline", vi)).toBe(vi("commandCard.failed"));
+  });
+
+  it("says the surface's own words alone when the failure carried no sentence", () => {
+    expect(taskStopRefused("offline", vi)).toEqual({ status: "failed", message: vi("shell.task.stopFailed") });
+    expect(artifactOpenRefused("offline", vi)).toEqual({ status: "failed", message: vi("shell.artifact.openFailed") });
+    expect(browserSessionRefused("offline", vi)).toEqual({ status: "failed", message: vi("shell.control.sessionChangeFailed") });
+  });
+});
+
+describe("which terminal cards the person just asked for", () => {
+  const terminalMessage = (messageId: string, createdAt: string, terminalId: string) => ({
+    messageId,
+    role: "assistant" as const,
+    createdAt,
+    blocks: [{ type: "terminal-session-card", owner: "host", terminalId }],
+  });
+  const timelineOf = (conversationId: string, messages: ReturnType<typeof terminalMessage>[]): Timeline =>
+    ({ conversationId, cursor: 0, messages, pins: [], instances: [], snapshots: [], metadata: { messageCount: messages.length, taskCount: 0, updatedAt: "" }, activeTaskIds: [] }) as Timeline;
+  const old = terminalMessage("m1", "2026-10-08T10:00:00.000Z", "term_old");
+  const later = terminalMessage("m2", "2026-10-08T10:05:00.000Z", "term_new");
+
+  it("counts every terminal as asked for in a conversation started on this page", () => {
+    const opening = nextConversationOpening({ kind: "new" }, "c1", timelineOf("c1", [old]));
+    expect(freshTerminalIds(timelineOf("c1", [old]), opening)).toEqual(["term_old"]);
+  });
+
+  it("counts a reloaded conversation's terminals as history, and one that arrives after as asked for", () => {
+    let opening: ConversationOpening = { kind: "loading", conversationId: "c1" };
+    expect(freshTerminalIds(undefined, nextConversationOpening(opening, "c1", undefined))).toEqual([]);
+    opening = nextConversationOpening(opening, "c1", timelineOf("c1", [old]));
+    expect(freshTerminalIds(timelineOf("c1", [old]), opening)).toEqual([]);
+    // Settled: a later page (an answer, an older page read in front) leaves what was held at opening alone.
+    opening = nextConversationOpening(opening, "c1", timelineOf("c1", [old, later]));
+    expect(freshTerminalIds(timelineOf("c1", [old, later]), opening)).toEqual(["term_new"]);
+  });
+
+  it("counts everything as asked for once the page leaves the conversation it opened (/new, or one that is gone)", () => {
+    const opening = nextConversationOpening({ kind: "loading", conversationId: "c1" }, undefined, undefined);
+    expect(opening).toEqual({ kind: "new" });
+    expect(freshTerminalIds(timelineOf("c2", [old]), nextConversationOpening(opening, "c2", timelineOf("c2", [old])))).toEqual(["term_old"]);
   });
 });
 

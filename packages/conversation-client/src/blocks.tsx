@@ -692,6 +692,12 @@ export interface BlockActions extends ModelPickerPort {
    */
   onTerminalShare?: (input: { text: string }) => void;
   /**
+   * Terminals a message that arrived while the person was here opened (`freshTerminalIds`): such a card announces the
+   * state it first settles on, a failure included. Any other terminal card was drawn again from history, so its first
+   * state is shown and not announced.
+   */
+  freshTerminalIds?: readonly string[];
+  /**
    * A button on a slash command's card (`command-card`): open a conversation, choose a thinking level, sign in to or
    * out of a provider. Carried out through the capability the rest of the app uses for the same thing; absent in a
    * snapshot, where the card shows what it listed and offers nothing to press.

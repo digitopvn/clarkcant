@@ -15,7 +15,7 @@ import { settleCommandAction } from "./command-card.tsx";
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
-import { nodeViewRefusalText, refusalReason } from "./node-view-refusal.ts";
+import { nodeViewRefusalText, refusalReason, refusalSentence } from "./node-view-refusal.ts";
 import { signInStartRefused, signOutRefused, signOutSettled, useProviderSignIns } from "./use-provider-sign-ins.ts";
 import { useModelPickerPort } from "./use-model-picker-port.ts";
 import type {
@@ -59,8 +59,8 @@ export interface BlockActionsDeps {
  * A press that sent the listing's `contentDigest` and was answered `DIGEST_MISMATCH` came from a list made before the
  * files changed: pressing the same row again would send the same digest and be refused the same way, and sending none
  * would install files nobody was shown, so the row goes out of date (`stale`) and offers a new search instead. Any
- * other refusal shows the node's own reason, where it gave one: it is the only thing that can say *why* the install
- * stopped.
+ * other refusal says the node's own reason, where it gave one, in the reader's words: it is the only thing that can say
+ * *why* the install stopped.
  */
 export function installRefusalState(
   error: unknown,
@@ -70,7 +70,36 @@ export function installRefusalState(
   if (contentDigest !== undefined && error instanceof GatewayError && error.code === "DIGEST_MISMATCH") {
     return { status: "stale", message: t("shell.package.filesChangedSinceListing"), staleContentDigest: contentDigest };
   }
-  return { status: "refused", message: error instanceof Error ? error.message : t("shell.package.installFailed") };
+  return { status: "refused", message: refusalSentence(error, t, "shell.package.installRefused", "shell.package.installFailed") };
+}
+
+/**
+ * What a Stop that did not reach the node leaves beside the task: the node's reason in the reader's words. Nothing
+ * pretends the request landed, because a stop that did not reach the node has not stopped anything.
+ */
+export function taskStopRefused(error: unknown, t: (key: MessageKey) => string): TaskStopState {
+  return { status: "failed", message: refusalSentence(error, t, "shell.task.stopRefused", "shell.task.stopFailed") };
+}
+
+/** What a refused reopen of an artifact says: the node's reason in the reader's words. */
+export function artifactOpenRefused(error: unknown, t: (key: MessageKey) => string): ArtifactOpenState {
+  return { status: "failed", message: refusalSentence(error, t, "shell.artifact.openRefused", "shell.artifact.openFailed") };
+}
+
+/**
+ * What a refused take over or hand back says on a browser session: refused rather than reported as done, because a
+ * takeover that silently did nothing would leave the person believing they have the wheel while the agent keeps driving.
+ */
+export function browserSessionRefused(error: unknown, t: (key: MessageKey) => string): ControlSessionActionState {
+  return { status: "failed", message: refusalSentence(error, t, "shell.control.sessionChangeRefused", "shell.control.sessionChangeFailed") };
+}
+
+/**
+ * The reason a feedback press did not go through, for the card's own sentence around it (`feedback.failed`): the node's
+ * reason without its code.
+ */
+export function feedbackRefusalReason(error: unknown, t: (key: MessageKey) => string): string {
+  return error instanceof Error ? refusalReason(error) : t("commandCard.failed");
 }
 
 /**
@@ -108,11 +137,12 @@ export function developOutcomeMessage(view: WidgetDevSessionRead, t: (key: Messa
  *
  * An answer the app cannot read (`NodeViewUnreadable`) only arrives once the node said yes, so the session started and
  * runs on the node: the card says so, and that this app cannot read its state, with the version advice, rather than
- * "failed" with the schema's text. Any other error is a start that did not happen, said as the node's reason.
+ * "failed" with the schema's text. What the session is doing is not known, so the state is `unknown` (drawn partial),
+ * never a success. Any other error is a start that did not happen, said as the node's reason.
  */
 export function developStartRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
   const unread = nodeViewRefusalText(error, t, "commandCard.develop.startedUnread");
-  if (unread !== undefined) return { status: "done", message: unread };
+  if (unread !== undefined) return { status: "unknown", message: unread };
   return { status: "failed", message: fillMessage(t("commandCard.develop.startFailed"), { reason: refusalReason(error) }) };
 }
 
@@ -147,6 +177,49 @@ export function settleCredentialSave(current: CredentialSaveStatus | undefined, 
   const read = (status: CredentialSaveStatus): SurfaceStatus => ({ phase: status.phase, attempt: status.attempt, freshness: { kind: "snapshot" } });
   const shown = read(current);
   return settleSurfaceStatus(shown, read(incoming)) === shown ? current : incoming;
+}
+
+/**
+ * What this page held of the conversation when it opened it, so a card can tell a message it is drawing again (a reload,
+ * a conversation opened from the list) from one that arrived while the person was here.
+ *
+ * - `loading`: an existing conversation was opened and its first page has not arrived yet.
+ * - `held`: its first page arrived; `through` is the node's time of the newest message in it. Anything newer arrived in
+ *   this page session, and anything at or before it (older pages included) is history.
+ * - `new`: the conversation started here, or the page moved on from the one it opened (`/new`, one that no longer
+ *   exists), so every message arrived in this page session.
+ */
+export type ConversationOpening =
+  | { kind: "loading"; conversationId: string }
+  | { kind: "held"; conversationId: string; through: number }
+  | { kind: "new" };
+
+export function nextConversationOpening(
+  current: ConversationOpening,
+  conversationId: string | undefined,
+  timeline: Timeline | undefined,
+): ConversationOpening {
+  if (current.kind === "new") return current;
+  if (conversationId !== current.conversationId) return { kind: "new" };
+  if (current.kind === "held" || timeline === undefined || timeline.conversationId !== conversationId) return current;
+  const through = timeline.messages.reduce((newest, message) => Math.max(newest, Date.parse(message.createdAt)), Number.NEGATIVE_INFINITY);
+  return { kind: "held", conversationId, through };
+}
+
+/**
+ * Terminals a message that arrived in this page session opened: the person just asked for them, so the state each card
+ * first settles on (a failure included) is news and is announced. A terminal only in history is not.
+ */
+export function freshTerminalIds(timeline: Timeline | undefined, opening: ConversationOpening): string[] {
+  if (timeline === undefined || opening.kind === "loading") return [];
+  const fresh: string[] = [];
+  for (const message of timeline.messages) {
+    if (opening.kind === "held" && !(Date.parse(message.createdAt) > opening.through)) continue;
+    for (const block of message.blocks) {
+      if (block.type === "terminal-session-card" && typeof block.terminalId === "string") fresh.push(block.terminalId);
+    }
+  }
+  return fresh;
 }
 
 type RowStates<T> = Readonly<Record<string, T>>;
@@ -362,6 +435,16 @@ export function useBlockActions({
 }: BlockActionsDeps): BlockActions {
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
 
+  /**
+   * Which terminals the person asked for while here (`freshTerminalIds`). Kept across renders and advanced during render:
+   * the next value is a pure function of the last one and the present timeline, and gives itself back once settled.
+   */
+  const opening = useRef<ConversationOpening>(conversationId === undefined ? { kind: "new" } : { kind: "loading", conversationId });
+  const freshTerminals = useMemo(() => {
+    opening.current = nextConversationOpening(opening.current, conversationId, timeline);
+    return freshTerminalIds(timeline, opening.current);
+  }, [conversationId, timeline]);
+
   const decideApproval = useCallback(
     (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => {
       if (conversationId === undefined) return;
@@ -523,17 +606,8 @@ export function useBlockActions({
             ...current,
             [taskId]: { status: "requested", state: result.state, confirmed: result.confirmed },
           })),
-        (error: unknown) =>
-          // Reported beside the control that caused it, and the task is left alone: nothing here
-          // pretends the request landed, because a stop that did not reach the node has not stopped
-          // anything.
-          setTaskStop((current) => ({
-            ...current,
-            [taskId]: {
-              status: "failed",
-              message: error instanceof Error ? error.message : t("shell.task.stopFailed"),
-            },
-          })),
+        // Reported beside the control that caused it, and the task is left alone.
+        (error: unknown) => setTaskStop((current) => ({ ...current, [taskId]: taskStopRefused(error, t) })),
       );
     },
     [client, t],
@@ -568,14 +642,7 @@ export function useBlockActions({
             },
           }));
         },
-        (error: unknown) =>
-          setArtifactOpen((current) => ({
-            ...current,
-            [artifactId]: {
-              status: "failed",
-              message: error instanceof Error ? error.message : t("shell.artifact.openFailed"),
-            },
-          })),
+        (error: unknown) => setArtifactOpen((current) => ({ ...current, [artifactId]: artifactOpenRefused(error, t) })),
       );
     },
     [client, t],
@@ -654,16 +721,7 @@ export function useBlockActions({
                 ? { status: "taken-over", leaseEpoch: result.session.leaseEpoch }
                 : { status: "stopped" },
           })),
-        (error: unknown) =>
-          // Refused rather than reported as done: a takeover that silently did nothing would leave
-          // the user believing they have the wheel while the agent keeps driving.
-          setControlSession((current) => ({
-            ...current,
-            [sessionId]: {
-              status: "failed",
-              message: error instanceof Error ? error.message : t("shell.control.sessionChangeFailed"),
-            },
-          })),
+        (error: unknown) => setControlSession((current) => ({ ...current, [sessionId]: browserSessionRefused(error, t) })),
       );
     },
     [client, t],
@@ -733,7 +791,7 @@ export function useBlockActions({
   );
   const failFeedback = useCallback(
     (cardId: string, error: unknown) =>
-      settleFeedback(cardId, { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
+      settleFeedback(cardId, { status: "failed", message: feedbackRefusalReason(error, t) }),
     [settleFeedback, t],
   );
 
@@ -775,7 +833,7 @@ export function useBlockActions({
           (error: unknown) =>
             settleFeedback(cardId, {
               status: "failed",
-              message: error instanceof Error ? error.message : t("commandCard.failed"),
+              message: feedbackRefusalReason(error, t),
               ...(acting === undefined ? {} : { reportId: acting }),
               ...(requestKey === undefined ? {} : { requestKey }),
             }),
@@ -840,6 +898,7 @@ export function useBlockActions({
       controlSession,
       // A terminal's result goes back the way a typed reply does, for the reason forms do.
       onTerminalShare: ({ text }) => void send(text),
+      freshTerminalIds: freshTerminals,
       onCommandAction: presses.press,
       commandAction,
       signIns,
@@ -869,6 +928,7 @@ export function useBlockActions({
       cancelSignIn,
       reattachSignIn,
       folderEntries,
+      freshTerminals,
       commandAction,
       presses,
       signIns,
