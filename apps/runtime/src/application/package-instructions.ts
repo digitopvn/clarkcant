@@ -108,7 +108,10 @@ export function readPackageInstructions(deps: Pick<PackageInstructionsDeps, "dat
   if (listed === undefined) {
     return { ok: false, code: "UNREADABLE", message: `${pkg.packageId}@${pkg.version} is not in the directory, so this node cannot locate its files` };
   }
-  const read = installedInstructions({ source: resolveLocalSource(listed, join(deps.dataDir, "package-cache"), pkg) });
+  const read = installedInstructions({
+    source: resolveLocalSource(listed, join(deps.dataDir, "package-cache"), pkg),
+    skippedAtInstall: pkg.skippedFacets,
+  });
   // A package this node could not read is asked again next time; one it read is the same until its digest changes.
   if (read.ok) {
     reads.set(key, read);

@@ -124,7 +124,7 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
     // The declared identity, as the widget listing reports it: a local install records its path as the id.
     const packageId = listed.packageId;
     // The snapshot a local install runs from, not the path it was copied from.
-    const read = installedThemes({ source: resolveLocalSource(listed, cacheRoot, pkg) });
+    const read = installedThemes({ source: resolveLocalSource(listed, cacheRoot, pkg), skippedAtInstall: pkg.skippedFacets });
     if (!read.ok) {
       unchecked.push({ packageId, version: listed.version, code: read.code, message: read.message });
       continue;

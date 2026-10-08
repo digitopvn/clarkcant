@@ -1,4 +1,11 @@
-import { checkThemeDocument, formatThemeRef, parseThemeRef, type PackageSource, type ThemeDocument } from "@clarkcant/contracts";
+import {
+  checkThemeDocument,
+  formatThemeRef,
+  parseThemeRef,
+  type PackageSource,
+  type SkippedFacetsRecord,
+  type ThemeDocument,
+} from "@clarkcant/contracts";
 
 import { readPackageFile } from "./package-files.ts";
 import { parseManifest } from "./widget-package.ts";
@@ -47,7 +54,11 @@ export type InstalledThemesOutcome =
     }
   | { ok: false; code: "NOT_LOCAL" | "UNREADABLE"; message: string };
 
-export function installedThemes(input: { source: PackageSource }): InstalledThemesOutcome {
+export function installedThemes(input: {
+  source: PackageSource;
+  /** The facets the generation's install skipped, kept inert (`InstalledReadOptions`). */
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
+}): InstalledThemesOutcome {
   if (input.source.kind !== "local") {
     return {
       ok: false,
@@ -61,7 +72,7 @@ export function installedThemes(input: { source: PackageSource }): InstalledThem
   if (!manifestFile.ok) return { ok: false, code: "UNREADABLE", message: `clarkcant.json: ${manifestFile.message}` };
   const manifestJson = parseJson(manifestFile.bytes);
   if (!manifestJson.ok) return { ok: false, code: "UNREADABLE", message: `clarkcant.json: ${manifestJson.message}` };
-  const parsed = parseManifest(manifestJson.value);
+  const parsed = parseManifest(manifestJson.value, { skippedAtInstall: input.skippedAtInstall });
   if (!parsed.ok) return { ok: false, code: "UNREADABLE", message: `clarkcant.json: ${parsed.problems.join("; ")}` };
   const manifest = parsed.manifest;
 

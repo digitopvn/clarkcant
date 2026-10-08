@@ -17,7 +17,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 
-import type { DirectoryEntry, PackageGeneration, PackageSource } from "@clarkcant/contracts";
+import type { DirectoryEntry, PackageGeneration, PackageSource, RecordedSkippedFacet } from "@clarkcant/contracts";
 
 /**
  * Fetching a git or npm package source to an exact artifact this node holds.
@@ -364,6 +364,23 @@ export function installedDirectoryEntries<G extends SnapshottedGeneration>(
     readable.push(source === entry.source ? entry : { ...entry, source });
   }
   return { entries: readable, withheld };
+}
+
+/**
+ * For a reader walking a listing: the facets the installed generation of each entry skipped at install
+ * (`PackageGeneration.skippedFacets`), so it reads that package without them. Matched the way
+ * `installedDirectoryEntries` matches, by the package id or the local path a generation was recorded under, and the
+ * version; an entry no active generation installed has nothing recorded.
+ */
+export function skippedAtInstallFor(
+  generations: readonly Pick<PackageGeneration, "packageId" | "version" | "skippedFacets">[],
+): (entry: DirectoryEntry) => readonly RecordedSkippedFacet[] | undefined {
+  return (entry) =>
+    generations.find(
+      (generation) =>
+        generation.version === entry.version &&
+        (generation.packageId === entry.packageId || (entry.source.kind === "local" && generation.packageId === entry.source.path)),
+    )?.skippedFacets;
 }
 
 /** Why a withheld entry (`installedDirectoryEntries`) is not served: what failed, what was kept, and what to do next. */

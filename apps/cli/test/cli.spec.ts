@@ -285,6 +285,31 @@ describe("instructions check", () => {
     expect(await runCli(["instructions", "check", long], clipped)).toBe(0);
     expect(clipped.out.join("")).toContain(`instructions/migrations.md: ${String(PACKAGE_INSTRUCTION_LIMITS.snippetChars + 1)} characters`);
   });
+
+  it("warns about a facet kind it does not know, reads past it, and still refuses a known kind with a bad body", async () => {
+    const instructionsFacet = { kind: "instructions", id: "rules", entry: "rules/instructions.json", isolation: "declarative" };
+    const later = pkg({ version: 1, rules: [RULE] }, {
+      facets: [instructionsFacet, { kind: "agents", id: "com.example.rules.agents", entry: "agents.json", isolation: "service" }],
+    });
+    const run = io();
+    expect(await runCli(["instructions", "check", later, "--json"], run)).toBe(0);
+    expect(JSON.parse(run.out.join(""))).toEqual({
+      path: join(later, "clarkcant.json"),
+      ok: true,
+      problems: [],
+      warnings: [
+        'clarkcant.json: facet com.example.rules.agents: kind "agents" is declared but not understood by this version of ClarkCant, so it is skipped',
+      ],
+    });
+
+    const bad = pkg({ version: 1, rules: [RULE] }, {
+      facets: [{ kind: "agents", id: "agents", entry: "agents.json", isolation: "service" }, { ...instructionsFacet, isolation: "service" }],
+    });
+    const refused = io();
+    expect(await runCli(["instructions", "check", bad], refused)).toBe(1);
+    // Named by its place in the file the author wrote, not in the list left after skipping.
+    expect(refused.out.join("")).toContain("clarkcant.json: facets.1");
+  });
 });
 describe("commands", () => {
   it("reports the node's status", async () => {

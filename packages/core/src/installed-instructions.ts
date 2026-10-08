@@ -7,6 +7,7 @@ import {
   readProjectInstructions,
   type PackageSource,
   type ProjectInstructionRule,
+  type SkippedFacetsRecord,
 } from "@clarkcant/contracts";
 
 import { readPackageFile } from "./package-files.ts";
@@ -55,7 +56,11 @@ export type InstalledInstructionsOutcome =
 /** What a clipped package snippet ends with, as a project's does. */
 const CLIPPED = "\n[…đã cắt bớt]";
 
-export function installedInstructions(input: { source: PackageSource }): InstalledInstructionsOutcome {
+export function installedInstructions(input: {
+  source: PackageSource;
+  /** The facets the generation's install skipped, kept inert (`InstalledReadOptions`). */
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
+}): InstalledInstructionsOutcome {
   if (input.source.kind !== "local") {
     return {
       ok: false,
@@ -72,7 +77,7 @@ export function installedInstructions(input: { source: PackageSource }): Install
   } catch {
     return { ok: false, code: "UNREADABLE", message: "clarkcant.json: is not valid JSON" };
   }
-  const parsed = parseManifest(manifestJson);
+  const parsed = parseManifest(manifestJson, { skippedAtInstall: input.skippedAtInstall });
   if (!parsed.ok) return { ok: false, code: "UNREADABLE", message: `clarkcant.json: ${parsed.problems.join("; ")}` };
   const manifest = parsed.manifest;
 

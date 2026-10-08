@@ -842,6 +842,15 @@ again; nothing is migrated or deleted. Temporary folders a stopped install left 
 install once they are an hour old; otherwise the package cache has no garbage collection, for snapshots as for git and
 npm artifacts, so a snapshot no generation uses any more stays on disk until the cache is cleared by hand.
 
+A package whose manifest declares a facet of a kind this node does not know installs without that facet
+([widget development §4](widget-development.md#4-package-manifest)). Its generation records the facet as
+`skippedFacets` (`[{ kind, id?, isolation? }]`), which `GET /packages` repeats on the package, and the package's `lane`
+there counts the facet's declared lane, or `trusted-native` when it names none, as the capability grants did. Every
+reader of the installed package leaves a recorded facet out for that generation, also on a node updated later to
+understand its kind. Installing the same running version again joins that install and restoring an uninstalled package brings the record back; only an update to another version, or an uninstall followed by a fresh install, clears it. A record the node cannot parse is reported as `"unreadable"`, counts as `trusted-native`, and makes every reader treat the package as unreadable. The install refuses with `400 HOST_API_MISMATCH`
+a manifest whose own `hostApi` leaves this node out, and its `409 DECLARED_REACH_MISMATCH` message says when a listed
+reach may count facets the node could not read.
+
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
@@ -1333,8 +1342,9 @@ package.
   its id, so the package starts with its instructions off everywhere until the person turns them on again. A node also
   drops, at start, every pair whose package is not installed. An upgrade or a rollback keeps the pairs, because the
   package stays installed.
-- `clarkcant instructions check <package folder>` validates the manifest against `packageManifestSchema` and its
-  `instructions` facet's rules file and snippets, warns about a `pin` and about a snippet longer than a node states.
+- `clarkcant instructions check <package folder>` reads the manifest as a node does (`readPackageManifest`) and checks
+  its `instructions` facet's rules file and snippets. It warns about a `pin`, about a snippet longer than a node
+  states, and about a facet of a kind this build does not know, which a node skips.
 
 ## Changing a surface
 

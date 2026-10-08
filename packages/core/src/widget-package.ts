@@ -8,11 +8,16 @@ import {
   fixtureDatasetSchema,
   manifestProblems,
   networkOriginSchema,
-  packageManifestSchema,
+  UNREADABLE_SKIPPED_FACETS,
+  readPackageManifest,
+  readSkippedFacetsRecord,
   unsafeSchemaPattern,
   widgetDefinitionSchema,
   type FixtureDataset,
+  withoutFacetsSkippedAtInstall,
   type PackageManifest,
+  type SkippedFacet,
+  type SkippedFacetsRecord,
   type WidgetDefinition,
 } from "@clarkcant/contracts";
 import { z } from "zod";
@@ -136,6 +141,11 @@ export interface WidgetPackage {
   datasets: Record<string, FixtureDataset>;
   /** Anything that stopped the package from being read at all. */
   problems: string[];
+  /**
+   * Facets the manifest declares whose kind this build does not know: declared but not understood, so left out of
+   * `manifest.facets` and never run, shown or granted anything here. Empty when the package could not be read.
+   */
+  skippedFacets: SkippedFacet[];
 }
 function readJson(path: string): { ok: true; value: unknown } | { ok: false; problem: string } {
   if (!existsSync(path)) return { ok: false, problem: `${path} does not exist` };
@@ -158,7 +168,20 @@ function firstIssue(error: z.ZodError, fallback: string): string {
  * the same checks — including the ones only `manifestProblems` can make, such as a facet whose files are outside the
  * package, which this reader would otherwise go on to open.
  */
-export function parseManifest(value: unknown): { ok: true; manifest: PackageManifest } | { ok: false; problems: string[] } {
+export function parseManifest(
+  value: unknown,
+  options: InstalledReadOptions = {},
+): { ok: true; manifest: PackageManifest; skippedFacets: SkippedFacet[] } | { ok: false; problems: string[] } {
+  // Checked again here, whoever read the generation: a record that is there but unreadable holds back every facet.
+  const recorded = options.skippedAtInstall === undefined ? undefined : readSkippedFacetsRecord(options.skippedAtInstall);
+  if (recorded === UNREADABLE_SKIPPED_FACETS) {
+    return {
+      ok: false,
+      problems: [
+        "the record of the facets this package's install skipped cannot be read, so none of its facets is used; update the package, or uninstall it and install it again",
+      ],
+    };
+  }
   const schemaVersion = typeof value === "object" && value !== null ? (value as { schemaVersion?: unknown }).schemaVersion : undefined;
   let candidate = value;
   if (schemaVersion === 1) {
@@ -176,16 +199,29 @@ export function parseManifest(value: unknown): { ok: true; manifest: PackageMani
       ],
     };
   }
-  const parsed = packageManifestSchema.safeParse(candidate);
+  // A facet kind this build does not know is skipped and reported, never refused (`readPackageManifest`).
+  const parsed = readPackageManifest(candidate);
   if (!parsed.success) {
     const problem = firstIssue(parsed.error, "does not match the manifest schema");
     return { ok: false, problems: [schemaVersion === 1 ? `${problem} (a schemaVersion 1 value the canonical manifest does not accept)` : problem] };
   }
   const problems = manifestProblems(parsed.data);
-  return problems.length === 0 ? { ok: true, manifest: parsed.data } : { ok: false, problems };
+  if (problems.length > 0) return { ok: false, problems };
+  return { ok: true, manifest: withoutFacetsSkippedAtInstall(parsed.data, recorded), skippedFacets: parsed.skippedFacets };
 }
 
-export function readPackage(root: string): WidgetPackage {
+/**
+ * How an installed package is read: without the facets its generation's install skipped
+ * (`PackageGeneration.skippedFacets`), which stay inert for that generation even once this build understands their
+ * kind. A reader of an installed package passes its generation's record; an author's tool, which reads a folder rather
+ * than an install, passes nothing. A record that does not parse (`UNREADABLE_SKIPPED_FACETS` or any malformed value)
+ * makes the package unreadable rather than read with nothing held back.
+ */
+export interface InstalledReadOptions {
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
+}
+
+export function readPackage(root: string, options: InstalledReadOptions = {}): WidgetPackage {
   const problems: string[] = [];
   const manifestPath = join(root, "clarkcant.json");
   const unread = (reasons: string[]): WidgetPackage => ({
@@ -195,11 +231,12 @@ export function readPackage(root: string): WidgetPackage {
     fixtures: {},
     datasets: {},
     problems: reasons,
+    skippedFacets: [],
   });
   const read = readJson(manifestPath);
   // Nothing else can be read without a manifest, and guessing at one would validate the wrong package.
   if (!read.ok) return unread([read.problem]);
-  const parsed = parseManifest(read.value);
+  const parsed = parseManifest(read.value, options);
   if (!parsed.ok) return unread(parsed.problems.map((problem) => `${manifestPath}: ${problem.trim()}`));
   const manifest = parsed.manifest;
 
@@ -278,7 +315,7 @@ export function readPackage(root: string): WidgetPackage {
     }
   }
 
-  return { root, manifest, facets, fixtures, datasets, problems };
+  return { root, manifest, facets, fixtures, datasets, problems, skippedFacets: parsed.skippedFacets };
 }
 
 /** The fixture names the standard requires, because the states they stand for are the ones a widget must survive. */

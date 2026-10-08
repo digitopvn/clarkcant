@@ -1,4 +1,11 @@
-import type { FixtureDataset, PackageManifest, PackageSource, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
+import type {
+  FixtureDataset,
+  PackageManifest,
+  PackageSource,
+  SkippedFacetsRecord,
+  WidgetDefinition,
+  WidgetFixture,
+} from "@clarkcant/contracts";
 
 import { readPackage } from "./widget-package.ts";
 
@@ -44,6 +51,8 @@ export function installedWidgets(input: {
   packageId: string;
   version: string;
   source: PackageSource;
+  /** The facets the generation's install skipped, kept inert (`InstalledReadOptions`). */
+  skippedAtInstall?: SkippedFacetsRecord | undefined;
 }): InstalledWidgetsOutcome {
   if (input.source.kind !== "local") {
     return {
@@ -54,7 +63,7 @@ export function installedWidgets(input: {
     };
   }
 
-  const pkg = readPackage(input.source.path);
+  const pkg = readPackage(input.source.path, { skippedAtInstall: input.skippedAtInstall });
 
   /*
    * Nothing parsed at all: that is a failure to read, not a package with no widgets. The two must stay apart,
