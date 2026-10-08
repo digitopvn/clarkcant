@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
- * Text typed right after the logo belongs to the new conversation.
+ * Text typed right after the logo, or right after `/new` during a reply, belongs to the new conversation.
  *
- * The logo tells the node about the click (`POST /app-intents`), and that answer can be slow. The start screen and the
- * composer must not wait for it: a message typed and sent in that window starts a reply in the new conversation, and a
- * draft typed in it is still there once the answer arrives. Before, the restart ran only on the answer, so the message
- * was checked as a command in the conversation left behind and the late restart then emptied the composer.
+ * Both tell the node (`POST /app-intents`), and that answer can be slow. The start screen and the composer must not
+ * wait for it: a message typed and sent in that window starts a reply in the new conversation, and a draft typed in it
+ * is still there once the answer arrives. Before, the restart ran only on the answer, so the message was checked as a
+ * command in the conversation left behind and the late restart then emptied the composer.
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -104,6 +104,54 @@ test("a draft typed right after the logo is still there when the node's answer a
   await answered;
   // The answer is handled in a task after the response; give it the time it would take to clear the draft.
   await page.waitForTimeout(500);
+
+  await expect(composer).toHaveValue("một câu chưa gửi");
+  await expect(page.locator(".cc-empty")).toBeVisible();
+  await held()?.continue();
+});
+
+test("a message sent right after /new during a reply starts a reply in the new conversation", async ({ page }) => {
+  const held = await openWithRunningReply(page);
+  const composer = page.locator("[data-composer]");
+
+  const answered = page.waitForResponse((response) => isIntentRequest(response.url()));
+  await composer.fill("/new");
+  await composer.press("Enter");
+  // No waiting for the node's answer to /new: the person types and sends at once.
+  await composer.fill(LONG_REPLY);
+  await composer.press("Enter");
+
+  await expect(page.locator('[data-role="user"]')).toHaveCount(1);
+  await expect(page.locator('[data-role="user"]')).toContainText(LONG_REPLY);
+  await expect(page.getByText(/Đoạn 2\./u).first()).toBeVisible({ timeout: 15_000 });
+  await expect(composer).toHaveValue("");
+
+  // The late answer changes nothing but says that the reply left behind goes on, and where to find it.
+  await answered;
+  await expect(page.locator("[data-intent-notice]")).toContainText("/sessions");
+  await expect(page.locator('[data-role="user"]')).toHaveCount(1);
+  await expect(page.locator("[data-stop]")).toBeVisible();
+
+  await page.locator("[data-stop]").click();
+  await expect(page.locator('[data-role="assistant"]').last().locator("[data-model-note]")).toContainText(
+    "Đã dừng theo yêu cầu",
+    { timeout: 15_000 },
+  );
+  await held()?.continue();
+});
+
+test("a draft typed right after /new during a reply is still there when the node's answer arrives", async ({ page }) => {
+  const held = await openWithRunningReply(page);
+  const composer = page.locator("[data-composer]");
+
+  const answered = page.waitForResponse((response) => isIntentRequest(response.url()));
+  await composer.fill("/new");
+  await composer.press("Enter");
+  await expect(page.locator(".cc-empty")).toBeVisible({ timeout: 1_000 });
+  await expect(page.locator("[data-stop]")).toHaveCount(0, { timeout: 1_000 });
+  await composer.fill("một câu chưa gửi");
+  await answered;
+  await expect(page.locator("[data-intent-notice]")).toContainText("/sessions");
 
   await expect(composer).toHaveValue("một câu chưa gửi");
   await expect(page.locator(".cc-empty")).toBeVisible();

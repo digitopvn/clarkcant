@@ -31,7 +31,10 @@ import {
   type NoticeOperationId,
   type OrbProfileName,
   type SettingsTab,
+  type SlashCommand,
+  type TypedSlashCommand,
   describeAppIntent,
+  intentRequiresConfirmation,
   isPersonOnlyAppIntent,
 } from "@clarkcant/contracts";
 
@@ -404,15 +407,71 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
 }
 
 /**
- * The clicks the page carries out the moment they happen, before the node has answered.
+ * The intents the page carries out the moment they are asked for, before the node has answered.
  *
- * Only the logo, for now: the node never refuses a clicked `nav.home` and never asks to confirm it, and leaving the
- * conversation changes only what the page shows - the conversation stays in the node's history, and a reply still being
- * written there goes on. Waiting for the answer instead left a window in which the composer still belonged to the
- * conversation being left: a message sent in it was checked only as a command there, and the restart that landed after
- * it emptied the composer, so the text was lost without a word.
+ * Only going home, for now - the logo, and `/new` typed while a reply is being written: the node never refuses
+ * `nav.home` and never asks to confirm it, and leaving the conversation changes only what the page shows - the
+ * conversation stays in the node's history, and a reply still being written there goes on. Waiting for the answer
+ * instead left a window in which the composer still belonged to the conversation being left: a message sent in it was
+ * checked only as a command there, and the restart that landed after it emptied the composer, so the text was lost
+ * without a word.
+ *
+ * An intent the node may ask the person to confirm can never be one of these, whatever is listed here: carrying it out
+ * before the node has decided would skip the question (`runsAtOnce`).
  */
-const CLICKS_RUN_AT_ONCE: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["nav.home"]);
+export const INTENTS_RUN_AT_ONCE: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["nav.home"]);
+
+/** Whether `kind` is carried out before the node has answered: listed above, and never one that needs confirming. */
+export function runsAtOnce(kind: AppIntentKind): boolean {
+  return INTENTS_RUN_AT_ONCE.has(kind) && !intentRequiresConfirmation(kind);
+}
+
+/**
+ * The typed commands that stand for an intent the page carries out at once: `/new` is the logo, as the node reads it
+ * (`slashCommandAppIntent` in `@clarkcant/core`). Any other command is decided by the node first.
+ */
+const TYPED_COMMANDS_RUN_AT_ONCE: Readonly<Partial<Record<SlashCommand, AppIntentKind>>> = { new: "nav.home" };
+
+/** The intent a typed command is carried out as before the node answers, if it is one. */
+export function typedCommandRunAtOnce(typed: TypedSlashCommand | undefined): AppIntentKind | undefined {
+  const kind = typed === undefined ? undefined : TYPED_COMMANDS_RUN_AT_ONCE[typed.command];
+  return kind !== undefined && runsAtOnce(kind) ? kind : undefined;
+}
+
+export interface RunAtOnceDeps {
+  /** Tells the node; its answer is its record of what the page already did. */
+  ask: () => Promise<AppIntentResolution>;
+  /** The one executor, through the page's own `runIntent`. */
+  run: (decision: AppIntentDecision) => void;
+  /** The node's answer naming the same intent, for a caller that says its read-back (`/new` during a reply). */
+  onRecorded?: (decision: Extract<AppIntentDecision, { kind: "intent" }>) => void;
+}
+
+/**
+ * Carries out an intent in `INTENTS_RUN_AT_ONCE` now and tells the node at the same time, so typing that follows it
+ * lands in the new state. One path for the logo and for `/new`.
+ *
+ * The node's answer is not carried out a second time when it names the same intent, which is what it does: that would
+ * restart again and empty a composer the person has started typing in. Any other answer should not happen (the node
+ * resolves a named `nav.home` and never asks to confirm it); were one to come, the page has already done what was asked
+ * and saying "refused" over the start screen would contradict what is on it, so it is left as a trace for whoever
+ * debugs the node, as is a request that failed: the intent is done and unrecorded, with nothing on screen to correct.
+ */
+export function runAppIntentAtOnce(kind: AppIntentKind, deps: RunAtOnceDeps): Promise<void> {
+  deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
+  return deps.ask().then(
+    (decision) => {
+      if (decision.kind === "intent" && decision.intent.kind === kind) {
+        deps.onRecorded?.(decision);
+        return;
+      }
+      console.warn(`the node answered "${decision.kind}" for the ${kind} the page already carried out; the screen is left as it is`);
+    },
+    (cause: unknown) => {
+      console.warn(`the ${kind} the page carried out could not be recorded by the node`, cause);
+    },
+  );
+}
 
 export interface ClickAppIntentDeps {
   /** Asks the node what the click means; for a click run at once, the node's record of it. */
@@ -426,26 +485,14 @@ export interface ClickAppIntentDeps {
 /**
  * A click on one of the page's own controls, decided by the node and carried out by the one executor.
  *
- * A click in `CLICKS_RUN_AT_ONCE` runs first and is reported to the node at the same time, so typing that follows it
- * lands in the new state. The node's answer then changes nothing when it names the same intent, which is what it
- * does; any other answer is still the node's word and is carried out (a refusal is said). A failed request leaves the
- * click done and unrecorded, with nothing on screen to correct.
+ * A click that `runsAtOnce` goes through `runAppIntentAtOnce`. Every other click waits for the node's decision.
  */
 export function clickAppIntent(kind: AppIntentKind, deps: ClickAppIntentDeps): Promise<void> {
-  if (!CLICKS_RUN_AT_ONCE.has(kind)) {
-    return deps.ask().then(
-      (decision) => {
-        if (decision.kind !== "none") deps.run(decision);
-      },
-      () => deps.onLookupFailed(),
-    );
-  }
-  deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
+  if (runsAtOnce(kind)) return runAppIntentAtOnce(kind, deps);
   return deps.ask().then(
     (decision) => {
-      if (decision.kind === "none" || (decision.kind === "intent" && decision.intent.kind === kind)) return;
-      deps.run(decision);
+      if (decision.kind !== "none") deps.run(decision);
     },
-    () => undefined,
+    () => deps.onLookupFailed(),
   );
 }
