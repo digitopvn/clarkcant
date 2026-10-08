@@ -33,7 +33,6 @@ const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const PACKAGE = "com.clarkcant.reference.connected-app";
 const LIST_REF = `${PACKAGE}.list-tasks@1`;
 const CAPABILITIES = [LIST_REF, `${PACKAGE}.update-task@1`];
-const FRAME = "[data-pin-live] [data-widget-frame]";
 /** The ports the reference manifest names for the fake connector. */
 const CONNECTOR_PORT = 8880;
 const CONNECTOR_ADMIN_PORT = 8881;
@@ -130,10 +129,25 @@ async function openTasks(page: Page, placement: "place_widget" | "fixture" = "pl
   }
   const open = page.locator("[data-open-live]").last();
   await expect(open).toBeVisible({ timeout: 20_000 });
+  // A conversation that opened one before keeps it pinned, and the new pin mounts only after the click's round trip, so
+  // "the last frame" can still be the old one for a moment. Scope to the pin this open created instead.
+  const pinIds = (): Promise<(string | null)[]> =>
+    page.locator("[data-pin-live]").evaluateAll((elements) => elements.map((element) => element.getAttribute("data-pin-live")));
+  const before = new Set(await pinIds());
   await open.click();
-  // A conversation that opened one before keeps it pinned, so the newest frame is the one just opened.
-  await expect(page.locator(FRAME).last()).toHaveAttribute("data-frame-status", "ready", { timeout: 30_000 });
-  const widget = page.locator(`${FRAME} iframe`).last().contentFrame();
+  let pinId: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        pinId = (await pinIds()).find((id): id is string => id !== null && !before.has(id));
+        return pinId;
+      },
+      { timeout: 30_000 },
+    )
+    .toBeDefined();
+  const frame = page.locator(`[data-pin-live="${String(pinId)}"] [data-widget-frame]`);
+  await expect(frame).toHaveAttribute("data-frame-status", "ready", { timeout: 30_000 });
+  const widget = frame.locator("iframe").contentFrame();
   await expect(widget.locator("#root[data-tasks-announced='true']")).toBeVisible({ timeout: 30_000 });
   return widget;
 }
