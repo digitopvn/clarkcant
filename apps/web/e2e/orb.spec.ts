@@ -615,6 +615,21 @@ async function heroSettled(page: Page): Promise<void> {
     .toBe(0);
 }
 
+/**
+ * The composer glow's timing function, and the animation it runs.
+ *
+ * Read from the computed style of the pseudo-element, which is what the compositor is handed: a stepped function means
+ * the light changes only at each step, so no frame is made in between.
+ */
+async function composerGlow(page: Page): Promise<{ name: string; timing: string }> {
+  return page.evaluate(() => {
+    const glow = document.querySelector(".cc-composer-glow");
+    if (glow === null) throw new Error("the composer glow is not on the page");
+    const style = getComputedStyle(glow, "::before");
+    return { name: style.animationName, timing: style.animationTimingFunction };
+  });
+}
+
 /** Frames the hero orb drew per second, over two seconds. */
 async function heroDrawRate(page: Page): Promise<number> {
   return page.evaluate(async () => {
@@ -642,7 +657,7 @@ test.describe("the orb's frame budget follows what draws its WebGL", () => {
     await expect(hero).toHaveAttribute("data-orb-motion", "full");
     await heroSettled(page);
 
-    // Still animated, at most twenty frames a second rather than one per display frame.
+    // Still animated, about fifteen frames a second rather than one per display frame.
     const rate = await heroDrawRate(page);
     expect(rate).toBeGreaterThan(8);
     expect(rate).toBeLessThanOrEqual(21);
@@ -652,6 +667,17 @@ test.describe("the orb's frame budget follows what draws its WebGL", () => {
     const size = await heroBuffer(page);
     expect(size.buffer).toBeLessThanOrEqual(Math.ceil(size.shown * 0.5) + 1);
     await page.screenshot({ path: join(EVIDENCE, "orb-09-software-renderer-1280.png") });
+
+    // The composer's light still travels, but steps round about fifteen times a second instead of on every display frame.
+    expect(await composerGlow(page)).toEqual({ name: "cc-glow-orbit", timing: "steps(108)" });
+  });
+
+  test("drawn by the CPU under reduced motion, the composer glow still rests", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await withRenderer(page, "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)");
+    await openApp(page);
+    await expect(page.locator(".cc-empty-orb[data-orb]")).toHaveAttribute("data-orb-renderer", "software");
+    expect((await composerGlow(page)).name).toBe("none");
   });
 
   test("a GPU keeps the orb on every display frame at full resolution", async ({ page }) => {
@@ -665,6 +691,8 @@ test.describe("the orb's frame budget follows what draws its WebGL", () => {
     expect(await heroDrawRate(page)).toBeGreaterThan(22);
     const size = await heroBuffer(page);
     expect(size.buffer).toBeGreaterThanOrEqual(Math.floor(size.shown));
+    // The composer glow is exactly as designed: a smooth orbit on every display frame.
+    expect(await composerGlow(page)).toEqual({ name: "cc-glow-orbit", timing: "linear" });
   });
 });
 
