@@ -2179,8 +2179,12 @@ phần trăm`, được chuyển cho lượt giọng nói của Clark như mọi
 động Clark thực hiện được và trang của phiên đã gửi `widgetPerform: 1`, dữ liệu của lượt còn liệt kê widget và từng
 hành động được cho phép: binding id, nhãn, mô tả và schema input. Danh sách được đọc khi lượt bắt đầu, nên một lượt
 phải chờ sau lượt khác sẽ không nhận được gì nếu trong lúc đó widget đã đóng hoặc một widget khác được chọn. Mô tả chỉ
-được liệt kê từ một định nghĩa mà widget có thể đã được đặt từ đó: một gói đang chạy, cùng phiên bản và digest của
-instance, khai báo hành động với đúng nhãn và schema input mà binding của nó đã ghi lại. Id widget, nhãn, mô tả và
+được liệt kê từ đúng thế hệ gói (package generation) mà binding của nó được đặt từ đó, khi thế hệ ấy còn đang chạy:
+`place_widget` ghi thế hệ này vào binding của từng hành động được cho phép (`packageGeneration`), và định nghĩa vẫn
+phải cùng phiên bản và digest của instance, khai báo hành động với đúng nhãn và schema input mà binding đã ghi lại. Một
+gói giả mạo chép lại id widget, phiên bản, schema và nhãn sẽ chạy dưới một thế hệ khác nên không cung cấp mô tả nào;
+một binding được tạo trước khi binding perform ghi lại thế hệ của mình cũng vậy. Cài lại, sửa chữa hoặc build lại trong
+phiên phát triển widget ở cùng phiên bản cũng tạo ra một thế hệ mới, nên mô tả cũng bị ẩn cho đến khi widget được đặt lại. Id widget, nhãn, mô tả và
 schema là lời của chính gói, mỗi phần được trích trên một dòng như dữ liệu, không bao giờ như chỉ dẫn. Clark khi đó có thể thực hiện một hành động qua
 `perform_widget_action`, cùng công cụ, schema, chính sách thực thi và thẻ của host như một yêu cầu gõ chữ. Thẻ mà lượt
 đặt ra được đọc lên bằng ngôn ngữ của người dùng. Host không thêm quy tắc khớp nào, gói không khai báo cách nói nào, và

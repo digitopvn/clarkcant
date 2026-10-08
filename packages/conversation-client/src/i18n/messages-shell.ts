@@ -237,6 +237,8 @@ export const MESSAGES_SHELL_VI = {
   "composer.references.open": "Xem bên trong {label}",
   "composer.references.remove": "Bỏ {label}",
   "composer.references.chips": "Tham chiếu gửi kèm",
+  "composer.attachments.remove": "Bỏ {name}",
+  "composer.attachments.keptForCommand": "Lệnh không mang theo tệp, nên các tệp này được giữ lại cho tin nhắn tiếp theo.",
 
   "shell.credential.sentNoName": "Đã gửi, nhưng node không ghi nhận tên nào.",
   "shell.credential.saved": "Đã lưu: {names}.",
@@ -569,6 +571,8 @@ export const MESSAGES_SHELL_EN = {
   "composer.references.open": "Look inside {label}",
   "composer.references.remove": "Remove {label}",
   "composer.references.chips": "References sent with this message",
+  "composer.attachments.remove": "Remove {name}",
+  "composer.attachments.keptForCommand": "Commands don't carry files, so these files are kept for your next message.",
 
   "shell.credential.sentNoName": "Sent, but the node reported no name.",
   "shell.credential.saved": "Saved: {names}.",

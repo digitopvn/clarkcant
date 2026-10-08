@@ -246,6 +246,7 @@ export function Conversation({
     busy,
     error,
     setError,
+    chipsKept,
     pendingUser,
     live,
     send,
@@ -615,6 +616,7 @@ export function Conversation({
           setDragging={setDragging}
           addFiles={addFiles}
           chips={chips}
+          chipsKept={chipsKept}
           onRemoveChip={(id) => dispatchChips({ type: "remove", id })}
           references={references}
           draft={draft}

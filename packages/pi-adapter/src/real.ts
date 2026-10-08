@@ -89,6 +89,116 @@ function canStartRun(message: SdkQueuedMessage): boolean {
   return parts !== undefined && (parts.text !== "" || parts.images.length > 0);
 }
 
+interface RunOptions {
+  selectedTools: string[];
+}
+
+/** The private members of the SDK 1.0.2 session that `prompt()` uses after its input handlers. */
+interface SessionPromptInternals {
+  _flushPendingBashMessages: () => void;
+  _flushPendingCustomMessages: () => void;
+  _baseSystemPromptOptions: RunOptions;
+  _runSystemPromptOptions: RunOptions | undefined;
+  _pendingNextTurnMessages: SdkQueuedMessage[];
+  _extensionRunner: {
+    emitBeforeAgentStart: (
+      text: string,
+      images: SdkImage[] | undefined,
+      options: RunOptions,
+    ) => Promise<{
+      messages: { customType: string; content: unknown; display: boolean; details?: unknown }[];
+      systemPromptOptions: RunOptions;
+    }>;
+  };
+  _normalizePromptImages: (images: SdkImage[] | undefined) => Promise<{ images: SdkImage[]; hints: string[] }>;
+  _preparePromptAndToolLoadout: (options: RunOptions) => SdkQueuedMessage | undefined;
+  _runAgentPrompt: (messages: SdkQueuedMessage[]) => Promise<void>;
+}
+
+/**
+ * The session's private members `prepareRunWithoutInputHandlers` needs, when every one is there with the shape it uses;
+ * undefined otherwise, so the caller can fall back to the public `prompt` before anything is taken off the queue.
+ */
+function sessionPromptInternals(session: SdkSession): SessionPromptInternals | undefined {
+  const internals = session as unknown as Partial<Record<keyof SessionPromptInternals, unknown>>;
+  const functions = [
+    internals._flushPendingBashMessages,
+    internals._flushPendingCustomMessages,
+    internals._normalizePromptImages,
+    internals._preparePromptAndToolLoadout,
+    internals._runAgentPrompt,
+    (internals._extensionRunner as { emitBeforeAgentStart?: unknown } | undefined)?.emitBeforeAgentStart,
+  ];
+  const base = internals._baseSystemPromptOptions as { selectedTools?: unknown } | undefined;
+  const shaped =
+    functions.every((member) => typeof member === "function") &&
+    Array.isArray(base?.selectedTools) &&
+    Array.isArray(internals._pendingNextTurnMessages) &&
+    "_runSystemPromptOptions" in internals;
+  return shaped ? (session as unknown as SessionPromptInternals) : undefined;
+}
+
+/**
+ * Prepare the session's run on text that already went through the extensions' input handlers and expansion, as
+ * `prompt()` does after those steps, and return the call that starts it.
+ *
+ * SAFETY: mirrors `AgentSession.prompt()` of `@earendil-works/pi-coding-agent` 1.0.2 from its bash and custom flush to
+ * its `_runAgentPrompt` call; `test/sdk-compatibility.spec.ts` holds a copy of that code and of the members used here,
+ * and fails when the installed SDK's differ. It runs `before_agent_start` and applies what it returns: the system
+ * prompt (ClarkCant's personal instructions arrive this way), the injected messages and the tool loadout. It also
+ * attaches pending `nextTurn` messages and normalises the pictures. Three steps are left out on purpose:
+ * - the streaming and `_compactionAbortController` checks, which come before the input handlers: the caller refuses
+ *   while the session streams or compacts;
+ * - the auth pre-check: a provider refusal still ends the run with an error the caller reports;
+ * - the pre-send `_checkCompaction(lastAssistant, false)`: it only catches a last response that was aborted, whose
+ *   post-run compaction check was skipped, and a queue is only drained after a run that finished, never after a Stop.
+ *   Compaction by threshold still runs before every model call of the run, from the session's next-turn preparation.
+ *
+ * Nothing is changed that `prompt()` would not redo until the returned call: the pending `nextTurn` messages are taken
+ * and the run's system prompt options set only then. So when a step throws here, the caller can still send the same
+ * text through `prompt()` with nothing lost.
+ */
+async function prepareRunWithoutInputHandlers(
+  session: SdkSession,
+  internals: SessionPromptInternals,
+  text: string,
+  images: SdkImage[] | undefined,
+): Promise<() => Promise<void>> {
+  internals._flushPendingBashMessages();
+  internals._flushPendingCustomMessages();
+  if (!session.model) throw new Error("no model is selected for this session");
+  const selectedToolsBefore = internals._baseSystemPromptOptions.selectedTools;
+  const result = await internals._extensionRunner.emitBeforeAgentStart(text, images, internals._baseSystemPromptOptions);
+  const handlerEditedTools =
+    result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
+    result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
+  if (!handlerEditedTools) result.systemPromptOptions.selectedTools = session.getActiveToolNames();
+  const normalized = await internals._normalizePromptImages(images);
+  const userText = normalized.hints.length > 0 ? `${text}\n\n${normalized.hints.join("\n")}` : text;
+  const messages: SdkQueuedMessage[] = [
+    { role: "user", content: [{ type: "text", text: userText }, ...normalized.images], timestamp: Date.now() },
+  ];
+  const nextTurn = [...internals._pendingNextTurnMessages];
+  messages.push(...nextTurn);
+  for (const message of result.messages) {
+    messages.push({
+      role: "custom",
+      customType: message.customType,
+      content: message.content ?? [],
+      display: message.display,
+      details: message.details,
+      timestamp: Date.now(),
+    } as SdkQueuedMessage);
+  }
+  const updateMessage = internals._preparePromptAndToolLoadout(result.systemPromptOptions);
+  if (updateMessage) messages.unshift(updateMessage);
+  return () => {
+    internals._pendingNextTurnMessages = internals._pendingNextTurnMessages.filter((message) => !nextTurn.includes(message));
+    internals._runSystemPromptOptions = result.systemPromptOptions;
+    return internals._runAgentPrompt(messages);
+  };
+}
+
 /**
  * Convert one of our tool definitions into the SDK's shape.
  *
@@ -317,6 +427,8 @@ export class RealPiAdapter implements PiAdapter {
   >();
 
   #sdk: SdkModule | undefined;
+  /** Whether this adapter already warned that a queued steer went through the public `prompt` again. */
+  #promptFallbackWarned = false;
   #modelRuntime: SdkModelRuntime | undefined;
   #builtins: ReadonlyMap<string, { api: string; baseUrl: string }> | undefined;
   #loader:
@@ -1046,10 +1158,14 @@ export class RealPiAdapter implements PiAdapter {
    * Run again on a steer the last run did not take. Pi's agent loop reads its steering queue between model calls; a
    * steer that lands after its last read stays queued once the run settles.
    *
-   * Answered through the session rather than the agent underneath it: the queue is taken off and its sentences are sent
-   * as one prompt, so the session's own run applies — retry on a transient provider error, compaction, the streaming
-   * flag and its settle events — which a bare `agent.continue()` skips. The sentences were already expanded when they
-   * were steered, so they are not expanded again. Bounded and checked exactly as a prompt is.
+   * Answered through the session's own run rather than the agent underneath it, so retry on a transient provider error,
+   * compaction, the streaming flag and its settle events apply, which a bare `agent.continue()` skips. The person's
+   * messages already went through the extensions' input handlers and were expanded when they were steered, so they are
+   * sent the way `prompt` sends text after those steps (`prepareRunWithoutInputHandlers`): `before_agent_start` runs
+   * again and its system prompt, messages and tools apply, but the input handlers do not run a second time. When the
+   * SDK no longer has what that needs, or a step before the run throws, they go through the public `prompt` instead,
+   * with a warning. Bounded as a prompt is, and refused with the queue untouched while the session still streams or
+   * compacts.
    *
    * The agent's queue also holds what a Pi extension queued, interleaved with the person's steers. Clearing the
    * session's queue clears the agent's too, so the whole queue is taken off, in the order Pi would deliver it: every
@@ -1069,6 +1185,12 @@ export class RealPiAdapter implements PiAdapter {
     const entry = this.#require(sessionId);
     const { session } = entry;
     if (!session.agent.hasQueuedMessages()) return;
+    // Refused before the queue is taken off, so nothing is lost: a run cannot start while one streams or compacts.
+    if (session.isStreaming || session.isCompacting) {
+      throw new Error(`worker ${sessionId} is still ${session.isStreaming ? "running" : "compacting"}; its queued messages stay queued`);
+    }
+    // Checked before the queue is taken off too, so the choice of path below never strands a message.
+    const internals = sessionPromptInternals(session);
     const queued = takeAgentQueues(session.agent);
     // The session's own text copies of the person's messages; the agent's messages carry the same text and pictures.
     session.clearQueue();
@@ -1106,9 +1228,39 @@ export class RealPiAdapter implements PiAdapter {
       return part === undefined ? [] : [part];
     });
     const text = parts.map((part) => part.text).filter((sentence) => sentence !== "").join("\n\n");
-    const images = parts.flatMap((part) => part.images);
-    await this.#bounded(sessionId, () =>
-      session.prompt(text, { expandPromptTemplates: false, ...(images.length === 0 ? {} : { images }) }),
+    const pictures = parts.flatMap((part) => part.images);
+    const images = pictures.length === 0 ? undefined : pictures;
+    await this.#bounded(sessionId, async () => {
+      let fallbackReason = "are missing or changed shape";
+      let start: (() => Promise<void>) | undefined;
+      if (internals !== undefined) {
+        // Only the steps before the run fall back; a failure of the run itself is the run's, reported as a prompt's is.
+        try {
+          start = await prepareRunWithoutInputHandlers(session, internals, text, images);
+        } catch (error) {
+          fallbackReason = `failed (${error instanceof Error ? error.message : String(error)})`;
+        }
+      }
+      if (start !== undefined) {
+        await start();
+        return;
+      }
+      // SAFETY: the fallback when the session's private members `prepareRunWithoutInputHandlers` mirrors from SDK
+      // 1.0.2 are missing, changed shape, or throw before the run starts. The public `prompt` runs the extensions'
+      // input handlers a second time on text they already handled, but the same text and pictures are sent, so
+      // nothing is lost, and the run keeps its `before_agent_start` system prompt.
+      this.#warnPromptFallback(fallbackReason);
+      await session.prompt(text, { expandPromptTemplates: false, ...(images === undefined ? {} : { images }) });
+    });
+  }
+
+  /** Warn, once per adapter, that queued steers go through the public `prompt` again, and why. */
+  #warnPromptFallback(reason: string): void {
+    if (this.#promptFallbackWarned) return;
+    this.#promptFallbackWarned = true;
+    process.emitWarning(
+      `the Pi SDK session's private members a queued steer is sent with (mirrored from SDK 1.0.2) ${reason}; ` +
+        "queued steers go through prompt() again, so extensions' input handlers run on them twice",
     );
   }
 

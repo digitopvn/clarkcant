@@ -4,6 +4,7 @@ import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
 
 import {
   attachmentReducer,
+  chipsAfterAnswer,
   clientAccepts,
   formatFileSize,
   nameForPastedFile,
@@ -120,8 +121,29 @@ describe("the chip list", () => {
     state = attachmentReducer(state, { type: "failed", id: "chip_2", reason: "bị từ chối" });
     expect(attachmentReducer(state, { type: "sent" }).map((entry) => entry.id)).toEqual(["chip_2"]);
   });
+
+  it("leaving the conversation clears every chip, failed ones included", () => {
+    let state = attachmentReducer([], { type: "add", chips: [chip(), chip({ id: "chip_2", filename: "b.txt" })] });
+    state = attachmentReducer(state, { type: "failed", id: "chip_2", reason: "bị từ chối" });
+    expect(attachmentReducer(state, { type: "cleared" })).toEqual([]);
+    // An upload that lands after the conversation was left does not bring its chip back.
+    expect(attachmentReducer([], { type: "stored", id: "chip_1", attachmentId: "att_1" })).toEqual([]);
+  });
 });
 
+describe("the chips after the node answered", () => {
+  it("a stored message carries its files, so they leave the composer", () => {
+    expect(chipsAfterAnswer({ resolution: "model" })).toBe("sent");
+    // `/background` with files, and a command-like sentence that names no command, are both stored as a turn.
+    expect(chipsAfterAnswer({ resolution: "model-failed" })).toBe("sent");
+  });
+
+  it("any command the host answered carries no files, so they are kept for the next message", () => {
+    // Whatever the command: one that leaves the conversation drops them in `restartSession` when it actually runs, and
+    // one that does not run (a declined delete, a Stop with nothing to stop) leaves them where they were.
+    expect(chipsAfterAnswer({ resolution: "app-intent" })).toBe("kept");
+  });
+});
 describe("a file with no name", () => {
   it("a pasted file without a name gets one derived from its type", () => {
     const at = new Date("2026-09-19T05:30:00.000Z");

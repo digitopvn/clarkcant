@@ -1,5 +1,7 @@
 import { validateAttachmentCandidate } from "@clarkcant/contracts";
 
+import type { SendMessageResult } from "./api.ts";
+
 /**
  * The composer's attachment logic, with no DOM in it.
  *
@@ -38,7 +40,8 @@ export type AttachmentAction =
   | { type: "remove"; id: string }
   | { type: "stored"; id: string; attachmentId: string }
   | { type: "failed"; id: string; reason: string }
-  | { type: "sent" };
+  | { type: "sent" }
+  | { type: "cleared" };
 
 /**
  * The chip list, as a reducer.
@@ -68,6 +71,9 @@ export function attachmentReducer(
       // Ready chips are gone because the message now owns them; a failed one stays, because nothing was
       // sent for it and its explanation is the only place the person can read what went wrong.
       return state.filter((chip) => chip.state === "failed");
+    case "cleared":
+      // The conversation they were attached for is gone from the screen, so none of them belongs to the next one.
+      return [];
     default: {
       // Unreachable while the union is exhaustive. Present because a new action added without a case here
       // must fail loudly rather than leave the chip list in a state nobody decided.
@@ -80,6 +86,18 @@ export function attachmentReducer(
 /** The ids a message should carry: the stored ones, in the order the person added them. */
 export function readyAttachmentIds(chips: readonly AttachmentChip[]): string[] {
   return chips.flatMap((chip) => (chip.state === "ready" && chip.attachmentId !== undefined ? [chip.attachmentId] : []));
+}
+
+/**
+ * What a send the node accepted does to the file chips.
+ *
+ * `sent`: the message was stored and carries them, so they are its now. `kept`: the host answered a command, which
+ * carries no files (`resolution: "app-intent"`), so they stay in the composer for the next message instead of
+ * vanishing without a word. A command that then leaves the conversation drops them where every departure does, in
+ * `restartSession`; one that does not run (a declined delete, a Stop with nothing to stop) leaves them where they were.
+ */
+export function chipsAfterAnswer(answer: Pick<SendMessageResult, "resolution">): "sent" | "kept" {
+  return answer.resolution === "app-intent" ? "kept" : "sent";
 }
 
 /**

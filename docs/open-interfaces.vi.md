@@ -193,7 +193,11 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   được trả lời thành một lượt, với đúng phần chữ đã gõ. Một `/background` không kèm yêu cầu luôn nhận hướng dẫn cách
   dùng. Một câu trông giống
   lệnh nhưng không khớp lệnh nào sẽ được trả lời là "không hiểu" khi không có tệp đính kèm; khi có tệp đính kèm, nó
-  được lưu cùng các tệp đó và được trả lời thành một lượt.
+  được lưu cùng các tệp đó và được trả lời thành một lượt. Client phân biệt hai trường hợp qua frame `done` của luồng:
+  `resolution: "app-intent"` nghĩa là host đã trả lời một lệnh và không tệp nào được gắn; mọi giá trị khác nghĩa là
+  tin nhắn đã được lưu cùng các tệp. Ô soạn thảo đi kèm giữ lại các chip tệp cho tin nhắn tiếp theo sau bất kỳ lệnh nào,
+  với một ghi chú ngắn rằng lệnh không mang theo tệp, kể cả một lệnh bị từ chối hoặc bị huỷ. Bắt đầu lại, bằng lệnh hay
+  bằng nút trên thanh đầu trang, sẽ bỏ các chip đó, nên chúng không bao giờ theo sang cuộc trò chuyện mới.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
   đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
   không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có
