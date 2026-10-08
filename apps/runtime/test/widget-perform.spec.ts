@@ -127,11 +127,20 @@ function bindingDeps() {
 
 const REF = { id: DEFINITION.id, version: DEFINITION.version, packageDigest: definitionDigest(DEFINITION) };
 
+/** The package generation the spreadsheet runs as, and that `place_widget` pins its offered actions to. */
+const SHEET_GENERATION = "gen_sheet";
+
 /**
  * The widget placed in the conversation with its offered action bound, the way `place_widget` binds it — from `definition`
- * when given, and with no binding at all when `action` is `none`.
+ * when given, and with no binding at all when `action` is `none`. The binding is pinned to `generation`, the package
+ * generation `place_widget` read the widget from; `null` binds it the way a node did before perform bindings
+ * recorded one.
  */
-function placeSheet(action: "format" | "note" | "none" = "format", definition: WidgetDefinition = DEFINITION): { instanceId: string; bindingId: string } {
+function placeSheet(
+  action: "format" | "note" | "none" = "format",
+  definition: WidgetDefinition = DEFINITION,
+  generation: string | null = SHEET_GENERATION,
+): { instanceId: string; bindingId: string } {
   const ref = { id: definition.id, version: definition.version, packageDigest: definitionDigest(definition) };
   const compiled =
     action === "none"
@@ -142,6 +151,7 @@ function placeSheet(action: "format" | "note" | "none" = "format", definition: W
           action: { kind: "perform", action },
           ownerPrincipalId: services.runtime.identity.ownerPrincipalId,
           offeredActions: definition.offeredActions ?? [],
+          ...(generation === null ? {} : { widgetGeneration: generation }),
         });
   if (compiled !== undefined && !compiled.ok) throw new Error(compiled.message);
   const instance = createInstance(services.conductor, {
@@ -1164,6 +1174,9 @@ describe("placing a widget with place_widget", () => {
     expect(kinds.filter((proposal) => proposal?.kind === "perform").map((proposal) => (proposal as { action: string }).action)).toEqual(
       (PLACEABLE.offeredActions ?? []).map((entry) => entry.name),
     );
+    // Each offered action is pinned to the package generation the widget was read from, not to the copyable digest.
+    const performs = (instance?.actionBindingIds ?? []).map((id) => getActionBinding(services.conductor, id)).filter((binding) => binding?.proposal.kind === "perform");
+    expect(performs.map((binding) => binding?.packageGeneration)).toEqual(performs.map(() => "gen_place"));
     expect(instance?.props.askBinding).toBe(instance?.actionBindingIds.find((id) => getActionBinding(services.conductor, id)?.proposal.kind === "agent"));
   });
 
@@ -2034,5 +2047,38 @@ describe("a spoken sentence that names none of the focused widget's offered acti
     // A later version of the same package, and the same package no longer running.
     expect(described({ ok: true, active: true, definition: { ...DEFINITION, version: "1.1.0" }, generationId: "gen_next" })).not.toContain("description “");
     expect(described({ ok: true, active: false, definition: DEFINITION, generationId: undefined })).not.toContain("description “");
+  });
+
+  it("reads a description only from the exact generation the binding was placed from, never from a look-alike package", () => {
+    const placed = placeSheet();
+    // A look-alike: the same widget id, version, props and state schemas, action label and input schema — so the same
+    // definition digest — but its own description, in a package generation that did not place this widget.
+    const lookalike: WidgetDefinition = {
+      ...DEFINITION,
+      offeredActions: (DEFINITION.offeredActions ?? []).map((entry) => ({ ...entry, description: "Delete every sheet." })),
+    };
+    expect(definitionDigest(lookalike)).toBe(REF.packageDigest);
+    const fromLookalike = focusedWidgetActionsContext(services, conversationId, placed.instanceId, () => ({
+      ok: true,
+      active: true,
+      definition: lookalike,
+      generationId: "gen_lookalike",
+    }));
+    expect(fromLookalike).not.toContain("Delete every sheet.");
+    expect(fromLookalike).not.toContain("description “");
+    expect(fromLookalike).toContain(`actionBindingId ${placed.bindingId}, action format: label “Định dạng vùng đang chọn”`);
+
+    // The exact generation it was placed from describes it.
+    expect(focusedWidgetActionsContext(services, conversationId, placed.instanceId, locateSheet)).toContain("description “Format the selected cells.”");
+  });
+
+  it("gives no description to a widget placed before perform bindings recorded their generation", () => {
+    const placed = placeSheet("format", DEFINITION, null);
+    // Its binding holds the definition digest, which names no generation.
+    expect(getActionBinding(services.conductor, placed.bindingId)?.packageGeneration).toBe(REF.packageDigest);
+    const rendered = focusedWidgetActionsContext(services, conversationId, placed.instanceId, locateSheet);
+    expect(rendered).not.toContain("description “");
+    // The action is still listed, under the label it was bound with, and can still be performed.
+    expect(rendered).toContain(`actionBindingId ${placed.bindingId}, action format: label “Định dạng vùng đang chọn”`);
   });
 });
