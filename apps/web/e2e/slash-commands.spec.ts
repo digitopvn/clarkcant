@@ -212,3 +212,76 @@ test("a folder typed into the /develop card in a browser is developed as the per
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+/** Puts the language back for the specs after this one: the suite shares one node, and it keeps the choice. */
+async function resetLanguage(request: import("@playwright/test").APIRequestContext): Promise<void> {
+  await request.put(`${GATEWAY}/preferences/experience.language`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { value: "vi" },
+  });
+}
+
+test("/settings opens the one Settings dialog over the conversation, on a named tab, and gives focus back", async ({ page }) => {
+  await openApp(page);
+  await send(page, "/sessions");
+  await expect(lastCard(page, "sessions")).toBeVisible({ timeout: 20_000 });
+  const rows = page.locator(".cc-row");
+  const before = await rows.count();
+  const composer = page.locator("[data-composer]");
+
+  await send(page, "/settings");
+  const settings = page.getByRole("dialog", { name: "Cài đặt" });
+  await expect(settings).toBeVisible({ timeout: 20_000 });
+  // The same dialog the gear opens, once: no second surface and nothing stacked.
+  await expect(page.locator('[data-modal="true"]')).toHaveCount(1);
+  await expect(settings.locator("[data-active-tab]")).toHaveAttribute("data-active-tab", "experience");
+  await expect(page.locator('.cc-row[data-role="user"]', { hasText: "/settings" })).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+  await expect(composer).toBeFocused();
+  // The conversation is still the one it was, with the host's read-back added to it.
+  await expect(page.locator('.cc-row[data-role="assistant"]').last()).toContainText("Tôi mở Settings nhé.");
+  expect(await rows.count()).toBeGreaterThan(before);
+  await expect(lastCard(page, "sessions")).toBeVisible();
+
+  // A tab named in Vietnamese words opens Settings on it.
+  await send(page, "/settings thiết bị");
+  await expect(settings.locator("[data-active-tab]")).toHaveAttribute("data-active-tab", "devices", { timeout: 20_000 });
+  await expect(page.locator("#cc-tab-devices")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+  await expect(composer).toBeFocused();
+
+  // A tab that does not exist opens nothing and says which ones there are.
+  await send(page, "/settings hoá đơn");
+  await expect(page.locator('.cc-row[data-role="assistant"]').last()).toContainText("Settings không có tab “hoá đơn”", { timeout: 20_000 });
+  await expect(settings).toHaveCount(0);
+});
+
+test.describe("in English", () => {
+  test.afterEach(async ({ request }) => resetLanguage(request));
+
+  test("/settings ai opens Settings on AI & Routing and reads it back in English", async ({ page }) => {
+    await openApp(page);
+    await page.locator("[data-settings='true']").click();
+    await page.locator("[data-segmented='language'] [data-segment='en']").click();
+    await expect(page.locator("[data-segmented='language'] [data-segment='en']")).toHaveAttribute("data-selected", "true");
+    await page.keyboard.press("Escape");
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect(settings).toHaveCount(0);
+
+    await send(page, "/settings ai");
+    await expect(settings).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-modal="true"]')).toHaveCount(1);
+    await expect(settings.locator("[data-active-tab]")).toHaveAttribute("data-active-tab", "ai");
+    await page.keyboard.press("Escape");
+    await expect(settings).toHaveCount(0);
+    await expect(page.locator("[data-composer]")).toBeFocused();
+    await expect(page.locator('.cc-row[data-role="assistant"]').last()).toContainText("Opening Settings on the AI & Routing tab.");
+
+    await send(page, "/settings billing");
+    await expect(page.locator('.cc-row[data-role="assistant"]').last()).toContainText('Settings has no tab "billing"', { timeout: 20_000 });
+    await expect(settings).toHaveCount(0);
+  });
+});

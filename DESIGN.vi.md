@@ -36,7 +36,7 @@ AI phải làm ClarkCant đơn giản hơn theo thời gian, không phải phứ
 - Không biến widgets thành một dashboard song song.
 - Mục tiêu không phải là giấu đi, mà là gọi ra được. Mọi thứ user có thể cần — phiên, đăng nhập/đăng xuất provider, model và thinking, cài đặt, chẩn đoán — đều gọi ra được bằng chat, voice hoặc slash command, và hiện thành tin nhắn của agent kèm widget UI (một mini app). Slash command, lời nói và voice cùng quy về một typed action.
 - Câu trả lời nào cần cấu trúc thì được ghép thành mini app: khi được nhờ so sánh benchmark của hai model, Clark nghiên cứu rồi trả lời bằng bảng, biểu đồ và sơ đồ ghép nối thành một bề mặt mạch lạc, không phải một bức tường chữ.
-- Settings là surface phụ, mở trên conversation và đóng lại về đúng vị trí cũ.
+- Settings là surface phụ, mở trên conversation và đóng lại về đúng vị trí cũ. Nút bánh răng, câu "mở cài đặt" gõ hay nói, và `/settings` (`/settings <tab>` cho một tab) đều mở cùng một hộp thoại đó.
 - Marketplace có thể có browser surface, nhưng phải mở từ chat/settings và không trở thành home screen thứ hai.
 - Mọi action quan trọng phải có đường chat và voice tương đương.
 
@@ -1285,6 +1285,17 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
 ### 11.2 AI & Routing
 
 - Current model as searchable picker.
+- Đăng nhập nhà cung cấp (đã ship): ngay dưới ô chọn nhà cung cấp và model, liệt kê mọi nhà cung cấp mà pi có thể
+  dùng để trả lời, dù đã đăng nhập hay chưa, chỉ với những cách đăng nhập pi công bố cho nhà cung cấp đó — đăng nhập
+  tài khoản (OAuth) khi pi có, API key khi pi nhận. Nhà cung cấp đã đăng nhập cho biết thông tin đăng nhập đến từ
+  đâu: do pi lưu, biến môi trường của node (.env hoặc shell), được trao lúc khởi động, models.json của pi, hoặc khoá
+  pi tự tìm thấy. Chỉ thông tin đăng nhập do pi lưu mới có Đăng xuất (và Thay API key / Đăng nhập lại); các loại khác
+  nói rõ không đăng xuất được ở đây và phải gỡ ở đâu. Đây là cùng một capability mà `/login` và `/logout` trả lời
+  trong cuộc trò chuyện — cùng route của node, cùng sổ đăng nhập và cùng đường đi phía client — nên quá trình đăng
+  nhập hiện ngay trong hàng (trang của nhà cung cấp để mở, một mã, ô mật khẩu cho khoá) với trạng thái đang chạy,
+  thất bại và hoàn tất, và những gì người dùng nhập đi thẳng tới pi, không bao giờ hiện lại. Đăng nhập hoặc đăng
+  xuất xong thì danh sách nhà cung cấp và danh mục model được đọc lại. Node không có pi nói rằng ở đây không có gì
+  để đăng nhập; danh sách pi không đọc được thì nói lý do và có nút Thử lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.
 - Automatic routing by Jev toggle.

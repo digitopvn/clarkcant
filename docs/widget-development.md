@@ -3004,8 +3004,10 @@ accepted on that port. Open the URL the dev host prints. A custom hostname, a tu
 The frame's modules are served only under a path that carries the dev host's per-process nonce
 (`/dev/modules/<nonce>/`), and the frame's opaque `null` origin is answered only there and under the frame's own
 `/dev/frame/<nonce>/` path. Vite's bare `/@fs/`, `/@id/`, `/@vite/` and `/src/` paths answer `404`, and no module
-carries `Access-Control-Allow-Origin: *`. A website, including one in its own sandboxed iframe, therefore cannot read
-your workspace through the dev host. In a checkout, Vite reads only the workspace's `packages/` and `node_modules/`,
+carries `Access-Control-Allow-Origin: *`. An installed CLI serves the release build's bundled frame runtimes under
+the same nonce, `/dev/frame/<nonce>/widget-runtime.js` for a package and `/dev/frame/<nonce>/catalog-runtime.js` for
+a catalog widget; the bare `/runtime/` paths answer `404`. A website, including one in its own sandboxed iframe,
+therefore cannot read your workspace through the dev host. In a checkout, Vite reads only the workspace's `packages/` and `node_modules/`,
 not the rest of the repository; an installed CLI reads only its own folder. A control change sent to `/dev/api/action` that is not `{ kind, value }` with a known `kind` is refused
 with `400`, and the shell keeps its state.
 
