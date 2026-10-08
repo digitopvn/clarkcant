@@ -40,7 +40,8 @@ import type { WidgetPerformer } from "../application/widget-actions.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { pendingForConversation } from "../interactions.ts";
-import { availableCredentials } from "../readiness.ts";
+import { credentialSources } from "../readiness.ts";
+import { voiceCredential } from "../voice-live-check.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type NodeServices } from "../services.ts";
 import { accumulateAnswerText } from "../voice-answer.ts";
@@ -49,11 +50,13 @@ import {
   type PendingVoiceInteraction,
   VOICE_ANSWER_NOTE,
   VOICE_CREDENTIAL_NAME,
+  type VoiceAnswerResult,
   type VoiceFrameSink,
   type VoiceGatewayOptions,
   attachVoiceGateway,
 } from "../voice-session.ts";
-import { NO_FOCUSED_SURFACE_SAY, type VoiceWidgetApproval, type VoiceWidgetRun } from "../widget-voice-action.ts";
+import { FOCUSED_WIDGET_NOTE, focusedWidgetActionsContext } from "../widget-perform-tool.ts";
+import { actionGoneSay, noFocusedSurfaceSay, type VoiceWidgetApproval, type VoiceWidgetRun } from "../widget-voice-action.ts";
 
 /**
  * The voice socket, and everything a live session needs to reach the rest of the node.
@@ -168,14 +171,9 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     deps.services.voiceLiveUtterance = voiceLiveUtterance;
   }
 
-  const credential = (): string | undefined =>
-    voiceFixture
-      ? "fixture-credential"
-      : // The vault first, then the environment. A key typed into the credential card is a key the person
-        // expects to be used, and an environment variable that happens to be absent must not make that
-        // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
-        deps.env["GEMINI_API_KEY"] ??
-        readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME);
+  const storedVoiceCredential = (): string | undefined =>
+    readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME);
+  const credential = nodeVoiceCredential({ fixture: voiceFixture, env: deps.env, stored: storedVoiceCredential });
 
   const voice = attachVoiceGateway({
     server: deps.server,
@@ -185,101 +183,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     ...(voiceLiveUtterance === undefined ? {} : { voiceLiveUtterance }),
     ...recognitionWiring({ services: deps.services, env: deps.env, credential, fixture: voiceFixture }),
-    /**
-     * What a finished sentence does.
-     *
-     * It becomes a message in the conversation and the agent answers it, with whatever tools the
-     * answer needs. The words that come back are what the voice session reads aloud, which is why the
-     * live model is told not to answer anything itself: this is the only answer in the room.
-     */
-    answer: async ({ conversationId, text, at: spokenAt, onText, onAppIntent, onWidgetPerform }) => {
-      const forwardText = onText === undefined ? undefined : accumulateAnswerText(onText);
-      const outcome = await handleUserMessage(deps.services.conductor, {
-        conversationId: conversationId as never,
-        principal: {
-          principalId: deps.services.runtime.identity.ownerPrincipalId as never,
-          kind: "user",
-          nodeId: deps.services.runtime.identity.nodeId as never,
-        },
-        text,
-        at: spokenAt as never,
-        // Spoken turns are answered briefly: the session has to read the answer out loud.
-        note: VOICE_ANSWER_NOTE,
-        // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
-        // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
-        channel: "voice",
-        // What the person said, heard on their own voice surface: it counts as their words (`MessageRecord.surface`).
-        surface: "voice",
-        // And it is the person who asked.
-        origin: "person",
-        // The voice surface is a caller holding an open stream like any other, so it gets the same
-        // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
-        // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
-        // holds the measurement that made this a function of its own. A `host-control` event — the app-control
-        // tool's decision — is forwarded separately, over the wire frame the browser already knows how to run.
-        ...(forwardText === undefined && onAppIntent === undefined && onWidgetPerform === undefined
-          ? {}
-          : {
-              emit: (event) => {
-                forwardText?.(event);
-                if (event.type === "host-control" && onAppIntent !== undefined) {
-                  // The voice surface reports what it did, like the typed stream's page does.
-                  deps.services.hostControl.expect(event.decision);
-                  onAppIntent(event.decision);
-                }
-                if (event.type === "widget-perform" && onWidgetPerform !== undefined) {
-                  // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back. A
-                  // closed socket sent nothing, so the turn's wait hears "nobody to ask", not an unknown outcome.
-                  deliverToVoiceFrame(deps.services, onWidgetPerform, event.request);
-                }
-              },
-            }),
-      });
-      // Indexed where the messages were just written, for the same reason the typed route does it:
-      // a sentence that was spoken is a message like any other, and search must not disagree with the
-      // conversation about what was said.
-      indexMessages(deps.services.search, { conversationId, messages: outcome.messages, at: spokenAt });
-
-      const reply = outcome.messages
-        .filter((message) => message.role === "assistant")
-        .map((message) => textOfMessage(message))
-        .join("\n\n")
-        .trim();
-      /*
-       * A turn can end with something waiting for an answer: an operation to approve, or a question card. The voice
-       * session asks out loud either way, and needs enough of the card to phrase it — the digest for an approval,
-       * the options for a question — because it sends its answer back through the same function the button does.
-       */
-      let pending: PendingVoiceInteraction | undefined;
-      for (const block of outcome.messages.flatMap((message) => message.blocks)) {
-        if (block.type === "approval-card" && block.decision === "pending") {
-          pending = {
-            kind: "approval",
-            approvalId: block.approvalId,
-            digest: block.operationDigest,
-            description: block.operationDescription,
-          };
-          break;
-        }
-        if (block.type === "question-card" && block.status === "waiting") {
-          pending = {
-            kind: "question",
-            questionId: block.questionId,
-            questionType: block.questionType,
-            prompt: block.prompt,
-            options: block.options.map((option) => ({ id: option.id, label: option.label })),
-            allowOther: block.allowOther,
-            voicePrompt: block.voicePrompt,
-          };
-          break;
-        }
-      }
-      return {
-        reply,
-        recordedMessages: outcome.messages.length,
-        ...(pending === undefined ? {} : { pendingInteraction: pending }),
-      };
-    },
+    /** What a finished sentence does (`answerSpokenSentence`). */
+    answer: (input) => answerSpokenSentence(deps.services, input),
     /** Carry out what the user just said yes or no to, and only while the card still waits (`spokenApprovalWiring`). */
     ...spokenApprovalWiring(deps.services),
     /**
@@ -379,6 +284,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     },
     /** Run a widget action the person asked for out loud (`spokenWidgetAction`). */
     widgetAction: (input) => spokenWidgetAction(deps.services, input),
+    /** The focused widget's offered actions, for a sentence that named none of them (`focusedWidgetActionsContext`). */
+    focusedWidgetContext: ({ conversationId, instanceId }) => focusedWidgetActionsContext(deps.services, conversationId, instanceId),
   });
   /*
    * Published to the settings route, from the same object the voice sessions use.
@@ -395,19 +302,147 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
    * be refused" on a node whose credential card had just been filled in — a line that was not merely unhelpful but
    * wrong about what this node would do.
    */
-  const voiceHasCredential = availableCredentials({
-    env: process.env,
+  // Which key a session would open on, by source and never by value, so an operator with a key in both places can
+  // read which one is in effect.
+  const voiceKeySource = credentialSources({
+    env: deps.env,
     vault: credentialNames(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId),
-  }).includes(VOICE_CREDENTIAL_NAME);
+  })[VOICE_CREDENTIAL_NAME];
   process.stderr.write(
     voiceFixture
       ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"
-      : voiceHasCredential
-        ? `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"})\n`
+      : voiceKeySource === "vault" || voiceKeySource === "environment"
+        ? `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"}; key from the ${voiceKeySource})\n`
         : "voice: no credential for the live provider, so a voice session will be refused by name rather than failing silently\n",
   );
 
   return { capabilities: () => voice.capabilities(), close: () => voice.close() };
+}
+
+type SpokenSentenceInput = Parameters<NonNullable<VoiceGatewayOptions["answer"]>>[0];
+
+/**
+ * What a finished sentence does.
+ *
+ * It becomes a message in the conversation and the agent answers it, with whatever tools the
+ * answer needs. The words that come back are what the voice session reads aloud, which is why the
+ * live model is told not to answer anything itself: this is the only answer in the room.
+ *
+ * A sentence said with a widget focused that named none of its labels may carry that widget's offered
+ * actions (`widgetContext`), read when the turn starts: they go in the turn's data, as the package's own
+ * words, and the host's note says how they may be used — through `perform_widget_action`, the typed path,
+ * and nothing else.
+ */
+export async function answerSpokenSentence(
+  services: NodeServices,
+  { conversationId, text, at: spokenAt, onText, onAppIntent, onWidgetPerform, widgetContext }: SpokenSentenceInput,
+): Promise<VoiceAnswerResult> {
+  const forwardText = onText === undefined ? undefined : accumulateAnswerText(onText);
+  const outcome = await handleUserMessage(services.conductor, {
+    conversationId: conversationId as never,
+    principal: {
+      principalId: services.runtime.identity.ownerPrincipalId as never,
+      kind: "user",
+      nodeId: services.runtime.identity.nodeId as never,
+    },
+    text,
+    at: spokenAt as never,
+    // Spoken turns are answered briefly: the session has to read the answer out loud.
+    note: widgetContext === undefined ? VOICE_ANSWER_NOTE : `${VOICE_ANSWER_NOTE} ${FOCUSED_WIDGET_NOTE}`,
+    // The focused widget's offered actions are the package's words, so they travel as data, never in the note; read
+    // when the turn starts, after any turn it waited behind, and left out if that widget is no longer focused by then.
+    ...(widgetContext === undefined ? {} : { dataAtStart: widgetContext }),
+    // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
+    // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
+    channel: "voice",
+    // What the person said, heard on their own voice surface: it counts as their words (`MessageRecord.surface`).
+    surface: "voice",
+    // And it is the person who asked.
+    origin: "person",
+    // The voice surface is a caller holding an open stream like any other, so it gets the same
+    // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
+    // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
+    // holds the measurement that made this a function of its own. A `host-control` event — the app-control
+    // tool's decision — is forwarded separately, over the wire frame the browser already knows how to run.
+    ...(forwardText === undefined && onAppIntent === undefined && onWidgetPerform === undefined
+      ? {}
+      : {
+          emit: (event) => {
+            forwardText?.(event);
+            if (event.type === "host-control" && onAppIntent !== undefined) {
+              // The voice surface reports what it did, like the typed stream's page does.
+              services.hostControl.expect(event.decision);
+              onAppIntent(event.decision);
+            }
+            if (event.type === "widget-perform" && onWidgetPerform !== undefined) {
+              // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back. A
+              // closed socket sent nothing, so the turn's wait hears "nobody to ask", not an unknown outcome.
+              deliverToVoiceFrame(services, onWidgetPerform, event.request);
+            }
+          },
+        }),
+  });
+  // Indexed where the messages were just written, for the same reason the typed route does it:
+  // a sentence that was spoken is a message like any other, and search must not disagree with the
+  // conversation about what was said.
+  indexMessages(services.search, { conversationId, messages: outcome.messages, at: spokenAt });
+
+  const reply = outcome.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => textOfMessage(message))
+    .join("\n\n")
+    .trim();
+  /*
+   * A turn can end with something waiting for an answer: an operation to approve, or a question card. The voice
+   * session asks out loud either way, and needs enough of the card to phrase it — the digest for an approval,
+   * the options for a question — because it sends its answer back through the same function the button does.
+   */
+  let pending: PendingVoiceInteraction | undefined;
+  for (const block of outcome.messages.flatMap((message) => message.blocks)) {
+    if (block.type === "approval-card" && block.decision === "pending") {
+      pending = {
+        kind: "approval",
+        approvalId: block.approvalId,
+        digest: block.operationDigest,
+        description: block.operationDescription,
+      };
+      break;
+    }
+    if (block.type === "question-card" && block.status === "waiting") {
+      pending = {
+        kind: "question",
+        questionId: block.questionId,
+        questionType: block.questionType,
+        prompt: block.prompt,
+        options: block.options.map((option) => ({ id: option.id, label: option.label })),
+        allowOther: block.allowOther,
+        voicePrompt: block.voicePrompt,
+      };
+      break;
+    }
+  }
+  return {
+    reply,
+    recordedMessages: outcome.messages.length,
+    ...(pending === undefined ? {} : { pendingInteraction: pending }),
+  };
+}
+
+/**
+ * The key a voice session and the dedicated recognizer open on.
+ *
+ * The vault first, then the environment (`voiceCredential`): a key typed into the credential card is the key the person
+ * expects to be used, and an older variable in the environment must not quietly answer instead. Read at open time
+ * rather than cached, so the next attempt after typing one finds it. The scripted fixture never reaches a provider, so
+ * it gets a placeholder rather than a key.
+ */
+export function nodeVoiceCredential(input: {
+  fixture: boolean;
+  env: Record<string, string | undefined>;
+  stored: () => string | undefined;
+}): () => string | undefined {
+  return () =>
+    input.fixture ? "fixture-credential" : voiceCredential({ env: input.env, vaultCredential: input.stored() }).value;
 }
 
 type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];
@@ -606,22 +641,22 @@ async function runSpokenWidgetAction(
   services: NodeServices,
   { conversationId, action, focused, onWidgetPerform }: SpokenWidgetActionInput,
 ): Promise<VoiceWidgetRun> {
+  const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
   const instanceId = focused?.instanceId;
-  if (instanceId === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
+  if (instanceId === undefined) return { ok: false, say: noFocusedSurfaceSay(locale) };
 
   const target = widgetActionTarget(services, instanceId, action.actionBindingId);
   if (target === undefined) {
     // The page's view was older than the instance, or the action is gone. Either way this is a refusal and not a
     // guess: invoking a binding the instance no longer announces is exactly what the digest check exists for.
-    return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
+    return { ok: false, say: actionGoneSay(locale) };
   }
   if (target.kind === "perform" && onWidgetPerform === undefined) {
     // An action the widget offers runs in the frame on the screen that shows it. A session whose page did not say it
     // can hand one to a frame and report back has no way to reach it, so the press is refused before anything is sent.
-    const performLocale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
     return {
       ok: false,
-      say: performLocale === "vi"
+      say: locale === "vi"
         ? `Tôi không bấm “${action.label}” bằng giọng nói được. Bạn nhờ Clark làm việc đó trong cuộc trò chuyện nhé; chưa có gì được gửi.`
         : `I can't press “${action.label}” by voice. Ask Clark to do it in the conversation instead; nothing was sent.`,
     };
@@ -650,7 +685,6 @@ async function runSpokenWidgetAction(
     { askedBy: "person-voice", ...(onWidgetPerform === undefined ? {} : { perform: voicePerformer(services, onWidgetPerform) }) },
   );
 
-  const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
   // Said from the code and details in the person's language: a call that may have run is never "could not do it".
   if (!result.ok) return { ok: false, say: spokenActionRefusal(action.label, { code: result.code, ...(result.detail === undefined ? {} : { detail: result.detail }) }, locale) };
   if (result.body.outcome === "background") {

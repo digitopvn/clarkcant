@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,6 +20,7 @@ import { createServiceHost, type ServiceHost, type ServiceLauncher } from "../..
 import { createWorkSupervisor } from "../../../../apps/runtime/src/work-supervisor.ts";
 import { renderImage } from "../service/png.mjs";
 import { FAKE_PROVIDER_STEPS, type FakeProvider, startFakeProvider } from "./fake-provider.ts";
+import { removeTestDirectory } from "../../../../tools/test-cleanup.ts";
 
 /**
  * The image generator's service, run by the node's own service host and job host against the fake provider.
@@ -196,7 +197,7 @@ afterEach(async () => {
   host = undefined;
   await provider.close();
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("the image generator service", () => {

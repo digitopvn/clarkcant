@@ -17,6 +17,7 @@ import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { createNodeServer } from "./server.ts";
 import { sweepTaskWorktrees } from "./worktree-sweep.ts";
+import { reconcileFeedbackAtStart } from "./routes/feedback.ts";
 import type { ViewDescriptor } from "./model-turn.ts";
 import { fixtureGatesFromEnv, loadFixtureComposition } from "./bootstrap/fixtures.ts";
 import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
@@ -235,6 +236,15 @@ async function main(): Promise<void> {
   const work = attachNodeWork({ services, env: process.env, envLoaded: envFile.loaded });
 
   /*
+   * An in-process GitHub for product reports, only when its gate is on, so the report journey files somewhere that is
+   * not the real repository. Absent, reports go to ClarkCant's repository with the person's own token.
+   */
+  if (fixtureGates.github) {
+    const github = fixtures?.createFakeGithub();
+    if (github !== undefined) services.feedbackGithub = github;
+    process.stderr.write("product reports: FIXTURE GitHub loaded — reports are kept in this process, not filed (CC_GITHUB_FIXTURE=1)\n");
+  }
+  /*
    * The frame-grant lifetime a browser journey can shorten, only when its gate is on. Absent, the node mints every grant
    * with the production lifetime and has no route that could change it.
    */
@@ -325,6 +335,14 @@ async function main(): Promise<void> {
     })
     .catch((cause: unknown) => {
       process.stderr.write(`could not sweep task worktrees: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+    });
+  // Product reports the previous process stopped in the middle of sending: found by their marker, never sent again.
+  void reconcileFeedbackAtStart(services)
+    .then((swept) => {
+      if (swept.checked > 0) process.stderr.write(`product reports left unsettled: ${String(swept.checked)} checked, ${String(swept.announced)} reported\n`);
+    })
+    .catch((cause: unknown) => {
+      process.stderr.write(`could not check unsettled product reports: ${cause instanceof Error ? cause.message : String(cause)}\n`);
     });
 
   // After recovery, so a task an automation started before the node stopped is already called uncertain rather than

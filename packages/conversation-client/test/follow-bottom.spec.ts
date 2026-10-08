@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BOTTOM_FOLLOW_SLACK_PX, distanceFromBottom, followScrollBehavior, followsBottom } from "../src/follow-bottom.ts";
+import { BOTTOM_FOLLOW_SLACK_PX, distanceFromBottom, followScrollBehavior, followsBottom, stillFollowsBottom } from "../src/follow-bottom.ts";
 
 describe("following the bottom of the transcript", () => {
   it("measures how far the view is from the bottom", () => {
@@ -39,5 +39,21 @@ describe("following the bottom of the transcript", () => {
     // Opening a stored conversation from its top would otherwise sweep every player past the screen.
     expect(followScrollBehavior({ scrollHeight: 1601, scrollTop: 400, clientHeight: 600 })).toBe("instant");
     expect(followScrollBehavior({ scrollHeight: 9000, scrollTop: 0, clientHeight: 600 })).toBe("instant");
+  });
+
+  it("leaves a reader who scrolled up before the browser reported it where they are", () => {
+    // The last report said the bottom, at 400; the view is now far above it, and the report of that scroll is still to come.
+    expect(stillFollowsBottom(true, 400, 0)).toBe(false);
+    expect(stillFollowsBottom(true, 400, 400 - BOTTOM_FOLLOW_SLACK_PX - 1)).toBe(false);
+  });
+
+  it("keeps following when the view has not moved up since the report, or moved down to follow", () => {
+    expect(stillFollowsBottom(true, 400, 400)).toBe(true);
+    // A small nudge stays within the slack, the same as a position just short of the bottom.
+    expect(stillFollowsBottom(true, 400, 400 - BOTTOM_FOLLOW_SLACK_PX)).toBe(true);
+    // Following a growing transcript moves the view down.
+    expect(stillFollowsBottom(true, 400, 900)).toBe(true);
+    // A reader who was not following is not made to by anything here.
+    expect(stillFollowsBottom(false, 400, 400)).toBe(false);
   });
 });

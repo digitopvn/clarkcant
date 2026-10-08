@@ -139,6 +139,7 @@ interface ActionRun {
  */
 export interface ViewQueue {
   inFlight: boolean;
+  /** In flight: the revision the write was sent at. Settled: the revision the node answered with. */
   revision?: number;
   queued?: { action?: TimelineAction; view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void }[];
 }
@@ -150,13 +151,17 @@ export interface ViewQueue {
  * that would release it never arrives: it is sent at once, with `keepalive`, at the revision the write in flight
  * produces if the node accepts it (a view write moves the revision by one). If that write is refused, so is this one,
  * and the node's own freshness window keeps what it reports honest.
+ *
+ * A change made after a write was answered but before the page drew that answer still holds the revision of the last
+ * render, one behind the node. It is sent at the revision the node answered with, so a quick second key press is not
+ * refused and the view is not put back to what it was before it.
  */
 export function planViewWrite(
   queue: ViewQueue | undefined,
   revision: number,
   leaving: boolean,
 ): { send: false } | { send: true; expectedRevision: number; keepalive: boolean } {
-  if (queue?.inFlight !== true) return { send: true, expectedRevision: revision, keepalive: leaving };
+  if (queue?.inFlight !== true) return { send: true, expectedRevision: Math.max(revision, queue?.revision ?? revision), keepalive: leaving };
   if (!leaving) return { send: false };
   return { send: true, expectedRevision: (queue.revision ?? revision) + 1, keepalive: true };
 }
@@ -380,7 +385,7 @@ export function useSurfaceRenderer({
         )
         .then((result) => {
           const [next, ...rest] = viewQueues.current.get(instanceId)?.queued ?? [];
-          viewQueues.current.set(instanceId, { inFlight: false, ...(rest.length === 0 ? {} : { queued: rest }) });
+          viewQueues.current.set(instanceId, { inFlight: false, revision: result.revision, ...(rest.length === 0 ? {} : { queued: rest }) });
           if (next !== undefined) sendView(conversation, instanceId, datasetRef, next.action ?? action, result.revision, next.view, refused, next.onSettled);
           else { applyTimeline(result.timeline); onSettled?.(result.timeline); }
         })

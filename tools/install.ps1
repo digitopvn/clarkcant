@@ -37,7 +37,9 @@
       Write-Host "Using the existing checkout in $Target (not pulling; update it yourself with git pull)."
     } else {
       Write-Host "Cloning $RepoUrl ($Ref) into $Target ..."
-      git clone --depth 1 --branch $Ref $RepoUrl $Target
+      # Blobless, not shallow: the commit history and release tags let onboarding read the notes of every release
+      # this checkout holds (tools/release/history.mjs --source); file contents download only for the checked-out tree.
+      git clone --filter=blob:none --branch $Ref $RepoUrl $Target
       if ($LASTEXITCODE -ne 0) { Say-Error 'git clone failed.'; return }
     }
     $Root = (Resolve-Path $Target).Path

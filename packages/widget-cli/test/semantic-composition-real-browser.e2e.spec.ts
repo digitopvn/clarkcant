@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
 
+import { chromiumTestArgs } from "../../../tools/chromium-test-args.ts";
 import { runCli } from "../src/cli.ts";
 import { startDevHost, type DevHost } from "../src/dev-host.ts";
 
@@ -95,7 +96,7 @@ draw();\n`,
     host = await startDevHost({ root: packageRoot, port: 0, watchFiles: false });
     const shellHtml = await (await fetch(host.url)).text();
     expect(shellHtml).toContain("demo.changed");
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
     const page = await browser.newPage({ colorScheme: "light" });
     const diagnostics: string[] = [];
     page.on("pageerror", (error) => diagnostics.push(error.message));
@@ -184,7 +185,7 @@ draw();\n`,
 
   it("applies a built-in composition event through the shared graph contract", async () => {
     host = await startDevHost({ builtin: "canvas.search@1", port: 0, watchFiles: false });
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, args: await chromiumTestArgs(chromium) });
     const page = await browser.newPage();
     await page.goto(host.url);
 

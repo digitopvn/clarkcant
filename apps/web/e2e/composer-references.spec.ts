@@ -62,6 +62,21 @@ function nextMessage(page: Page): Promise<Request> {
   return page.waitForRequest((request) => request.method() === "POST" && /\/messages(\/stream)?$/u.test(request.url()));
 }
 
+test("a bare slash lists the person's skills beside the node's commands", async ({ page }) => {
+  await openApp(page);
+  await composer(page).click();
+  await page.keyboard.type("/");
+
+  await expect(picker(page)).toBeVisible();
+  // However many commands the node has, its skills are not pushed out of the first list.
+  await expect(option(page, "new")).toBeVisible();
+  await expect(option(page, "release-notes")).toBeVisible();
+  await expect(option(page, "review")).toBeVisible();
+  await expect(picker(page).locator('[data-reference-kind="skill"]')).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(composer(page)).toHaveValue("/");
+});
+
 test("a skill chosen after a slash with the keyboard is sent, shown and briefed to the turn", async ({ page }) => {
   await openApp(page);
   await composer(page).click();
@@ -172,7 +187,8 @@ test("the pointer chooses a row and opens a folder, and removing a chip takes it
   await expect(page.locator('[data-reference-chip="demo-app/docs"]')).toBeVisible();
   await expect(composer(page)).toBeFocused();
 
-  await page.keyboard.type("và /");
+  // A bare slash fills the capped list with host commands first, so the skill is narrowed to by name.
+  await page.keyboard.type("và /rel");
   await option(page, "release-notes").click();
   await expect(composer(page)).toHaveValue("@demo-app/docs và /release-notes ");
   await expect(page.locator("[data-reference-chip]")).toHaveCount(2);

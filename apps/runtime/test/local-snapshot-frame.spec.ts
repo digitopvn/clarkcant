@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { createInstance, mintFrameGrant, snapshotLocalPackage } from "@clarkcant
 
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A package listed by a path on this machine, as its frame is served after it was installed from a snapshot.
@@ -173,11 +174,11 @@ beforeEach(async () => {
   }).instanceId;
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (previousIndex === undefined) delete process.env["CC_DIRECTORY_INDEX"];
   else process.env["CC_DIRECTORY_INDEX"] = previousIndex;
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  await removeTestDirectory(dir);
 });
 
 describe("the frame of a package installed from a path on this machine", () => {

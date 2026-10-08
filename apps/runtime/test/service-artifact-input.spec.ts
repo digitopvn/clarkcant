@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import {
 import { EXECUTION_POLICY_PREFERENCE_KEY, writeRegisteredPreference } from "@clarkcant/core";
 import { createConversation, createPin, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
+import { readClarkVersion } from "../../../tools/release/clark-version.mjs";
 import { type CapabilityInvokeDeps, invokeCapability, runApprovedCapability } from "../src/application/capability-invoke.ts";
 import {
   type ArtifactBrokerDeps,
@@ -30,6 +31,7 @@ import { createPackageJobHost, type PackageJobHost } from "../src/job-host.ts";
 import { createServiceHost, type ServiceHost, type ServiceLauncher } from "../src/service-host.ts";
 import { createWorkSupervisor, type WorkSupervisor } from "../src/work-supervisor.ts";
 import { WAV_HEADER_BYTES, applyGain, fixtureClip, parseWavHeader, renderPlan, wavHeader } from "../../../examples/reference-apps/media-render/service/wav.mjs";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A package service reading a file a widget holds, end to end through the node: the reference media render package's
@@ -144,6 +146,7 @@ function writeReaderPackage(): void {
 let buffer = "";
 const waiting = new Map();
 let next = 1;
+let client = null;
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 const read = (artifactId) => new Promise((resolve) => {
   const id = "read-" + String(next++);
@@ -158,6 +161,7 @@ async function handle(message) {
     return;
   }
   if (message.method === "initialize") {
+    client = message.params.clientInfo;
     send({ id: message.id, result: { protocolVersion: "2025-06-18", serverInfo: { name: "reader", version: "1.0.0" }, capabilities: { tools: {} } } });
     return;
   }
@@ -168,7 +172,7 @@ async function handle(message) {
   if (message.method === "tools/call") {
     const first = await read(message.params.arguments.source);
     const second = await read(message.params.arguments.other);
-    send({ id: message.id, result: { content: [{ type: "text", text: JSON.stringify({ first, second }) }] } });
+    send({ id: message.id, result: { content: [{ type: "text", text: JSON.stringify({ first, second, client }) }] } });
     return;
   }
   if (message.id !== undefined && message.method !== undefined) send({ id: message.id, result: {} });
@@ -241,10 +245,11 @@ function writeProbePackage(): void {
   writeFileSync(
     join(root, "service", "server.mjs"),
     `
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, writeFileSync } from "node:fs";
 let buffer = "";
 const waiting = new Map();
 let next = 1;
+let client = null;
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 const ask = (method, params) => new Promise((resolve) => {
   const id = "ask-" + String(next++);
@@ -277,7 +282,12 @@ async function run(id, args) {
     }
   }
   const late = await Promise.all(detached);
-  if (answered) writeFileSync(args.report, JSON.stringify({ results, detached: late }));
+  // Written aside and renamed into place: the test reads the report as soon as it exists, and a file written where it
+  // is read exists, empty, before its bytes are in it.
+  if (answered) {
+    writeFileSync(args.report + ".partial", JSON.stringify({ results, detached: late }));
+    renameSync(args.report + ".partial", args.report);
+  }
   else send({ id, result: { content: [{ type: "text", text: JSON.stringify([...results, ...late]) }] } });
 }
 async function handle(message) {
@@ -456,7 +466,7 @@ afterEach(async () => {
   await host?.stopAll();
   host = undefined;
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 describe("a package service reading a widget's file", () => {
@@ -569,6 +579,25 @@ describe("a package service reading a widget's file", () => {
     expect(Buffer.from(answer.first.result?.bytes ?? "", "base64").toString("utf8")).toBe("plai");
     expect(answer.first.result).toMatchObject({ mimeType: "text/plain", sizeBytes: 14 });
     expect(answer.second.error?.code).toBe(SERVICE_ARTIFACT_ERROR_CODES.notAnInput);
+  });
+
+  it("introduces the node to the service as this build of Clark, with the one canonical version", async () => {
+    writeReaderPackage();
+    activate(READER, READER_GENERATION);
+    await startServices();
+    const mine = pick(new TextEncoder().encode("plain text one"), INSTANCE, "one.txt", "text/plain");
+
+    const outcome = await invokeCapability(deps(), {
+      ref: READ_TWO,
+      args: { source: mine.artifactId },
+      source: "widget",
+      conversationId: CONVERSATION,
+      bindingGeneration: READER_GENERATION,
+      jobOrigin: { instanceId: INSTANCE, actionBindingId: "binding_reader" },
+    });
+    if (outcome.kind !== "done") throw new Error(`expected an answer, got ${JSON.stringify(outcome)}`);
+    const answer = JSON.parse(outcome.output) as { client: unknown };
+    expect(answer.client).toEqual({ name: "clarkcant", version: readClarkVersion(fileURLToPath(new URL("../../../", import.meta.url))) });
   });
 });
 

@@ -49,8 +49,9 @@ của `CLARKCANT_SEARCH_DECIDER` hay `CLARKCANT_CONTEXT_DECIDER` nghĩa là "h�
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
-referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt; nó được dùng khi môi
-trường không có, và biến đặt trong môi trường luôn thắng. Token của Cloudflare chỉ được đọc từ môi
+referenced from code. Key của TypeSafe cũng có thể được nhập vào thẻ cài đặt. Khi cả hai nơi đều có,
+key lưu trong thẻ được ưu tiên, theo quy tắc chung cho mọi credential của nhà cung cấp; key trong môi
+trường chỉ được dùng khi thẻ chưa có key. Lưu hoặc xoá key trong thẻ có hiệu lực từ quyết định kế tiếp, không cần khởi động lại; khi không còn key ở cả hai nơi, selector bị tắt. Câu trả lời readiness của node (`GET /readiness`, trường `sources`) cho biết key nào đang được dùng, không bao giờ hiện giá trị. Token của Cloudflare chỉ được đọc từ môi
 trường: không có thẻ cài đặt cho nó, và một secret được lưu cho mục đích khác không bao giờ được dùng
 làm credential của decision provider.
 
@@ -69,7 +70,7 @@ CLOUDFLARE_API_TOKEN=<một token được phép chạy Workers AI>
 |---|---|---|
 | Nơi nhận request | `https://api.typesafe.ai/v1/systemone`, hoặc `CLARKCANT_JEV_ENDPOINT` | `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/<model>`, dựng từ hai giá trị đã kiểm tra; không có cách ghi đè endpoint |
 | Model | `jev-1.13.0` nếu không ghi đè | `clef` hoặc `clef-flash`, luôn phải nêu rõ |
-| Credential | `TYPESAFE_API_KEY`, nếu không có thì key từ thẻ cài đặt | Chỉ `CLOUDFLARE_API_TOKEN` |
+| Credential | Key từ thẻ cài đặt, nếu không có thì `TYPESAFE_API_KEY` | Chỉ `CLOUDFLARE_API_TOKEN` |
 | Thân request | System One: `{state, model, questions}` | Cùng một thân |
 | Response | Câu trả lời System One | Cùng câu trả lời đó nằm trong envelope REST của Cloudflare; chỉ `success: true` mới được mở ra |
 
@@ -232,7 +233,9 @@ selector: clef-flash pinned on cloudflare, 4000 ms per turn
 selector: disabled (no credential or local-only); composed surfaces use the deterministic path
 ```
 
-Dạng thứ hai chỉ xuất hiện khi Cloudflare được chọn.
+Dạng thứ hai chỉ xuất hiện khi Cloudflare được chọn. Dòng này mô tả node lúc khởi động: key TypeSafe
+được lưu hoặc xoá trong thẻ cài đặt sau đó thay đổi cách selector hoạt động mà không làm thay đổi dòng
+này.
 
 If that line says disabled, everything still works: composed surfaces compile through the
 deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one

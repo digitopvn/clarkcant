@@ -9,6 +9,7 @@ import {
   reviewDevServerUrl,
   reviewIpcCall,
   reviewNotificationTarget,
+  withContentSecurityPolicy,
 } from "../src/security.mjs";
 
 /**
@@ -86,6 +87,44 @@ describe("the content security policy leaves no execution primitive", () => {
     expect(policy).toContain("frame-ancestors 'none'");
     expect(policy).toContain("object-src 'none'");
     expect(policy).toContain("base-uri 'none'");
+  });
+
+  it("may frame the node, which serves isolated widgets, and nothing else", () => {
+    const frameSrc = (value: string) => value.split("; ").filter((directive) => directive.startsWith("frame-src"));
+    // Without the directive `default-src 'none'` refuses every isolated widget in the desktop window.
+    expect(frameSrc(contentSecurityPolicy({ appOrigin: "http://127.0.0.1:8765/", nodeOrigin: "http://127.0.0.1:8765" }))).toEqual([
+      "frame-src 'self' http://127.0.0.1:8765",
+    ]);
+    // Under a dev server the app and the node are two origins; frames come from the node.
+    const dev = contentSecurityPolicy({
+      appOrigin: "http://127.0.0.1:5173/?gateway=x",
+      nodeOrigin: "http://127.0.0.1:8765",
+      devOrigin: "http://127.0.0.1:5173",
+    });
+    expect(frameSrc(dev)).toEqual(["frame-src 'self' http://127.0.0.1:5173 http://127.0.0.1:8765"]);
+    expect(frameSrc(policy)).toEqual(["frame-src 'self'"]);
+  });
+});
+
+describe("the window's policy is applied to the window's documents", () => {
+  const POLICY = contentSecurityPolicy({ appOrigin: "http://127.0.0.1:8765/" });
+  const WIDGET_POLICY = "default-src 'none'; script-src 'nonce-abc' 'self'; frame-ancestors 'self'";
+
+  it("is set on the window's own document", () => {
+    const headers = withContentSecurityPolicy({ resourceType: "mainFrame", responseHeaders: { "content-type": ["text/html"] } }, POLICY);
+    expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
+  });
+
+  it("leaves a framed widget document its own policy, which the window's would refuse outright", () => {
+    const responseHeaders = { "content-security-policy": [WIDGET_POLICY] };
+    const headers = withContentSecurityPolicy({ resourceType: "subFrame", responseHeaders }, POLICY);
+    expect(headers).toEqual(responseHeaders);
+    expect(headers["Content-Security-Policy"]).toBeUndefined();
+  });
+
+  it("gives a framed document with no policy of its own the window's, so nothing is framed with less", () => {
+    const headers = withContentSecurityPolicy({ resourceType: "subFrame", responseHeaders: { "content-type": ["text/html"] } }, POLICY);
+    expect(headers["Content-Security-Policy"]).toEqual([POLICY]);
   });
 });
 

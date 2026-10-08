@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,7 @@ import {
   recordWidgetSemantic,
   touchWidgetSemantic,
 } from "../src/repositories/widget-semantic.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The touched-widget record a model turn reads.
@@ -31,9 +32,9 @@ beforeEach(() => {
   migrate(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 const at = (second: number) => `2026-09-29T10:00:${String(second).padStart(2, "0")}.000Z` as Instant;

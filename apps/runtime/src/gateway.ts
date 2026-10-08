@@ -34,9 +34,11 @@ import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
 import { handleConnectionCallback, handleConnectionRoutes } from "./routes/package-connections.ts";
 import { handleThemeRoutes } from "./routes/themes.ts";
+import { handleWidgetDevRoutes } from "./routes/widget-dev-sessions.ts";
 import { handleComposerRoutes } from "./routes/composer.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleEffectRoutes } from "./routes/effects.ts";
+import { handleFeedbackRoutes } from "./routes/feedback.ts";
 import { handleSignalRoutes } from "./routes/signals.ts";
 import { handleGithubSignalRoute } from "./routes/github-signals.ts";
 import { handleWebhookSignalRoute } from "./routes/webhook-signals.ts";
@@ -320,6 +322,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   const effectResponse = handleEffectRoutes({ services, request, segments, at });
   if (effectResponse !== undefined) return effectResponse;
 
+  // Product reports from the host's Feedback Composer. Publishing is person-only: see `isPersonOnlyRoute`.
+  const feedbackResponse = await handleFeedbackRoutes({ services, request, segments, at });
+  if (feedbackResponse !== undefined) return feedbackResponse;
+
   // What the composer offers after / or @. Read only; a reference is checked again when the message is sent.
   const composerResponse = await handleComposerRoutes({ services, request, segments });
   if (composerResponse !== undefined) return composerResponse;
@@ -349,6 +355,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (connectionResponse !== undefined) return connectionResponse;
   const packageResponse = await handlePackageRoutes({ services, request, segments });
   if (packageResponse !== undefined) return packageResponse;
+  const widgetDevResponse = await handleWidgetDevRoutes({ services, request, segments });
+  if (widgetDevResponse !== undefined) return widgetDevResponse;
 
   const themeResponse = handleThemeRoutes({ services, request, segments });
   if (themeResponse !== undefined) return themeResponse;

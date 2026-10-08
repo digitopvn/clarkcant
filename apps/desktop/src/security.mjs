@@ -139,11 +139,36 @@ export function contentSecurityPolicy(input = {}) {
     "media-src 'self' blob:",
     "font-src 'self'",
     `connect-src ${sources(["'self'", app, node, dev], { webSockets: true })}`,
+    /*
+     * A widget that runs in its own frame is a document the node serves (`/frame/<grant>/...`), so the window may frame
+     * the node and the app's own origin (the same one, unless a dev server serves the app) and nothing else. Without this
+     * directive `default-src 'none'` refuses every isolated widget.
+     */
+    `frame-src ${sources(["'self'", app, node])}`,
     "form-action 'none'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "object-src 'none'",
   ].join("; ");
+}
+
+/**
+ * The response headers the window's session hands on, with the window's policy applied.
+ *
+ * The window's policy is for the window's own documents. A framed document that brings its own policy keeps it: an
+ * isolated widget's document is served by the node with a policy written for it — a per-response script nonce, and
+ * `frame-ancestors` naming the app that may frame it — and the window's `frame-ancestors 'none'` and nonce-less
+ * `script-src` added on top would refuse that document outright, since every policy a response carries is enforced.
+ * A framed document with no policy of its own gets the window's, so nothing is framed with less than that.
+ *
+ * @param {{ resourceType?: string, responseHeaders?: Record<string, string | string[]> }} details
+ * @param {string} policy
+ */
+export function withContentSecurityPolicy(details, policy) {
+  const headers = { ...(details.responseHeaders ?? {}) };
+  const ownPolicy = Object.keys(headers).some((name) => name.toLowerCase() === "content-security-policy");
+  if (details.resourceType === "subFrame" && ownPolicy) return headers;
+  return { ...headers, "Content-Security-Policy": [policy] };
 }
 
 /** The hosts a dev server may be on: this machine and nothing else. */

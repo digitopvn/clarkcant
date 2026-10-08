@@ -6,7 +6,7 @@ This document records the live-provider check for voice (V17), which tests that 
 
 **Opt-in test implemented.** The test requires:
 - `CC_LIVE_PROVIDER=1` environment variable
-- `GEMINI_API_KEY` in environment or node vault
+- `GEMINI_API_KEY` in environment or node vault (a key saved in the vault wins when both hold one)
 - An active Gemini Live API account
 
 The test is skipped (with a named reason) if these preconditions are not met, so it never blocks CI.

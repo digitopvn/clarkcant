@@ -11,6 +11,7 @@ import { writeBlob } from "../src/blobs.ts";
 import { releaseConversationAttachments } from "../src/attachments.ts";
 import { sweepConversationFileCleanup } from "../src/conversation-file-cleanup.ts";
 import { beginActionRun, endActionRun } from "../src/application/action-runs.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 const AT = "2026-09-30T09:00:00.000Z" as Instant;
 let db: Database;
@@ -41,7 +42,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-delete-")); db = openDatabase({path: ":memory:"}); migrate(db); now = AT;
   createConversation(db, {conversationId: id, homeNodeId: nodeId, at: AT}); policy("autonomous");
 });
-afterEach(() => { db.close(); rmSync(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 100}); });
+afterEach(async () => { db.close(); await removeTestDirectory(dir); });
 
 it("releases attachments and finalized unattached widget files only after commit, preserving shared bytes", () => {
   const shared = attachment(); const exclusive = artifact();
@@ -148,6 +149,6 @@ it("refuses agent intents and machine relays, including alternate path segmentat
 it("upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys", () => {
   const legacy = openDatabase({path: ":memory:"}); migrate(legacy, MIGRATIONS.slice(0, 38));
   createConversation(legacy, {conversationId: id, homeNodeId: nodeId, at: AT});
-  expect(migrate(legacy).applied).toEqual([39, 40, 41, 42, 43, 44]); expect(getConversation(legacy, id)).toBeDefined();
+  expect(migrate(legacy).applied).toEqual([39, 40, 41, 42, 43, 44, 45, 46]); expect(getConversation(legacy, id)).toBeDefined();
   expect(legacy.prepare("PRAGMA foreign_keys").get()).toMatchObject({foreign_keys: 1}); legacy.close();
 });

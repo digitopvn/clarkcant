@@ -35,14 +35,15 @@ import {
   verifyBackup,
   type ProjectRecord,
 } from "../src/index.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-storage-"));
 });
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+afterEach(async () => {
+  await removeTestDirectory(dir);
 });
 
 function freshDb() {

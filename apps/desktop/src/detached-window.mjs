@@ -114,6 +114,14 @@ export function reviewDetachedBootstrap(payload) {
     // rather than as a detach that could not be prepared.
     return { ok: false, reason: "a detached window needs the widget host bootstrap it is a view of" };
   }
+  if (payload.live.kind === "isolated-frame") {
+    /*
+     * A widget in its own frame cannot run here. Its frame saves state, publishes what it shows and renews its URL
+     * through the conversation's credential, and this window holds none — so it would open as a frame that cannot
+     * save. Refused here as well as unoffered in the conversation, so no caller can open one.
+     */
+    return { ok: false, reason: "a widget that runs in its own frame stays in the conversation" };
+  }
   if (typeof payload.instanceRef !== "string" || payload.instanceRef === "") {
     // A detached window with no instance reference has nothing to show, and an empty frame would read as a widget
     // that failed to load rather than as a request that made no sense.
@@ -157,6 +165,59 @@ export function reviewDetachedIntent(payload) {
     return { ok: false, reason: "an intent has to name the binding it invokes" };
   }
   return { ok: true, intent: payload };
+}
+
+/**
+ * The detached window's lease on the instance it shows.
+ *
+ * The same numbers as the conversation's own surface (`CLAIM_REFRESH_MS` in `DesktopSurfaces.tsx`): refreshed well
+ * inside its lifetime, so one missed refresh does not hand the instance to somebody else.
+ */
+export const DETACHED_LEASE = Object.freeze({ refreshMs: 30_000, leaseMs: 90_000 });
+
+/**
+ * Keep the detached window's claim alive while it is open.
+ *
+ * A claim made once lapses, and after that any surface can claim the instance while this window still shows it: two
+ * live owners, which is what the lease exists to prevent. So the host re-claims on a timer with the same owner token.
+ *
+ * A refusal that says somebody else holds the instance now (`ALREADY_OWNED`) means this window is no longer the owner,
+ * and `onLost` is told once so the host can close it. Any other failure — the node restarting, a network blip — is
+ * retried on the next tick: the lease outlives a missed refresh on purpose.
+ *
+ * @param {{
+ *   claim: () => Promise<{ ok: boolean, code?: string }>,
+ *   onLost: (answer: { ok: false, code?: string, refused?: string }) => void,
+ *   refreshMs?: number,
+ *   timers?: { setInterval: typeof setInterval, clearInterval: typeof clearInterval },
+ * }} input
+ * @returns {{ stop: () => void }}
+ */
+export function keepDetachedLease(input) {
+  const timers = input.timers ?? globalThis;
+  let stopped = false;
+  let refreshing = false;
+  const stop = () => {
+    stopped = true;
+    timers.clearInterval(timer);
+  };
+  const timer = timers.setInterval(() => {
+    // One refresh at a time: a node slow to answer must not collect a queue of claims behind it.
+    if (stopped || refreshing) return;
+    refreshing = true;
+    void input
+      .claim()
+      .then((answer) => {
+        if (stopped || answer.ok || answer.code !== "ALREADY_OWNED") return;
+        stop();
+        input.onLost(answer);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        refreshing = false;
+      });
+  }, input.refreshMs ?? DETACHED_LEASE.refreshMs);
+  return { stop };
 }
 
 /** Where a detached window opens: beside its parent, and inside the work area the parent is already in. */

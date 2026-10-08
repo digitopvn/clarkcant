@@ -47,8 +47,8 @@ export interface DecisionProviderConnection {
 /**
  * The TypeSafe key a person typed into the settings card, when there is one.
  *
- * A function rather than a value because it is read when the selector is built, and the point of storing one is that
- * it works without restarting the node. It reads that one named key and nothing else: a lookup by any name would let a
+ * A function rather than a value because it is read again for each decision (`liveDecisionConfig`), and the point of
+ * storing one is that it works without restarting the node. It reads that one named key and nothing else: a lookup by any name would let a
  * secret stored for a different consumer become a decision provider's bearer without the vault's consumer check.
  */
 export type StoredCredential = () => string | undefined;

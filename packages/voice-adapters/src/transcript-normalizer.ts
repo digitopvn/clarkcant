@@ -13,8 +13,10 @@ import {
  * for stale closure. This puts the known spelling back, and nothing else: it is a lookup against the session's own
  * vocabulary, never a model, and it never rewrites a sentence. Four rules, each a fact about one term:
  *
- * - `casing`: the same word in the wrong case ("Github" -> GitHub). Never lowers a letter, so a sentence's first
- *   word stays as it was written.
+ * - `casing`: the same word in the wrong case ("Github" -> GitHub). A letter is lowered only to restore a code-like
+ *   term heard exactly, case aside ("RedactSecrets" -> redactSecrets, "PNPM verify" -> pnpm verify, "Git stash" ->
+ *   git stash); any other word, such as an ordinary word starting a sentence, keeps the capital it was written with. A
+ *   term the vocabulary spells two ways by case alone (`UserService` and `userService`) keeps the case it was heard in.
  * - `spacing`: the term's own words, split the way speech splits them ("use effect" -> useEffect, "voice session dot
  *   ts" -> voice-session.ts).
  * - `alias`: a mis-hearing recorded for that term and no other ("stale closer" -> stale closure).
@@ -34,7 +36,10 @@ import {
  * A command is never the result of a guess. Commands are recognized and kept, but no alias, spacing variant or near
  * match is ever rewritten into one: `git status` and `git stash` differ by what they do, and a normaliser that picked
  * between them would be deciding what runs. For the same reason no respelled word is allowed to complete a command
- * with its neighbours ("git re base" stays as heard).
+ * with its neighbours ("git re base" stays as heard). Restoring case is the one exception, because it changes how a
+ * command is written and never which command it is: "Git stash" becomes `git stash`, but `npm` never becomes `pnpm`,
+ * even in a project whose vocabulary says pnpm. That is a product decision (#574): only case is restored, and a
+ * command is never guessed.
  */
 
 export interface NormalizationResult {
@@ -57,11 +62,22 @@ interface Form {
   term: RecognitionTerm;
   rule: Rule;
 }
+/** A span of tokens `from..to` that matched one or more terms. */
+interface Hit {
+  from: number;
+  to: number;
+  candidates: Form[];
+  near: boolean;
+  /** The shorter exact form at `from` that words running together into a longer term passed over. */
+  passedOver?: Hit | undefined;
+}
 interface Lexicon {
   forms: Map<string, Form[]>;
   longest: number;
   nearMatchable: Array<{ term: RecognitionTerm; words: string[] }>;
   compacts: Array<{ term: RecognitionTerm; compact: string }>;
+  /** Terms by their spelling, case aside, when more than one term has it: `UserService` and `userService`. */
+  caseVariants: Map<string, RecognitionTerm[]>;
 }
 
 /**
@@ -89,9 +105,9 @@ const MAX_FORM_WORDS = 6;
  * The kinds a one-character slip may be corrected into. Names people say - glossary words, providers, models - have one
  * spelling and no near neighbours that mean something else. Symbols, paths, branches and packages do: `setUser` and
  * `getUser`, `app.ts` and `app.tsx` are one edit apart and are different things, so for them only an exact spoken form
- * counts.
+ * counts. A recognizer biased with a vocabulary near-matches without evidence, so it is given only these kinds.
  */
-const NEAR_MATCHABLE_KINDS: ReadonlySet<RecognitionTerm["kind"]> = new Set(["glossary", "provider", "model"]);
+export const NEAR_MATCHABLE_KINDS: ReadonlySet<RecognitionTerm["kind"]> = new Set(["glossary", "provider", "model"]);
 /** Characters that join a word to the next inside one written token: `gemini-live.tsx`, `@scope/name`, `a/b`. */
 const JOINER = /[._/\\@#:-]/u;
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
@@ -108,34 +124,50 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   const lexicon = lexiconFor(context);
   const codeSwitched = VIETNAMESE_LETTERS.test(text);
 
-  type Hit = { from: number; to: number; candidates: Form[]; near: boolean };
-  const hits: Hit[] = [];
-  for (let index = 0; index < tokens.length; ) {
-    const hit = matchAt(tokens, text, index, lexicon);
-    if (hit === undefined) {
-      index += 1;
-      continue;
-    }
-    hits.push(hit);
-    index = hit.to;
-  }
+  const hits = hitsBetween(tokens, text, 0, tokens.length, lexicon);
 
   // Evidence that the utterance is about code, by position, so a span never counts as its own evidence.
   const anchors: number[] = [];
   tokens.forEach((token, index) => {
     if (TECHNICAL_CUES.has(token.lower)) anchors.push(index);
   });
-  for (const hit of hits) {
+  // Words a run-together term absorbed, kept apart, since they support fewer spans: see `supported`.
+  const absorbed: number[] = [];
+  const addEvidence = (hit: Hit, into: number[]): void => {
     const unique = distinctTerms(hit.candidates);
     const source = text.slice(tokens[hit.from]!.start, tokens[hit.to - 1]!.end);
     // Only a term heard in its own spelling, case aside, is evidence: a corrected span supporting another correction
     // would let two guesses vouch for each other.
     const term = unique[0];
-    if (unique.length === 1 && term !== undefined && !hit.near && source.toLowerCase() === term.text.toLowerCase() && (source === term.text || isDistinctive(term))) {
-      for (let at = hit.from; at < hit.to; at += 1) anchors.push(at);
+    if (
+      term !== undefined &&
+      sameSpellingAsideCase(unique) &&
+      !hit.near &&
+      source.toLowerCase() === term.text.toLowerCase() &&
+      unique.some((candidate) => source === candidate.text || isDistinctive(candidate))
+    ) {
+      for (let at = hit.from; at < hit.to; at += 1) into.push(at);
+      return;
     }
-  }
-  const supported = (from: number, to: number): boolean => codeSwitched || anchors.some((at) => at < from || at >= to);
+    // Words that ran together into a longer term are evidence still, exactly as they would have been on their own:
+    // "web" heard exactly says the sentence is about code whether or not "web app" goes on to read as `webapp`. Only
+    // a shorter form starting the span opens it up; the exact matches after that form count too.
+    if (hit.passedOver !== undefined) {
+      addEvidence(hit.passedOver, absorbed);
+      for (const inner of hitsBetween(tokens, text, hit.passedOver.to, hit.to, lexicon)) addEvidence(inner, absorbed);
+    }
+  };
+  for (const hit of hits) addEvidence(hit, anchors);
+  const outside = (at: number, hit: Hit): boolean => at < hit.from || at >= hit.to;
+  // Absorbed words support only a span whose change no run-together span can rest on: one that absorbed no words and
+  // holds no evidence of its own. One that absorbed words too would take its own with it ("the web app and the web app"
+  // would vouch for itself). One holding evidence already supports every run-together span outside it, so their absorbed
+  // words are rewritten away: "Follow-up" heard for the tool follow-up, or the cue "code" in "code review" for
+  // `codeReview`, would turn "web app" into `webapp`, then be rewritten itself on the "web" that change took away.
+  const supported = (hit: Hit): boolean =>
+    codeSwitched ||
+    anchors.some((at) => outside(at, hit)) ||
+    (hit.passedOver === undefined && anchors.every((at) => outside(at, hit)) && absorbed.some((at) => outside(at, hit)));
 
   const result: NormalizationResult = { text, changes: [], abstained: [], technical: [] };
   const replacements: Array<{ start: number; end: number; to: string }> = [];
@@ -151,6 +183,13 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     if (embeddedInWord(text, start, end)) continue;
     const source = text.slice(start, end);
     if (terms.length > 1) {
+      // Terms that differ only by case (`UserService` and `userService`) are different real names, and the heard
+      // casing is the only evidence of which one was meant: heard in their shared spelling, it stays as heard. A retry
+      // would not settle it, so this is a known term, not an abstention.
+      if (sameSpellingAsideCase(terms) && source.toLowerCase() === terms[0]!.text.toLowerCase()) {
+        result.technical.push({ start, end });
+        continue;
+      }
       result.abstained.push({ start, end, text: source, candidates: terms.map((term) => term.text).slice(0, 8) });
       continue;
     }
@@ -165,9 +204,16 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
     // Nor is a command assembled from a guess: "git re base" stays as heard rather than becoming `git rebase` because
     // its last word was respelled. Which command runs is never the normaliser's decision.
     if (rule !== "casing" && completesCommand(tokens, hit.from, hit.to, term, lexicon)) continue;
-    if (rule === "casing" && !raisesCaseOnly(source, term.text)) continue;
-    const needsContext = rule !== "casing" || !isDistinctive(term);
-    if (needsContext && !supported(hit.from, hit.to)) continue;
+    // Lowering a letter restores a code-like term heard exactly, case aside, and nothing else: "RedactSecrets" is
+    // `redactSecrets`, but "Rebase" starting a sentence is the word rebase written as a sentence starts.
+    const lowers = rule === "casing" && !raisesCaseOnly(source, term.text);
+    if (lowers && !isCodeLike(term)) continue;
+    // A command heard in its own words is evidence enough for its own case: "Git stash" names no other command. A
+    // lowercase tool name that is code-like only for a hyphen or digit ("follow-up", "s3") may also be an ordinary
+    // word starting a sentence, so lowering it needs the same evidence as any plain word.
+    const needsContext =
+      rule !== "casing" || (lowers && isWordLikeTool(term)) || !(isDistinctive(term) || (lowers && term.kind === "command"));
+    if (needsContext && !supported(hit)) continue;
     if (result.changes.length >= MAX_NORMALIZATION_CHANGES) continue;
 
     replacements.push({ start, end, to: term.text });
@@ -186,28 +232,53 @@ export function normalizeTranscript(input: string, context: RecognitionContext):
   return result;
 }
 
-/** The longest known form starting at `index`, or a near match when no form starts there. */
-function matchAt(
-  tokens: readonly Token[],
-  text: string,
-  index: number,
-  lexicon: Lexicon,
-): { from: number; to: number; candidates: Form[]; near: boolean } | undefined {
-  const longest = Math.min(lexicon.longest, tokens.length - index);
-  for (let length = longest; length >= 1; length -= 1) {
+/** Every match over tokens `from..end`, left to right, each with its spellings told apart only by case. */
+function hitsBetween(tokens: readonly Token[], text: string, from: number, end: number, lexicon: Lexicon): Hit[] {
+  const hits: Hit[] = [];
+  for (let index = from; index < end; ) {
+    const hit = matchAt(tokens, text, index, end, lexicon);
+    if (hit === undefined) {
+      index += 1;
+      continue;
+    }
+    hits.push(withCaseVariantsOf(hit, lexicon));
+    index = hit.to;
+  }
+  return hits;
+}
+
+function withCaseVariantsOf(hit: Hit, lexicon: Lexicon): Hit {
+  const passedOver = hit.passedOver === undefined ? undefined : withCaseVariantsOf(hit.passedOver, lexicon);
+  return { ...hit, candidates: withCaseVariants(hit.candidates, lexicon), passedOver };
+}
+
+/**
+ * The longest exact match starting at `index` and ending by `end`: a known form, or words that run together into a
+ * term. A near match is tried only when neither starts there. When words run together into a term longer than the
+ * form starting there, the form is kept as `passedOver`, since what those words are on their own is still evidence.
+ */
+function matchAt(tokens: readonly Token[], text: string, index: number, end: number, lexicon: Lexicon): Hit | undefined {
+  let form: Hit | undefined;
+  for (let length = Math.min(lexicon.longest, end - index); length >= 1 && form === undefined; length -= 1) {
     if (!joinedBySeparators(tokens, text, index, length)) continue;
     const key = tokens.slice(index, index + length).map((token) => token.lower).join(" ");
     const forms = lexicon.forms.get(key);
-    if (forms !== undefined) return { from: index, to: index + length, candidates: forms, near: false };
+    if (forms !== undefined) form = { from: index, to: index + length, candidates: forms, near: false };
   }
-  for (let length = Math.min(3, tokens.length - index); length >= 1; length -= 1) {
+  for (let length = Math.min(3, end - index); length >= 1; length -= 1) {
+    // A form at least as long as the words left to try wins: the longer exact match is the one the person said.
+    if (form !== undefined && length <= form.to - index) return form;
     if (!joinedBySeparators(tokens, text, index, length)) continue;
     const compact = tokens.slice(index, index + length).map((token) => token.lower).join("");
-    // Words that run together into the term exactly ("clark cant web" for clarkcant-web) are a spacing variant.
+    // Words that run together into the term exactly ("clark cant web" for clarkcant-web) are a spacing variant, and
+    // longer than the form found at this position ("clark cant" for ClarkCant) they are the longer term.
     const joined = length > 1 ? lexicon.compacts.filter((entry) => entry.compact === compact && entry.term.kind !== "command") : [];
     if (joined.length > 0) {
-      return { from: index, to: index + length, candidates: joined.map((entry) => ({ term: entry.term, rule: "spacing" })), near: false };
+      const candidates = joined.map((entry): Form => ({ term: entry.term, rule: "spacing" }));
+      return { from: index, to: index + length, candidates, near: false, passedOver: form };
     }
+    // A near match is a guess, and never outranks an exact form, however short.
+    if (form !== undefined) continue;
     if (compact.length < NEAR_MATCH_MIN_LENGTH - 1) continue;
     // Something already written as code was written on purpose; a slip is a spoken word, not an identifier.
     if (IDENTIFIER_SHAPED.test(text.slice(tokens[index]!.start, tokens[index + length - 1]!.end))) continue;
@@ -217,7 +288,7 @@ function matchAt(
       return { from: index, to: index + length, candidates: near.map((entry) => ({ term: entry.term, rule: "near-match" })), near: true };
     }
   }
-  return undefined;
+  return form;
 }
 
 function joinedBySeparators(tokens: readonly Token[], text: string, index: number, length: number): boolean {
@@ -258,7 +329,13 @@ function lexiconFor(context: RecognitionContext): Lexicon {
       nearMatchable.push({ term, words: tokenize(term.text).map((token) => token.lower) });
     }
   }
-  const lexicon = { forms, longest, nearMatchable, compacts };
+  const caseVariants = new Map<string, RecognitionTerm[]>();
+  for (const term of context.terms) {
+    const spelling = term.text.toLowerCase();
+    caseVariants.set(spelling, [...(caseVariants.get(spelling) ?? []), term]);
+  }
+  for (const [spelling, terms] of caseVariants) if (terms.length < 2) caseVariants.delete(spelling);
+  const lexicon = { forms, longest, nearMatchable, compacts, caseVariants };
   lexicons.set(context, lexicon);
   return lexicon;
 }
@@ -288,7 +365,28 @@ function isDistinctive(term: RecognitionTerm): boolean {
   return /\p{Ll}\p{Lu}|\p{Lu}{2}|\p{N}|[._/-]/u.test(term.text);
 }
 
-/** Whether `to` differs from `from` only by raising letters to capitals. Lowering is never a correction here. */
+/**
+ * A term only ever written as code, so a capital it does not have is a recognizer's, not the person's: mixed case
+ * (`redactSecrets`, `OAuth`), a digit (`gpt-4o`), code punctuation (`git-stash`, `voice-session.ts`), or a command
+ * (`git stash`, `pnpm verify`). A plain word - `rebase`, `worktree`, `pnpm`, a repository called `clarkcant`, a symbol
+ * called `update` - is also an ordinary word, and a sentence may start with it. A tool is judged by its spelling like
+ * every other kind: the session's tools include installed skill and extension names, which are often plain words
+ * (`test`, `review`, `weather`, `deploy`, `tasks`).
+ */
+function isCodeLike(term: RecognitionTerm): boolean {
+  return term.kind === "command" || /\p{Ll}\p{Lu}|\p{Lu}{2}\p{Ll}|\p{N}|[._/\\@#:-]/u.test(term.text);
+}
+
+/**
+ * A tool name that is all lowercase and code-like only because of a hyphen or a digit: `follow-up`, `check-in`, `s3`,
+ * `daily-notes`. Skill names like these are often ordinary English ("Follow-up with the team", "S3 is down"), so the
+ * spelling alone does not say a capital was the recognizer's.
+ */
+function isWordLikeTool(term: RecognitionTerm): boolean {
+  return term.kind === "tool" && /^[\p{Ll}\p{N}-]+$/u.test(term.text);
+}
+
+/** Whether `to` differs from `from` only by raising letters to capitals. Lowering is decided separately. */
 function raisesCaseOnly(from: string, to: string): boolean {
   if (from.length !== to.length || from.toLowerCase() !== to.toLowerCase()) return true;
   for (let index = 0; index < from.length; index += 1) {
@@ -303,6 +401,26 @@ function distinctTerms(forms: readonly Form[]): RecognitionTerm[] {
   const seen = new Map<string, RecognitionTerm>();
   for (const form of forms) if (!seen.has(form.term.text)) seen.set(form.term.text, form.term);
   return [...seen.values()];
+}
+
+/**
+ * A hit's candidates with every term spelled like one of them, case aside. "clark cant" is the spoken form of ClarkCant
+ * alone, but beside a symbol `clarkcant` writing it would pick a case, which the heard words never said.
+ */
+function withCaseVariants(forms: readonly Form[], lexicon: Lexicon): Form[] {
+  const all = [...forms];
+  for (const form of forms) {
+    for (const term of lexicon.caseVariants.get(form.term.text.toLowerCase()) ?? []) {
+      if (!all.some((existing) => existing.term === term)) all.push({ term, rule: form.rule });
+    }
+  }
+  return all;
+}
+
+/** Whether every term is the same spelling, case aside: one term, or names such as `UserService` and `userService`. */
+function sameSpellingAsideCase(terms: readonly RecognitionTerm[]): boolean {
+  const spelling = terms[0]?.text.toLowerCase();
+  return terms.every((term) => term.text.toLowerCase() === spelling);
 }
 
 /** The rule a single-term hit is reported under: the most literal one that matched. */

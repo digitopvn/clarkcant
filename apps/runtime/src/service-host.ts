@@ -58,6 +58,7 @@ import {
   type StdioMcpTransportOptions,
 } from "@clarkcant/mcp-adapters";
 
+import { clarkVersion } from "./application/changelog.ts";
 import {
   type ContainerEngineName,
   engineEnvironment,
@@ -1087,6 +1088,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     try {
       connection = await connect({
         serverId: entry.key,
+        clientVersion: clarkVersion(),
         command: launch.command,
         args: launch.args,
         env: engineEnvironment(),

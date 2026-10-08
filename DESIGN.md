@@ -193,6 +193,13 @@ The lease **moves** rather than duplicates: the shell releases first, the host c
 the window closes the host releases and the shell claims it back — so there is never a moment with two owners. Closing
 the window is itself the reattach path, even when the user just presses the OS close button.
 
+The host keeps that claim alive with the conversation's own numbers (refresh every 30 s, 90 s lease), and the node
+records it as `detached`, so a competing claim is told the widget is open in its own window. While the window is open,
+the conversation does not refresh a lease of its own. A refresh refused because another surface now holds the instance
+closes the window. The window never outlives the conversation that opened it: closing that view (another conversation,
+the pin closed), closing the conversation window or quitting closes the detached window, and its lease is given back
+on the way.
+
 ### 2.3 Wake phrase
 
 Target UX: local wake phrase **"Hey Clark"** opens voice mode.

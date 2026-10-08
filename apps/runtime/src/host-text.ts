@@ -198,6 +198,21 @@ export interface HostText {
     commandVerdict: (command: string, ended: "stopped" | "timed-out" | "exited", exitCode: number | null, durationMs: number) => string;
     /** A package install the card asks about; the risk tier is the lane's own identifier. */
     installCard: (name: string, version: string, riskTier: string) => string;
+    /** A widget dev session asking to run the package being developed, updating as its files change within this reach. */
+    devSessionCard: (name: string, version: string, riskTier: string) => string;
+    /**
+     * Said in the conversation when a widget dev session's new build reaches more than the one before it and the
+     * execution policy ran it without asking: what it added, so a wider reach is never taken in silence.
+     */
+    devSessionWidened: (name: string, generation: number, added: string) => string;
+    /** Why Clark may not watch a folder for a widget dev session, and what the person can do instead. */
+    devSessionRootNotOwned: (root: string, workspace: string) => string;
+    /** Why a widget dev session's build is not running: the person declined it in the inbox. */
+    devBuildDenied: string;
+    /** Why a widget dev session's build is not running: nobody answered the question about it in time. */
+    devBuildExpired: string;
+    /** Why a widget dev session's build is not running: the install was recorded, yet another generation runs. */
+    devBuildNotActive: string;
     /** A capability grant an install asks about separately. */
     grantCard: (ref: string, name: string, version: string) => string;
     /** A command's result when it printed nothing: a fact worth stating rather than an empty block. */
@@ -315,6 +330,7 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   ask_user_question: "Ask the user a question",
   control_app: "Control the app",
   create_automation: "Create an automation",
+  develop_widget: "Develop a widget from a folder",
   find_project: "Find the project folder",
   find_runtime: "Find what is running",
   inspect_ui: "Look at the interface",
@@ -329,6 +345,7 @@ export const TOOL_LABELS_EN: Readonly<Record<string, string>> = {
   read_context: "Read the context found",
   read_inbox: "Read the inbox",
   remember: "Remember something",
+  report_feedback: "Report a bug or request a feature",
   request_secret: "Ask the host for a secret",
   run_command: "Run a command",
   search_directory: "Search the package directory",
@@ -564,6 +581,15 @@ const VI: HostText = {
             : `thoát với mã ${exitCode ?? "không rõ"} sau ${durationMs} ms`
       }.`,
     installCard: (name, version, riskTier) => `cài ${name} ${version} (${riskTier})`,
+    devSessionCard: (name, version, riskTier) =>
+      `chạy ${name} ${version} từ thư mục đang phát triển, tự cập nhật khi mã thay đổi trong cùng phạm vi truy cập (${riskTier})`,
+    devSessionWidened: (name, generation, added) =>
+      `Bản dựng ${String(generation)} của ${name} được truy cập nhiều hơn bản trước (${added}). Chính sách thực thi của bạn cho phép cài mà không hỏi, nên bản này đang chạy; mọi thay đổi đã được ghi lại.`,
+    devSessionRootNotOwned: (root, workspace) =>
+      `Clark chỉ tự phát triển widget trong không gian widget của mình (${workspace}) và trong những thư mục bạn đã chọn; ${root} không thuộc chỗ nào trong đó, nên chưa có gì được bắt đầu. Để phát triển thư mục đó ở đây, hãy tự chọn nó: bấm “Phát triển thư mục này” trên thẻ, hoặc gõ /develop rồi đến đường dẫn của thư mục.`,
+    devBuildDenied: "bạn đã từ chối chạy bản dựng này, nên bản trước vẫn chạy",
+    devBuildExpired: "không ai trả lời câu hỏi về bản dựng này kịp lúc, nên bản trước vẫn chạy",
+    devBuildNotActive: "việc cài đặt đã được ghi lại, nhưng bản dựng này không phải bản đang chạy",
     grantCard: (ref, name, version) => `cấp quyền ${ref} cho ${name} ${version}`,
     noOutput: "Không có output.",
     truncated: "\n… (đã cắt bớt)",
@@ -868,6 +894,15 @@ const EN: HostText = {
             : `exited with code ${exitCode ?? "unknown"} after ${durationMs} ms`
       }.`,
     installCard: (name, version, riskTier) => `install ${name} ${version} (${riskTier})`,
+    devSessionCard: (name, version, riskTier) =>
+      `run ${name} ${version} from the folder being developed, updating as its code changes within the same reach (${riskTier})`,
+    devSessionWidened: (name, generation, added) =>
+      `Build ${String(generation)} of ${name} reaches more than the one before it (${added}). Your execution policy lets installs run without asking, so it is running now; the change is recorded.`,
+    devSessionRootNotOwned: (root, workspace) =>
+      `Clark develops widgets on its own only in its widget workspace (${workspace}) and in folders you chose; ${root} is neither, so nothing was started. To develop that folder here, choose it yourself: press "Develop this folder" on the card, or type /develop followed by the folder's path.`,
+    devBuildDenied: "you declined to run this build, so the previous one keeps running",
+    devBuildExpired: "nobody answered the question about this build in time, so the previous one keeps running",
+    devBuildNotActive: "the install was recorded, but this build is not the one running",
     grantCard: (ref, name, version) => `grant ${ref} to ${name} ${version}`,
     noOutput: "No output.",
     truncated: "\n… (truncated)",

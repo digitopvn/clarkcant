@@ -132,6 +132,28 @@ describe("guarded mode asks where the category or a rule requires it", () => {
   });
 });
 
+describe("an effect Clark proposed on its own", () => {
+  const proposed: ExecutionIntent = { kind: "proposed", origin: "person" };
+
+  it("is asked about in guarded mode even where the category stays on this machine", () => {
+    expect(outcome("guarded", "local-write", { intent: proposed })).toBe("ask");
+    expect(outcome("guarded", "local-write", { intent: { kind: "proposed" } })).toBe("ask");
+    // The same effect the person asked for by name is performed.
+    expect(outcome("guarded", "local-write", { intent: { kind: "interactive" } })).toBe("execute");
+  });
+
+  it("is performed in guarded mode when a rule allows the category", () => {
+    const rules: ExecutionRule[] = [{ effectCategory: "local-write", decision: "execute" }];
+    expect(outcome("guarded", "local-write", { intent: proposed, rules })).toBe("execute");
+  });
+
+  it("is asked about in ask mode, and before a risky category in autonomous mode", () => {
+    expect(outcome("ask", "local-write", { intent: proposed })).toBe("ask");
+    for (const category of RISKY) expect(outcome("autonomous", category, { intent: proposed }), category).toBe("ask");
+    expect(outcome("autonomous", "local-write", { intent: proposed })).toBe("execute");
+  });
+});
+
 describe("autonomous mode executes the user's own instruction", () => {
   it("performs everything that stays on this machine", () => {
     for (const category of ["read", "local-write"] as const) {
@@ -414,6 +436,27 @@ describe("the audit is the record autonomy would otherwise not leave", () => {
       approvedBy: "policy",
       description: "git status",
     });
+  });
+
+  it("records the person as the one who let it run when their own press was the decision", () => {
+    const decision = { kind: "execute" as const, reason: "the person pressed on the host's card", audit: true };
+
+    let counter = 0;
+    recordEffectExecution(
+      { db, nodeId: "node_1", newId: (prefix) => `${prefix}_${++counter}`, now: () => "2026-09-16T06:00:00.000Z" as never },
+      {
+        principalId: "prin_owner",
+        mode: "ask",
+        decision,
+        category: "external-write",
+        operationDigest: DIGEST,
+        description: "file a report",
+        approvedBy: "person",
+      },
+    );
+
+    const [row] = allRows<{ document: string }>(db, "SELECT document FROM events");
+    expect(JSON.parse(row?.document ?? "{}")).toMatchObject({ approvedBy: "person", because: "the person pressed on the host's card" });
   });
 });
 
