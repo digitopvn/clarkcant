@@ -31,7 +31,13 @@ type Deps = Parameters<typeof useTurnSend>[0];
 type Chip = Deps["chips"][number];
 
 /** Each stream waits until the test ends it, so a send can be held in flight across a restart. */
-function harness(chips: readonly Chip[], appIntent: (request: { text: string }) => Promise<unknown> = async () => ({ kind: "none" })) {
+function harness(
+  chips: readonly Chip[],
+  appIntent: (request: { text: string }) => Promise<unknown> = async () => ({ kind: "none" }),
+  options: { firstMessage?: boolean } = {},
+) {
+  // A first message has no conversation yet: the page learns its id only once the node made it.
+  const conversationId = options.firstMessage === true ? undefined : "conv_1";
   hooks.states = [];
   hooks.refs = [];
   const dispatched: unknown[] = [];
@@ -57,7 +63,7 @@ function harness(chips: readonly Chip[], appIntent: (request: { text: string }) 
     hooks.ref = 0;
     return useTurnSend({
       client: client as never,
-      conversationId: "conv_1",
+      conversationId,
       setConversationId: noop,
       onConversationReady: undefined,
       onSessionReset: undefined,
@@ -171,5 +177,41 @@ describe("a command typed while a reply is being written", () => {
 
     streams[0]?.();
     await reply;
+  });
+
+  it("starts the new conversation on /new and says the reply goes on in the one left behind", async () => {
+    const readBack = "Started a new conversation. Clark is still finishing the reply in the previous one, which is kept; reopen it any time with /sessions.";
+    const decision = { kind: "intent", intent: { kind: "nav.home" }, requiresConfirmation: false, readBack };
+    const { render, streams, asked, pending, notices, cleared } = harness([], async () => decision);
+    const reply = render().send("viết một câu trả lời thật dài");
+
+    await render().send("/new");
+    expect(asked).toEqual([{ text: "/new", source: "chat", conversationId: "conv_1" }]);
+    expect(pending).toEqual([decision]);
+    expect(notices).toEqual([readBack]);
+    expect(cleared).toHaveLength(2);
+
+    streams[0]?.();
+    await reply;
+  });
+
+  it("says a slash command waits when the first message is still on its way and there is no conversation yet", async () => {
+    const { render, streams, asked, pending, notices, cleared } = harness([], undefined, { firstMessage: true });
+    const first = render().send("viết một câu trả lời thật dài");
+    expect(render().busy).toBe(true);
+
+    await render().send("/settings");
+    expect(asked).toEqual([]);
+    expect(pending).toEqual([]);
+    expect(cleared).toHaveLength(1);
+    expect(notices).toEqual(["intents.commandWaits"]);
+
+    // An ordinary sentence still waits without a remark.
+    await render().send("và thêm một ví dụ nữa");
+    expect(notices).toEqual(["intents.commandWaits"]);
+
+    await vi.waitFor(() => expect(streams).toHaveLength(1));
+    streams[0]?.();
+    await first;
   });
 });

@@ -546,8 +546,13 @@ function findTab(normalised: string): SettingsTab | undefined {
   // Only look after the word "tab" when it is there, so "mo settings cua model nay" is not read as a
   // request to switch to the models tab.
   const marker = normalised.indexOf(" tab ");
-  const haystack = bareTabName(marker === -1 ? normalised : normalised.slice(marker + 1));
-  return TAB_WORDS.find((entry) => haystack.includes(entry.word))?.tab;
+  // Whole words only: a name found inside a longer word is not that name, so "invoice" does not open the Voice tab
+  // and "cài đặt" does not open AI.
+  const words = bareTabName(marker === -1 ? normalised : normalised.slice(marker + 1))
+    .replace(/[.!?,;:]+/g, " ")
+    .split(" ")
+    .filter((word) => word !== "");
+  return TAB_WORDS.find((entry) => containsPhrase(words, entry.word))?.tab;
 }
 
 /**
@@ -560,6 +565,21 @@ function findTab(normalised: string): SettingsTab | undefined {
 export function settingsTabNamed(text: string): SettingsTab | undefined {
   const name = bareTabName(text).replace(/^tab /u, "");
   return TAB_WORDS.find((entry) => entry.word === name)?.tab;
+}
+
+/**
+ * What `/new` says, sent as a message or while a reply is still being written. `replying` is whether Clark is still
+ * answering in the conversation being left: that reply is not stopped, and the sentence says where it goes on.
+ */
+export function newConversationReadBack(locale: AppIntentLocale, replying: boolean): string {
+  if (locale === "en") {
+    return replying
+      ? "Started a new conversation. Clark is still finishing the reply in the previous one, which is kept; reopen it any time with /sessions."
+      : "Started a new conversation. The previous one is kept; reopen it any time with /sessions.";
+  }
+  return replying
+    ? "Đã mở cuộc trò chuyện mới. Clark vẫn đang viết nốt câu trả lời ở cuộc trước, cuộc đó vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions."
+    : "Đã mở cuộc trò chuyện mới. Cuộc trước vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.";
 }
 
 /**

@@ -11,6 +11,7 @@ import { migrate, openDatabase } from "@clarkcant/storage";
 import {
   isAppCommandShaped,
   matchAppIntent,
+  newConversationReadBack,
   normaliseIntentText,
   recordAppIntentEvent,
   resolveAppIntent,
@@ -373,6 +374,24 @@ describe("a Settings tab named by the label the panel shows", () => {
     expect(settingsTabNamed("billing")).toBeUndefined();
     expect(settingsTabNamed("nho")).toBeUndefined();
   });
+
+  it("reads a tab name only as whole words, never inside a longer word", () => {
+    // "invoice" holds "voice" and "email" holds "ai"; "cài đặt" holds "ai" once its marks are gone.
+    for (const [sentence, locale] of [
+      ["open the invoice tab", "en"],
+      ["open settings tab for my invoices", "en"],
+      ["open the email tab", "en"],
+      ["mở tab invoice", "vi"],
+      ["mở tab email", "vi"],
+      ["mở tab cài đặt", "vi"],
+      ["open the cài đặt tab", "en"],
+    ] as const) {
+      const match = matchAppIntent(sentence, { locale });
+      expect(match?.kind, sentence).toBe("refused");
+    }
+    expect(matchAppIntent("open the voice tab", { locale: "en" })).toEqual({ kind: "intent", intent: { kind: "settings.tab", tab: "devices" } });
+    expect(matchAppIntent("mở tab ai", { locale: "vi" })).toEqual({ kind: "intent", intent: { kind: "settings.tab", tab: "ai" } });
+  });
 });
 
 describe("the slash commands that are app intents", () => {
@@ -394,6 +413,16 @@ describe("the slash commands that are app intents", () => {
     expect(vi?.kind === "refused" && vi.say).toContain("Thiết bị & Giọng nói");
     const en = slashCommandAppIntent({ command: "settings", argument: "billing" }, "en");
     expect(en?.kind === "refused" && en.say).toContain("Experience, AI & Routing, Control");
+  });
+
+  it("says, for /new left during a reply, that the reply goes on in the conversation kept behind", () => {
+    expect(newConversationReadBack("en", true)).toContain("still finishing the reply in the previous one");
+    expect(newConversationReadBack("vi", true)).toContain("vẫn đang viết nốt câu trả lời ở cuộc trước");
+    for (const locale of ["en", "vi"] as const) {
+      expect(newConversationReadBack(locale, true)).toContain("/sessions");
+      expect(newConversationReadBack(locale, false)).toContain("/sessions");
+      expect(newConversationReadBack(locale, false)).not.toBe(newConversationReadBack(locale, true));
+    }
   });
 
   it("leaves every other command to be answered as a message", () => {

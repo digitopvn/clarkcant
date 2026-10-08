@@ -61,6 +61,7 @@ import {
   quotedEffectIntent,
   recordAppIntentEvent,
   resolveAppIntent,
+  newConversationReadBack,
   setPreference,
   slashCommandAppIntent,
 } from "@clarkcant/core";
@@ -366,6 +367,12 @@ export function decideAppIntent(
     confirmed: false,
     ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
   });
+  if (slash?.command === "new") {
+    // `/new` says what it does whichever way it arrived, and, sent while Clark is still answering here, that the reply
+    // goes on being written in this conversation rather than being lost or stopped.
+    const replying = input.conversationId !== undefined && (deps.runningConversations?.() ?? []).includes(input.conversationId);
+    return { ...answered, readBack: newConversationReadBack(locale, replying) };
+  }
   return answered;
 }
 

@@ -92,15 +92,7 @@ export async function answerSlashCommand(
 
   switch (command) {
     case "new":
-      return appIntentAnswer(
-        services,
-        input,
-        locale,
-        say(
-          "Đã mở cuộc trò chuyện mới. Cuộc này vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
-          "Started a new conversation. This one is kept; reopen it any time with /sessions.",
-        ),
-      );
+      return appIntentAnswer(services, input, locale);
 
     case "sessions":
       return sessionsAnswer(services, input.conversationId, say, card);
@@ -220,23 +212,20 @@ export async function answerSlashCommand(
  * settings" typed or spoken reaches, so it is read the same way, writes the same audit record, and the page runs it
  * through the same executor onto the same dialog: no second screen, nothing a model chose, and the conversation and
  * the draft stay where they were. A tab that does not exist opens nothing and is refused by name, listing the tabs by
- * their labels. `readBack`, when given, is what the command says instead of the decision's own read-back.
+ * their labels. `/new` reads back the same sentence on both paths, saying where the conversation being left is kept.
  */
 function appIntentAnswer(
   services: SlashServices,
   input: { conversationId: string; typed: TypedSlashCommand; at: () => Instant },
   locale: Locale,
-  readBack?: string,
 ): SlashCommandAnswer {
   const typed = `/${input.typed.command} ${input.typed.argument}`.trim();
   const decision = typedAppIntent(services, input.conversationId, typed, input.at);
   switch (decision.kind) {
     case "refused":
       return { text: decision.say };
-    case "intent": {
-      const said = readBack ?? decision.readBack;
-      return { text: said, appIntent: { ...decision, readBack: said } };
-    }
+    case "intent":
+      return { text: decision.readBack, appIntent: decision };
     default:
       // Neither command asks first, and both are app intents; anything else would be a decision this answer cannot
       // carry out, so it says so rather than claiming the screen changed.

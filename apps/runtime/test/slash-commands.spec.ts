@@ -241,6 +241,26 @@ describe("slash commands in a conversation", () => {
     ]);
   });
 
+  it("says on /new that the conversation left is kept, and, during a reply, that the reply goes on there", async () => {
+    const id = await createConversation("trước");
+    const sent = await command(id, "/new");
+    expect(sent.text).toBe("Đã mở cuộc trò chuyện mới. Cuộc trước vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.");
+    expect(sent.body["appIntent"]).toMatchObject({ readBack: sent.text });
+
+    // Clark is still answering in this conversation: the turn is not stopped, and the read-back says where it goes on.
+    services.turnControl = { running: () => [id] } as unknown as NonNullable<NodeServices["turnControl"]>;
+    const ask = async (text: string) => (await call("POST", "/app-intents", { text, source: "chat", conversationId: id })).body as { decision: Record<string, unknown> };
+    expect((await ask("/new")).decision).toMatchObject({
+      kind: "intent",
+      intent: { kind: "nav.home" },
+      readBack: "Đã mở cuộc trò chuyện mới. Clark vẫn đang viết nốt câu trả lời ở cuộc trước, cuộc đó vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
+    });
+    expect((await call("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    expect((await ask("/new")).decision["readBack"]).toBe(
+      "Started a new conversation. Clark is still finishing the reply in the previous one, which is kept; reopen it any time with /sessions.",
+    );
+  });
+
   it("reads /settings back in English when the person's language is English", async () => {
     const id = await createConversation("settings");
     expect((await call("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);

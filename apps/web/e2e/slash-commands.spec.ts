@@ -284,6 +284,21 @@ test("/settings typed while a reply is written opens Settings on the tab its Vie
   await expect(page.locator("[data-send]")).toBeVisible({ timeout: 15_000 });
 });
 
+test("/new typed while a reply is written starts a new conversation and says the reply goes on in the one left behind", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  await send(page, "viết một câu trả lời thật dài");
+  await expect(page.locator("[data-stop]")).toBeVisible({ timeout: 15_000 });
+
+  await send(page, "/new");
+  await expect(page.locator(".cc-empty[data-leaving='false']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-role="user"]')).toHaveCount(0);
+  await expect(page.locator("[data-intent-notice]")).toContainText("Clark vẫn đang viết nốt câu trả lời ở cuộc trước", { timeout: 15_000 });
+  await expect(page.locator("[data-intent-notice]")).toContainText("/sessions");
+  await expect(composer).toHaveValue("");
+  await expect(page.locator("[data-stop]")).toHaveCount(0);
+});
+
 test.describe("in English", () => {
   test.afterEach(async ({ request }) => resetLanguage(request));
 
