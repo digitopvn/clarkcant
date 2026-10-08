@@ -49,6 +49,7 @@ export const MESSAGES_INBOX_VI = {
   "inbox.reachChange.narrower": "So với bản đang cài, bản này với tới ít hơn:",
   "inbox.reachChange.unchanged": "Bản này với tới đúng như bản đang cài.",
   "inbox.unreadable": "{n} mục trong hộp thư không đọc được nên không hiện ở đây. Các mục còn lại vẫn hiện đầy đủ.",
+  "inbox.nodeNewer": "Node này mới hơn ứng dụng này, nên một số thông tin trong hộp thư không được hiển thị. Hãy cập nhật ứng dụng để thấy đầy đủ.",
   "inbox.reachChange.unknown": "Không so sánh được với bản đang cài, nên chưa biết bản này thay đổi những gì.",
   "package.unreadFields.one":
     "Mục này có 1 thông tin mà bản Clark này không đọc được, nên những gì hiện ở đây có thể ít hơn điều mục này ghi. Hãy cập nhật Clark để xem đầy đủ.",
@@ -336,6 +337,7 @@ export const MESSAGES_INBOX_EN = {
   "inbox.reachChange.narrower": "Compared with the version installed, this one reaches less:",
   "inbox.reachChange.unchanged": "This version reaches the same as the one installed.",
   "inbox.unreadable": "{n} items in the inbox could not be read, so they are not shown here. Everything else is.",
+  "inbox.nodeNewer": "This node is newer than this app, so some of what it says in the inbox is not shown. Update the app to see everything.",
   "inbox.reachChange.unknown": "Could not compare with the installed version, so what this one changes is not known.",
   "package.unreadFields.one":
     "This listing has 1 detail this version of Clark cannot read, so what is shown here may be less than the listing says. Update Clark to see all of it.",

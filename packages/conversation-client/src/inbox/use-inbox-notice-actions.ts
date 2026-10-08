@@ -11,6 +11,7 @@ import type {
 
 import type { GatewayClient } from "../api.ts";
 import type { MessageKey } from "../i18n/messages.ts";
+import { nodeViewRefusalText } from "../node-view-refusal.ts";
 import type { SendOptions } from "../use-turn-send.ts";
 import { capabilitiesSay, noticeRefusalReason, noticeReference, snoozeUntil } from "./inbox-model.ts";
 
@@ -139,6 +140,9 @@ export function useInboxNoticeActions({
       try {
         answer = await client.actOnNotice(noticeId, action, { ...(until === undefined ? {} : { until }), source });
       } catch (cause) {
+        // Carried out by the node, which answered; only its answer is one this app does not read, and said so.
+        const unread = nodeViewRefusalText(cause, t, "shell.nodeView.acted");
+        if (unread !== undefined) return unread;
         // Worded from the node's code in the reader's language; a restore that fails leaves the notice dismissed.
         const reason = noticeRefusalReason(cause, t);
         throw new Error(t(action === "restore" ? "inbox.act.undoFailed" : "inbox.act.failed").replace("{reason}", reason), { cause });

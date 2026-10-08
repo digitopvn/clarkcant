@@ -19,6 +19,9 @@ import {
   useOrbProfile,
 } from "@clarkcant/conversation-client";
 
+// The Clark version this app was built as: a release stamps it into every app's manifest (`tools/release/clark-version.mjs`).
+import webPackage from "../package.json" with { type: "json" };
+
 /**
  * Browser client entry.
  *
@@ -104,7 +107,7 @@ export function App(): ReactElement {
 
   // Memoised: passing a fresh client into the conversation on every render would make its
   // load effect depend on a new object each time and re-run without end.
-  const client = useMemo(() => new GatewayClient({ baseUrl, token }), [baseUrl, token]);
+  const client = useMemo(() => new GatewayClient({ baseUrl, token, appVersion: webPackage.version }), [baseUrl, token]);
 
   /*
    * Whether this browser has been through the first-run screen.

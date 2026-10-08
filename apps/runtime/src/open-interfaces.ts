@@ -168,7 +168,7 @@ export function openApiDocument(): Record<string, unknown> {
       [OPENAPI_PATH]: {
         get: { summary: "This document", security: [], responses: { "200": ok("OpenAPI 3.1") } },
       },
-      "/node": { get: { summary: "The node and its configured model", responses: { "200": ok("Node"), ...refusals } } },
+      "/node": { get: { summary: "The node, its configured model and the Clark version it runs (clarkVersion)", responses: { "200": ok("Node"), ...refusals } } },
       "/changelog": {
         get: {
           summary: "What this version of Clark changed, from the release notes embedded with the build",

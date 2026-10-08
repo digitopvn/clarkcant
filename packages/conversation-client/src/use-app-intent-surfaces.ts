@@ -22,6 +22,7 @@ import {
 } from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { nodeViewRefusalText } from "./node-view-refusal.ts";
 
 /** The kinds whose outcome the model note beside the composer already shows, success or failure. */
 const MODEL_SWITCH_KINDS: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["model.cycle", "model.select"]);
@@ -230,7 +231,10 @@ export function useAppIntentSurfaces({
         if (client === undefined || currentConversation.current !== id) throw new Error(t("intents.deleteUnconfirmed"));
         let result;
         try { result = await client.deleteConversation(id, permit); }
-        catch { throw new Error(t("intents.deleteUnconfirmed")); }
+        catch (cause) {
+          // An answer this app does not read also says which version is newer; the deletion stays unconfirmed either way.
+          throw new Error(nodeViewRefusalText(cause, t, "intents.deleteUnconfirmed") ?? t("intents.deleteUnconfirmed"), { cause });
+        }
         if (!result.deleted) {
           if (result.decision.kind === "needs-confirmation") {
             setDeletionQuestion(result.decision);

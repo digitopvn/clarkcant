@@ -134,6 +134,8 @@ describe("gateway authorization", async () => {
     expect(response.status).toBe(200);
     const body = response.body as Record<string, unknown>;
     expect(nodeIdSchema.safeParse(body.nodeId).success).toBe(true);
+    // The version an app compares with its own when it cannot read one of this node's answers.
+    expect(body.clarkVersion).toMatch(/^(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?|unknown)$/);
     // The token itself must never be echoed back.
     expect(JSON.stringify(body)).not.toContain(token());
   });

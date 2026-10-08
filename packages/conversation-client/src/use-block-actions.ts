@@ -6,6 +6,7 @@ import { type GatewayClient, GatewayError, type Timeline, type WidgetDevSessionR
 import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { nodeViewRefusalText } from "./node-view-refusal.ts";
 import type {
   ArtifactOpenState,
   BlockActions,
@@ -88,6 +89,19 @@ export function developOutcomeMessage(view: WidgetDevSessionRead, t: (key: Messa
   const leadsElsewhere = pressed.trim().replace(/[\\/]+$/u, "").toLowerCase() !== view.root.replace(/[\\/]+$/u, "").toLowerCase();
   const kept = fillMessage(t(leadsElsewhere ? "commandCard.develop.notKeptLink" : "commandCard.develop.notKeptBroad"), { folder: view.root });
   return `${outcome} ${kept}`;
+}
+
+/**
+ * What a `/develop` start that did not come back as a session the app could read settles on.
+ *
+ * An answer the app cannot read (`NodeViewUnreadable`) only arrives once the node said yes, so the session started and
+ * runs on the node: the card says so, and that this app cannot read its state, with the version advice, rather than
+ * "failed" with the schema's text. Any other error is a start that did not happen, said as the node's reason.
+ */
+export function developStartRefused(error: unknown, t: (key: MessageKey) => string): CommandActionState {
+  const unread = nodeViewRefusalText(error, t, "commandCard.develop.startedUnread");
+  if (unread !== undefined) return { status: "done", message: unread };
+  return { status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") };
 }
 
 /** What a Forget press did, saying so when the folder stays reachable through a folder that holds it. */
@@ -525,7 +539,7 @@ export function useBlockActions({
       settle({ status: "pending" });
       void client.startWidgetDevSession({ root, conversationId }).then(
         (view) => settle({ status: "done", message: developOutcomeMessage(view, t, root) }),
-        (error: unknown) => settle({ status: "failed", message: error instanceof Error ? error.message : t("commandCard.failed") }),
+        (error: unknown) => settle(developStartRefused(error, t)),
       );
     },
     [client, conversationId, t],
@@ -601,7 +615,12 @@ export function useBlockActions({
                 status: "done",
                 message: forgetOutcomeMessage(result, t),
               }),
-            fail,
+            // The node answered, so the folder was taken back; only what it said about it cannot be read.
+            (error: unknown) => {
+              const unread = nodeViewRefusalText(error, t, "shell.nodeView.acted");
+              if (unread === undefined) fail(error);
+              else settle({ status: "done", message: unread });
+            },
           );
           return;
       }
