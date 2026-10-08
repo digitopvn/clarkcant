@@ -7,6 +7,7 @@ import {
   followsBottom,
   noteLayoutScroll,
   reportScroll,
+  scrollAsTranscript,
   stillFollowsBottom,
 } from "../src/follow-bottom.ts";
 
@@ -121,6 +122,39 @@ describe("following the bottom of the transcript", () => {
     const report = reportScroll(node);
     node.scrollHeight = 1200;
     node.scrollTop = 600;
+    expect(stillFollowsBottom(true, report, node)).toBe(true);
+  });
+
+  /** A view whose scroll lands at once, as an instant one does, or not yet, as a smooth one has not on the call. */
+  const scrollable = (top: number, lands: boolean): ReturnType<typeof view> & { scrollTo(options: ScrollToOptions): void } => {
+    const node = {
+      ...view(top),
+      scrollTo(options: ScrollToOptions): void {
+        if (lands) node.scrollTop = Math.min(options.top ?? node.scrollTop, node.scrollHeight - node.clientHeight);
+      },
+    };
+    return node;
+  };
+
+  it("sees a reader's scroll up right after the transcript's own scroll down to follow the reply", () => {
+    // Reported at the bottom; the reply grows by 400px and the transcript follows it down, then the reader scrolls up by
+    // as much, all before the browser reports either move. Measured from the report, the view did not move.
+    const node = scrollable(1400, true);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "instant" });
+    expect(node.scrollTop).toBe(1800);
+    expect(stillFollowsBottom(true, report, node)).toBe(true);
+    node.scrollTop -= 400;
+    expect(stillFollowsBottom(true, report, node)).toBe(false);
+  });
+
+  it("records only the part of its own scroll the view has made, so a glide still under way is not counted", () => {
+    const node = scrollable(1400, false);
+    const report = reportScroll(node);
+    node.scrollHeight = 2400;
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: "smooth" });
+    // The view has not moved yet: counting the whole glide would read the view as far above where it was expected.
     expect(stillFollowsBottom(true, report, node)).toBe(true);
   });
 

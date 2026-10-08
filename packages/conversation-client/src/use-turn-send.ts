@@ -12,7 +12,7 @@ import { chipsAfterAnswer, readyAttachmentIds, readyChipIds, type AttachmentChip
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
-import { followScrollBehavior, followsBottom, reportScroll, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
+import { followScrollBehavior, followsBottom, reportScroll, scrollAsTranscript, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -185,7 +185,7 @@ export function useTurnSend({
     const node = scroller.current;
     if (node === null || !followsBottomNow()) return;
     const metrics = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop, clientHeight: node.clientHeight };
-    node.scrollTo({ top: node.scrollHeight, behavior: followScrollBehavior(metrics) });
+    scrollAsTranscript(node, { top: node.scrollHeight, behavior: followScrollBehavior(metrics) });
     // The streamed reply is as much a reason to follow the bottom as a stored message is: without
     // it the answer grows below the fold while the view stays where the question was. It is
     // conditional because that is a reason to follow, not a licence to interrupt someone reading
