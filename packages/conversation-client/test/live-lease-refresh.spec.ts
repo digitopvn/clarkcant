@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HANDOFF_WAIT_MS, refreshLiveLease } from "../src/live-lease-refresh.ts";
+import { HANDOFF_WAIT_MS, RECLAIM_TIMEOUT_MS, refreshLiveLease } from "../src/live-lease-refresh.ts";
 
 /**
  * The conversation's periodic re-claim of a live widget, driven with a fake clock and claims answered by hand.
@@ -87,8 +87,14 @@ describe("the conversation's periodic re-claim", () => {
     let handingOff = false;
     const slow = controlled();
     const claim = vi.fn(() => slow.promise);
-    const refresh = refreshLiveLease({ claim, paused: () => handingOff, onOwner: vi.fn(), refreshMs: 1_000 });
-    // A re-claim slower than the refresh interval: the next ticks do not send another behind it.
+    const refresh = refreshLiveLease({
+      claim,
+      paused: () => handingOff,
+      onOwner: vi.fn(),
+      refreshMs: 1_000,
+      claimTimeoutMs: 60_000,
+    });
+    // A re-claim slower than the refresh interval, inside its deadline: the next ticks do not send another behind it.
     await vi.advanceTimersByTimeAsync(3_000);
     expect(claim).toHaveBeenCalledTimes(1);
 
@@ -123,6 +129,39 @@ describe("the conversation's periodic re-claim", () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBe(true);
+    refresh.stop();
+  });
+
+  it("gives up on a re-claim that never lands, so later ticks keep the lease alive", async () => {
+    vi.useFakeTimers();
+    const late = controlled();
+    const claim = vi.fn<() => Promise<void>>().mockImplementationOnce(() => late.promise).mockImplementation(async () => undefined);
+    const onOwner = vi.fn();
+    const refresh = refreshLiveLease({ claim, paused: () => false, onOwner, refreshMs: 30_000 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(claim).toHaveBeenCalledTimes(1);
+    // Timed out: counted as failed, so the surface is not called the owner on its account.
+    await vi.advanceTimersByTimeAsync(RECLAIM_TIMEOUT_MS);
+    expect(onOwner).not.toHaveBeenCalled();
+    // And an answer arriving after the deadline does not count either.
+    late.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onOwner).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000 - 30_000 - RECLAIM_TIMEOUT_MS);
+    expect(claim).toHaveBeenCalledTimes(20);
+    expect(onOwner).toHaveBeenCalledTimes(19);
+    refresh.stop();
+  });
+
+  it("keeps re-claiming every tick through a node that never answers any of them", async () => {
+    vi.useFakeTimers();
+    const claim = vi.fn(() => new Promise<void>(() => undefined));
+    const onOwner = vi.fn();
+    const refresh = refreshLiveLease({ claim, paused: () => false, onOwner, refreshMs: 30_000 });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(claim).toHaveBeenCalledTimes(20);
+    expect(onOwner).not.toHaveBeenCalled();
     refresh.stop();
   });
 

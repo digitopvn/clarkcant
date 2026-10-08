@@ -338,7 +338,7 @@ test("a detach the desktop shell throws on tells the person, takes the widget ba
   expect(errors).toEqual([]);
 });
 
-test("the conversation sends one re-claim at a time, and Detach waits for the one on its way before it releases", async ({ page }) => {
+test("a re-claim the node never answers does not stop the next one, and Detach waits for the one on its way", async ({ page }) => {
   const live = await openOwnedLiveWidget(page, "records");
   await expect(live.locator("[data-ownership='owner']")).toBeVisible({ timeout: 30_000 });
 
@@ -354,21 +354,22 @@ test("the conversation sends one re-claim at a time, and Detach waits for the on
     await route.continue();
   });
 
-  // A re-claim that outlasts the refresh interval: no second one is sent behind it.
+  // The first re-claim is never answered. It times out well inside the interval, so the next tick still re-claims.
   await page.clock.fastForward(REFRESH_MS);
   await expect.poll(() => held.length).toBe(1);
-  await page.clock.fastForward(REFRESH_MS);
-  await page.clock.fastForward(REFRESH_MS);
-  await page.waitForTimeout(300);
-  expect(held.length).toBe(1);
+  // Stepped in two jumps, as real time would pass: the deadline (10 s) fires and settles before the next tick is due.
+  await page.clock.fastForward(10_000);
+  await page.clock.fastForward(REFRESH_MS - 10_000);
+  await expect.poll(() => held.length).toBe(2);
+  await expect(live.locator("[data-ownership='owner']")).toBeVisible();
 
-  // Detach waits for that re-claim: nothing is released while it is still out.
+  // Detach waits for the re-claim on its way: nothing is released while it is still out.
   await live.locator("[data-detach-widget='true']").click();
   await page.waitForTimeout(300);
   expect(releases).toEqual([]);
   expect(await shellCalls(page)).toEqual([]);
 
-  await held[0]?.continue();
+  await held[1]?.continue();
   await expect.poll(() => releases).toEqual(["release"]);
   await expect.poll(() => shellCalls(page)).toEqual(["detach"]);
 });

@@ -27,24 +27,40 @@ export interface LiveLeaseRefresh {
 /** How long a hand-off waits for a re-claim still on its way before it goes ahead. */
 export const HANDOFF_WAIT_MS = 5_000;
 
+/**
+ * How long one re-claim may take before it counts as failed.
+ *
+ * Well inside the refresh interval. Re-claims go one at a time, so without a deadline a single re-claim the node never
+ * answers would stop every later one, and the lease would lapse while the surface still said it held it. A timed-out
+ * re-claim makes nobody the owner; the next tick tries again.
+ */
+export const RECLAIM_TIMEOUT_MS = 10_000;
+
 export function refreshLiveLease(input: {
   claim: () => Promise<unknown>;
   /** True while the lease is somebody else's to keep: handing off to, or held by, a detached window. */
   paused: () => boolean;
   onOwner: () => void;
   refreshMs: number;
+  claimTimeoutMs?: number;
 }): LiveLeaseRefresh {
   let stopped = false;
   let inFlight: Promise<void> | undefined;
   const timer = setInterval(() => {
     if (stopped || inFlight !== undefined || input.paused()) return;
-    const sent = input.claim().then(
-      () => {
-        // Paused since it was sent: the hand-off decides who owns the widget now, not this answer.
-        if (!stopped && !input.paused()) input.onOwner();
-      },
-      () => undefined,
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<false>((resolve) => {
+      deadline = setTimeout(() => resolve(false), input.claimTimeoutMs ?? RECLAIM_TIMEOUT_MS);
+    });
+    const answered = input.claim().then(
+      () => true,
+      () => false,
     );
+    const sent = Promise.race([answered, timedOut]).then((claimed) => {
+      clearTimeout(deadline);
+      // Paused since it was sent: the hand-off decides who owns the widget now, not this answer.
+      if (claimed && !stopped && !input.paused()) input.onOwner();
+    });
     inFlight = sent.finally(() => {
       inFlight = undefined;
     });

@@ -813,7 +813,14 @@ function registerHandlers() {
       },
     });
     window.once("ready-to-show", () => window.show());
-    await window.loadURL(url);
+    try {
+      await window.loadURL(url);
+    } catch (cause) {
+      // A page that failed to load shows nothing and claims nothing. Closing it hands the widget back through the same
+      // path as any close, and the conversation says why the window did not open.
+      if (!window.isDestroyed()) window.close();
+      return { ok: false, refused: `the widget window did not load: ${cause instanceof Error ? cause.message : String(cause)}` };
+    }
 
     const claimed = await opened.lease.begin();
     if (!claimed.ok) return { ok: false, refused: claimed.refused };
