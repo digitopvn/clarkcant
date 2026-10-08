@@ -215,7 +215,8 @@ export type WidgetDevActivation = z.infer<typeof widgetDevActivationSchema>;
  *   or junction, or it was not there when the node started again.
  * - `capacity`: the node already watched as many folders as it does at once when it started again.
  * - `root-refused`: when the node started again, the folder was no longer one the session may watch (for example a
- *   session Clark started whose folder is outside the widget workspace, or a folder now inside the data folder).
+ *   session Clark started whose folder is outside the widget workspace and every folder the person chose, or a folder
+ *   now inside the data folder).
  */
 export const widgetDevStopReasonSchema = z.enum(["requested", "watch-failed", "folder-gone", "capacity", "root-refused"]);
 export type WidgetDevStopReason = z.infer<typeof widgetDevStopReasonSchema>;
@@ -244,6 +245,12 @@ export const widgetDevSessionViewSchema = z.strictObject({
   showingLastKnownGood: z.boolean(),
   /** The widget the session placed in its conversation, when it placed one. */
   placed: z.strictObject({ conversationId: z.string().min(1).max(200), instanceId: z.string().min(1).max(200) }).optional(),
+  /**
+   * True when the person chose this folder, so Clark may develop in it and in every folder inside it. A start is kept as
+   * a choice only when the path pressed is the folder itself (not a link to it) and the folder is not a whole drive or
+   * the home folder; otherwise the session runs and this stays absent.
+   */
+  chosenByPerson: z.literal(true).optional(),
 });
 export type WidgetDevSessionView = z.infer<typeof widgetDevSessionViewSchema>;
 
@@ -257,3 +264,22 @@ export const widgetDevSessionCreateSchema = z.strictObject({
   widgetId: z.string().min(1).max(160).optional(),
 });
 export type WidgetDevSessionCreate = z.infer<typeof widgetDevSessionCreateSchema>;
+
+/** `POST /widget-dev/chosen-folders/forget`: the folder the person no longer lets Clark develop in. */
+export const widgetDevFolderForgetSchema = z.strictObject({
+  /** The chosen folder, as the node lists it (its canonical path) or as a path that resolves to it. */
+  root: z.string().min(1).max(1000),
+});
+export type WidgetDevFolderForget = z.infer<typeof widgetDevFolderForgetSchema>;
+
+/**
+ * What a forget did: the folder it matched, and whether it took a choice back. `stillCoveredBy` names a folder Clark may
+ * still develop in that holds this one (another chosen folder, or a project root the person set), so the answer never
+ * says Clark lost access it still has.
+ */
+export const widgetDevFolderForgetResultSchema = z.strictObject({
+  root: z.string().min(1).max(1000),
+  forgotten: z.boolean(),
+  stillCoveredBy: z.string().min(1).max(1000).optional(),
+});
+export type WidgetDevFolderForgetResult = z.infer<typeof widgetDevFolderForgetResultSchema>;

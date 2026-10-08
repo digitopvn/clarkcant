@@ -1,10 +1,12 @@
 import { mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   WIDGET_DEV_ALLOWED_ISOLATIONS,
   messageBlockSchema,
   nowInstant,
+  type CommandCard,
   type MessageBlock,
   type PackageManifest,
   type TurnOrigin,
@@ -35,6 +37,7 @@ import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices } from "../services.ts";
 import { placeWidget } from "../widget-perform-tool.ts";
 import { installPackage, packageInstallDepsOf, type ApprovedInstall } from "./package-install.ts";
+import { developFolderCard, type ProposedFolder } from "./widget-dev-card.ts";
 import {
   WIDGET_DEV_DIRECTORY_SOURCE,
   WIDGET_DEV_SNAPSHOTS_MAX,
@@ -58,10 +61,11 @@ import {
  * Whose intent the installs carry out is the session's initiative. A session the person starts on their own surface
  * installs as their request, for any folder on the node outside its data folder. A session Clark starts during a turn
  * installs as Clark's own proposal (`proposed`), so a mode that asks before what the person did not ask for by name asks,
- * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`), or a folder inside a `workspace.roots` value
- * the person recorded themselves (`configuredRoots`). Nothing lets the person record that value yet, so in practice Clark
- * develops in the workspace; choosing a project folder is tracked in digitopvn/clarkcant#538. A turn a machine surface,
- * an automation or a peer sent starts nothing.
+ * and it may watch only Clark's own widget workspace (`widgetWorkspaceDir`), a folder the person chose for widget
+ * development by starting a session there themselves (`chosenFolders`), or a folder inside a `workspace.roots` value the
+ * person recorded themselves (`configuredRoots`). For any other folder Clark offers the person a card to choose it
+ * (`folderCard`); the press on it starts the session on the person's own surface. A turn a machine surface, an
+ * automation or a peer sent starts nothing.
  *
  * Phases 1–2 run only packages whose facets stay in the widget frame or are data (`WIDGET_DEV_ALLOWED_ISOLATIONS`); a
  * package with a service, tools or native facet is a failed build saying so.
@@ -103,6 +107,24 @@ export interface WidgetDevSessions {
   ): Promise<WidgetDevResult<{ session: WidgetDevSessionView; text: string; hostBlocks: Record<string, unknown>[] }>>;
   /** The folder Clark may scaffold widgets in, created when missing. */
   workspace(): string;
+  /**
+   * The host-owned card a person chooses a folder to develop on (`developFolderCard`), offering `proposed` first, in
+   * `locale` (the owner's language when left out).
+   */
+  folderCard(input: { proposed?: string; locale?: "vi" | "en"; only?: "chosen" }): CommandCard;
+  /** The folders the person chose that Clark may develop in now (`chosenFolders`), as canonical paths. */
+  chosen(): string[];
+  /**
+   * Every folder the person chose, with whether it is found at its path now (`markedFolders`): one that is missing, or
+   * now leads elsewhere, grants nothing, but is still listed so the person can forget it.
+   */
+  marked(): { root: string; found: boolean }[];
+  /**
+   * Take back the person's choice of a folder: it no longer lets Clark start sessions in it, or in a folder inside it.
+   * `stillCoveredBy` names a folder Clark may still develop in that holds it, when there is one. Only the person's own
+   * surface calls this (the route is person-only). Sessions there, and what they run, stay as they are.
+   */
+  forget(root: string): WidgetDevResult<{ root: string; forgotten: boolean; stillCoveredBy?: string }>;
   /** Start watching again every session that was live when the node stopped. */
   resume(): Promise<void>;
   close(): void;
@@ -228,9 +250,10 @@ export function createWidgetDevSessions(
    * Local folders only: a Windows share or device path is refused. Nothing that holds the node's data folder, or lies
    * inside it, may be watched, except Clark's widget workspace: the package cache, the session store and the database
    * live there, and a session that watched them would build from its own snapshots. A session Clark starts may watch only
-   * that workspace and folders inside a root the person recorded themselves (`configuredRoots`), so a model cannot
-   * point the node's install path at an arbitrary folder. A session the person starts on their own surface (the REST
-   * route, as the owner) may name any other local folder.
+   * that workspace, folders the person chose for widget development (`chosenFolders`) and folders inside a root the
+   * person recorded themselves (`configuredRoots`), so a model cannot point the node's install path at an arbitrary
+   * folder. A session the person starts on their own surface (the REST route, as the owner) may name any other local
+   * folder.
    */
   const checkRoot = (raw: string, initiative: { kind: WidgetDevInitiative["kind"] }): WidgetDevResult<string> => {
     const given = raw.trim();
@@ -261,10 +284,15 @@ export function createWidgetDevSessions(
       return refusal(400, "ROOT_IN_DATA_FOLDER", "the folder holds or lies inside this node's data folder, which is not developed from; use a project folder");
     }
     if (initiative.kind === "clark" && !inWorkspace) {
-      const configured = configuredRoots()
-        .map((path) => realOrUndefined(path))
-        .filter((path): path is string => path !== undefined);
-      if (containingRoot(ownedResources(configured), root) === undefined) {
+      // The person's configured roots are resolved as they are now; a chosen folder is the canonical path the person's
+      // start stored, compared as it is (`chosenFolders`), so a link swapped in at its path later widens nothing.
+      const allowed = [
+        ...configuredRoots()
+          .map((path) => realOrUndefined(path))
+          .filter((path): path is string => path !== undefined),
+        ...chosenFolders(),
+      ];
+      if (containingRoot(ownedResources(allowed), root) === undefined) {
         return refusal(403, "ROOT_NOT_OWNED", hostText(ownerLocale(services().runtime)).approvals.devSessionRootNotOwned(root, widgetWorkspace));
       }
     }
@@ -275,8 +303,7 @@ export function createWidgetDevSessions(
    * The folders the person recorded themselves for their projects: a `workspace.roots` preference whose source is the
    * person (`user` or `onboarding`). The built-in default, the home folder and the drive the node runs from, is not a
    * choice the person made, and a value Clark wrote is not one either: neither lets Clark watch a folder. No surface
-   * writes such a value today, so this is normally empty; the node has no registry of projects apart from these roots
-   * (its project index is a scan beneath them), and letting the person choose a folder is digitopvn/clarkcant#538.
+   * writes such a value today, so this is normally empty; the folders the person chooses are `chosenFolders`.
    */
   const configuredRoots = (): string[] => {
     const runtime = services().runtime;
@@ -287,6 +314,47 @@ export function createWidgetDevSessions(
     if (record === undefined || (record.source !== "user" && record.source !== "onboarding") || !Array.isArray(record.value)) return [];
     return record.value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "" && isAbsolute(entry.trim())).map((entry) => entry.trim());
   };
+
+  /**
+   * The folders the person chose for widget development: the folder of every session they started on their own surface
+   * (`chosenByPerson`), live or stopped. Only the person-only start writes that mark, so no turn, widget or machine
+   * surface can add a folder here; a session the store forgets takes its folder with it.
+   */
+  const chosenFolders = (): string[] => markedFolders().filter((folder) => folder.found).map((folder) => folder.root);
+
+  /**
+   * Every folder marked as chosen, once each. The stored root is the canonical path the person's start resolved; a folder
+   * that now resolves anywhere else (it was replaced by a link, moved or removed) is not `found`, and so grants nothing
+   * (`chosenFolders`), but it is still the person's mark to see and forget.
+   */
+  const markedFolders = (): { root: string; found: boolean }[] => {
+    const folders: { root: string; found: boolean }[] = [];
+    for (const session of readDevSessions(dataDir())) {
+      if (session.chosenByPerson !== true || folders.some((folder) => sameRoot(folder.root, session.root))) continue;
+      const now = realOrUndefined(session.root);
+      folders.push({ root: session.root, found: now !== undefined && sameRoot(now, session.root) });
+    }
+    return folders;
+  };
+
+  /**
+   * Whether a folder is too broad to keep as a choice: a filesystem or drive root, or the person's home folder itself. A
+   * session there may still run, but its start leaves no lasting choice behind, since a choice covers every folder inside.
+   */
+  const broadFolder = (root: string): "drive" | "home" | undefined => {
+    if (dirname(root) === root) return "drive";
+    const home = realOrUndefined(homedir()) ?? resolve(homedir());
+    return sameRoot(root, home) ? "home" : undefined;
+  };
+
+  /**
+   * The person's start chooses its folder only when the path they pressed is the folder itself, as it resolves now. A card
+   * always carries the canonical path it showed; if that path leads somewhere else by the time of the press (a link
+   * swapped in, or a missing folder made a link), the session runs but nothing is kept, so the person never approves one
+   * folder and grants another. A folder too broad to keep (`broadFolder`) is never chosen either.
+   */
+  const choosesFolder = (initiative: WidgetDevInitiative, root: string, pressed: string): boolean =>
+    initiative.kind === "person" && sameRoot(resolve(pressed.trim()), root) && broadFolder(root) === undefined;
 
   const viewOf = (stored: StoredDevSession): WidgetDevSessionView => {
     const session = live.get(stored.sessionId);
@@ -316,6 +384,7 @@ export function createWidgetDevSessions(
       ...(lastBuild === undefined ? {} : { lastBuild }),
       showingLastKnownGood: behind,
       ...(stored.placed === undefined ? {} : { placed: stored.placed }),
+      ...(stored.chosenByPerson === true ? { chosenByPerson: true as const } : {}),
     };
   };
 
@@ -794,6 +863,7 @@ export function createWidgetDevSessions(
       const existing = sessions.find((session) => sameRoot(session.root, root) && session.status === "live" && live.has(session.sessionId));
       if (existing !== undefined) {
         const view = await serial(existing.sessionId, async () => {
+          if (choosesFolder(initiative, root, input.root)) update(existing.sessionId, (current) => ({ ...current, chosenByPerson: true }));
           await settle(existing.sessionId, "start");
           return sessionView(existing.sessionId);
         });
@@ -821,6 +891,8 @@ export function createWidgetDevSessions(
         status: "live",
         startedAt: nowInstant(),
         initiative,
+        // The person starting a folder is them choosing it; Clark picking up a folder they chose keeps the mark.
+        ...(choosesFolder(initiative, root, input.root) ? { chosenByPerson: true as const } : {}),
         ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         ...(input.widgetId === undefined ? {} : { widgetId: input.widgetId }),
         ...(placed === undefined ? {} : { placed }),
@@ -891,6 +963,67 @@ export function createWidgetDevSessions(
     },
 
     workspace,
+
+    folderCard(input) {
+      const node = services();
+      const given = input.proposed?.trim().slice(0, 1000);
+      // The card names, and its press starts, the folder the path resolves to now, never only the words Clark or the
+      // command gave: a link or `..` cannot make the person approve one folder and grant a wider one.
+      // A path that names no local folder now gets no button: a press could only fail, or find something else there later.
+      let proposed: ProposedFolder | undefined;
+      if (given !== undefined && given !== "") {
+        const folder = !isAbsolute(given) || isRemoteOrDevicePath(given) ? undefined : realOrUndefined(resolve(given));
+        if (!isAbsolute(given)) proposed = { given, problem: "relative" };
+        else if (isRemoteOrDevicePath(given) || (folder !== undefined && isRemoteOrDevicePath(folder))) proposed = { given, problem: "remote" };
+        else if (folder === undefined) proposed = { given, problem: "missing" };
+        else {
+          const broad = broadFolder(folder);
+          proposed = { given, folder, ...(broad === undefined ? {} : { broad }) };
+        }
+      }
+      return developFolderCard({
+        cardId: node.conductor.newId("card"),
+        at: nowInstant(),
+        locale: input.locale ?? ownerLocale(node.runtime),
+        ...(proposed === undefined ? {} : { proposed }),
+        chosen: markedFolders(),
+        sessions: readDevSessions(dataDir()).map(viewOf),
+        ...(input.only === undefined ? {} : { only: input.only }),
+      });
+    },
+
+    chosen: chosenFolders,
+
+    marked: markedFolders,
+
+    forget(raw) {
+      const given = raw.trim();
+      if (!isAbsolute(given)) return refusal(400, "ROOT_NOT_ABSOLUTE", "give the chosen folder as an absolute path on this node");
+      const real = realOrUndefined(resolve(given));
+      const matches = (root: string): boolean => sameRoot(root, given) || (real !== undefined && sameRoot(root, real));
+      const sessions = readDevSessions(dataDir());
+      const chosen = sessions.find((session) => session.chosenByPerson === true && matches(session.root));
+      if (chosen !== undefined) {
+        writeDevSessions(
+          dataDir(),
+          sessions.map((session) => {
+            if (session.chosenByPerson !== true || !matches(session.root)) return session;
+            const { chosenByPerson: _forgotten, ...rest } = session;
+            return rest;
+          }),
+        );
+      }
+      const root = chosen?.root ?? real ?? given;
+      // Said rather than hidden: a folder inside another one Clark may still develop in stays reachable through that one.
+      const covering = [
+        ...configuredRoots()
+          .map((path) => realOrUndefined(path))
+          .filter((path): path is string => path !== undefined),
+        ...chosenFolders(),
+      ];
+      const stillCoveredBy = containingRoot(ownedResources(covering), root);
+      return { ok: true, value: { root, forgotten: chosen !== undefined, ...(stillCoveredBy === undefined ? {} : { stillCoveredBy }) } };
+    },
 
     async resume() {
       try {

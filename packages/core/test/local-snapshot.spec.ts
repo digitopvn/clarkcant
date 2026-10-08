@@ -27,6 +27,7 @@ import {
   resolveLocalSource,
   snapshotLocalPackage,
 } from "../src/package-fetch.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A package listed by a path on this machine, copied into the package cache when it is installed.
@@ -52,8 +53,8 @@ beforeEach(() => {
   writeFileSync(join(source, "assets", "icon.svg"), "<svg></svg>");
 });
 
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+afterEach(async () => {
+  await removeTestDirectory(dir);
 });
 
 function digestOf(path: string): string {

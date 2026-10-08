@@ -66,6 +66,37 @@ interface DesktopBridge {
   closeWindow?: () => Promise<unknown>;
   /** Hands an https URL to the operating system's browser; the shell refuses any other scheme. */
   openExternal?: (url: string) => Promise<unknown>;
+  /** The OS folder dialog, in a window the shell's main process owns. Answers the path the person chose, or that they cancelled. */
+  pickDirectory?: (input?: { title?: string }) => Promise<unknown>;
+}
+
+/** What became of asking the person for a folder in the OS dialog. */
+export type FolderPick = { kind: "picked"; path: string } | { kind: "cancelled" } | { kind: "failed" };
+
+/** Whether this window can open the OS folder dialog: a desktop shell that has one. A browser cannot. */
+export function canPickFolder(scope: unknown = globalThis): boolean {
+  return desktopBridge(scope)?.pickDirectory !== undefined;
+}
+
+/**
+ * Ask the person for a folder in the OS dialog. The shell's answer is read as untrusted: anything but a non-empty path
+ * or a cancel is a failure, which the caller answers by asking for the path in words instead. A dialog that cannot open
+ * (a Linux desktop without a file chooser portal, for one) fails the same way.
+ */
+export async function pickFolderOnDesktop(title: string, scope: unknown = globalThis): Promise<FolderPick> {
+  const bridge = desktopBridge(scope);
+  if (bridge?.pickDirectory === undefined) return { kind: "failed" };
+  let answer: unknown;
+  try {
+    answer = await bridge.pickDirectory({ title });
+  } catch {
+    return { kind: "failed" };
+  }
+  if (typeof answer !== "object" || answer === null) return { kind: "failed" };
+  const { ok, canceled, path } = answer as { ok?: unknown; canceled?: unknown; path?: unknown };
+  if (ok !== true) return { kind: "failed" };
+  if (canceled === true) return { kind: "cancelled" };
+  return typeof path === "string" && path.trim() !== "" ? { kind: "picked", path } : { kind: "failed" };
 }
 
 /**

@@ -56,6 +56,12 @@ export const storedDevSessionSchema = z.strictObject({
   initiative: z
     .discriminatedUnion("kind", [z.strictObject({ kind: z.literal("person") }), z.strictObject({ kind: z.literal("clark"), origin: turnOriginSchema.optional() })])
     .optional(),
+  /**
+   * The person chose this folder for widget development on their own surface: they started a session here. It stays set
+   * when Clark picks the session up again, and it is what lets a session Clark starts watch this folder (and folders
+   * inside it). Only a start the person made sets it; nothing Clark, a widget or a machine surface does can.
+   */
+  chosenByPerson: z.literal(true).optional(),
   /** Snapshot digests this session made in the package cache, so the ones nothing runs or waits on can be removed. */
   snapshots: z.array(z.string().min(1).max(120)).max(WIDGET_DEV_SNAPSHOTS_MAX).optional(),
   startedAt: z.iso.datetime({ offset: false }),
@@ -90,7 +96,7 @@ export function widgetDevStoreDir(dataDir: string): string {
 }
 
 /**
- * The folder Clark owns for widgets it scaffolds itself. Besides the person's project folders, it is the one place a
+ * The folder Clark owns for widgets it scaffolds itself. Besides the folders the person chose, it is the one place a
  * session Clark starts may watch; nothing else under the data folder may be developed.
  */
 export function widgetWorkspaceDir(dataDir: string): string {

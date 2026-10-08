@@ -589,6 +589,9 @@ describe("WebSocket gateway", () => {
       "//widget-dev//sessions/",
       "/widget-dev/sessions/wdev_x/rebuild",
       "/widget-dev/sessions/wdev_x/place",
+      // Taking back which folders Clark may develop in is the person's, as choosing them is.
+      "/widget-dev/chosen-folders/forget",
+      "//widget-dev//chosen-folders//forget/",
       "/conversations/conv_x/delete",
       "//conversations//conv_x//delete/?ignored=1",
     ];

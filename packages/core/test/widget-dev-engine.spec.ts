@@ -16,6 +16,7 @@ import {
   startDevEngine,
   type DevEngine,
 } from "../src/index.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /** A folder whose `stat` fails with this code, as an antivirus or indexer holding it on Windows makes it fail. */
 const statFailure = vi.hoisted(() => ({ path: undefined as string | undefined, code: "EPERM" }));
@@ -315,7 +316,7 @@ describe("the dev engine", () => {
     await engine.ready;
     expect(engine.watching()).toBe(true);
 
-    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    await removeTestDirectory(root);
     const deadline = Date.now() + 5_000;
     while (gone === 0 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
     expect(gone).toBe(1);
@@ -341,7 +342,8 @@ describe("the dev engine", () => {
     engines.push(engine);
     await engine.ready;
 
-    // In one turn of the event loop: no existence check runs between the delete and the new folder, as `rm -rf out && build`.
+    // In one turn of the event loop: no existence check runs between the delete and the new folder. Synchronous on purpose;
+    // no retries are asked for, since `rmSync` would not run them.
     rmSync(root, { recursive: true, force: true });
     writePackage(root, "<p>new folder</p>");
     const waitFor = async (generation: number): Promise<void> => {

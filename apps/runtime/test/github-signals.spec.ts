@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,7 @@ import { startAutomationService, type AutomationService } from "../src/automatio
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { GITHUB_WEBHOOK_BODY_LIMIT, bodyLimitForPath, createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * GitHub delivering to a running node.
@@ -48,10 +49,10 @@ beforeEach(() => {
   services.automation = service;
 });
 
-afterEach(() => {
+afterEach(async () => {
   service.stop();
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 function fixture(name: string): Buffer {

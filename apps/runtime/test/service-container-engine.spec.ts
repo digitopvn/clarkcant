@@ -33,6 +33,7 @@ import {
   serviceContainerName,
   serviceRunArgs,
 } from "../src/service-container.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The container boundary, checked from inside a real container.
@@ -475,7 +476,7 @@ describe.skipIf(!engine.available)("the media render package's service on a real
         await host.stopAll();
       } finally {
         db.close();
-        rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        await removeTestDirectory(work);
       }
     }
   }, 600_000);
@@ -636,7 +637,7 @@ describe.skipIf(!engine.available)("a service's provider key on a real engine", 
       provider.closeAllConnections();
       await new Promise<void>((resolve) => provider.close(() => resolve()));
       db.close();
-      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      await removeTestDirectory(work);
     }
   }, 600_000);
 });

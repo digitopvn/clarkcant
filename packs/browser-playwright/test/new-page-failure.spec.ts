@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type BrowserContext } from "playwright";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createDriver } from "../src/driver.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The browser started, but its page could not be opened.
@@ -24,8 +25,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-afterAll(() => {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+afterAll(async () => {
+  await removeTestDirectory(dir);
 });
 
 describe("a browser whose page could not be opened", () => {

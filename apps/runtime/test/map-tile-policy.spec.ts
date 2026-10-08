@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,6 +26,7 @@ import { readMapTilePolicy } from "../src/map-tiles.ts";
 import { createMapTilesTool } from "../src/map-tiles-tool.ts";
 import { appendHostReply } from "../src/routes/conversations.ts";
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The map tile policy, set and cleared from Settings and through Clark.
@@ -63,9 +64,9 @@ beforeEach(async () => {
   conversationId = (created.body as { conversationId: string }).conversationId;
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await removeTestDirectory(dir);
 });
 
 function request(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<GatewayResponse> {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { allRows, createConversation, getTask } from "@clarkcant/storage";
 
 import { resumeTasksWaitingOnCapability } from "../src/capability-waiters.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A task a person asked for while nothing could do it yet goes ahead once something can.
@@ -61,9 +62,9 @@ beforeEach(() => {
   createConversation(services.runtime.db, { conversationId: CONVERSATION_ID, homeNodeId: services.runtime.identity.nodeId, at: AT });
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 describe("a task parked on a capability goes ahead when the capability becomes usable", () => {

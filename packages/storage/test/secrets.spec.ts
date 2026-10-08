@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ import {
   secretBackendFor,
   summarizeSecret,
 } from "../src/secrets.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Secrets: metadata about a secret, and a value somewhere else.
@@ -38,9 +39,9 @@ beforeEach(() => {
   migrate(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   db.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  await removeTestDirectory(dir);
 });
 
 function add(name = "github_token", overrides: Partial<Parameters<typeof putSecretMetadata>[1]> = {}): void {

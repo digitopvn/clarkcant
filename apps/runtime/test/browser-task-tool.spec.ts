@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import { createNodeTools } from "../src/node-tools.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createTaskDispatcher, type TaskDispatcher, type TaskDispatcherDeps } from "../src/task-dispatch.ts";
 import { nodeWorkerModel } from "../src/worker-model.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The model's way to start a browser task: which sites the task may act on come only from what the person wrote, and
@@ -34,9 +35,9 @@ beforeEach(() => {
     .run(conversationId, services.runtime.identity.nodeId, AT, AT);
 });
 
-afterEach(() => {
+afterEach(async () => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeTestDirectory(dir);
 });
 
 type Job = Parameters<TaskDispatcher["dispatch"]>[0];

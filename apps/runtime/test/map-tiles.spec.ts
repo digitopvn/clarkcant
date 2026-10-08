@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,7 @@ import { type InjectionPolicy, nodeStoreSecretBackend, putSecretMetadata } from 
 import { type MapTileCredential, createMapTileProxy, mapTileCredential, mapTileUrl, readMapTilePolicy, sniffTileType } from "../src/map-tiles.ts";
 import { handleMapTileRoutes } from "../src/routes/map-tiles.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The tile proxy and its route.
@@ -231,9 +232,9 @@ describe("the tile routes on a node", () => {
     services = bootNodeServices({ dataDir: dir, label: "test node" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     services.runtime.db.close();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeTestDirectory(dir);
   });
 
   it("has no policy by default, and then asks nobody for any tile", async () => {
@@ -372,9 +373,9 @@ describe("the credential runner", () => {
     services = bootNodeServices({ dataDir: dir, label: "test node" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     services.runtime.db.close();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeTestDirectory(dir);
   });
 
   it("runs without a key when the policy names none", () => {

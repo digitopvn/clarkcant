@@ -2199,6 +2199,10 @@ Detach không reset state/subscription/media.
 
 Close detached window chỉ chuyển presentation ownership; không xóa instance.
 
+Cửa sổ detached giữ lease live-owner của instance dưới bề mặt `detached` và làm mới nó trong lúc còn mở. Cửa sổ đóng lại,
+và trả instance về, khi phần hiển thị trong hội thoại đã mở nó biến mất, khi cửa sổ hội thoại đóng, khi ứng dụng thoát,
+hoặc khi một bề mặt khác đã lấy lease.
+
 Hiện chỉ widget dạng composition mới detach được. Widget chạy trong khung riêng (isolated frame) ở lại trong hội
 thoại: cửa sổ tách rời không giữ credential nào, mà khung đó cần credential của hội thoại để lưu state, publish
 semantic và làm mới URL. Hội thoại không hiện nút detach cho widget này và desktop host từ chối bootstrap của nó.
@@ -2908,9 +2912,18 @@ và version sẽ bị từ chối thay vì cài các tệp của phiên. Không 
 mỗi lần dựng; đầu ra đã dựng như `dist` vẫn được giữ.
 
 Clark phát triển widget trong không gian widget riêng của mình (`<dataDir>/widget-workspace`), nơi Clark dựng khung một
-widget mới. Để Clark làm việc với một dự án widget bạn đã có, hãy chép thư mục của nó vào không gian widget. Hiện chưa thể
-chỉ cho Clark một thư mục dự án khác; việc chọn thư mục được theo dõi tại
-[#538](https://github.com/digitopvn/clarkcant/issues/538). Thư mục dữ liệu của chính node không bao giờ được phát triển,
+widget mới. Để Clark làm việc với một dự án widget bạn đã có, hãy tự chọn thư mục của nó: gõ `/develop` (hoặc
+`/develop <thư mục>`, hoặc nhờ Clark), rồi bấm **Chọn thư mục…** trên thẻ trả lời. Ứng dụng desktop mở hộp chọn thư mục
+của hệ thống; trình duyệt, hoặc ứng dụng desktop nối với một node trên máy khác, sẽ hỏi đường dẫn đầy đủ của thư mục trên
+máy chạy node. Nếu Clark muốn phát triển một thư mục bạn chưa chọn, không có gì được bắt đầu và chính thẻ đó hiện ra với
+nút **Phát triển thư mục này**. Thẻ nêu thư mục mà đường dẫn thật sự dẫn tới, và nói rõ khi nó khác đường dẫn được đưa
+ra; đường dẫn không tìm thấy thì không có nút. Lần bấm chỉ giữ thư mục làm lựa chọn của bạn nếu lúc bấm đường dẫn vẫn
+chính là thư mục đó, nên một liên kết được đặt vào chỗ nó trong lúc chờ không được gì. Khi bạn đã bắt đầu một thư mục, Clark được làm việc trong đó, và trong mọi thư mục nằm bên trong nó, mà không cần hỏi
+lại, cho tới khi bạn thu hồi: gõ `/develop forget` (hoặc hỏi Clark những thư mục nó được dùng) rồi bấm **Thu hồi** cạnh
+thư mục đó. Thu hồi không dừng phiên đang chạy, và một thư mục nằm trong một thư mục khác bạn đã chọn vẫn được dùng qua
+thư mục đó (câu trả lời nói rõ điều này). Một thư mục đã chọn bị chuyển đi được liệt kê là không tìm thấy, để bạn vẫn
+thu hồi được. Chỉ tin nhắn do bạn gửi mới khiến Clark đưa ra một thư mục để chọn. Cả một ổ đĩa hay thư mục home của bạn có thể được phát triển trong một
+phiên, nhưng Clark không bao giờ giữ quyền với nó. Thư mục dữ liệu của chính node không bao giờ được phát triển,
 và một thư mục chia sẻ qua mạng cũng vậy. Một phiên chạy widget nằm trong frame và dữ liệu khai báo. Gói có phần
 dịch vụ, công cụ hoặc native bị từ chối kèm một lỗi nói rõ điều đó; hãy cài gói đó theo cách thông thường.
 
