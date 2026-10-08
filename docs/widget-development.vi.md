@@ -483,6 +483,21 @@ Không dùng blank frame làm loading hoặc error.
 
 Không giữ stale rows dưới nhãn live khi refresh fail.
 
+Các thẻ dựng sẵn của Clark đọc những trạng thái này qua hợp đồng trạng thái
+dùng chung được mô tả ở [DESIGN.vi.md §8.3](../DESIGN.vi.md#83-interaction-states).
+Hiện hợp đồng này là nội bộ của host và chưa được xuất qua widget SDK, nhưng một
+widget cô lập nên theo cùng các quy tắc để đọc giống các thẻ xung quanh:
+
+- con số không ai báo thì hiện là chưa rõ, không khả dụng hoặc không được hỗ
+  trợ, không bao giờ là `0`; con số đã được báo thì nêu nguồn và thời điểm;
+- không bao giờ vẽ một kết quả bị mâu thuẫn hoặc chưa được xác minh thành thành
+  công;
+- nói một thay đổi trạng thái một lần, trong một live region có sẵn trước thay
+  đổi đó: assertive cho lỗi, polite cho phần còn lại, và không nói gì với nội
+  dung đã có sẵn lúc widget được mount;
+- bỏ qua câu trả lời cho một lần thử cũ khi một lần thử mới hơn đang hiện trên
+  màn hình.
+
 ---
 
 ## 8. Hành động, nhập liệu và thẻ chỉ đọc

@@ -477,6 +477,20 @@ Do not use a blank frame as loading or error.
 
 Do not keep stale rows under a live label when a refresh fails.
 
+Clark's built-in cards read these states through the shared status contract
+described in [DESIGN.md §8.3](../DESIGN.md#83-interaction-states). The contract
+is internal to the host today and is not exported through the widget SDK, but an
+isolated widget should follow the same rules so it reads like the cards around
+it:
+
+- show a figure nobody reported as unknown, unavailable or unsupported, never
+  as `0`, and name the source and as-of time of a figure that was reported;
+- never draw a result that is contradicted or unverified as a success;
+- say a change of state once, in a live region that exists before the change:
+  assertive for an error, polite otherwise, and nothing for content that was
+  already there when the widget mounted;
+- drop an answer for an earlier attempt when a newer one is on screen.
+
 ---
 
 ## 8. Actions, input and read-only cards

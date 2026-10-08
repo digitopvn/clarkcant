@@ -15,6 +15,7 @@ import {
 import { LocaleProvider } from "../src/i18n/locale-context.tsx";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import type { LocaleChoice } from "../src/i18n/locale.ts";
+import { CATALOG } from "../src/renderers.tsx";
 import { CARDS_CSS } from "../src/styles/cards.ts";
 import { LiveNote, PhaseBadge, nextLivePlacement, phaseOf } from "../src/surface-status.tsx";
 import { findAll, textOf } from "./block-helpers.ts";
@@ -139,7 +140,7 @@ describe("a task summary never shows a failure as a success", () => {
     const { durationMs: _omitted, ...withoutDuration } = SUMMARY;
     const missing = renderToStaticMarkup(TaskSummaryCardBlock({ block: withoutDuration, t: en, locale: "en" }) as ReactElement);
     const reported = renderToStaticMarkup(TaskSummaryCardBlock({ block: SUMMARY, t: en, locale: "en" }) as ReactElement);
-    expect(missing).not.toMatch(/\b0\s*s/u);
+    expect(missing).not.toMatch(/\b0\s*(?:ms|s)\b/u);
     expect(reported).toMatch(/\b4\s*s/u);
   });
 });
@@ -224,5 +225,23 @@ describe("what a press answered is said in a live region", () => {
     // On the card, outside both regions: a reload shows the stop and does not announce it.
     expect(stopped).toMatch(/data-surface-live="off"[^]*data-control-notice="stopped"/u);
     expect(stopped).not.toMatch(/role="status"[^>]*>[^<]*<p[^>]*data-control-notice/u);
+  });
+});
+
+describe("a metric the host could not compute", () => {
+  it("is shown as a dash for the eye and said as unknown, never as zero", () => {
+    const Metrics = CATALOG["canvas.metrics@1"]!;
+    const html = inLocale(
+      "en",
+      createElement(Metrics, {
+        definitionId: "canvas.metrics@1",
+        props: { title: "Usage" },
+        dataset: { rows: [{ id: "tokens", label: "Tokens" }], freshness: "live", updatedAt: "2026-10-08T09:00:00.000Z" },
+      }),
+    );
+    expect(html).toContain('data-metric-unknown="true"');
+    expect(html).toContain('<span aria-hidden="true">—</span>');
+    expect(html).toContain(`<span class="cc-sr-only">${MESSAGES_EN["widgets.metrics.unknown"]}</span>`);
+    expect(html).not.toMatch(/cc-metric-value">0/u);
   });
 });

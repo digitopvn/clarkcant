@@ -834,6 +834,33 @@ Every widget must define:
 - read-only snapshot;
 - disabled action reason.
 
+Built-in miniapps read their own state machines through one shared status
+contract (`packages/contracts/src/surface-status.ts`). Each domain keeps its
+machine; the contract only decides how a state looks, whether it is said aloud,
+whether it can be retried, and whether it is still current.
+
+- **Phases.** `loading`, `empty`, `pending`, `needs-action`, `success`,
+  `partial`, `error`, `unavailable`, `cancelled`. One tone and one text mark per
+  phase, so `partial` is never green on one card and amber on the next, and no
+  state is told by colour alone. The mark is drawn by the stylesheet with an
+  empty alternative text; the badge's text is only the domain's own words.
+- **Never a failure as a success.** A task that reports success against
+  contradicting evidence is `error`; success without verified evidence is
+  `partial`. A state this build does not know is drawn plain, never guessed.
+- **Missing is not zero.** A value is `reported` (with its source, `official` or
+  `inferred`, and an as-of time), `unknown`, `unavailable` (with a reason) or
+  `unsupported`. A missing duration or metric is left out or said as unknown.
+- **Snapshot or live.** A host card is a snapshot and is never stale. A live
+  view carries `observedAt` and a stale window, and past it keeps what it showed
+  and says how old it is.
+- **Announcements.** What a press answered goes in a live region that exists
+  before the answer arrives: `error` is assertive, any other change of phase is
+  polite, and the same phase again, `loading`, or anything already on screen at
+  mount (a reload, a scroll back) is not announced.
+- **Late answers.** An answer for an earlier attempt is dropped; within one
+  attempt a late "still working" never reopens an outcome; retry is offered only
+  for `error` or `partial` when the domain names `retry` or `check-again`.
+
 ### 8.4 Local vs effect actions
 
 Local view actions don't need to ask:
