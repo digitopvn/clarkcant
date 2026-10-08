@@ -870,9 +870,15 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   `/logout`, `/develop` và Quên) và thẻ góp ý. Thử lại gửi đúng lần bấm đó qua
   đúng con đường cũ, dùng được bằng chuột và bàn phím như chính lần bấm, và bằng
   giọng nói khi nói lại cùng lệnh; node trả lời an toàn cho mỗi lần bấm như vậy
-  ở lần thứ hai. Một lời từ chối do node quyết định (chính sách, xung đột, lỗi
-  của chính node) và một câu trả lời mà ứng dụng này không đọc được thì không có
-  gì để lặp lại, vì gửi lại chỉ nhận về đúng câu trả lời cũ. Trình hiển thị
+  ở lần thứ hai. Node nhận một báo cáo cho một lần gửi trước khi hỏi GitHub bất
+  cứ điều gì, nên một lần gửi thứ hai chồng lên lần đầu sẽ thấy báo cáo đang được
+  gửi và chỉ nói nó đang ở đâu, còn một báo cáo node đã gửi thì chỉ được kiểm
+  tra, không bao giờ bị gửi lại; điều này cũng đúng với Vẫn gửi. Một lời từ chối
+  do node quyết định (chính sách, xung đột, lỗi của chính node) và một câu trả
+  lời mà ứng dụng này không đọc được thì không có gì để lặp lại, vì gửi lại chỉ
+  nhận về đúng câu trả lời cũ, và lời của chúng không nói "bạn có thể thử lại".
+  Khi nút Thử lại hoặc Kiểm tra lại biến mất trong lúc lần bấm chạy, tiêu điểm
+  bàn phím chuyển sang ghi chú lần bấm của thẻ, nơi nói lần bấm đó ra sao. Trình hiển thị
   terminal không tải được mã của nó cũng không đề nghị Thử lại, vì trình duyệt
   giữ thất bại đó suốt vòng đời của trang; thông báo của nó nói rằng tải lại ứng
   dụng sẽ tải lại trình hiển thị.
@@ -880,7 +886,14 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   này không đọc được câu trả lời, báo cáo có thể đã được gửi lên hoặc chưa. Thẻ
   nói đúng điều đó, ở dạng `partial` và không bao giờ là "thất bại" kèm chữ của
   schema, dùng câu mở đầu cho câu trả lời node không đọc được cùng câu về phiên
-  bản, và đề nghị **Kiểm tra lại**, chỉ hỏi node báo cáo đang ở đâu.
+  bản, và đề nghị **Kiểm tra lại**, chỉ hỏi node báo cáo đang ở đâu. Điều đó
+  cũng đúng khi lần gửi đã đi mà không có câu trả lời nào quay về (mất kết nối,
+  hết thời gian chờ, chặng chuyển tiếp trả 408, 502, 503 hoặc 504): node có thể
+  đã gửi rồi, nên thẻ không bao giờ nói "chưa gửi được"; thẻ nói chưa biết kết
+  quả, kèm Kiểm tra lại và Thử lại. Một lần Kiểm tra lại không đi tới nơi vẫn để
+  báo cáo ở trạng thái chưa biết, kèm lý do, vì kiểm tra không bao giờ gửi gì.
+  Chỉ câu trả lời của chính node rằng nó chưa từng gửi báo cáo mới nói báo cáo
+  chưa có trên GitHub.
 
 ### 8.4 Local vs effect actions
 

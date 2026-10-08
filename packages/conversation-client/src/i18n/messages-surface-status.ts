@@ -35,6 +35,11 @@ export const MESSAGES_SURFACE_STATUS_VI = {
   "widgets.metrics.unknown": "chưa rõ",
   "surface.retry": "Thử lại",
   "feedback.unread": "Node đã trả lời, nhưng ứng dụng này không đọc được báo cáo đã được gửi lên hay chưa.",
+  "feedback.notKnown.sent":
+    "Không nhận được câu trả lời ({reason}), nên chưa biết báo cáo đã được gửi lên hay chưa. Có thể node đã gửi rồi; Kiểm tra lại chỉ hỏi chứ không gửi, và báo cáo không bao giờ bị gửi hai lần.",
+  "feedback.notKnown.check": "Chưa kiểm tra được ({reason}), nên vẫn chưa biết báo cáo đã được gửi lên hay chưa. Kiểm tra lại chỉ hỏi, không gửi gì.",
+  "feedback.failed.final": "Chưa gửi được: {reason}. Nội dung vẫn còn đây.",
+  "feedback.check.nothingSent": "Node cho biết báo cáo này chưa từng được gửi, nên chưa có trên GitHub. Nội dung vẫn còn đây.",
 } as const;
 
 export type SurfaceStatusMessageKey = keyof typeof MESSAGES_SURFACE_STATUS_VI;
@@ -68,4 +73,9 @@ export const MESSAGES_SURFACE_STATUS_EN = {
   "widgets.metrics.unknown": "unknown",
   "surface.retry": "Try again",
   "feedback.unread": "The node answered, but this app can't read whether the report was filed.",
+  "feedback.notKnown.sent":
+    "No answer came back ({reason}), so whether the report was filed isn't known yet. The node may have filed it; Check again only asks and sends nothing, and the report is never filed twice.",
+  "feedback.notKnown.check": "The check didn't go through ({reason}), so whether the report was filed still isn't known. Check again only asks; it sends nothing.",
+  "feedback.failed.final": "Not filed: {reason}. Your text is still here.",
+  "feedback.check.nothingSent": "The node says this report was never sent, so it is not on GitHub. Your text is still here.",
 } as const satisfies Record<SurfaceStatusMessageKey, string>;

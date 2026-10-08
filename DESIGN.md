@@ -886,9 +886,15 @@ whether it can be retried, and whether it is still current.
   and Forget) and the feedback card. Try again sends the same press through the
   same path, reachable by pointer and keyboard like the press itself, and by
   voice as the same command spoken again; each of those presses is one the node
-  answers safely a second time. A refusal the node decided (policy, a conflict,
-  its own failure) and an answer this app cannot read offer nothing to repeat,
-  because sending them again would bring the same answer back. A terminal view
+  answers safely a second time. The node takes a report for one send before it
+  asks GitHub anything, so a second publish that overlaps the first finds it
+  being sent and only says where it stands, and a report the node already sent
+  is checked, never sent again; this holds for Send anyway too. A refusal the
+  node decided (policy, a conflict, its own failure) and an answer this app
+  cannot read offer nothing to repeat, because sending them again would bring
+  the same answer back, and their words do not say "you can try again". When
+  Try again or Check again goes away while its press runs, keyboard focus moves
+  to the card's press note, which says what the press came to. A terminal view
   whose code did not load offers no Try again either, because the browser keeps
   that failure for the page's life; its notice says that reloading the app loads
   it again.
@@ -896,7 +902,13 @@ whether it can be retried, and whether it is still current.
   cannot read the answer, the report may have been filed or not. The card says
   exactly that, as `partial` and never as "failed" with the schema's text, using
   the node-view refusal lead and the version sentence, and offers **Check
-  again**, which only asks the node where the report stands.
+  again**, which only asks the node where the report stands. The same holds
+  when the publish was sent and no answer came back (a dropped connection, a
+  timeout, a relay's 408, 502, 503 or 504): the node may have filed it, so the
+  card never says "not filed"; it says the outcome is not known yet, with Check
+  again and Try again. A Check again that does not go through keeps the report
+  not known, with the reason, because a check never files anything. Only the
+  node's own answer that it never sent the report says it is not on GitHub.
 
 ### 8.4 Local vs effect actions
 

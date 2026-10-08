@@ -506,6 +506,10 @@ và là mẫu tham chiếu cho quy tắc đó. Các dòng của thẻ lệnh và
 tham chiếu cho `canRetry`: chúng chỉ đề nghị Thử lại cạnh một thất bại mà lần
 bấm không tới được node hoặc hết thời gian chờ (`next: "retry"`), không bao giờ
 cạnh một lời từ chối do node quyết định hay một câu trả lời chúng không đọc được.
+Thẻ góp ý cũng đề nghị nút này cạnh một lần gửi đã đi mà không có câu trả lời,
+được nói là chưa biết (`partial`) chứ không phải thất bại, bên cạnh Kiểm tra lại.
+Khi nút Thử lại biến mất trong lúc lần bấm chạy, tiêu điểm chuyển sang ghi chú
+nói lần bấm đó ra sao.
 
 ---
 

@@ -109,10 +109,16 @@ export function feedbackRefusalReason(error: unknown, t: (key: MessageKey) => st
  * - The node answered the publish, but this app cannot read the answer (`NodeViewUnreadable`): the report may have been
  *   filed or not, so the card says exactly that — never "failed" with the schema's text — and offers Check again, which
  *   only asks the node where the report stands.
+ * - The publish was sent and no answer came back in time (a dropped connection, a timeout, a relay's 408/502/503/504):
+ *   the node may have filed it, so the card says it is not known yet — never "not filed" — and offers Check again and
+ *   Try again. Pressing the publish again is safe: the node answers a report it already holds, or is still sending,
+ *   with where it stands and never files it twice.
+ * - A Check again that did not go through: a check never files anything, so the report stays not known, with the
+ *   reason, and Check again stays offered. Only the node's own answer that it never sent the report (`NOTHING_SENT`)
+ *   says it is not on GitHub, in the app's words, because that is the node's fact rather than a guess.
  * - The node answered the preparation and this app cannot read it: nothing was filed. Said in words, with nothing to
  *   repeat, since the same request would bring the same answer back.
- * - Anything else did not get through. Sending the same press again is safe, because the node answers a report it
- *   already holds with what became of it and never files it twice, so a press that did not reach the node or timed out
+ * - Anything else did not get through. A press that did not reach the node or timed out before the publish was sent
  *   offers Try again (`next: "retry"`); a refusal the node decided says its reason and offers nothing to repeat.
  */
 export function feedbackPressFailed(
@@ -125,8 +131,24 @@ export function feedbackPressFailed(
     ...(press.requestKey === undefined ? {} : { requestKey: press.requestKey }),
   };
   if (press.published && press.reportId !== undefined) {
+    const notKnown = { status: "unknown" as const, ...kept, reportId: press.reportId };
     const unread = nodeViewRefusalText(error, t, "feedback.unread");
-    if (unread !== undefined) return { status: "unknown", message: unread, ...kept, reportId: press.reportId };
+    if (unread !== undefined) return { ...notKnown, message: unread };
+    const reason = { reason: feedbackRefusalReason(error, t) };
+    if (press.intent === "check") {
+      // The node's own answer that it never sent this report is a fact, not a guess: nothing is on GitHub.
+      if (error instanceof GatewayError && error.code === "NOTHING_SENT") return { status: "failed", message: t("feedback.check.nothingSent"), ...kept };
+      return { ...notKnown, message: fillMessage(t("feedback.notKnown.check"), reason) };
+    }
+    if (retryableFailure(error)) {
+      return {
+        ...notKnown,
+        message: fillMessage(t("feedback.notKnown.sent"), reason),
+        next: "retry",
+        press: "create",
+        ...(press.intent === undefined ? {} : { intent: press.intent }),
+      };
+    }
   }
   const unreadPrepared = nodeViewRefusalText(error, t, "shell.nodeView.read");
   if (unreadPrepared !== undefined) return { status: "failed", message: unreadPrepared, ...kept };

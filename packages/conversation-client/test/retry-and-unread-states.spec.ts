@@ -174,16 +174,60 @@ describe("a feedback press that did not come back readable", () => {
   });
 
   it("offers Try again for a press that did not get through, and nothing for a refusal", () => {
-    expect(feedbackPressFailed(offline(), en, { press: "create", intent: "send", reportId: "rpt_1", published: true })).toMatchObject({
+    expect(feedbackPressFailed(offline(), en, { press: "create", intent: "send", requestKey: "k", published: false })).toMatchObject({
       status: "failed",
       press: "create",
       intent: "send",
-      reportId: "rpt_1",
+      requestKey: "k",
       next: "retry",
     });
+    expect(feedbackPressFailed(new GatewayError(409, "NOT_INCONCLUSIVE", "can be sent or checked"), en, { press: "create", intent: "send-anyway", reportId: "rpt_1", published: true })).not.toHaveProperty(
+      "next",
+    );
     expect(feedbackPressFailed(new GatewayError(409, "NOTHING_SENT", "never sent"), en, { press: "create", intent: "check", reportId: "rpt_1", published: true })).not.toHaveProperty(
       "next",
     );
+  });
+
+  it("says a publish that was sent and got no answer as not known yet, never not filed, with Try again, in both languages", () => {
+    for (const [t, messages] of [
+      [en, MESSAGES_EN],
+      [vi, MESSAGES_VI],
+    ] as const) {
+      for (const error of [offline(), timedOut(), new GatewayError(502, "BAD_GATEWAY", "relay hop failed")]) {
+        const state = feedbackPressFailed(error, t, { press: "create", intent: "send", reportId: "rpt_1", requestKey: "k", published: true });
+        expect(state).toMatchObject({ status: "unknown", reportId: "rpt_1", requestKey: "k", next: "retry", press: "create", intent: "send" });
+        const message = state.status === "unknown" ? state.message : "";
+        expect(message.startsWith(messages["feedback.notKnown.sent"].split("{reason}")[0]!)).toBe(true);
+        expect(message).not.toContain(messages["feedback.failed"].split("{reason}")[0]!);
+      }
+    }
+    // Before the publish was sent, nothing can have been filed: a press that did not get through is still a failure.
+    expect(feedbackPressFailed(offline(), en, { press: "create", intent: "send", requestKey: "k", published: false })).toMatchObject({ status: "failed", next: "retry" });
+  });
+
+  it("keeps a Check again that did not go through as not known, with its reason, and never as not filed", () => {
+    for (const [t, messages] of [
+      [en, MESSAGES_EN],
+      [vi, MESSAGES_VI],
+    ] as const) {
+      for (const error of [offline(), timedOut(), policy()]) {
+        const state = feedbackPressFailed(error, t, { press: "create", intent: "check", reportId: "rpt_1", requestKey: "k", published: true });
+        expect(state).toMatchObject({ status: "unknown", reportId: "rpt_1", requestKey: "k" });
+        // Check again is the way forward; repeating the check as a Try again would be the same press twice.
+        expect(state).not.toHaveProperty("next");
+        const message = state.status === "unknown" ? state.message : "";
+        expect(message.startsWith(messages["feedback.notKnown.check"].split("{reason}")[0]!)).toBe(true);
+        expect(message).toContain(error instanceof GatewayError ? error.reason : error.message);
+        expect(message).not.toContain(messages["feedback.failed"].split("{reason}")[0]!);
+      }
+    }
+  });
+
+  it("says the node's own answer that it never sent the report as such, with nothing to repeat", () => {
+    const state = feedbackPressFailed(new GatewayError(409, "NOTHING_SENT", "never sent"), vi, { press: "create", intent: "check", reportId: "rpt_1", published: true });
+    expect(state).toMatchObject({ status: "failed", message: MESSAGES_VI["feedback.check.nothingSent"], reportId: "rpt_1" });
+    expect(state).not.toHaveProperty("next");
   });
 
   it("keeps the report an unknown answer is about, so a later press for the same words acts on it", () => {
@@ -279,5 +323,99 @@ describe("a feedback card's press note", () => {
     expect(check).toHaveLength(1);
     (check[0]!.props.onClick as () => void)();
     expect(pressed).toEqual([{ cardId: "card_draft", reportId: "rpt_1", intent: "check" }]);
+  });
+
+  it("says a publish with no answer as not known, with Try again that sends the same press and Check again that only checks", () => {
+    for (const [t, messages] of [
+      [en, MESSAGES_EN],
+      [vi, MESSAGES_VI],
+    ] as const) {
+      const state = feedbackPressFailed(offline(), t, { press: "create", intent: "send", reportId: "rpt_1", published: true });
+      const { actions, pressed } = pressing("card_draft", state);
+      const html = renderToStaticMarkup(createElement(FeedbackCardBlock, { block: PREPARED, t, actions }));
+      expect(html).toContain('data-result="unknown"');
+      expect(html).toContain('data-surface-phase="partial"');
+      expect(html).not.toContain(messages["feedback.failed"].split("{reason}")[0]!);
+      const note = noteOf(FeedbackCardBlock({ block: PREPARED, t, actions }));
+      const retry = findAll(note, "data-feedback-retry");
+      const check = findAll(note, "data-feedback-check-unread");
+      expect(retry).toHaveLength(1);
+      expect(check).toHaveLength(1);
+      (retry[0]!.props.onClick as () => void)();
+      (check[0]!.props.onClick as () => void)();
+      expect(pressed).toEqual([
+        { cardId: "card_draft", reportId: "rpt_1", intent: "send" },
+        { cardId: "card_draft", reportId: "rpt_1", intent: "check" },
+      ]);
+    }
+  });
+
+  it("says you can try again only beside a Try again", () => {
+    for (const [t, messages] of [
+      [en, MESSAGES_EN],
+      [vi, MESSAGES_VI],
+    ] as const) {
+      const refused = renderToStaticMarkup(
+        createElement(FeedbackCardBlock, {
+          block: RESULT,
+          t,
+          actions: pressing("card_result", { status: "failed", message: "not allowed", press: "create", intent: "send", reportId: "rpt_1" }).actions,
+        }),
+      );
+      expect(refused).toContain(messages["feedback.failed.final"].replace("{reason}", "not allowed"));
+      expect(refused).not.toContain(messages["feedback.failed"].replace("{reason}", "not allowed"));
+      expect(refused).not.toContain("data-feedback-retry");
+
+      const lost = renderToStaticMarkup(
+        createElement(FeedbackCardBlock, {
+          block: RESULT,
+          t,
+          actions: pressing("card_result", { status: "failed", message: "offline", press: "create", intent: "send", reportId: "rpt_1", next: "retry" }).actions,
+        }),
+      );
+      expect(lost).toContain(messages["feedback.failed"].replace("{reason}", "offline"));
+      expect(lost).toContain("data-feedback-retry");
+    }
+  });
+
+  it("offers Check again only while whether the report was filed is not known", () => {
+    const states: FeedbackCardState[] = [
+      { status: "failed", message: "offline", press: "create", intent: "send", reportId: "rpt_1", next: "retry" },
+      { status: "failed", message: "refused", press: "create", intent: "send", reportId: "rpt_1" },
+      { status: "failed", message: MESSAGES_EN["feedback.check.nothingSent"], reportId: "rpt_1" },
+      { status: "publishing", intent: "send" },
+      { status: "publishing", intent: "check" },
+      { status: "preparing" },
+      { status: "done", publication: RESULT.publication! },
+    ];
+    for (const block of [PREPARED, RESULT]) {
+      for (const state of states) {
+        const html = renderToStaticMarkup(createElement(FeedbackCardBlock, { block, t: en, actions: pressing(block.cardId, state).actions }));
+        expect(html, `${block.cardId} ${state.status}`).not.toContain("data-feedback-check-unread");
+      }
+      const unknown: FeedbackCardState = { status: "unknown", message: "?", reportId: "rpt_1" };
+      const html = renderToStaticMarkup(createElement(FeedbackCardBlock, { block, t: en, actions: pressing(block.cardId, unknown).actions }));
+      expect(html).toContain("data-feedback-check-unread");
+    }
+  });
+
+  it("keeps focus on the press's note after Try again or Check again, rather than dropping it to the page", () => {
+    const state = feedbackPressFailed(offline(), en, { press: "create", intent: "send", reportId: "rpt_1", published: true });
+    const { actions } = pressing("card_draft", state);
+    const note = noteOf(FeedbackCardBlock({ block: PREPARED, t: en, actions }));
+    // The note is the element that stays while the press runs again, and it can hold focus without joining the tab order.
+    expect(note.props["data-feedback-press"]).toBe(true);
+    expect(note.props.tabIndex).toBe(-1);
+    for (const marker of ["data-feedback-retry", "data-feedback-check-unread"]) {
+      const focused: string[] = [];
+      const button = findAll(note, marker)[0]!;
+      const event = {
+        currentTarget: {
+          closest: (selector: string) => (selector === "[data-feedback-press]" ? { focus: () => focused.push(marker) } : null),
+        },
+      };
+      (button.props.onClick as (event: unknown) => void)(event);
+      expect(focused).toEqual([marker]);
+    }
   });
 });

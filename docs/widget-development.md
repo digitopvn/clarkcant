@@ -498,7 +498,10 @@ and the credential card settle late answers through `settleSurfaceStatus`, and
 are the reference for that rule. Command-card rows and the feedback card are the
 reference for `canRetry`: they offer Try again only beside a failure whose press
 did not reach the node or timed out (`next: "retry"`), never beside a refusal
-the node decided or an answer they cannot read.
+the node decided or an answer they cannot read. The feedback card also offers it
+beside a publish that was sent and got no answer, which it says as not known
+(`partial`) rather than failed, next to Check again. When Try again goes away
+while its press runs, focus moves to the note that says what the press came to.
 
 ---
 

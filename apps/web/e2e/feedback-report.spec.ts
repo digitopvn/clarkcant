@@ -147,3 +147,42 @@ test("an answer to Create issue this app cannot read is not known, never failed,
   await expect(results).toHaveCount(before + 1, { timeout: 20_000 });
   await expect(results.last()).toHaveAttribute("data-feedback-status", "published");
 });
+
+test("a publish whose answer never arrives is not known, never not filed, and Try again or Check again keeps the focus", async ({ page }) => {
+  await openApp(page);
+  const results = page.locator('.cc-row[data-role="assistant"] [data-feedback-stage="result"]');
+  const before = await results.count();
+  const composer = page.locator("[data-composer]");
+  await composer.click();
+  await composer.fill("/report bug the model picker loses its search text");
+  await composer.press("Enter");
+  const prepared = page.locator('.cc-row[data-role="assistant"] [data-feedback-prepared]').last();
+  await expect(prepared).toBeVisible({ timeout: 20_000 });
+
+  // The publish leaves and the connection drops: the node may have filed it, so nothing says it was not filed.
+  await page.route("**/feedback/reports/*/publish", (route) => route.abort("connectionreset"));
+  await prepared.locator("[data-feedback-create]").click();
+  const note = prepared.locator(".cc-command-status[data-result='unknown']");
+  await expect(note).toHaveAttribute("data-surface-phase", "partial", { timeout: 20_000 });
+  await expect(note).toContainText("nên chưa biết báo cáo đã được gửi lên hay chưa");
+  await expect(prepared).not.toContainText("Chưa gửi được");
+  const pressNote = prepared.locator("[data-feedback-press]");
+
+  // Try again from the keyboard: its button goes away while the press runs, and focus stays on the note.
+  await prepared.locator("[data-feedback-retry]").focus();
+  await page.keyboard.press("Enter");
+  await expect(pressNote).toBeFocused();
+  await expect(note).toBeVisible({ timeout: 20_000 });
+  await page.unrouteAll({ behavior: "wait" });
+
+  // Check again only asks, and keeps the focus too: the node says it never sent this one, and nothing is filed.
+  await prepared.locator("[data-feedback-check-unread]").focus();
+  await page.keyboard.press("Enter");
+  await expect(prepared.locator(".cc-command-status[data-result='failed']")).toContainText("chưa từng được gửi", { timeout: 20_000 });
+  await expect(pressNote).toBeFocused();
+  await expect(results).toHaveCount(before);
+
+  await prepared.locator("[data-feedback-create]").click();
+  await expect(results).toHaveCount(before + 1, { timeout: 20_000 });
+  await expect(results.last()).toHaveAttribute("data-feedback-status", "published");
+});

@@ -53,8 +53,10 @@ function pressText(state: FeedbackCardState, t: T): string | undefined {
     case "done":
       return t("feedback.created");
     case "failed":
-      // An answer this app cannot read is already a whole sentence; any other failure is the node's reason in the card's.
-      return state.press === undefined ? state.message : fill(t("feedback.failed"), { reason: state.message });
+      // An answer this app cannot read is already a whole sentence; any other failure is the node's reason in the card's,
+      // which says the press can be tried again only where Try again is offered beside it.
+      if (state.press === undefined) return state.message;
+      return fill(t(state.next === "retry" ? "feedback.failed" : "feedback.failed.final"), { reason: state.message });
     case "unknown":
       return state.message;
     case "prepared":
@@ -62,11 +64,23 @@ function pressText(state: FeedbackCardState, t: T): string | undefined {
   }
 }
 
+/** A press that can be made again as it was: one that did not get through, or a publish whose outcome is not known. */
+type RepeatablePress = Extract<FeedbackCardState, { status: "failed" | "unknown" }>;
+
+/**
+ * Moves focus from a pressed Try again or Check again to the note around it, which stays while the press runs and says
+ * what it comes to: the button itself goes away with the state it was offered for, and focus must not fall to the page.
+ */
+function keepFocusOnNote(event: { currentTarget: Element } | undefined): void {
+  const note = event?.currentTarget.closest<HTMLElement>("[data-feedback-press]");
+  note?.focus();
+}
+
 /**
  * What a press on a feedback card came to, in live regions mounted with the card, so the answer is heard when it
- * arrives: a failure interrupts, anything else waits its turn. Beside it, the one thing that can help: Try again when the
- * press did not get through and sending it again is safe (`canRetry`), or Check again when the node answered and this
- * app cannot read whether the report was filed. Nothing is offered for a refusal the node decided.
+ * arrives: a failure interrupts, anything else waits its turn. Beside it, what can help: Try again when the press did
+ * not get through or its outcome is not known, and sending it again is safe (`canRetry`); Check again whenever whether
+ * the report was filed is not known. Nothing is offered for a refusal the node decided.
  */
 function FeedbackPressNote({
   state,
@@ -77,32 +91,51 @@ function FeedbackPressNote({
   state: FeedbackCardState | undefined;
   t: T;
   /** Repeats the press that failed; absent where the card cannot repeat it as it was (the words changed since). */
-  onRetry?: (state: Extract<FeedbackCardState, { status: "failed" }>) => void;
+  onRetry?: (state: RepeatablePress) => void;
   /** Asks the node where the report stands; absent where the card already offers that press. */
   onCheck?: (reportId: string) => void;
 }): ReactElement {
   const phase = state === undefined ? undefined : FEEDBACK_PRESS_PHASE[state.status];
-  const retry = state?.status === "failed" && canRetry({ phase: "error", ...(state.next === undefined ? {} : { next: state.next }) }) ? state : undefined;
+  const retry =
+    (state?.status === "failed" || state?.status === "unknown") && canRetry({ phase: "error", ...(state.next === undefined ? {} : { next: state.next }) })
+      ? state
+      : undefined;
   return (
-    <>
+    <div className="cc-feedback-press" data-feedback-press tabIndex={-1}>
       <LiveNote phase={phase} className="cc-command-status" data-result={state?.status === "done" || state?.status === "failed" || state?.status === "unknown" ? state.status : undefined}>
         {state === undefined ? undefined : pressText(state, t)}
       </LiveNote>
       {retry === undefined || onRetry === undefined ? null : (
         <div className="cc-command-actions">
-          <button type="button" className="cc-chip" data-feedback-retry onClick={() => onRetry(retry)}>
+          <button
+            type="button"
+            className="cc-chip"
+            data-feedback-retry
+            onClick={(event?: { currentTarget: Element }) => {
+              keepFocusOnNote(event);
+              onRetry(retry);
+            }}
+          >
             {t("surface.retry")}
           </button>
         </div>
       )}
       {state?.status !== "unknown" || onCheck === undefined ? null : (
         <div className="cc-command-actions">
-          <button type="button" className="cc-chip" data-feedback-check-unread onClick={() => onCheck(state.reportId)}>
+          <button
+            type="button"
+            className="cc-chip"
+            data-feedback-check-unread
+            onClick={(event?: { currentTarget: Element }) => {
+              keepFocusOnNote(event);
+              onCheck(state.reportId);
+            }}
+          >
             {t("feedback.checkAgain")}
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -386,9 +419,9 @@ function FeedbackComposer({
             state={state}
             t={t}
             // The same press again, only while the words are the ones it was for: other words are another report.
-            {...(state?.status === "failed" && state.requestKey === requestKey
+            {...((state?.status === "failed" || state?.status === "unknown") && state.requestKey === requestKey
               ? {
-                  onRetry: (failed: Extract<FeedbackCardState, { status: "failed" }>) =>
+                  onRetry: (failed: RepeatablePress) =>
                     failed.press === "preview"
                       ? actions?.onFeedbackPreview?.({ cardId: block.cardId, request })
                       : actions?.onFeedbackCreate?.({ cardId: block.cardId, request, ...(failed.intent === undefined ? {} : { intent: failed.intent }) }),
@@ -476,8 +509,12 @@ export function FeedbackResult({ block, t, actions }: { block: FeedbackCard; t: 
         type="button"
         className="cc-action"
         {...{ [marker]: true }}
-        disabled={busy}
-        onClick={() => actions?.onFeedbackCreate?.({ cardId: block.cardId, reportId, intent })}
+        // aria-disabled, not disabled: a disabled button drops the focus that pressed it to the page.
+        aria-disabled={busy ? "true" : undefined}
+        onClick={() => {
+          if (busy) return;
+          actions?.onFeedbackCreate?.({ cardId: block.cardId, reportId, intent });
+        }}
       >
         {t(label)}
       </button>

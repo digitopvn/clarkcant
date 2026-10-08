@@ -766,10 +766,20 @@ export type FeedbackCardState =
       intent?: FeedbackPublishIntent;
     }
   /**
-   * The node answered a publish, but this app cannot read the answer: the report may or may not have been filed. Not a
-   * failure and not a success; Check again asks the node where `reportId` stands, and sends nothing.
+   * Whether `reportId` was filed is not known: the node answered a publish in words this app cannot read, the publish
+   * was sent and no answer came back, or a check did not go through. Not a failure and not a success; Check again asks
+   * the node where the report stands, and sends nothing. `next` is `retry` when the publish itself may be pressed again
+   * (`press` and `intent` say which), which the node answers for a report it already holds without filing it twice.
    */
-  | { status: "unknown"; message: string; reportId: string; requestKey?: string };
+  | {
+      status: "unknown";
+      message: string;
+      reportId: string;
+      requestKey?: string;
+      next?: "retry";
+      press?: "create";
+      intent?: FeedbackPublishIntent;
+    };
 
 /** A secret's save on a credential card: on its way, kept, or refused. Never the value itself. */
 export interface CredentialSaveStatus {
