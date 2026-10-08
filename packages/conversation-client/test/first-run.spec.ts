@@ -20,4 +20,17 @@ describe("the steps a first run shows", () => {
     // person, rather than as a form on a screen about something they have not tried yet.
     expect(firstRunSteps({ model: true, credentials: ["gemini"] })).toEqual(["welcome", "key"]);
   });
+
+  it("does not ask for a TypeSafe key when another decision provider is selected and ready", () => {
+    // Nothing on such a node would use the TypeSafe key, so asking for it would be asking for a key in a screenshot.
+    expect(firstRunSteps({ model: true, credentials: [] }, { provider: "cloudflare", status: "ready" })).toEqual(["welcome"]);
+    expect(firstRunSteps({ model: true, credentials: [] }, { provider: "openrouter", status: "ready" })).toEqual(["welcome"]);
+  });
+
+  it("still asks for the TypeSafe key while TypeSafe decides, or while the other provider cannot answer", () => {
+    expect(firstRunSteps({ model: true, credentials: [] }, { provider: "typesafe", status: "no-credential" })).toEqual(["welcome", "key"]);
+    // A provider that is not ready is not deciding anything yet; the key that would make the default work is still worth asking.
+    expect(firstRunSteps({ model: true, credentials: [] }, { provider: "cloudflare", status: "misconfigured" })).toEqual(["welcome", "key"]);
+    expect(firstRunSteps({ model: true, credentials: [] }, { provider: "openrouter", status: "no-credential" })).toEqual(["welcome", "key"]);
+  });
 });

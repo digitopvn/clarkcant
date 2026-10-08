@@ -6,6 +6,7 @@ import { PERSONAL_INSTRUCTIONS_MAX_CHARS, THINKING_LEVELS, type ModelPool, type 
 import type { MessageKey } from "../i18n/messages.ts";
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
+import { DecisionProviderSection } from "./controls/decision-provider-section.tsx";
 import { ProviderSignInSection } from "./controls/provider-sign-in-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
@@ -216,6 +217,8 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
       </section>
 
       <ProviderSignInSection client={client} />
+      {/* The decision role, separate from the conversation model above: who answers Clark's typed decisions. */}
+      <DecisionProviderSection client={client} />
 
       <CredentialsSection client={client} entries={CREDENTIAL_ENTRIES} />
 

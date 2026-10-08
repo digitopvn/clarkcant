@@ -12,6 +12,9 @@ import type {
   ChangelogView,
   CompositionGraph,
   ConnectionStatus,
+  DecisionProviderId,
+  DecisionProviderSelection,
+  DecisionProviderView,
   GraphSemanticState,
   LayoutNode,
   MapTilePolicyView,
@@ -1743,6 +1746,26 @@ export class GatewayClient {
 
   async signOutProvider(providerId: string): Promise<{ providerId: string; signedOut: boolean }> {
     return this.#call("POST", `/providers/${encodeURIComponent(providerId)}/sign-out`, {});
+  }
+
+  /** Who answers Clark's decisions on this node, with which model, a key from where, and the last call. Never a key. */
+  async decisionProvider(): Promise<{ decisionProvider: DecisionProviderView }> {
+    return this.#call("GET", "/decision-provider");
+  }
+
+  /** The person's choice of decision provider, or `null` to follow the node's environment. Applies from the next decision. */
+  async chooseDecisionProvider(selection: DecisionProviderSelection | null): Promise<{ decisionProvider: DecisionProviderView }> {
+    return this.#call("PUT", "/decision-provider", { selection });
+  }
+
+  /** Stores a decision provider's key under its own vault name. The answer names the source, never the key. */
+  async saveDecisionCredential(provider: DecisionProviderId, value: string): Promise<{ decisionProvider: DecisionProviderView }> {
+    return this.#call("PUT", "/decision-provider/credential", { provider, value });
+  }
+
+  /** Removes a decision provider's stored key; not-found when there was none. */
+  async removeDecisionCredential(provider: DecisionProviderId): Promise<{ decisionProvider: DecisionProviderView }> {
+    return this.#call("DELETE", `/decision-provider/credential/${encodeURIComponent(provider)}`);
   }
 
   /**
