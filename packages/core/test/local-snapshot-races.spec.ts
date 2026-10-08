@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { cachedLocalSnapshotPath, digestOfDirectory, snapshotLocalPackage } from "../src/package-fetch.ts";
+import { cachedLocalSnapshotPath, digestOfDirectory, removeLocalSnapshot, snapshotLocalPackage } from "../src/package-fetch.ts";
 import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
@@ -22,6 +22,8 @@ interface Hooks {
   beforeOpen?: (path: string, flags: unknown) => void;
   /** Replaces a `rename`, given the real one. */
   rename?: (from: string, to: string, real: (from: string, to: string) => Promise<void>) => Promise<void>;
+  /** Runs before a real `rm`, which waits for what it returns. */
+  beforeRm?: (path: string) => Promise<void>;
 }
 
 const hooks = vi.hoisted((): Hooks => ({}));
@@ -36,6 +38,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
     rename: async (from: string, to: string) =>
       hooks.rename === undefined ? actual.rename(from, to) : hooks.rename(String(from), String(to), actual.rename),
+    rm: async (path: string, options?: import("node:fs").RmOptions) => {
+      await hooks.beforeRm?.(String(path));
+      return actual.rm(path, options);
+    },
   };
 });
 
@@ -57,6 +63,7 @@ beforeEach(() => {
 afterEach(async () => {
   delete hooks.beforeOpen;
   delete hooks.rename;
+  delete hooks.beforeRm;
   await removeTestDirectory(dir);
 });
 
@@ -156,5 +163,65 @@ describe("a snapshot placing its copy in the cache", () => {
     expect(digestOf(source)).toBe(before);
     expect(existsSync(cachedLocalSnapshotPath(cacheRoot, before) ?? "")).toBe(false);
     expect(cached()).toEqual([]);
+  });
+});
+
+describe("a snapshot and its removal", () => {
+  const removal = { recursive: true, force: true } as const;
+
+  it("keeps a snapshot while a snapshot taken there holds it, or while the caller says it is used", async () => {
+    const taken = await snapshotLocalPackage({ path: source, cacheRoot, limits: LIMITS });
+    if (!taken.ok) throw new Error(taken.message);
+    const path = taken.artifact.path;
+    expect(await removeLocalSnapshot(path, { inUse: () => false, options: removal })).toBe("kept");
+    taken.release();
+    taken.release();
+    expect(await removeLocalSnapshot(path, { inUse: () => true, options: removal })).toBe("kept");
+    expect(existsSync(path)).toBe(true);
+    expect(await removeLocalSnapshot(path, { inUse: () => false, options: removal })).toBe("removed");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("keeps a snapshot that another snapshot of the same files is reusing as the removal starts", async () => {
+    const first = await snapshotLocalPackage({ path: source, cacheRoot, limits: LIMITS });
+    if (!first.ok) throw new Error(first.message);
+    first.release();
+    const path = first.artifact.path;
+    // The second snapshot checks the folder already there before it reuses it; the removal starts right then.
+    let removing: Promise<"removed" | "kept"> | undefined;
+    hooks.beforeOpen = (opened, flags) => {
+      if (removing !== undefined || typeof flags !== "number" || !opened.startsWith(path)) return;
+      removing = removeLocalSnapshot(path, { inUse: () => false, options: removal });
+    };
+    const second = await snapshotLocalPackage({ path: source, cacheRoot, limits: LIMITS });
+    expect(second).toMatchObject({ ok: true, artifact: { path, digest: first.artifact.digest } });
+    expect(await removing).toBe("kept");
+    expect(digestOf(path)).toBe(first.artifact.digest);
+  });
+
+  it("makes a snapshot taken while a removal runs wait for it, then place its own copy", async () => {
+    const first = await snapshotLocalPackage({ path: source, cacheRoot, limits: LIMITS });
+    if (!first.ok) throw new Error(first.message);
+    first.release();
+    const path = first.artifact.path;
+    let release = (): void => undefined;
+    const gate = new Promise<void>((done) => (release = done));
+    let started = (): void => undefined;
+    const removalStarted = new Promise<void>((done) => (started = done));
+    hooks.beforeRm = async (removed) => {
+      if (removed !== path) return;
+      started();
+      await gate;
+    };
+    const removing = removeLocalSnapshot(path, { inUse: () => false, options: removal });
+    await removalStarted;
+    // Let the removal go on only once the second snapshot is copying, so it reaches the folder while the removal runs.
+    hooks.beforeOpen = (_opened, flags) => {
+      if (flags === "wx") release();
+    };
+    const second = await snapshotLocalPackage({ path: source, cacheRoot, limits: LIMITS });
+    expect(await removing).toBe("removed");
+    expect(second).toMatchObject({ ok: true, artifact: { path, digest: first.artifact.digest } });
+    expect(digestOf(path)).toBe(first.artifact.digest);
   });
 });

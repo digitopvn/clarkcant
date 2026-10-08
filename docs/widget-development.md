@@ -3035,9 +3035,10 @@ mode asks, the first install is a question, and so is every build that changes w
 reach, resources, facet lanes, facets, permissions, or the capabilities it requests. A build that only changes code or UI
 reuses that answer and runs at once; when you approve a build in the inbox while newer ones are waiting, the build you
 approved is installed first, and the newest one after it when your answer covers what it reaches. A mode that does not
-ask runs every build. When such a build reaches more than the one before it, and nobody was asked about it, the conversation says so with what it added; a build you approved in the
-inbox was already shown to you with that. A build is also refused when its package id belongs to something else on the
-node: a listed package, another session, or a package installed the ordinary way.
+ask runs every build. When such a build reaches more than the one before it, and nobody was asked about it, the
+conversation says so with what it added; a build you approved in the inbox was already shown to you with that. A build
+is also refused when its package id belongs to something else on the node: a listed package, another session, or a
+package installed the ordinary way.
 
 Stopping a session stops watching the folder; the last build keeps running where it was placed. When the node stops
 watching on its own, the status beside the frame says why. The watcher may have failed, or the folder may have been
@@ -3638,8 +3639,11 @@ snapshot is that plan's artifact. A generation installed from a path before snap
 reading its path until it is installed again. A snapshot sweeps `.tmp-*` and `.stale-*` folders older than an hour from
 the cache. Widget dev sessions remove the snapshots they made once nothing runs, waits on or can roll back to them:
 after each install, and at boot before any folder is watched again, including snapshots that fell off a session's
-list (`orphaned-snapshots.json` in the session store's folder). Nothing else collects unused cache entries yet: a
-snapshot an ordinary install took, and git and npm artifacts, stay.
+list (`orphaned-snapshots.json` in the session store's folder). A snapshot is never removed while a build or an
+install is placing or reusing it: the snapshot holds it until its generation is recorded, or, for a session's newest
+build, until a newer build replaces it (`removeLocalSnapshot`); a snapshot taken while a removal runs waits for it and
+then copies the files again. Nothing else collects unused cache entries yet: a snapshot an ordinary install took, and
+git and npm artifacts, stay.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws

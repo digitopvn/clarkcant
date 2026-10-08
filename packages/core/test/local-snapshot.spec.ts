@@ -279,7 +279,7 @@ describe("snapshotLocalPackage", () => {
     ];
     for (const path of spellings) {
       const result = await snapshotLocalPackage({ path, cacheRoot, limits: LIMITS });
-      expect(result).toEqual(expected);
+      expect(result).toMatchObject({ ok: true, artifact: expected.artifact });
     }
   });
 

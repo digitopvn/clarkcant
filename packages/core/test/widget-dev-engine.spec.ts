@@ -14,6 +14,7 @@ import {
   cachedLocalSnapshotPath,
   devConsentScopeOf,
   digestOfDirectory,
+  removeLocalSnapshot,
   startDevEngine,
   type DevEngine,
 } from "../src/index.ts";
@@ -240,6 +241,31 @@ describe("the dev engine", () => {
     expect(snapshot !== undefined && existsSync(snapshot)).toBe(true);
     expect(readFileSync(join(snapshot ?? "", "widgets", "main", "index.html"), "utf8")).toBe("<p>one</p>");
     expect(engine.latest()?.listing.source).not.toEqual(first?.listing.source);
+  });
+
+  it("holds its newest generation's snapshot against removal until a newer one replaces it or the engine closes", async () => {
+    const root = tempDir("dev-engine-");
+    const cacheRoot = tempDir("dev-engine-cache-");
+    writePackage(root, "<p>one</p>");
+    const engine = engineFor(root, cacheRoot);
+    await engine.ready;
+    const pathOf = (): string => cachedLocalSnapshotPath(cacheRoot, engine.latest()?.generation.digest ?? "") ?? "";
+    const remove = (path: string) => removeLocalSnapshot(path, { inUse: () => false, options: { recursive: true, force: true } });
+    const first = pathOf();
+    expect(await remove(first)).toBe("kept");
+    // A build of the same files again keeps one hold, not two: the newest generation's.
+    expect((await engine.rebuild("rebuild")).kind).toBe("unchanged");
+
+    writeFileSync(join(root, "widgets", "main", "index.html"), "<p>two</p>");
+    expect((await engine.rebuild("change")).kind).toBe("generation");
+    const second = pathOf();
+    expect(await remove(second)).toBe("kept");
+    expect(await remove(first)).toBe("removed");
+    expect(existsSync(first)).toBe(false);
+
+    engine.close();
+    expect(await remove(second)).toBe("removed");
+    expect(existsSync(second)).toBe(false);
   });
 
   it("leaves installed dependencies out of the digest, the snapshot and the watch, and keeps built output in", async () => {

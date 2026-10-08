@@ -457,8 +457,19 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   const now = options.now ?? (() => new Date().toISOString());
   // Only the newest generation is kept: older ones are named in their build records and the caller's own state.
   let newest: DevGenerationRecord | undefined;
+  /**
+   * The hold on the newest generation's snapshot (`snapshotLocalPackage`), kept until a newer generation replaces it or
+   * the engine closes: from the moment a build places or reuses the snapshot until the caller has followed the build,
+   * nothing removes it (`removeLocalSnapshot`).
+   */
+  let newestHold: (() => void) | undefined;
   let last: WidgetDevBuild | undefined;
   let closed = false;
+
+  const releaseNewest = (): void => {
+    newestHold?.();
+    newestHold = undefined;
+  };
 
   const fail = (trigger: WidgetDevTrigger, diagnostics: WidgetDevDiagnostic[]): DevEngineEvent => {
     last = { ok: false, at: now(), trigger, ...capped(diagnostics) };
@@ -531,6 +542,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
 
     let folder = root;
     let digest: string;
+    let hold: (() => void) | undefined;
     try {
       if (options.cacheRoot === undefined) {
         const digested = digestOfDirectory(root, { exclude: DEV_ENGINE_EXCLUDED_ROOT_NAMES, excludeAnyCase: true, limits });
@@ -558,20 +570,29 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         }
         folder = snapshot.artifact.path;
         digest = snapshot.artifact.digest;
+        hold = snapshot.release;
       }
     } catch (cause) {
       return fail(trigger, [{ severity: "error", code: "FILES_UNREADABLE", message: `the files could not be read: ${messageOf(cause)}` }]);
     }
-    if (ledElsewhere()) return elsewhere(trigger);
+    // Every way out below but a new generation lets go of this build's hold: the newest generation keeps its own.
+    if (ledElsewhere()) {
+      hold?.();
+      return elsewhere(trigger);
+    }
 
     const previous = newest;
     if (previous !== undefined && previous.generation.digest === digest) {
+      hold?.();
       last = { ok: true, at: now(), trigger, generation: previous.generation.generation, diagnostics: [] };
       return { kind: "unchanged", build: last };
     }
     // What the generation is, read from the bytes it names: the copy, when there is one, since the folder may have moved on.
     const copy = folder === root ? source : read(folder);
-    if (!copy.ok) return fail(trigger, copy.diagnostics);
+    if (!copy.ok) {
+      hold?.();
+      return fail(trigger, copy.diagnostics);
+    }
 
     const manifest = copy.manifest;
     const publisher = manifest.publisher;
@@ -608,6 +629,10 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       ),
     });
     newest = record;
+    newestHold?.();
+    newestHold = hold;
+    // A build that ends after the engine closed keeps nothing held: the caller follows no build of a closed engine.
+    if (closed) releaseNewest();
     last = { ok: true, at: generation.builtAt, trigger, generation: generation.generation, diagnostics: [] };
     return { kind: "generation", record, build: last };
   };
@@ -1003,6 +1028,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     },
     close: () => {
       closed = true;
+      releaseNewest();
       stopWatching();
     },
   };

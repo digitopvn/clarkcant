@@ -3022,9 +3022,10 @@ yêu cầu của bạn. Khi chế độ yêu cầu hỏi, lần cài đầu tiê
 reach đã khai báo, tài nguyên, lane của facet, các facet, quyền, hoặc các capability gói yêu cầu. Một lần dựng chỉ đổi mã
 hay UI dùng lại câu trả lời đó và chạy ngay; khi bạn duyệt một lần dựng trong hộp thư trong lúc đã có những lần dựng mới
 hơn đang chờ, lần dựng bạn duyệt được cài trước, rồi đến lần dựng mới nhất khi câu trả lời của bạn bao trùm những gì nó
-tiếp cận. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp cận nhiều hơn lần trước và không ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn
-đã duyệt trong hộp thư thì đã được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một
-thứ khác trên node: một gói đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
+tiếp cận. Một chế độ không hỏi thì chạy mọi lần dựng. Khi một lần dựng như vậy tiếp cận nhiều hơn lần trước và không
+ai được hỏi về nó, cuộc hội thoại nói điều đó kèm những gì nó thêm vào; một lần dựng bạn đã duyệt trong hộp thư thì đã
+được cho bạn xem điều đó rồi. Một lần dựng cũng bị từ chối khi id gói của nó thuộc về một thứ khác trên node: một gói
+đã được liệt kê, một phiên khác, hoặc một gói được cài theo cách thông thường.
 
 Dừng một phiên là dừng theo dõi thư mục; bản dựng cuối vẫn chạy ở nơi nó đã được đặt. Khi node tự dừng theo dõi, dòng
 trạng thái cạnh frame nói lý do. Có thể bộ theo dõi đã bị lỗi, hoặc thư mục đã bị xoá hay đổi tên; node kiểm tra thư mục
@@ -3623,8 +3624,12 @@ generation đang chạy chính là artifact của plan đó. Một generation đ
 có `snapshotDigest` và vẫn đọc đường dẫn của nó cho tới khi được cài lại. Mỗi lần tạo snapshot sẽ dọn các thư mục
 `.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache. Các phiên widget dev xoá những snapshot chúng đã tạo khi không còn gì
 chạy, chờ hay có thể quay lại chúng: sau mỗi lần cài, và lúc khởi động trước khi thư mục nào được theo dõi lại, kể cả
-những snapshot đã rơi khỏi danh sách của một phiên (`orphaned-snapshots.json` trong thư mục của kho phiên). Ngoài ra
-chưa có gì dọn các mục cache không còn dùng: snapshot của một lần cài thông thường, và artifact git và npm, vẫn được giữ.
+những snapshot đã rơi khỏi danh sách của một phiên (`orphaned-snapshots.json` trong thư mục của kho phiên). Một
+snapshot không bao giờ bị xoá trong lúc một lần dựng hay một lần cài đang đặt hoặc dùng lại nó: lần tạo snapshot giữ nó
+cho tới khi generation của nó được ghi lại, hoặc, với bản dựng mới nhất của một phiên, cho tới khi một bản dựng mới hơn
+thay thế nó (`removeLocalSnapshot`); một snapshot được tạo trong lúc một lần xoá đang chạy sẽ chờ lần xoá đó xong rồi
+chép lại các tệp. Ngoài ra chưa có gì dọn các mục cache không còn dùng: snapshot của một lần cài thông thường, và
+artifact git và npm, vẫn được giữ.
 
 `digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw
