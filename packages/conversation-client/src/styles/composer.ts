@@ -196,10 +196,11 @@ div.cc-attachment { flex-wrap: wrap; }
  * compositor produces a frame for every display frame, and with software compositing each one costs the CPU whatever
  * it draws: about 0.6 of a core for this glow alone. A stepped timing function changes the value only 108 times a
  * turn (fifteen a second at the default 7.2 s), so the frames in between are never made. The Orb already detects a
- * software rasteriser and publishes it on its canvas, so the glow reads that rather than detecting anything itself.
+ * software rasteriser, and a browser with no WebGL at all ("none", where the Orb shows its still gradient), and publishes
+ * either on its canvas, so the glow reads that rather than detecting anything itself.
  * A GPU machine matches nothing here and keeps the smooth orbit, and reduced motion's "animation: none" still wins.
  */
-:root:has(canvas[data-orb-renderer="software"]) .cc-composer-glow::before { animation-timing-function: steps(108); }
+:root:has(canvas[data-orb-renderer="software"], canvas[data-orb-renderer="none"]) .cc-composer-glow::before { animation-timing-function: steps(108); }
 
 .cc-composer {
   /* As wide as the column above it: the elevation and the pill shape are what mark it as the control,

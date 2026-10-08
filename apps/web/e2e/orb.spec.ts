@@ -521,9 +521,8 @@ test("reduced motion stills every style, and the preview says so", async ({ page
   expect(await looksStill(page, ".cc-orb[data-orb]")).toBe(true);
 });
 
-test("without WebGL the orb stays visible in its style's colours, and Settings says why it is still", async ({ page }) => {
-  mkdirSync(EVIDENCE, { recursive: true });
-  // A machine whose browser offers no WebGL: every request for a context is refused, as a disabled GPU does.
+/** A machine whose browser offers no WebGL: every request for a context is refused, as a disabled GPU does. */
+async function withoutWebgl(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const original = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function withoutWebgl(this: HTMLCanvasElement, ...args: unknown[]) {
@@ -531,6 +530,11 @@ test("without WebGL the orb stays visible in its style's colours, and Settings s
       return (original as (...rest: unknown[]) => unknown).apply(this, args);
     } as typeof HTMLCanvasElement.prototype.getContext;
   });
+}
+
+test("without WebGL the orb stays visible in its style's colours, and Settings says why it is still", async ({ page }) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  await withoutWebgl(page);
   await api("PUT", "/preferences/orb.profile", { value: "pearl" });
 
   await openApp(page);
@@ -677,6 +681,25 @@ test.describe("the orb's frame budget follows what draws its WebGL", () => {
     await withRenderer(page, "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)");
     await openApp(page);
     await expect(page.locator(".cc-empty-orb[data-orb]")).toHaveAttribute("data-orb-renderer", "software");
+    expect((await composerGlow(page)).name).toBe("none");
+  });
+
+  test("with no WebGL at all, the orb says so and the composer glow steps as it does on the CPU", async ({ page }) => {
+    await withoutWebgl(page);
+    await openApp(page);
+    const hero = page.locator(".cc-empty-orb[data-orb]");
+    // The orb's own fallback is unchanged: the still gradient, with the reason published beside it.
+    await expect(hero).toHaveAttribute("data-orb", "fallback");
+    await expect(hero).toHaveAttribute("data-orb-renderer", "none");
+    await expect(page.locator(".cc-orb[data-orb]").first()).toHaveAttribute("data-orb-renderer", "none");
+    expect(await composerGlow(page)).toEqual({ name: "cc-glow-orbit", timing: "steps(108)" });
+  });
+
+  test("with no WebGL under reduced motion, the composer glow still rests", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await withoutWebgl(page);
+    await openApp(page);
+    await expect(page.locator(".cc-empty-orb[data-orb]")).toHaveAttribute("data-orb-renderer", "none");
     expect((await composerGlow(page)).name).toBe("none");
   });
 

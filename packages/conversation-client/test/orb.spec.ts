@@ -4,6 +4,7 @@ import {
   createOrbFrameScheduler,
   createOrbRenderer,
   isSoftwareRenderer,
+  orbRendererKind,
   ORB_GPU_BUDGET,
   ORB_SOFTWARE_BUDGET,
   orbFrameBudget,
@@ -433,6 +434,21 @@ describe("the orb on a machine without a GPU", () => {
     const silent = fakeWebgl({ plain: "WebKit WebGL" });
     const fromSilent = createOrbRenderer(silent.canvas);
     expect(fromSilent.ok && fromSilent.renderer.software).toBe(false);
+  });
+
+  it("reports what draws the orb: a GPU, the CPU, or no WebGL at all", () => {
+    expect(orbRendererKind(createOrbRenderer(fakeWebgl().canvas))).toBe("gpu");
+    expect(orbRendererKind(createOrbRenderer(fakeWebgl({ plain: "Google SwiftShader" }).canvas))).toBe("software");
+
+    // A browser that gives no WebGL context: the orb falls back to its still gradient, and the page learns there is
+    // no GPU to draw with, which the composer glow reads the same way as a software rasteriser.
+    const noContext = { getContext: () => null } as unknown as HTMLCanvasElement;
+    const missing = createOrbRenderer(noContext);
+    expect(missing.ok).toBe(false);
+    expect(orbRendererKind(missing)).toBe("none");
+
+    // WebGL is there but the orb failed for a reason of its own: that says nothing about the machine.
+    expect(orbRendererKind({ ok: false, reason: "shader did not compile: ERROR" })).toBeUndefined();
   });
 
   it("sizes the drawing buffer by the budget without a GPU, and at the caller's ceiling with one", () => {
