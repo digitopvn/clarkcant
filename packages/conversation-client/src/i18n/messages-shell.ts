@@ -143,6 +143,8 @@ export const MESSAGES_SHELL_VI = {
   "shell.background.queuedSuffix": " — đang chờ",
 
   "shell.attachment.tooMany": "một tin nhắn chỉ mang được {max} tệp",
+  "shell.attachment.notReadBack": "không đọc lại được tệp này để mang sang cuộc trò chuyện mới; hãy đính kèm lại",
+  "shell.attachment.notCarried": "tệp này chưa tải lên xong khi cuộc trò chuyện đổi; hãy đính kèm lại",
 
   "composer.references.skillsLabel": "Kỹ năng",
   "composer.references.mentionLabel": "Dự án, tệp, hội thoại và việc đang chạy",
@@ -498,6 +500,8 @@ export const MESSAGES_SHELL_EN = {
   "shell.background.queuedSuffix": " — waiting",
 
   "shell.attachment.tooMany": "one message can only carry {max} files",
+  "shell.attachment.notReadBack": "this file could not be read again to bring it into the new conversation; attach it again",
+  "shell.attachment.notCarried": "this file was still uploading when the conversation changed; attach it again",
 
   "composer.references.skillsLabel": "Skills",
   "composer.references.mentionLabel": "Projects, files, conversations and running work",
