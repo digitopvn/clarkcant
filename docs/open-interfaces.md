@@ -525,6 +525,18 @@ service is labelled with the id its package gave it and carries only its state (
 what it was started with or why it failed; its `serviceKey` also names the package generation running it, so an update
 makes an earlier reference stale.
 
+`/model` (and `/model <words>`, which the picker searches for first) answers with a `command-card` whose `picker` is
+`{ "kind": "model" }` and whose `rows` are empty. The card itself freezes no list: the client draws the picker from
+`GET /model` (the catalogue and the model in use) and `GET /providers/auth` (which providers are signed in), with a
+search, a provider filter and a marker on the model in use. Opening it changes nothing. A model is applied only once
+the person confirms it, through `POST /model` — the same catalogue-checked path Settings uses — and it answers from the
+next message (`applies: "next-session"`), or from the next node start on a node that runs no model yet
+(`"next-start"`). A signed-out provider's models are shown but cannot be applied until it signs in. After a sign-in on a
+`/login` card finishes, the card names the provider, re-reads both lists rather than assuming the sign-in made models
+available, and offers that provider's models in the same picker or keeping the model in use; a provider that is not
+listed as signed in yet, or has no models, is said so with a way to check again. A record of the card — a transcript, a
+search result — draws no picker.
+
 The inbox routes are reachable with the same token but are **not** in `/openapi.json` yet and may change: `GET /inbox`
 (what waits on the person, the notices, the notices snoozed for later, the kinds quieted and the versions skipped),
 `GET /inbox/summary`,
