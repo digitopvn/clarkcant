@@ -916,10 +916,20 @@ Refusals: `400 ROOT_NOT_ABSOLUTE`, `400 ROOT_NOT_A_FOLDER`, `404 ROOT_NOT_FOUND`
 - A chosen folder is kept as the real path it had when the person started it, together with that folder's device and
   file id (`chosenFolderId` in the session store). If that path later leads somewhere else (the folder was replaced by
   a link or junction, moved or removed), or holds another folder (one made there after the chosen one went), the choice
-  no longer counts, so neither a swapped link nor a folder made in its place can widen it. It is still listed, as not
+  no longer counts, so neither a swapped link nor a folder made in its place can widen it (within the limit of the
+  folder id, below). It is still listed, as not
   found, so the person can forget it; if that same folder comes back at that path (moved back), the choice counts
   again. A choice stored before folder ids were kept has none: it takes the id of the folder found at its path the
-  first time one is, and from then on is held to that folder.
+  first time one is, and from then on is held to that folder. A new folder at the path is chosen when the person starts
+  it themselves, which records its id (also for a session still live there).
+- **Limit of the folder id.** The id tells folders apart only while the filesystem does not give a later folder the
+  same one. NTFS (Windows) gives a folder made again a new id. Linux filesystems such as ext4 can give a folder deleted
+  (not moved) and made again at once at the same path the id the deleted one had, and then it counts as the chosen
+  folder. The node holds a watched folder open on Linux and macOS, so this cannot happen while a session watches it;
+  it can between sessions or while the node is stopped. No second signal is added: a folder's birth time is no finer
+  than the filesystem's clock tick (on ext4 a folder deleted and made again within one tick has the same id and birth
+  time), and where it cannot be read Node reports the change time, which moves with every file added or removed. Forget
+  a folder before deleting it if another folder made there must not inherit the choice.
 - The person takes a choice back with `POST /widget-dev/chosen-folders/forget`, the **Forget** button on the card
   `/develop forget` answers with, or the same card Clark shows when asked in words (`develop_widget` action
   `folders`). Forgetting does not stop a running session. A folder inside another chosen folder, or inside a
@@ -994,7 +1004,10 @@ reading as live:
   when the folder is missing after a restart.
 - `capacity`: the node is already watching eight folders as it resumes.
 - `root-refused`: after a restart, the folder fails the same check a start makes. For example, a session Clark started
-  whose folder is outside the widget workspace.
+  whose folder is outside the widget workspace, or in a chosen folder that was deleted (or moved away) and made again
+  at the same path while the node was stopped: the folder there is not the one chosen, so Clark may not watch it on its
+  own. What the session ran keeps running. The status line and the session's row on the `develop` card tell the person
+  to choose the folder again; their own start (**Develop again**) chooses the folder now at the path.
 
 A folder that is still there with another identity does not stop the session. The node compares the folder's device and
 file id with the ones it started watching; when they differ, the folder was made again at the same path (for example by
