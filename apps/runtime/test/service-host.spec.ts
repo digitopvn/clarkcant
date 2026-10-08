@@ -1237,11 +1237,12 @@ describe("a service that reaches a provider through the host", () => {
     expect(readiness(DEFINE)?.blockedReason).toBeUndefined();
     expect(pidOf()).toBe(pid);
 
+    // Taking the key back forgets its description with it, so the package reads as never given one, not signed in.
     deleteCredential(db, PRINCIPAL, "LOOKUP_API_KEY");
     serviceHost.refreshAuthentication?.(LOOKUP);
     expect(readiness(DEFINE)).toMatchObject({
       authenticated: false,
-      blockedReason: "the secret LOOKUP_API_KEY has no value on this node",
+      blockedReason: "the secret LOOKUP_API_KEY has not been provided on this node",
     });
   });
 

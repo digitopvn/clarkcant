@@ -1,9 +1,11 @@
-import { SETTINGS_TABS } from "@clarkcant/contracts";
+import { SETTINGS_TAB_LABELS, SETTINGS_TABS, type SettingsTab } from "@clarkcant/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   APP_INTENT_KINDS,
   APP_INTENT_NOT_UNDERSTOOD,
+  SLASH_COMMANDS,
+  SLASH_COMMAND_INTENTS,
   type AppIntentKind,
   describeAppIntent,
 } from "@clarkcant/contracts";
@@ -11,9 +13,12 @@ import { migrate, openDatabase } from "@clarkcant/storage";
 import {
   isAppCommandShaped,
   matchAppIntent,
+  newConversationReadBack,
   normaliseIntentText,
   recordAppIntentEvent,
   resolveAppIntent,
+  settingsTabNamed,
+  slashCommandAppIntent,
   type ThemeTarget,
 } from "../src/app-intents.ts";
 
@@ -289,11 +294,11 @@ describe("a command the registry does not know", () => {
     const match = matchAppIntent("đổi sang tab");
     expect(match?.kind).toBe("refused");
     if (match?.kind !== "refused") throw new Error("unreachable");
-    expect(match.say).toContain("extensions");
-    // And it names only tabs that exist. This used to read "not memory", which was true while the Memory tab did
-    // not exist; now that it does, the durable property is that the sentence comes from the list rather than that
-    // one particular tab is missing from it.
-    for (const tab of SETTINGS_TABS) expect(match.say).toContain(tab);
+    // And it names only tabs that exist, by the labels the Vietnamese panel shows. This used to read "not memory",
+    // which was true while the Memory tab did not exist; now that it does, the durable property is that the
+    // sentence comes from the list rather than that one particular tab is missing from it.
+    for (const tab of SETTINGS_TABS) expect(match.say).toContain(SETTINGS_TAB_LABELS[tab].vi);
+    expect(match.say).toContain("Bộ nhớ");
     expect(match.say).not.toContain("plugins");
     // A tab change is a command, named and not finished, so it is not marked as naming none.
     expect(match.unplaced).toBeUndefined();
@@ -316,9 +321,131 @@ describe("a command the registry does not know", () => {
   it("refuses a tab change with no tab named in English when asked", () => {
     const match = matchAppIntent("đổi sang tab", { locale: "en" });
     if (match?.kind !== "refused") throw new Error("unreachable");
-    expect(match.say).toContain("extensions");
+    expect(match.say).toContain("Extensions");
     expect(match.say.toLowerCase()).toContain("not sure");
-    for (const tab of SETTINGS_TABS) expect(match.say).toContain(tab);
+    for (const tab of SETTINGS_TABS) expect(match.say).toContain(SETTINGS_TAB_LABELS[tab].en);
+  });
+});
+
+/** Every name a visible tab label gives: the whole label and each part either side of "&", in the bare spelling. */
+function visibleLabelNames(): { name: string; typed: string; tab: SettingsTab }[] {
+  return SETTINGS_TABS.flatMap((tab) =>
+    Object.values(SETTINGS_TAB_LABELS[tab]).flatMap((label) =>
+      [label, ...label.split("&").map((part) => part.trim())].map((typed) => ({
+        typed,
+        name: normaliseIntentText(typed.replace(/&/g, " ")),
+        tab,
+      })),
+    ),
+  );
+}
+
+describe("a Settings tab named by the label the panel shows", () => {
+  it("covers every word on every tab, in English and Vietnamese", () => {
+    const names = visibleLabelNames().map((entry) => entry.name);
+    for (const expected of ["bo nho", "giong noi", "routing", "dinh tuyen", "thiet bi", "nha phat trien", "ai routing"]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it("opens the matching tab from /settings <label> for every visible label word", () => {
+    for (const { typed, tab } of visibleLabelNames()) {
+      expect(settingsTabNamed(typed), typed).toBe(tab);
+      expect(slashCommandAppIntent({ command: "settings", argument: typed }, "vi"), typed).toEqual({
+        kind: "intent",
+        intent: { kind: "settings.tab", tab },
+      });
+    }
+  });
+
+  it("opens the matching tab from a typed or spoken \"mở tab …\" for every visible label word", () => {
+    for (const { typed, tab } of visibleLabelNames()) {
+      expect(matchAppIntent(`mở tab ${typed}`), typed).toEqual({ kind: "intent", intent: { kind: "settings.tab", tab } });
+    }
+  });
+
+  it("reads the label words the issue found refused", () => {
+    expect(settingsTabNamed("Bộ nhớ")).toBe("memory");
+    expect(settingsTabNamed("giọng nói")).toBe("devices");
+    expect(settingsTabNamed("AI & Routing")).toBe("ai");
+    expect(settingsTabNamed("routing")).toBe("ai");
+    expect(matchAppIntent("mở tab bộ nhớ")).toEqual({ kind: "intent", intent: { kind: "settings.tab", tab: "memory" } });
+  });
+
+  it("still refuses a name no tab has", () => {
+    expect(settingsTabNamed("billing")).toBeUndefined();
+    expect(settingsTabNamed("nho")).toBeUndefined();
+  });
+
+  it("reads a tab name only as whole words, never inside a longer word", () => {
+    // "invoice" holds "voice" and "email" holds "ai"; "cài đặt" holds "ai" once its marks are gone.
+    for (const [sentence, locale] of [
+      ["open the invoice tab", "en"],
+      ["open settings tab for my invoices", "en"],
+      ["open the email tab", "en"],
+      ["mở tab invoice", "vi"],
+      ["mở tab email", "vi"],
+      ["mở tab cài đặt", "vi"],
+      ["open the cài đặt tab", "en"],
+    ] as const) {
+      const match = matchAppIntent(sentence, { locale });
+      expect(match?.kind, sentence).toBe("refused");
+    }
+    expect(matchAppIntent("open the voice tab", { locale: "en" })).toEqual({ kind: "intent", intent: { kind: "settings.tab", tab: "devices" } });
+    expect(matchAppIntent("mở tab ai", { locale: "vi" })).toEqual({ kind: "intent", intent: { kind: "settings.tab", tab: "ai" } });
+  });
+});
+
+describe("the slash commands that are app intents", () => {
+  it("reads /settings, /settings <tab> and /new as the host's own intents", () => {
+    expect(slashCommandAppIntent({ command: "settings", argument: "" }, "vi")).toEqual({ kind: "intent", intent: { kind: "settings.open" } });
+    expect(slashCommandAppIntent({ command: "settings", argument: "tab ai" }, "en")).toEqual({
+      kind: "intent",
+      intent: { kind: "settings.tab", tab: "ai" },
+    });
+    expect(slashCommandAppIntent({ command: "new", argument: "" }, "vi")).toEqual({ kind: "intent", intent: { kind: "nav.home" } });
+  });
+
+  it("refuses a tab that does not exist by listing the tabs by their labels in the person's language", () => {
+    const vi = slashCommandAppIntent({ command: "settings", argument: "billing" }, "vi");
+    expect(vi).toEqual({
+      kind: "refused",
+      say: `Settings không có tab “billing”. Các tab: ${SETTINGS_TABS.map((tab) => SETTINGS_TAB_LABELS[tab].vi).join(", ")}. Gõ /settings để mở Settings.`,
+    });
+    expect(vi?.kind === "refused" && vi.say).toContain("Thiết bị & Giọng nói");
+    const en = slashCommandAppIntent({ command: "settings", argument: "billing" }, "en");
+    expect(en?.kind === "refused" && en.say).toContain("Experience, AI & Routing, Control");
+  });
+
+  it("says, for /new left during a reply, that the reply goes on in the conversation kept behind", () => {
+    expect(newConversationReadBack("en", true)).toContain("still finishing the reply in the previous one");
+    expect(newConversationReadBack("vi", true)).toContain("vẫn đang viết nốt câu trả lời ở cuộc trước");
+    for (const locale of ["en", "vi"] as const) {
+      expect(newConversationReadBack(locale, true)).toContain("/sessions");
+      expect(newConversationReadBack(locale, false)).toContain("/sessions");
+      expect(newConversationReadBack(locale, false)).not.toBe(newConversationReadBack(locale, true));
+    }
+  });
+
+  it("reads a command that stands for one intent exactly as the shared copy the page goes home by, whatever follows it", () => {
+    // The page carries `/new` out before the node answers, reading `SLASH_COMMAND_INTENTS`; were the node to read a
+    // command another way, the page would act on a meaning the node does not give it.
+    for (const command of SLASH_COMMANDS) {
+      const shared = SLASH_COMMAND_INTENTS[command];
+      if (shared === undefined) continue;
+      for (const argument of ["", "background", "a title"]) {
+        for (const locale of ["vi", "en"] as const) {
+          expect(slashCommandAppIntent({ command, argument }, locale), `/${command} ${argument}`).toEqual({ kind: "intent", intent: { kind: shared } });
+        }
+      }
+    }
+    expect(SLASH_COMMAND_INTENTS.new).toBe("nav.home");
+  });
+
+  it("leaves every other command to be answered as a message", () => {
+    for (const command of ["thinking", "sessions", "login", "logout", "background", "changelog", "report", "develop", "model"] as const) {
+      expect(slashCommandAppIntent({ command, argument: "" }, "vi")).toBeUndefined();
+    }
   });
 });
 

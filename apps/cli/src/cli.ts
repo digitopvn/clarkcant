@@ -12,7 +12,7 @@ import {
   isHostWrittenMessage,
   manifestProblems,
   PACKAGE_INSTRUCTION_LIMITS,
-  PERSON_ONLY_REFUSAL,
+  personOnlyRefusal,
   readPackageManifest,
   PROJECT_INSTRUCTION_LIMITS,
   PROJECT_INSTRUCTIONS_PATH,
@@ -296,7 +296,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         }
         if (isPersonOnlyRoute(method, path)) {
           // An approval is the person's decision; a scriptable relay that an AI tool can drive does not carry it.
-          throw new CliError(PERSON_ONLY_REFUSAL.message);
+          throw new CliError(personOnlyRefusal("cli-api", method, path).message);
         }
         // Marked as the `clarkcant api` surface, so a route the node gates on machine surfaces (a widget's artifact
         // writes) decides it with the execution policy and records that it came through here.

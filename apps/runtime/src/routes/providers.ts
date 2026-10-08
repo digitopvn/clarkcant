@@ -10,6 +10,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *
  * - `GET /providers/auth` — the providers pi can sign in to, and which are signed in. Never a credential.
  * - `POST /providers/:id/sign-in {method}` — starts the provider's own sign-in; the answer is the sign-in to follow.
+ * - `GET /providers/sign-ins` — the sign-ins still running or waiting, so a surface opened again shows the one it left.
  * - `GET /providers/sign-ins/:id` — where a sign-in is: a page to open, a code, a question, or how it ended.
  * - `POST /providers/sign-ins/:id/answer {value}` — the person's answer, handed straight to the provider, never kept.
  * - `POST /providers/sign-ins/:id/cancel`
@@ -50,6 +51,10 @@ export async function handleProviderRoutes(deps: ProviderRouteDeps): Promise<Gat
     } catch (cause) {
       return fail(502, "PROVIDER_AUTH_FAILED", `pi could not list its providers: ${messageOf(cause)}`);
     }
+  }
+
+  if (segments.length === 2 && segments[1] === "sign-ins" && request.method === "GET") {
+    return json(200, { signIns: signIns.running() });
   }
 
   if (segments.length === 3 && segments[1] === "sign-ins" && request.method === "GET") {

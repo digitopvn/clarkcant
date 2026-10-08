@@ -508,9 +508,11 @@ label.cc-list-main { cursor: pointer; }
 /* A command card's row: its buttons sit together at the end, and what a press did or a sign-in needs reads below it. */
 .cc-command-actions { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); margin-inline-start: auto; }
 .cc-command-actions .cc-action { margin-inline-start: 0; }
-.cc-command-actions .cc-action[data-tone="danger"]:not(:disabled) { color: var(--cc-danger); }
+.cc-command-actions .cc-action[data-tone="danger"]:not(:disabled, [aria-disabled="true"]) { color: var(--cc-danger); }
 .cc-command-current { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
-.cc-command-status, .cc-command-row .cc-sign-in { flex-basis: 100%; margin: 0; }
+.cc-command-status, .cc-command-outcome, .cc-command-row .cc-sign-in { flex-basis: 100%; margin: 0; }
+/* A row's outcome regions are always there, empty until a press; an empty one takes no room in the row. */
+.cc-command-outcome:not(:has(p)) { margin-block-start: calc(-1 * var(--cc-space-xs)); }
 .cc-command-status { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-command-status[data-result="failed"] { color: var(--cc-danger); }
 /* The changelog: one disclosure per release, its changes grouped by kind; the summary is a 44px target. */

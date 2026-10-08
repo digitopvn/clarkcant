@@ -51,6 +51,7 @@ import {
   describeAppIntent,
   describeNoticeAction,
   isPersonOnlyNoticeOperation,
+  parseSlashCommand,
   pointToNoticeUpdate,
 } from "@clarkcant/contracts";
 import {
@@ -60,7 +61,9 @@ import {
   quotedEffectIntent,
   recordAppIntentEvent,
   resolveAppIntent,
+  newConversationReadBack,
   setPreference,
+  slashCommandAppIntent,
 } from "@clarkcant/core";
 import type { WidgetTarget } from "@clarkcant/core";
 import {
@@ -306,9 +309,18 @@ export function decideAppIntent(
     }
     return registry.value;
   };
+  // A host slash command that is a pure UI intent (`/settings`, `/settings ai`, `/new`) is decided here like the
+  // sentence or click that asks for the same thing, whether it arrived as a message or while a reply was still being
+  // written: one reading, one decision, one audit record. Any other command is a message, not an app intent.
+  const slash = input.intent === undefined && input.request.text !== undefined ? parseSlashCommand(input.request.text) : undefined;
+  const slashIntent = slash === undefined ? undefined : slashCommandAppIntent(slash, locale);
+  if (slash !== undefined && slashIntent === undefined) return { kind: "none" };
+  if (slashIntent?.kind === "refused") return { kind: "refused", say: slashIntent.say };
+  const named = slashIntent?.intent ?? input.intent;
+  const text = slash === undefined ? input.request.text : undefined;
   const resolution = resolveAppIntent({
-    ...(input.request.text === undefined ? {} : { text: input.request.text }),
-    ...(input.intent === undefined ? {} : { intent: input.intent }),
+    ...(text === undefined ? {} : { text }),
+    ...(named === undefined ? {} : { intent: named }),
     mintConfirmationToken: () => randomUUID() as ConfirmationToken,
     ...(deps.widgetTargets === undefined ? {} : { widgetTargets: deps.widgetTargets }),
     themeTargets: () => {
@@ -355,6 +367,12 @@ export function decideAppIntent(
     confirmed: false,
     ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
   });
+  if (slash?.command === "new") {
+    // `/new` says what it does whichever way it arrived, and, sent while Clark is still answering here, that the reply
+    // goes on being written in this conversation rather than being lost or stopped.
+    const replying = input.conversationId !== undefined && (deps.runningConversations?.() ?? []).includes(input.conversationId);
+    return { ...answered, readBack: newConversationReadBack(locale, replying) };
+  }
   return answered;
 }
 

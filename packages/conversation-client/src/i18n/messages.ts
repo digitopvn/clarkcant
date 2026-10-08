@@ -12,6 +12,8 @@
  * words, in whatever language the conversation is in, and this catalog has no opinion about it.
  */
 
+import { SETTINGS_TAB_LABELS } from "@clarkcant/contracts";
+
 import type { LocaleChoice } from "./locale.ts";
 import { MESSAGES_THEMES_EN, MESSAGES_THEMES_VI } from "./messages-themes.ts";
 import { MESSAGES_CHANGELOG_EN, MESSAGES_CHANGELOG_VI } from "./messages-changelog.ts";
@@ -43,13 +45,14 @@ export const MESSAGES_VI = {
   "settings.description": "Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại.",
   "settings.done": "Xong",
   "settings.tabs.group": "Nhóm cài đặt",
-  "settings.tab.experience": "Trải nghiệm",
-  "settings.tab.ai": "AI & Định tuyến",
-  "settings.tab.control": "Kiểm soát",
-  "settings.tab.extensions": "Tiện ích",
-  "settings.tab.devices": "Thiết bị & Giọng nói",
-  "settings.tab.memory": "Bộ nhớ",
-  "settings.tab.developer": "Nhà phát triển",
+  // The tab labels come from the contract, so the names a command accepts and a refusal lists are these words.
+  "settings.tab.experience": SETTINGS_TAB_LABELS.experience.vi,
+  "settings.tab.ai": SETTINGS_TAB_LABELS.ai.vi,
+  "settings.tab.control": SETTINGS_TAB_LABELS.control.vi,
+  "settings.tab.extensions": SETTINGS_TAB_LABELS.extensions.vi,
+  "settings.tab.devices": SETTINGS_TAB_LABELS.devices.vi,
+  "settings.tab.memory": SETTINGS_TAB_LABELS.memory.vi,
+  "settings.tab.developer": SETTINGS_TAB_LABELS.developer.vi,
   "settings.language.heading": "Ngôn ngữ",
   "settings.language.description": "Ngôn ngữ giao diện. Áp dụng ngay, và giữ nguyên sau khi tải lại.",
   "settings.language.vi": "Tiếng Việt",
@@ -91,13 +94,13 @@ export const MESSAGES_EN = {
   "settings.description": "A few preferences. Everything else lives in the conversation.",
   "settings.done": "Done",
   "settings.tabs.group": "Settings group",
-  "settings.tab.experience": "Experience",
-  "settings.tab.ai": "AI & Routing",
-  "settings.tab.control": "Control",
-  "settings.tab.extensions": "Extensions",
-  "settings.tab.devices": "Devices & Voice",
-  "settings.tab.memory": "Memory",
-  "settings.tab.developer": "Developer",
+  "settings.tab.experience": SETTINGS_TAB_LABELS.experience.en,
+  "settings.tab.ai": SETTINGS_TAB_LABELS.ai.en,
+  "settings.tab.control": SETTINGS_TAB_LABELS.control.en,
+  "settings.tab.extensions": SETTINGS_TAB_LABELS.extensions.en,
+  "settings.tab.devices": SETTINGS_TAB_LABELS.devices.en,
+  "settings.tab.memory": SETTINGS_TAB_LABELS.memory.en,
+  "settings.tab.developer": SETTINGS_TAB_LABELS.developer.en,
   "settings.language.heading": "Language",
   "settings.language.description": "The interface language. Applies immediately, and stays after reload.",
   "settings.language.vi": "Tiếng Việt",

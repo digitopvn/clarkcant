@@ -75,6 +75,8 @@ drawn by CSS with empty alt text) and `LiveNote` (both regions always mounted; c
 
 ## Follow-ups for command cards (owned by #711/#715)
 
+Follow-ups 1–5 and 7 are done in [phase 02](phase-02-command-cards-and-terminal.md); 6 stays with #713.
+
 1. `command-card.tsx:121,125`: render the row status through `LiveNote` so the region exists before the answer and a
    failure is assertive; map `settled.status` to a phase (`refused`/`failed` error, `stale`/`unknown` partial).
 2. `provider-sign-in-panel.tsx:106` (moved there by #726): a cancelled sign-in is marked `data-result="failed"`; map

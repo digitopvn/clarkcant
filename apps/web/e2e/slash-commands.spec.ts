@@ -123,6 +123,34 @@ test("a provider is signed in to with a key from the /login card, and signed out
   await expect(stored.locator(".cc-command-status")).toContainText("Đã đăng xuất", { timeout: 10_000 });
 });
 
+test("a /login sign-in keeps the focus that started it, and is shown again on the card after a reload", async ({ page }) => {
+  await openApp(page);
+  await send(page, "/login");
+  const card = lastCard(page, "login");
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  const other = card.locator('[data-row-id="fake-other"]');
+
+  // Pressed from the keyboard; the field the provider asks with takes the focus, so typing goes straight there.
+  await other.getByRole("button", { name: "Dùng API key" }).focus();
+  await page.keyboard.press("Enter");
+  const field = other.locator('.cc-sign-in input[type="password"]');
+  await expect(field).toBeFocused({ timeout: 10_000 });
+
+  // The page reloads mid-sign-in: the node still runs it, so the newest card's row shows it rather than nothing.
+  await page.reload();
+  await expect(page.locator("[data-composer]")).toBeVisible();
+  const again = lastCard(page, "login").locator('[data-row-id="fake-other"]');
+  await expect(again.locator('.cc-sign-in input[type="password"]')).toBeVisible({ timeout: 20_000 });
+  await expect(again.getByRole("button", { name: "Dùng API key" })).toHaveAttribute("aria-disabled", "true");
+  // Shown in that one row only.
+  await expect(page.locator('[data-command="login"] [data-row-id="fake-other"] .cc-sign-in')).toHaveCount(1);
+  // And it does not pull the focus from where a page that just opened puts it.
+  await expect(again.locator('.cc-sign-in input[type="password"]')).not.toBeFocused();
+
+  await again.locator(".cc-sign-in").getByRole("button", { name: "Hủy" }).click();
+  await expect(again.locator(".cc-sign-in .cc-command-status")).toContainText("Đã hủy", { timeout: 10_000 });
+});
+
 /** A widget project folder of the test's own, outside the node's data folder, with a package id no other test uses. */
 function writeProject(): { root: string; packageId: string } {
   const unique = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -257,6 +285,46 @@ test("/settings opens the one Settings dialog over the conversation, on a named 
   await send(page, "/settings hoá đơn");
   await expect(page.locator('.cc-row[data-role="assistant"]').last()).toContainText("Settings không có tab “hoá đơn”", { timeout: 20_000 });
   await expect(settings).toHaveCount(0);
+});
+
+test("/settings typed while a reply is written opens Settings on the tab its Vietnamese label names, and another command says it waits", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  // The fixture's slow reply, a piece every 150 ms, leaves time to type while it is written.
+  await send(page, "viết một câu trả lời thật dài");
+  await expect(page.locator("[data-stop]")).toBeVisible({ timeout: 15_000 });
+
+  await send(page, "/settings bộ nhớ");
+  const settings = page.getByRole("dialog", { name: "Cài đặt" });
+  await expect(settings.locator("[data-active-tab]")).toHaveAttribute("data-active-tab", "memory", { timeout: 20_000 });
+  await expect(composer).toHaveValue("");
+  // Closed with its own button rather than Escape, which would also stop the reply.
+  await settings.getByRole("button", { name: "Xong" }).click();
+  await expect(settings).toHaveCount(0);
+  await expect(page.locator("[data-stop]")).toBeVisible();
+
+  // A command answered in the conversation has to wait for this reply: it stays in the draft, and the page says why.
+  await send(page, "/thinking high");
+  await expect(page.locator("[data-intent-notice]")).toContainText("Gửi /thinking được khi Clark trả lời xong", { timeout: 15_000 });
+  await expect(composer).toHaveValue("/thinking high");
+
+  await page.locator("[data-stop]").click();
+  await expect(page.locator("[data-send]")).toBeVisible({ timeout: 15_000 });
+});
+
+test("/new typed while a reply is written starts a new conversation and says the reply goes on in the one left behind", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  await send(page, "viết một câu trả lời thật dài");
+  await expect(page.locator("[data-stop]")).toBeVisible({ timeout: 15_000 });
+
+  await send(page, "/new");
+  await expect(page.locator(".cc-empty[data-leaving='false']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-role="user"]')).toHaveCount(0);
+  await expect(page.locator("[data-intent-notice]")).toContainText("Clark vẫn đang viết nốt câu trả lời ở cuộc trước", { timeout: 15_000 });
+  await expect(page.locator("[data-intent-notice]")).toContainText("/sessions");
+  await expect(composer).toHaveValue("");
+  await expect(page.locator("[data-stop]")).toHaveCount(0);
 });
 
 test.describe("in English", () => {

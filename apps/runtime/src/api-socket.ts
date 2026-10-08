@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
-import { isPersonOnlyRoute, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
+import { isPersonOnlyRoute, parseSseChunk, personOnlyRefusal } from "@clarkcant/contracts";
 
 import { handleRequest, type GatewayRequest } from "./gateway.ts";
 import { API_SOCKET_PATH, API_SOCKET_PROTOCOL } from "./open-interfaces.ts";
@@ -115,7 +115,7 @@ export function attachApiSocket(options: { server: Server; services: NodeService
       if (isPersonOnlyRoute(method, requestPath)) {
         // Answered as the route's refusal rather than an error frame: the request was well formed, it is just not
         // one this surface carries.
-        send({ type: "response", id, status: 403, body: PERSON_ONLY_REFUSAL });
+        send({ type: "response", id, status: 403, body: personOnlyRefusal("relay", method, requestPath) });
         return;
       }
       if (inFlight >= MAX_IN_FLIGHT) {

@@ -3,6 +3,12 @@ import { join } from "node:path";
 
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
+import {
+  CREDENTIALS_SECTION_SELECTOR,
+  credentialFieldSelector,
+  credentialRowSelector,
+} from "../../../packages/conversation-client/src/settings/controls/vault-list-focus.ts";
+
 /**
  * Choosing who answers Clark's decisions from Settings → AI & Routing, as a person does it.
  *
@@ -86,8 +92,10 @@ test("each provider is chosen, Cloudflare says what it is missing, and its key i
   await segment("cloudflare").click();
   await expect(current).toHaveAttribute("data-decision-active-provider", "cloudflare", { timeout: 10_000 });
   await expect(current).toHaveAttribute("data-decision-status", "misconfigured");
-  await expect(current.locator("[data-decision-hint]")).toContainText("CLOUDFLARE_ACCOUNT_ID");
+  // The reason is worded in the person's language from the node's code; the node's English sentence never appears.
+  await expect(current.locator("[data-decision-hint]")).toContainText("Cấu hình này chưa dùng được: Cloudflare cần một account id (CLOUDFLARE_ACCOUNT_ID)");
   await expect(current.locator("[data-decision-hint]")).toContainText("Nhập account id Cloudflare");
+  await expect(current.locator("[data-decision-hint]")).not.toContainText("decision provider needs");
   await expect(section.locator('[data-decision-account-source="none"]')).toBeVisible();
 
   // The account id fixes that; the provider then needs only its key.
@@ -127,6 +135,8 @@ test("each provider is chosen, Cloudflare says what it is missing, and its key i
   await slug.fill("openrouter/auto");
   await section.locator("[data-decision-model-use]").click();
   await expect(section.locator('[data-decision-outcome="selection"]')).toHaveAttribute("data-result", "failed", { timeout: 10_000 });
+  await expect(section.locator('[data-decision-outcome="selection"]')).toContainText("Node không nhận lựa chọn này");
+  await expect(section.locator('[data-decision-outcome="selection"]')).not.toContainText("router");
   await expect(current).toHaveAttribute("data-decision-active-provider", "cloudflare");
   await slug.fill("typesafe/jev-1.13");
   await section.locator("[data-decision-model-use]").click();
@@ -148,30 +158,82 @@ test("each provider is chosen, Cloudflare says what it is missing, and its key i
 
 test("a key is saved and removed with the keyboard alone", async ({ page }) => {
   const section = await openDecisionProvider(page);
-  const typesafe = section.locator('[data-decision-key-card="typesafe"]');
-  const field = typesafe.locator('[data-decision-key-input="typesafe"]');
+  const openrouter = section.locator('[data-decision-key-card="openrouter"]');
+  const field = openrouter.locator('[data-decision-key-input="openrouter"]');
 
   await field.focus();
-  await page.keyboard.type(TYPESAFE_KEY);
+  await page.keyboard.type(OPENROUTER_KEY);
   await page.keyboard.press("Enter");
-  await expect(typesafe).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
-  await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-status", "ready");
+  await expect(openrouter).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
   await expect(field).toHaveValue("");
-  expect(await page.content()).not.toContain(TYPESAFE_KEY);
+  expect(await page.content()).not.toContain(OPENROUTER_KEY);
 
   // With the field empty its Save is disabled, so Tab goes straight to Remove.
   await field.focus();
   await page.keyboard.press("Tab");
-  const remove = typesafe.locator('[data-decision-key-remove="typesafe"]');
+  const remove = openrouter.locator('[data-decision-key-remove="openrouter"]');
   await expect(remove).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(typesafe).toHaveAttribute("data-decision-key-source", "none", { timeout: 10_000 });
+  await expect(openrouter).toHaveAttribute("data-decision-key-source", "none", { timeout: 10_000 });
 
   // The selector is reachable and pressable from the keyboard too.
   const segment = section.locator('[data-segmented="decision-provider"] [data-segment="typesafe"]');
   await segment.focus();
   await page.keyboard.press("Enter");
   await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-selected-by", "settings", { timeout: 10_000 });
+});
+
+test("the TypeSafe key has one control: its card points to the Credentials list and follows what is saved there", async ({ page, request }) => {
+  const section = await openDecisionProvider(page);
+  const current = section.locator("[data-decision-current]");
+  const typesafe = section.locator('[data-decision-key-card="typesafe"]');
+  await expect(typesafe).toHaveAttribute("data-decision-key-source", "none");
+  await expect(current).toHaveAttribute("data-decision-status", "no-credential");
+  await expect(typesafe.locator("input")).toHaveCount(0);
+  await expect(typesafe.locator("[data-decision-key-in-credentials='typesafe']")).toContainText("Thông tin xác thực");
+
+  // The pointer moves focus to the key field of the TypeSafe row, the one place its key is saved; never to a button.
+  const row = page.locator(`${CREDENTIALS_SECTION_SELECTOR} ${credentialRowSelector("typesafe")}`);
+  await expect(row).toBeVisible();
+  const field = row.locator(credentialFieldSelector("typesafe"));
+  const go = typesafe.locator("[data-decision-key-go-to-credentials='typesafe']");
+  await go.focus();
+  await page.keyboard.press("Enter");
+  await expect(field).toBeFocused();
+
+  // Saved there, the card says so at once, with no reload: the key is in Credentials and the decider is ready.
+  await page.keyboard.type(TYPESAFE_KEY);
+  await row.locator("[data-credential-replace='typesafe']").click();
+  await expect(typesafe).toHaveAttribute("data-decision-key-source", "vault", { timeout: 10_000 });
+  await expect(typesafe).toContainText("Đã lưu trong Thông tin xác thực");
+  await expect(typesafe).not.toContainText("Đã lưu ở đây");
+  await expect(current).toHaveAttribute("data-decision-status", "ready");
+  expect(await page.content()).not.toContain(TYPESAFE_KEY);
+  expect(await nodeView(request)).not.toContain(TYPESAFE_KEY);
+
+  // Removed there, the card goes back to no key, again without a reload.
+  await row.locator("[data-credential-remove='typesafe']").click();
+  await expect(typesafe).toHaveAttribute("data-decision-key-source", "none", { timeout: 10_000 });
+  await expect(current).toHaveAttribute("data-decision-status", "no-credential");
+});
+
+test("Go to Credentials still lands somewhere when the TypeSafe row or the whole list is missing", async ({ page }) => {
+  const section = await openDecisionProvider(page);
+  const typesafe = section.locator('[data-decision-key-card="typesafe"]');
+  const go = typesafe.locator("[data-decision-key-go-to-credentials='typesafe']");
+  const credentials = page.locator(CREDENTIALS_SECTION_SELECTOR);
+  await expect(credentials.locator(credentialRowSelector("typesafe"))).toBeVisible();
+
+  // A row the pointer cannot find: focus falls back to the list's heading rather than nowhere.
+  await page.evaluate((selector) => document.querySelector(selector)?.removeAttribute("data-credential-row"), credentialRowSelector("typesafe"));
+  await go.click();
+  await expect(credentials.locator("h2, h3, h4").first()).toBeFocused();
+  await expect(typesafe.locator("[data-decision-credentials-missing]")).toHaveCount(0);
+
+  // No list on the page at all: the card says where the list lives.
+  await page.evaluate((selector) => document.querySelector(selector)?.removeAttribute("data-credentials-section"), CREDENTIALS_SECTION_SELECTOR);
+  await go.click();
+  await expect(typesafe.locator("[data-decision-credentials-missing='typesafe']")).toContainText("AI & Định tuyến");
 });
 
 test("on a phone, in English, the card fits the screen and every control is reachable", async ({ browser, request }) => {
@@ -193,7 +255,9 @@ test("on a phone, in English, the card fits the screen and every control is reac
   const section = await openDecisionProvider(page);
   await expect(section.locator("h3")).toHaveText("Decision provider", { timeout: 10_000 });
   await expect(section.locator("[data-decision-current]")).toHaveAttribute("data-decision-status", "misconfigured");
-  await expect(section.locator("[data-decision-hint]")).toContainText("Enter the Cloudflare account id below");
+  await expect(section.locator("[data-decision-hint]")).toContainText(
+    "This configuration can't be used: Cloudflare needs an account id (CLOUDFLARE_ACCOUNT_ID). Enter the Cloudflare account id below",
+  );
   const controls = [
     ...(await section.locator('[data-segmented="decision-provider"] button').all()),
     section.locator("[data-decision-account-input]"),

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { feedbackCardSchema } from "./feedback.ts";
-import type { providerSignInViewSchema } from "./slash-commands.ts";
+import type { commandCardSchema, providerSignInViewSchema } from "./slash-commands.ts";
 import type { StatusTone } from "./status-cards.ts";
 import type {
   approvalCardBlockSchema,
@@ -433,6 +433,21 @@ export const SIGN_IN_PHASE: Record<SignInState, SurfacePhase> = {
   done: "success",
   failed: "error",
   cancelled: "cancelled",
+};
+
+type CommandBadgeTone = NonNullable<z.infer<typeof commandCardSchema>["rows"][number]["badge"]>["tone"];
+/**
+ * A command card row's badge, read as a phase where its tone claims exactly one. The node writes the tone, not a
+ * phase, so only a tone every badge that carries it means the same way is read as a phase: `active` is work under way,
+ * `success` a kept outcome, `danger` a failure. `neutral` claims nothing — a queued job, a plain label — and `warning`
+ * names no single phase: a folder not found now is unavailable, while a task the person stopped or one that was
+ * interrupted ended early. Both are left out, so those badges are drawn plain, with their own words, rather than
+ * guessed into a phase that says something that did not happen.
+ */
+export const COMMAND_BADGE_PHASE: Record<Exclude<CommandBadgeTone, "neutral" | "warning">, SurfacePhase> = {
+  active: "pending",
+  success: "success",
+  danger: "error",
 };
 
 type FeedbackPublication = NonNullable<z.infer<typeof feedbackCardSchema>["publication"]>["status"];

@@ -14,6 +14,7 @@ import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followScrollBehavior, followsAfterScroll, reportScroll, scrollAsTranscript, stillFollowsBottom, type ScrollReport } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
+import { runAppIntentAtOnce, typedCommandRunAtOnce } from "./app-intents.ts";
 import { type AppIntentDecision, type ComposerReference, parseSlashCommand } from "@clarkcant/contracts";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -61,6 +62,11 @@ export interface TurnSendState {
    * showing it, and the next message opens a new one.
    */
   restartSession: () => void;
+  /**
+   * Called right after a restart: the check it returns answers, later, whether the page is still on the new
+   * conversation that restart started, with nothing sent in it yet (`RunAtOnceDeps.watchStart`).
+   */
+  watchNewStart: () => () => boolean;
   /** The scroll container, and the reader's own decision to follow the bottom or not. */
   scroller: React.RefObject<HTMLDivElement | null>;
   /**
@@ -99,12 +105,21 @@ export interface TurnSendDeps {
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
   /**
+   * The one executor, run now rather than after the next render: `/new` during a reply goes home before anything typed
+   * after it can land in the conversation being left.
+   */
+  runIntent: (decision: AppIntentDecision) => void;
+  /** A short remark beside the composer, such as why a command typed during a reply has to wait for it. */
+  onNotice: (text: string) => void;
+  /**
    * Empties the composer draft once a send is accepted, and on a restart.
    *
    * A draft that outlives its send is one Enter away from sending the same message again, and in
    * Autonomous mode that repeats whatever the message asked for.
    */
   clearDraft: () => void;
+  /** The composer draft as it is now, read when a command's late answer could clear it. */
+  readDraft: () => string;
   /** A failed send restores the user's text to the composer draft, so nothing typed is lost. */
   onSendFailed: (originalText: string) => void;
   /** The interface language, for a failure the node did not word itself. */
@@ -138,7 +153,10 @@ export function useTurnSend({
   setDatasets,
   setSnapshots,
   setPendingIntent,
+  runIntent,
+  onNotice,
   clearDraft,
+  readDraft,
   onSendFailed,
   t,
 }: TurnSendDeps): TurnSendState {
@@ -180,6 +198,19 @@ export function useTurnSend({
    * else that increments the generation must reset `busy` too, or a stale send would leave Stop on screen for good.
    */
   const sessionGeneration = useRef(0);
+  /**
+   * Moves on whenever the page leaves the start a restart made: another restart, a message sent, or a conversation
+   * opened or created some other way (voice, a file). A remark about leaving that lands later is said only if this has
+   * not moved since (`watchNewStart`).
+   */
+  const startMark = useRef(0);
+  useEffect(() => {
+    if (conversationId !== undefined) startMark.current += 1;
+  }, [conversationId]);
+  const watchNewStart = useCallback((): (() => boolean) => {
+    const mark = startMark.current;
+    return () => startMark.current === mark;
+  }, []);
 
   useEffect(() => {
     const node = scroller.current;
@@ -223,11 +254,54 @@ export function useTurnSend({
          * the answer is carried out by the one executor. Anything that is not a command keeps its text in the
          * composer as before: a second turn cannot start until this one ends.
          */
-        if (conversationId === undefined) return;
+        const slash = parseSlashCommand(trimmed);
+        if (conversationId === undefined) {
+          // The first message is still on its way, so there is no conversation yet to decide a command in: a slash
+          // command waits in the draft like any other, and the person is told so rather than Enter doing nothing.
+          if (slash !== undefined) onNotice(t("intents.commandWaits").replace("{command}", `/${slash.command}`));
+          return;
+        }
+        /*
+         * `/new` is the logo: the new conversation starts now, through the same path, and the node is told at the same
+         * time. Waiting for its answer left a window in which a message typed next was checked as a command in the
+         * conversation being left, and the late restart then emptied the composer. The node's read-back still says
+         * that the reply goes on in the conversation left behind, which /sessions reopens; when the node cannot be told,
+         * the page says what it knows itself: leaving did not stop that reply, and the conversation is kept.
+         */
+        const atOnce = typedCommandRunAtOnce(slash);
+        if (atOnce !== undefined) {
+          void runAppIntentAtOnce(atOnce, {
+            ask: () => client.sendAppIntent({ text: trimmed, source: "chat", conversationId }),
+            run: runIntent,
+            onRecorded: (decision) => onNotice(decision.readBack),
+            onUnrecorded: () => onNotice(t("intents.newConversationKeptReplying")),
+            watchStart: watchNewStart,
+          });
+          return;
+        }
         const decision = await client
           .sendAppIntent({ text: trimmed, source: "chat", conversationId })
           .catch(() => undefined);
-        if (decision === undefined || decision.kind === "none") return;
+        /*
+         * `/settings` is an app intent and comes back as one. Any other slash command is answered in the
+         * conversation, which has to wait for this reply: it stays in the draft, and the person is told why, rather than
+         * Enter seeming to do nothing.
+         */
+        if (decision === undefined || decision.kind === "none") {
+          if (slash !== undefined) onNotice(t(decision === undefined ? "intents.commandLookupFailed" : "intents.commandWaits").replace("{command}", `/${slash.command}`));
+          return;
+        }
+        /*
+         * The command stayed in the composer while the node read it, and the person may have edited it since: going home
+         * on "về trang chủ" while they were already typing the next message. Text that is no longer the command is theirs,
+         * so the intent runs now and the draft is put back after it, rather than the restart emptying it without a word.
+         */
+        const typedSince = readDraft();
+        if (typedSince.trim() !== trimmed) {
+          runIntent(decision);
+          onSendFailed(typedSince);
+          return;
+        }
         clearDraft();
         setPendingIntent(decision);
         return;
@@ -238,6 +312,7 @@ export function useTurnSend({
 
       setBusy(true);
       setError(undefined);
+      startMark.current += 1;
       // Cleared here, after the guard above: a send refused for being empty or for arriving while
       // another turn is busy keeps its text. A send that fails later gets it back from `onSendFailed`.
       if (!standalone) {
@@ -353,13 +428,17 @@ export function useTurnSend({
       conversationId,
       dispatchChips,
       onConversationReady,
+      onNotice,
       onReferencesSent,
       onSendFailed,
+      readDraft,
       resetHero,
       setConversationId,
       setPendingIntent,
+      runIntent,
       t,
       timeline,
+      watchNewStart,
     ],
   );
 
@@ -368,6 +447,7 @@ export function useTurnSend({
     // jump: a restart is the same layout change in the opposite direction.
     resetHero();
     sessionGeneration.current += 1;
+    startMark.current += 1;
     setConversationId(undefined);
     setTimeline(undefined);
     setDatasets({});
@@ -396,5 +476,5 @@ export function useTurnSend({
     }
   }, [busy, client, conversationId, t]);
 
-  return { busy, error, setError, chipsKept, pendingUser, live, send, stop, restartSession, scroller, followsBottomNow };
+  return { busy, error, setError, chipsKept, pendingUser, live, send, stop, restartSession, watchNewStart, scroller, followsBottomNow };
 }

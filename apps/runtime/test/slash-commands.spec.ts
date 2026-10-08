@@ -64,6 +64,17 @@ async function createConversation(title: string): Promise<string> {
   return (response.body as { conversationId: string }).conversationId;
 }
 
+/** The app-intent audit records written so far, as the kind, the tab when there is one, and where the request came from. */
+function appIntentRecords(): { kind: string; tab?: string; source: string }[] {
+  const rows = services.runtime.db.prepare("SELECT document FROM events WHERE kind = ? ORDER BY source_sequence").all("app.intent") as {
+    document: string;
+  }[];
+  return rows.map((row) => {
+    const document = JSON.parse(row.document) as { kind: string; tab?: string; source: string };
+    return { kind: document.kind, ...(document.tab === undefined ? {} : { tab: document.tab }), source: document.source };
+  });
+}
+
 /** Sends the command and answers with the host's reply: its sentence and its card, if it carries one. */
 async function command(conversationId: string, text: string): Promise<{ body: Record<string, unknown>; text: string; card: CommandCard | undefined }> {
   const response = await call("POST", `/conversations/${conversationId}/messages`, { text });
@@ -183,7 +194,71 @@ describe("slash commands in a conversation", () => {
 
     expect(body["appIntent"]).toBeUndefined();
     expect(text).toContain("billing");
-    expect(text).toContain("experience, ai, control, extensions, devices, memory, developer");
+    // Named by the labels the Vietnamese panel shows, not by ids the person never sees.
+    expect(text).toContain("Trải nghiệm, AI & Định tuyến, Kiểm soát, Tiện ích, Thiết bị & Giọng nói, Bộ nhớ, Nhà phát triển");
+    expect(appIntentRecords()).toEqual([]);
+  });
+
+  it("opens the tab a Vietnamese or English label word names", async () => {
+    const id = await createConversation("cài đặt");
+    for (const [argument, tab] of [["bộ nhớ", "memory"], ["giọng nói", "devices"], ["routing", "ai"], ["AI & Routing", "ai"], ["Nhà phát triển", "developer"]] as const) {
+      const named = await command(id, `/settings ${argument}`);
+      expect(named.body["appIntent"], argument).toMatchObject({ kind: "intent", intent: { kind: "settings.tab", tab } });
+    }
+    expect((await command(id, "/settings bộ nhớ")).text).toBe("Tôi mở Settings ở tab Bộ nhớ nhé.");
+  });
+
+  it("writes the same app-intent record for /settings and /new as typed \"open settings\" does", async () => {
+    const id = await createConversation("cài đặt");
+    await command(id, "mở cài đặt");
+    await command(id, "/settings");
+    await command(id, "/settings bộ nhớ");
+    await command(id, "/new");
+    expect(appIntentRecords()).toEqual([
+      { kind: "settings.open", source: "chat" },
+      { kind: "settings.open", source: "chat" },
+      { kind: "settings.tab", tab: "memory", source: "chat" },
+      { kind: "nav.home", source: "chat" },
+    ]);
+  });
+
+  it("answers /settings sent while a reply is being written through the same decision, and leaves other commands to the conversation", async () => {
+    const id = await createConversation("cài đặt");
+    const ask = async (text: string) => (await call("POST", "/app-intents", { text, source: "chat", conversationId: id })).body as { decision: Record<string, unknown> };
+
+    expect((await ask("/settings")).decision).toMatchObject({ kind: "intent", intent: { kind: "settings.open" } });
+    expect((await ask("/settings giọng nói")).decision).toMatchObject({ kind: "intent", intent: { kind: "settings.tab", tab: "devices" } });
+    expect((await ask("/new")).decision).toMatchObject({ kind: "intent", intent: { kind: "nav.home" } });
+    const refused = (await ask("/settings billing")).decision;
+    expect(refused["kind"]).toBe("refused");
+    expect(refused["say"]).toContain("Bộ nhớ");
+    // Not an app intent: the composer keeps it and says it waits for the reply.
+    expect((await ask("/thinking high")).decision).toEqual({ kind: "none" });
+    expect(appIntentRecords()).toEqual([
+      { kind: "settings.open", source: "chat" },
+      { kind: "settings.tab", tab: "devices", source: "chat" },
+      { kind: "nav.home", source: "chat" },
+    ]);
+  });
+
+  it("says on /new that the conversation left is kept, and, during a reply, that the reply goes on there", async () => {
+    const id = await createConversation("trước");
+    const sent = await command(id, "/new");
+    expect(sent.text).toBe("Đã mở cuộc trò chuyện mới. Cuộc trước vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.");
+    expect(sent.body["appIntent"]).toMatchObject({ readBack: sent.text });
+
+    // Clark is still answering in this conversation: the turn is not stopped, and the read-back says where it goes on.
+    services.turnControl = { running: () => [id] } as unknown as NonNullable<NodeServices["turnControl"]>;
+    const ask = async (text: string) => (await call("POST", "/app-intents", { text, source: "chat", conversationId: id })).body as { decision: Record<string, unknown> };
+    expect((await ask("/new")).decision).toMatchObject({
+      kind: "intent",
+      intent: { kind: "nav.home" },
+      readBack: "Đã mở cuộc trò chuyện mới. Clark vẫn đang viết nốt câu trả lời ở cuộc trước, cuộc đó vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.",
+    });
+    expect((await call("PUT", "/preferences/experience.language", { value: "en" })).status).toBe(200);
+    expect((await ask("/new")).decision["readBack"]).toBe(
+      "Started a new conversation. Clark is still finishing the reply in the previous one, which is kept; reopen it any time with /sessions.",
+    );
   });
 
   it("reads /settings back in English when the person's language is English", async () => {
@@ -194,7 +269,7 @@ describe("slash commands in a conversation", () => {
     expect(text).toBe("Opening Settings on the Devices & Voice tab.");
     expect(body["appIntent"]).toMatchObject({ intent: { kind: "settings.tab", tab: "devices" }, readBack: text });
     expect((await command(id, "/settings nowhere")).text).toBe(
-      'Settings has no tab "nowhere". Tabs: experience, ai, control, extensions, devices, memory, developer. Type /settings to open Settings.',
+      'Settings has no tab "nowhere". Tabs: Experience, AI & Routing, Control, Extensions, Devices & Voice, Memory, Developer. Type /settings to open Settings.',
     );
   });
 
@@ -407,6 +482,20 @@ describe("provider sign-in routes", () => {
     expect(listed.providers.find((entry) => entry.providerId === "fake-other")?.configured).toBe(false);
   });
 
+  it("lists the sign-ins still running, so a surface opened again shows the one it left, and drops one once it ends", async () => {
+    const started = await call("POST", "/providers/fake-other/sign-in", { method: "oauth" });
+    const { signInId } = started.body as ProviderSignInView;
+    await waitFor(signInId, "waiting");
+
+    const listed = await call("GET", "/providers/sign-ins");
+    expect(listed.status).toBe(200);
+    const running = (listed.body as { signIns: ProviderSignInView[] }).signIns;
+    expect(running).toEqual([expect.objectContaining({ signInId, providerId: "fake-other", method: "oauth", state: "waiting" })]);
+
+    await call("POST", `/providers/sign-ins/${signInId}/cancel`, {});
+    expect(((await call("GET", "/providers/sign-ins")).body as { signIns: ProviderSignInView[] }).signIns).toEqual([]);
+  });
+
   it("refuses to sign out of a key that comes from the environment, saying where it lives", async () => {
     const response = await call("POST", "/providers/fake/sign-out", {});
     expect(response.status).toBe(409);
@@ -422,6 +511,7 @@ describe("provider sign-in routes", () => {
     expect(isPersonOnlyRoute("GET", "/providers/auth")).toBe(false);
     expect(isPersonOnlyRoute("POST", "/providers/fake/sign-in")).toBe(true);
     expect(isPersonOnlyRoute("POST", "/providers/fake/sign-out")).toBe(true);
+    expect(isPersonOnlyRoute("GET", "/providers/sign-ins")).toBe(true);
     expect(isPersonOnlyRoute("GET", "/providers/sign-ins/x")).toBe(true);
     expect(isPersonOnlyRoute("POST", "/providers/sign-ins/x/answer")).toBe(true);
   });

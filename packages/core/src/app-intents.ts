@@ -27,7 +27,9 @@
  */
 
 import {
+  SETTINGS_TAB_LABELS,
   SETTINGS_TABS,
+  SLASH_COMMAND_INTENTS,
   type AppIntent,
   type AppIntentDecision,
   type AppIntentEventDocument,
@@ -40,9 +42,11 @@ import {
   type Instant,
   type NoticeOperationId,
   type SettingsTab,
+  type TypedSlashCommand,
   appIntentNotUnderstood,
   describeAppIntent,
   intentRequiresConfirmation,
+  settingsTabLabelList,
 } from "@clarkcant/contracts";
 import { type Database, appendEvent } from "@clarkcant/storage";
 
@@ -383,18 +387,47 @@ function wholeSentenceMatch(bare: string): { phrase: string; kind: AppIntentKind
   return PHRASES.find((entry) => entry.wholeSentence === true && entry.phrase === sentence);
 }
 
-/** Words that name a Settings tab, longest first so "cong cu" is not read as "cong". */
-const TAB_WORDS: readonly { words: readonly string[]; tab: SettingsTab }[] = [
-  { words: ["experience", "trai nghiem"], tab: "experience" },
-  { words: ["ai", "model", "models", "dinh tuyen"], tab: "ai" },
-  { words: ["control", "kiem soat"], tab: "control" },
+/**
+ * Names for a tab beyond its visible labels: the singular, a word people use for what the tab holds, and the word a
+ * tab used to be called.
+ */
+const TAB_EXTRA_WORDS: Record<SettingsTab, readonly string[]> = {
+  experience: [],
+  ai: ["model", "models"],
+  control: [],
   // "cong cu" moved here with the tab: Extensions & Widgets is where the capability list now lives, and a word
   // that still pointed at a tab named Tools would send somebody to a screen that no longer exists.
-  { words: ["extensions", "extension", "tien ich", "cong cu"], tab: "extensions" },
-  { words: ["devices", "device", "thiet bi"], tab: "devices" },
-  { words: ["memory", "ghi nho"], tab: "memory" },
-  { words: ["developer", "nha phat trien"], tab: "developer" },
-];
+  extensions: ["extension", "cong cu"],
+  devices: ["device"],
+  memory: ["ghi nho"],
+  developer: [],
+};
+
+/** A label or a typed tab name in the bare spelling, with "&" read as a space: "AI & Định tuyến" is "ai dinh tuyen". */
+function bareTabName(text: string): string {
+  return normaliseIntentText(text.replace(/&/g, " "));
+}
+
+/**
+ * The names of a tab's label in both languages: the whole label, and each part of it either side of "&", so
+ * "Thiết bị & Giọng nói" is named by "thiet bi giong noi", "thiet bi" and "giong noi".
+ */
+function labelNames(tab: SettingsTab): string[] {
+  return Object.values(SETTINGS_TAB_LABELS[tab]).flatMap((label) => [
+    bareTabName(label),
+    ...label.split("&").map(bareTabName),
+  ]);
+}
+
+/**
+ * Every name of every Settings tab, longest first so "trai nghiem" is not read as "ai".
+ *
+ * Derived from the labels the panel draws, so a word on a tab is always a name of that tab and a tab relabelled
+ * later is found by its new words without anyone remembering to list them here.
+ */
+const TAB_WORDS: readonly { word: string; tab: SettingsTab }[] = SETTINGS_TABS.flatMap((tab) =>
+  [...new Set([...labelNames(tab), ...TAB_EXTRA_WORDS[tab]])].map((word) => ({ word, tab })),
+).sort((a, b) => b.word.length - a.word.length);
 
 /** Text that asks to change tabs. Present without a tab name, the request is refused rather than guessed. */
 const TAB_INTENT_MARKERS: readonly string[] = [
@@ -448,13 +481,13 @@ function containsPhrase(words: readonly string[], phrase: string): boolean {
   return words.some((_, start) => parts.every((part, offset) => words[start + offset] === part));
 }
 
-// Derived from the tabs that exist, so a tab added later is named in the refusal without anyone remembering to
-// update a sentence. A refusal that listed a tab which is not there would send the person looking for it.
-const TAB_REFUSAL_VI = `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${SETTINGS_TABS.join(", ")}.`;
-const TAB_REFUSAL_EN = `I am not sure which tab you want to open. The tabs available are: ${SETTINGS_TABS.join(", ")}.`;
-
+// Derived from the tabs that exist and named by their labels, so a tab added later is named in the refusal without
+// anyone remembering to update a sentence, in the words the panel shows. A refusal that listed a tab which is not
+// there, or by an id the person never sees, would send them looking for it.
 function tabRefusal(locale: AppIntentLocale): string {
-  return locale === "en" ? TAB_REFUSAL_EN : TAB_REFUSAL_VI;
+  return locale === "en"
+    ? `I am not sure which tab you want to open. The tabs available are: ${settingsTabLabelList("en")}.`
+    : `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${settingsTabLabelList("vi")}.`;
 }
 
 /**
@@ -514,24 +547,74 @@ function findTab(normalised: string): SettingsTab | undefined {
   // Only look after the word "tab" when it is there, so "mo settings cua model nay" is not read as a
   // request to switch to the models tab.
   const marker = normalised.indexOf(" tab ");
-  const haystack = marker === -1 ? normalised : normalised.slice(marker + 1);
-  for (const entry of TAB_WORDS) {
-    for (const word of entry.words) {
-      if (haystack.includes(word)) return entry.tab;
-    }
-  }
-  return undefined;
+  // Whole words only: a name found inside a longer word is not that name, so "invoice" does not open the Voice tab
+  // and "cài đặt" does not open AI.
+  const words = bareTabName(marker === -1 ? normalised : normalised.slice(marker + 1))
+    .replace(/[.!?,;:]+/g, " ")
+    .split(" ")
+    .filter((word) => word !== "");
+  return TAB_WORDS.find((entry) => containsPhrase(words, entry.word))?.tab;
 }
 
 /**
- * The Settings tab a whole word names, such as the argument of `/settings ai` or `/settings thiết bị`.
+ * The Settings tab a whole name names, such as the argument of `/settings ai`, `/settings bộ nhớ` or
+ * `/settings AI & Routing`.
  *
  * Exact rather than a search inside a sentence, as `findTab` is: an argument is only the name of a tab, so anything
  * else is a tab that does not exist and is refused by name instead of guessed. "tab ai" is read as "ai".
  */
 export function settingsTabNamed(text: string): SettingsTab | undefined {
-  const name = normaliseIntentText(text).replace(/^tab /u, "");
-  return TAB_WORDS.find((entry) => entry.words.includes(name))?.tab;
+  const name = bareTabName(text).replace(/^tab /u, "");
+  return TAB_WORDS.find((entry) => entry.word === name)?.tab;
+}
+
+/**
+ * What `/new` says, sent as a message or while a reply is still being written. `replying` is whether Clark is still
+ * answering in the conversation being left: that reply is not stopped, and the sentence says where it goes on.
+ */
+export function newConversationReadBack(locale: AppIntentLocale, replying: boolean): string {
+  if (locale === "en") {
+    return replying
+      ? "Started a new conversation. Clark is still finishing the reply in the previous one, which is kept; reopen it any time with /sessions."
+      : "Started a new conversation. The previous one is kept; reopen it any time with /sessions.";
+  }
+  return replying
+    ? "Đã mở cuộc trò chuyện mới. Clark vẫn đang viết nốt câu trả lời ở cuộc trước, cuộc đó vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions."
+    : "Đã mở cuộc trò chuyện mới. Cuộc trước vẫn được giữ; mở lại bất cứ lúc nào bằng /sessions.";
+}
+
+/**
+ * The app intent a host slash command stands for, when it is one: `/settings` opens Settings, `/settings <tab>` opens
+ * it on that tab, and `/new` goes to the start screen for a fresh conversation.
+ *
+ * The node's one reading of these commands. A command sent as a message and one sent while a reply is still being
+ * written both reach the host's decision through here, so they open the same thing and write the same audit record.
+ * A tab that does not exist is refused by name, listing the tabs by the labels the panel shows. Any other command is
+ * not an app intent (`undefined`): it is answered in the conversation, as a message.
+ *
+ * A command that stands for one intent whatever follows it (`/new`) is read from `SLASH_COMMAND_INTENTS`, the copy the
+ * page also reads to go home at once on `/new` during a reply, so the two cannot mean different things.
+ */
+export function slashCommandAppIntent(typed: TypedSlashCommand, locale: AppIntentLocale): AppIntentMatch | undefined {
+  const fixed = SLASH_COMMAND_INTENTS[typed.command];
+  if (fixed !== undefined) return { kind: "intent", intent: { kind: fixed } };
+  switch (typed.command) {
+    case "settings": {
+      if (typed.argument === "") return { kind: "intent", intent: { kind: "settings.open" } };
+      const tab = settingsTabNamed(typed.argument);
+      if (tab !== undefined) return { kind: "intent", intent: { kind: "settings.tab", tab } };
+      const named = typed.argument.slice(0, 60);
+      return {
+        kind: "refused",
+        say:
+          locale === "en"
+            ? `Settings has no tab "${named}". Tabs: ${settingsTabLabelList("en")}. Type /settings to open Settings.`
+            : `Settings không có tab “${named}”. Các tab: ${settingsTabLabelList("vi")}. Gõ /settings để mở Settings.`,
+      };
+    }
+    default:
+      return undefined;
+  }
 }
 
 function looksLikeTabRequest(normalised: string): boolean {

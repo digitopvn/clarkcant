@@ -325,8 +325,8 @@ export const VOICE_CSS = `
  * The one action a card is about. Filled, so "đang làm" looks different from the view controls beside it;
  * disabled, it drops back to the plain outline so a filled button never means "cannot".
  */
-.cc-action[data-emphasis="primary"]:not(:disabled) { background: var(--cc-accent); border-color: var(--cc-accent); color: var(--cc-on-accent); font-weight: 600; }
-.cc-action[data-emphasis="primary"]:hover:not(:disabled) { background: color-mix(in oklab, var(--cc-accent) 88%, var(--cc-text)); }
+.cc-action[data-emphasis="primary"]:not(:disabled, [aria-disabled="true"]) { background: var(--cc-accent); border-color: var(--cc-accent); color: var(--cc-on-accent); font-weight: 600; }
+.cc-action[data-emphasis="primary"]:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in oklab, var(--cc-accent) 88%, var(--cc-text)); }
 
 /*
  * The choices a question offers.

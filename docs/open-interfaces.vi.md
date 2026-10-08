@@ -201,13 +201,22 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   với một ghi chú ngắn rằng lệnh không mang theo tệp, kể cả một lệnh bị từ chối hoặc bị huỷ. Bắt đầu lại, bằng lệnh hay
   bằng nút trên thanh đầu trang, sẽ bỏ các chip đó, nên chúng không bao giờ theo sang cuộc trò chuyện mới.
 - `/settings` mở hộp thoại Settings mà nút bánh răng trên thanh đầu trang mở, và `/settings <tab>` mở nó ở tab đó.
-  Một tab được gọi bằng id của nó (`experience`, `ai`, `control`, `extensions`, `devices`, `memory`, `developer`) hoặc
-  bằng những từ mà lệnh gõ "mở cài đặt" chấp nhận (`thiết bị`, `kiểm soát`, `tab ai`, ...). Câu trả lời mang quyết định
+  Một tab được gọi bằng id của nó (`experience`, `ai`, `control`, `extensions`, `devices`, `memory`, `developer`), bằng
+  nhãn của nó đúng như bảng Settings hiển thị bằng tiếng Anh hoặc tiếng Việt, cả nhãn hay từng phần hai bên dấu "&"
+  (`Bộ nhớ`, `giọng nói`, `AI & Routing`, `routing`), hoặc bằng những từ khác mà lệnh gõ "mở cài đặt" chấp nhận
+  (`model`, `tab ai`, ...); câu gõ "mở tab bộ nhớ" cũng nhận đúng những tên đó. Câu trả lời mang quyết định
   `settings.open` hoặc `settings.tab` của chính host trong `appIntent` (trên `/messages/stream` là trong frame `done`),
-  và trang chạy quyết định đó qua bộ thực thi app intent của nó: vẫn là hộp thoại đó, không phải hộp thoại thứ hai và
-  không chồng lên hộp thoại khác, cuộc trò chuyện và các chip tệp trong ô soạn thảo giữ nguyên, và khi đóng thì focus
-  trở về ô soạn thảo. Một tab không tồn tại thì không mở gì cả và được trả lời bằng danh sách các tab. Không model nào
-  được hỏi.
+  do cùng quyết định app intent mà câu gõ "mở cài đặt" đi tới đưa ra, và được ghi thành cùng sự kiện kiểm toán
+  `app.intent` (`/new` cũng vậy, dưới dạng `nav.home`). Trang chạy quyết định đó qua bộ thực thi app intent của nó: vẫn
+  là hộp thoại đó, không phải hộp thoại thứ hai và không chồng lên hộp thoại khác, cuộc trò chuyện và các chip tệp
+  trong ô soạn thảo giữ nguyên, và khi đóng thì focus trở về ô soạn thảo. Một tab không tồn tại thì không mở gì cả và
+  được trả lời bằng danh sách các tab theo nhãn của chúng trong ngôn ngữ của người dùng. Không model nào được hỏi.
+- `POST /app-intents` với `text` đọc `/settings`, `/settings <tab>` và `/new` theo cùng cách đó, nên ô soạn thảo đi kèm
+  gửi lệnh gõ trong lúc câu trả lời đang được viết tới đó và Settings mở ra (hoặc bắt đầu lại) ngay. `/new` không dừng
+  câu trả lời đó: nó tiếp tục được viết trong cuộc trò chuyện vừa rời đi, mở lại được bằng `/sessions`, và `readBack`
+  của quyết định nói rõ điều này, như ô soạn thảo đi kèm hiển thị. Mọi lệnh gạch chéo khác được trả lời `none` ở đó,
+  vì nó được trả lời trong cuộc trò chuyện và phải chờ câu trả lời xong: ô soạn thảo đi kèm giữ nó trong bản nháp và
+  nói rõ điều đó, giống như với mọi lệnh gạch chéo gõ trước khi tin nhắn đầu tiên tạo xong cuộc trò chuyện.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
   đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
   không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có
@@ -556,6 +565,17 @@ trên thẻ `/login` (hoặc trong Cài đặt → AI & Định tuyến) hoàn t
 rồi đề nghị chọn model của provider đó ngay trong cùng bộ chọn, hoặc giữ model đang dùng; provider chưa hiện là đã đăng
 nhập, hoặc không có model nào, được nói rõ kèm cách kiểm tra lại. Bản ghi của thẻ — trong bản ghi hội thoại, trong kết
 quả tìm kiếm — không vẽ bộ chọn.
+
+Bản thân việc đăng nhập — từ thẻ `/login` hay Cài đặt → AI & Định tuyến — đi qua các route chỉ dành cho người dùng, không
+có trong `/openapi.json`: `POST /providers/:id/sign-in { method }` (`oauth` hoặc `api_key`) bắt đầu lần đăng nhập của
+chính provider, hoặc trả về lần đang chạy cho provider đó; `GET /providers/sign-ins/:id` cho biết nó đang ở đâu (một
+trang cần mở, một mã, một câu hỏi, hoặc nó kết thúc ra sao); `POST /providers/sign-ins/:id/answer { value }` chuyển câu
+trả lời của người dùng tới provider mà không giữ lại; `POST /providers/sign-ins/:id/cancel` kết thúc nó; và
+`POST /providers/:id/sign-out` xoá thông tin đăng nhập pi đã lưu. `GET /providers/sign-ins` trả về `{ "signIns": [...] }`,
+các lần đăng nhập vẫn đang chạy hoặc đang chờ (tối đa một cho mỗi provider), để một bề mặt được mở lại — một tab Cài đặt
+được chuyển về, một trang được tải lại — hiện lần đăng nhập đúng chỗ người dùng để lại, thay vì đưa ra các nút sẽ âm thầm
+tiếp tục nó; thẻ `/login` chỉ hiện mỗi lần đăng nhập ở hàng mới nhất. Lần đăng nhập nằm trong bộ nhớ và bị bỏ sau mười
+phút không có câu trả lời.
 
 Các route hộp thư gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi: `GET /inbox`
 (những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn, các loại đang tắt báo và các phiên bản đã bỏ
@@ -1284,7 +1304,11 @@ chạy raise ra), quyết định capability của package, cài một gói (`PO
 cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, báo cáo frame của widget đã làm gì với một hành động Clark nhờ nó thực hiện (`POST /app-intents/widget-perform/{performId}`), tin cậy một peer đã ghép cặp, cấp
 grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
 của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), gửi một báo cáo sản phẩm
-(`POST /feedback/reports/{reportId}/publish`; gửi lên GitHub thay người dùng là quyết định của họ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
+(`POST /feedback/reports/{reportId}/publish`; gửi lên GitHub thay người dùng là quyết định của họ), lưu hoặc gỡ một credential đã lưu (`POST /credentials` và
+`DELETE /credentials/{name}`, giống `PUT /decision-provider/credential` và `DELETE` của nó; một khoá quyết định node
+hành động trên tài khoản của ai, và khoá `typesafe` mà các route chung lưu chính là khoá của nhà cung cấp quyết định, nên
+chúng không được là đường vòng qua route đó; gỡ một credential cũng xoá phần mô tả lưu bên cạnh nó; liệt kê tên vẫn dùng
+được), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
@@ -1298,6 +1322,12 @@ nó không bao giờ đưa ra câu trả lời của người dùng về một t
 thông báo (`403 PERSON_ONLY` cho cả hai, route cập nhật bị từ chối như trên). `read_inbox` đánh dấu tiêu đề và nội
 dung của mọi thông báo là dữ liệu do việc khác báo lại, không bao giờ là chỉ dẫn, và giữ mỗi thông báo trên một dòng.
 Discovery document ghi điều này ở mục `personDecisions`.
+
+Một lời từ chối nói rõ bề mặt nào đã từ chối và vì sao. Thân của nó là `{ "code": "PERSON_ONLY", "surface", "message" }`,
+trong đó `surface` là `relay`, `mcp` hoặc `cli-api`, còn `message` nêu tên bề mặt đó cùng phương thức và đường dẫn bị từ
+chối (ví dụ "the WebSocket relay refused DELETE /credentials/typesafe: storing or removing a stored credential is the
+person's decision ..."); `clarkcant api` in ra đúng thông điệp đó. Một route credential bị gateway HTTP từ chối vì
+yêu cầu mang dấu của một bề mặt máy cũng nhận cùng thân đó. Client so khớp theo `code` vẫn chạy như cũ.
 
 **Kết nối MCP riêng của service trong package.** Node là MCP client của mỗi service trong package mà nó chạy qua
 stdio. Khi facet `tools` của service khai báo `egress`, request `initialize` của node đề nghị

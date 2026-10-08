@@ -5,6 +5,7 @@ import {
   type DecisionProviderSelection,
   type DecisionProviderStatus,
   type DecisionProviderView,
+  type DecisionReasonCode,
 } from "@clarkcant/contracts";
 
 import { type DecisionConfig, currentDecisionConfig } from "../decision-config.ts";
@@ -44,13 +45,23 @@ function credentialOf(input: DecisionProviderViewInput, provider: DecisionProvid
   };
 }
 
-function statusOf(config: DecisionConfig): { status: DecisionProviderStatus; reason?: string } {
+/**
+ * The state the decider is in, why in English for logs and machine clients, and why as a code the card words in the
+ * person's language: the card never shows the English sentence.
+ */
+function statusOf(config: DecisionConfig): { status: DecisionProviderStatus; reason?: string; reasonCode?: DecisionReasonCode } {
   // `decisionCallRefusal`'s checks, except that a missing key is named before the "disabled" it implies: with no key and
   // no explicit switch, `enabled` is false only because there is no key, and "add a key" is the thing to tell somebody.
-  if (config.localOnly) return { status: "local-only", reason: "this node is configured local-only, so no intent is sent to a provider" };
-  if (config.endpointRefusal !== undefined) return { status: "misconfigured", reason: config.endpointRefusal };
-  if (config.apiKey === undefined) return { status: "no-credential", reason: "no provider credential is configured on this node" };
-  if (!config.enabled) return { status: "disabled", reason: "the selector is disabled on this node" };
+  if (config.localOnly) {
+    return { status: "local-only", reason: "this node is configured local-only, so no intent is sent to a provider", reasonCode: "local-only" };
+  }
+  if (config.endpointRefusal !== undefined) {
+    return { status: "misconfigured", reason: config.endpointRefusal, reasonCode: config.endpointRefusalCode ?? "endpoint-invalid" };
+  }
+  if (config.apiKey === undefined) {
+    return { status: "no-credential", reason: "no provider credential is configured on this node", reasonCode: "no-credential" };
+  }
+  if (!config.enabled) return { status: "disabled", reason: "the selector is disabled on this node", reasonCode: "disabled" };
   return { status: "ready" };
 }
 
@@ -93,6 +104,7 @@ export function decisionProviderView(input: DecisionProviderViewInput): Decision
             model: last.model,
             durationMs: last.durationMs,
             ...(last.reason === undefined ? {} : { reason: last.reason }),
+            ...(last.reasonCode === undefined ? {} : { reasonCode: last.reasonCode }),
           },
         }),
     providers: DECISION_PROVIDER_IDS.map((id) => ({

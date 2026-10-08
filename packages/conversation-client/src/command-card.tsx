@@ -1,11 +1,12 @@
-import { useId, useRef, useState, type FormEvent, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
-import type { CommandCard } from "@clarkcant/contracts";
+import { COMMAND_BADGE_PHASE, type CommandCard, type SurfacePhase, type SurfaceStatus, settleSurfaceStatus } from "@clarkcant/contracts";
 
 import type { BlockActions, CommandActionState, FolderEntryReason } from "./blocks.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 import { AfterSignIn, ModelPicker } from "./model-picker.tsx";
 import { SignInPanel } from "./provider-sign-in-panel.tsx";
+import { LiveNote, PhaseBadge, phaseOf } from "./surface-status.tsx";
 
 /**
  * The widget a slash command answers with: a host-owned card in the conversation.
@@ -17,13 +18,36 @@ import { SignInPanel } from "./provider-sign-in-panel.tsx";
 
 type CardRow = CommandCard["rows"][number];
 
-const BADGE_TONE: Record<NonNullable<CardRow["badge"]>["tone"], string | undefined> = {
-  neutral: undefined,
-  active: "info",
-  success: "ok",
-  warning: "warn",
-  danger: "danger",
+/** What a press came to, read through the shared status contract: a reply nobody can read is not a success. */
+export const COMMAND_ACTION_PHASE: Record<CommandActionState["status"], SurfacePhase> = {
+  pending: "pending",
+  done: "success",
+  failed: "error",
+  unknown: "partial",
 };
+
+function asSurfaceStatus(state: CommandActionState): SurfaceStatus {
+  return { phase: COMMAND_ACTION_PHASE[state.status], attempt: state.attempt ?? 0, freshness: { kind: "snapshot" } };
+}
+
+/**
+ * The state a press's key holds after `incoming` arrives, by the contract's rule for late answers: an answer for an
+ * earlier press is dropped, and the first outcome of a press is final — a late "working" never reopens it.
+ */
+export function settleCommandAction(current: CommandActionState | undefined, incoming: CommandActionState): CommandActionState {
+  if (current === undefined) return incoming;
+  const shownStatus = asSurfaceStatus(current);
+  return settleSurfaceStatus(shownStatus, asSurfaceStatus(incoming)) === shownStatus ? current : incoming;
+}
+
+/** The press a row speaks for: the latest among its buttons, so an older press on a sibling button never shows over it. */
+export function latestCommandAction(states: readonly (CommandActionState | undefined)[]): CommandActionState | undefined {
+  let latest: CommandActionState | undefined;
+  for (const state of states) {
+    if (state !== undefined && (latest === undefined || (state.attempt ?? 0) > (latest.attempt ?? 0))) latest = state;
+  }
+  return latest;
+}
 
 export function CommandCardBlock({
   block,
@@ -77,11 +101,26 @@ function CommandRow({
   const rowKey = `${cardId}/${row.rowId}`;
   const signIn = actions?.signIns?.[rowKey];
   const states = row.actions.map((entry) => actions?.commandAction?.[`${rowKey}/${entry.actionId}`]);
+  /*
+   * `pending` covers the whole row (any button still waiting), while the outcome shown is the latest press. The two agree
+   * only because a busy row is `aria-disabled` and refuses every press until it settles, so no sibling press can start
+   * behind a pending one. If that guard ever changes, compute `pending` from the latest press too, or an older sibling's
+   * failure would hide behind a newer success.
+   */
   const pending = states.some((state) => state?.status === "pending");
-  const settled = states.find((state): state is Exclude<CommandActionState, { status: "pending" }> => state !== undefined && state.status !== "pending");
+  const latest = latestCommandAction(states);
+  const settled = latest === undefined || latest.status === "pending" ? undefined : latest;
   const signingIn = signIn !== undefined && (signIn.state === "running" || signIn.state === "waiting");
+  const busy = pending || signingIn;
   /** The row's buttons, so focus returns to the one that opened a folder path field once that field closes. */
   const buttons = useRef(new Map<string, HTMLButtonElement>());
+  // A `/login` row drawn again shows the sign-in the node still runs for its provider, rather than nothing.
+  const signInProvider = row.actions.find((entry) => entry.action.kind === "provider-sign-in")?.action;
+  const providerId = signInProvider?.kind === "provider-sign-in" ? signInProvider.providerId : undefined;
+  const reattach = live ? actions?.onSignInReattach : undefined;
+  useEffect(() => {
+    if (providerId !== undefined) reattach?.({ key: rowKey, providerId });
+  }, [reattach, rowKey, providerId]);
   // A `/develop` row's badge is what was true when the card was drawn; once a press on the row has settled, the status
   // line beside it says what is true now (a session started, a folder forgotten), so the old badge is not shown with it.
   const superseded = settled?.status === "done" && row.actions.some((entry) => entry.action.kind === "develop-folder" || entry.action.kind === "develop-folder-forget");
@@ -96,11 +135,7 @@ function CommandRow({
           </span>
           {row.note === undefined ? null : <span className="cc-list-subtitle">{row.note}</span>}
         </div>
-        {badge === undefined ? null : (
-          <span className="cc-badge" data-tone={BADGE_TONE[badge.tone]}>
-            {badge.text}
-          </span>
-        )}
+        {badge === undefined ? null : <PhaseBadge phase={phaseOf(COMMAND_BADGE_PHASE, badge.tone)}>{badge.text}</PhaseBadge>}
       </div>
       {live && row.actions.length > 0 ? (
         <div className="cc-command-actions">
@@ -115,23 +150,33 @@ function CommandRow({
               className="cc-action"
               data-emphasis={entry.tone === "primary" ? "primary" : undefined}
               data-tone={entry.tone === "danger" ? "danger" : undefined}
-              disabled={pending || signingIn}
-              onClick={() => actions?.onCommandAction?.({ cardId, rowId: row.rowId, actionId: entry.actionId, action: entry.action })}
+              // aria-disabled, not disabled: a disabled button drops the focus that pressed it to the page.
+              aria-disabled={busy ? "true" : undefined}
+              onClick={() => {
+                if (busy) return;
+                actions?.onCommandAction?.({ cardId, rowId: row.rowId, actionId: entry.actionId, action: entry.action });
+              }}
             >
               {entry.label}
             </button>
           ))}
         </div>
       ) : null}
-      {pending ? (
-        <p className="cc-command-status" role="status">
-          {t("commandCard.working")}
-        </p>
-      ) : settled === undefined ? null : (
-        <p className="cc-command-status" role="status" data-result={settled.status}>
-          {settled.message}
-        </p>
-      )}
+      {/*
+        What a press came to, in live regions that exist before the answer arrives: a failure interrupts, anything else
+        waits its turn, and a row drawn again with an outcome already there (a reload, a scroll back) says nothing.
+      */}
+      {live && row.actions.length > 0 ? (
+        <div className="cc-command-outcome">
+          <LiveNote
+            phase={pending ? "pending" : settled === undefined ? undefined : COMMAND_ACTION_PHASE[settled.status]}
+            className="cc-command-status"
+            data-result={pending ? undefined : settled?.status}
+          >
+            {pending ? t("commandCard.working") : settled?.message}
+          </LiveNote>
+        </div>
+      ) : null}
       {signIn === undefined ? null : (
         <SignInPanel
           signIn={signIn}

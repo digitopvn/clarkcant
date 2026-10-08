@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactElement } from "react";
 
 import {
+  DECISION_CREDENTIAL_NAMES,
   DECISION_PROVIDER_IDS,
+  DECISION_REASON_CODES,
+  HOST_OWNED_DECISION_CREDENTIALS,
   OPENROUTER_DECISION_MODEL_PATTERN,
   isOpenrouterRouterSlug,
   type DecisionCredentialSource,
   type DecisionProviderId,
   type DecisionProviderSelection,
   type DecisionProviderView,
+  type DecisionReasonCode,
 } from "@clarkcant/contracts";
 
 import { GatewayError, type GatewayClient } from "../../api.ts";
@@ -15,6 +19,7 @@ import { fillMessage } from "../../i18n/fill-message.ts";
 import { useT } from "../../i18n/locale-context.tsx";
 import type { MessageKey } from "../../i18n/messages.ts";
 import { SegmentedControl, type SegmentedOption } from "./primitives.tsx";
+import { focusCredential } from "./vault-list-focus.ts";
 
 export type DecisionListing =
   | { status: "loading" }
@@ -61,16 +66,57 @@ const KEY_SOURCE_NOTE: Record<DecisionCredentialSource, MessageKey> = {
   none: "settings.decision.key.note.none",
 };
 
+/**
+ * Whether a provider's key is held in the Credentials list rather than on its own key card.
+ *
+ * Only Cloudflare's and OpenRouter's keys sit under host-owned vault names that the generic credential store refuses, so
+ * their cards are the one place to enter them. TypeSafe's key is the plain `typesafe` credential the Credentials list
+ * already saves, replaces and removes; a second field here would be two controls for one key, so its card points there.
+ */
+export function keyLivesInCredentials(provider: DecisionProviderId): boolean {
+  return !HOST_OWNED_DECISION_CREDENTIALS.includes(DECISION_CREDENTIAL_NAMES[provider]);
+}
+
+/** The badge for where a key comes from: a key saved in the Credentials list is said to be there, not on this card. */
+export function keySourceBadge(provider: DecisionProviderId, source: DecisionCredentialSource): MessageKey {
+  return source === "vault" && keyLivesInCredentials(provider) ? "settings.decision.key.source.vault.credentials" : KEY_SOURCE_BADGE[source];
+}
+
 const SELECTED_BY: Record<DecisionProviderView["selectedBy"], MessageKey> = {
   settings: "settings.decision.selectedBy.settings",
   environment: "settings.decision.selectedBy.environment",
   default: "settings.decision.selectedBy.default",
 };
 
-/** The node's own sentence for a refusal, without the code in front of it. */
+/** The node's own sentence for a failed read, kept for diagnostics; the card itself never shows the node's English. */
 function reasonOf(error: unknown): string {
   if (error instanceof GatewayError) return error.reason;
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Why the decider is in its state, or why its last call got no answer, in the person's language.
+ *
+ * The node sends a code beside its English sentence; the card words the code and never inserts the sentence, so a
+ * Vietnamese card does not carry English. A node too old to send a code, or newer and sending a code this client does
+ * not know yet, gets the generic wording rather than a raw message key.
+ */
+export function decisionReasonText(code: string | undefined, t: (key: MessageKey) => string): string {
+  return t(isKnownReasonCode(code) ? `settings.decision.reason.${code}` : "settings.decision.reason.unknown");
+}
+
+function isKnownReasonCode(code: string | undefined): code is DecisionReasonCode {
+  return code !== undefined && (DECISION_REASON_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * What a refused write says, in the person's language: the node's 400 for a selection is a choice it would not take,
+ * for a key it is a key outside the accepted length; anything else is a request that did not complete.
+ */
+export function decisionWriteFailure(slot: DecisionOutcomeSlot, error: unknown, t: (key: MessageKey) => string): string {
+  const refused = error instanceof GatewayError && error.status === 400;
+  const why = !refused ? "settings.decision.failed.other" : slot === "selection" ? "settings.decision.failed.selection" : "settings.decision.failed.key";
+  return fillMessage(t("settings.decision.writeFailed"), { reason: t(why) });
 }
 
 /** Whether a slug is one the node would accept as an OpenRouter decision model, so the form refuses it before sending. */
@@ -108,7 +154,7 @@ export function selectionFor(choice: DecisionChoice, view: DecisionProviderView)
 /** What the card says about the provider's state: the decider's reason, and what to do about it. */
 export function decisionHint(view: DecisionProviderView, t: (key: MessageKey) => string): string {
   const provider = t(PROVIDER_NAME[view.provider]);
-  const reason = view.reason ?? "";
+  const reason = decisionReasonText(view.reasonCode, t);
   switch (view.status) {
     case "ready":
       return fillMessage(t("settings.decision.hint.ready"), { host: view.endpointHost });
@@ -120,7 +166,10 @@ export function decisionHint(view: DecisionProviderView, t: (key: MessageKey) =>
         { reason },
       );
     case "no-credential":
-      return fillMessage(t("settings.decision.hint.no-credential"), { provider });
+      return fillMessage(
+        t(keyLivesInCredentials(view.provider) ? "settings.decision.hint.no-credential.credentials" : "settings.decision.hint.no-credential"),
+        { provider },
+      );
     case "disabled":
       return t("settings.decision.hint.disabled");
   }
@@ -130,7 +179,7 @@ export function decisionHint(view: DecisionProviderView, t: (key: MessageKey) =>
 export function lastCallLine(view: DecisionProviderView, t: (key: MessageKey) => string): string {
   const last = view.lastCall;
   if (last === undefined) return t("settings.decision.lastCall.none");
-  const values = { model: last.model, ms: last.durationMs, reason: last.reason ?? last.event };
+  const values = { model: last.model, ms: last.durationMs, reason: decisionReasonText(last.reasonCode, t) };
   if (last.status === "answered") return fillMessage(t("settings.decision.lastCall.answered"), values);
   if (last.status === "abstained") return fillMessage(t("settings.decision.lastCall.abstained"), values);
   return fillMessage(t("settings.decision.lastCall.unavailable"), values);
@@ -159,6 +208,8 @@ export function DecisionProviderSection({ client }: { client: GatewayClient }): 
   }, [client]);
 
   useEffect(load, [load]);
+  // TypeSafe's key is saved and removed in the Credentials list, so the card reads the node again after either.
+  useEffect(() => client.onCredentialsChange(load), [client, load]);
 
   const settle = (slot: DecisionOutcomeSlot, outcome: DecisionOutcome): void =>
     setOutcomes((current) => ({ ...current, [slot]: outcome }));
@@ -167,7 +218,7 @@ export function DecisionProviderSection({ client }: { client: GatewayClient }): 
     slot: DecisionOutcomeSlot,
     request: Promise<{ decisionProvider: DecisionProviderView }>,
     done: string,
-    failed: (error: unknown) => string = (error) => fillMessage(t("settings.decision.writeFailed"), { reason: reasonOf(error) }),
+    failed: (error: unknown) => string = (error) => decisionWriteFailure(slot, error, t),
   ): Promise<boolean> => {
     settle(slot, { status: "pending" });
     return request.then(
@@ -224,7 +275,7 @@ export function DecisionProviderSection({ client }: { client: GatewayClient }): 
           (error) =>
             error instanceof GatewayError && error.code === "RESOURCE_NOT_FOUND"
               ? fillMessage(t("settings.decision.key.removeNothing"), { provider: name })
-              : fillMessage(t("settings.decision.writeFailed"), { reason: reasonOf(error) }),
+              : decisionWriteFailure(`key:${provider}`, error, t),
         );
       }}
     />
@@ -285,7 +336,7 @@ export function DecisionProviderCard({
       ) : listing.status === "failed" ? (
         <div className="cc-panel-row" data-decision-state="failed">
           <p className="cc-panel-note" role="alert">
-            {t("settings.decision.readFailed")} {listing.reason}
+            {t("settings.decision.readFailed")}
           </p>
           <button type="button" className="cc-chip" onClick={onRetry}>
             {t("settings.decision.retry")}
@@ -532,10 +583,11 @@ function DecisionKeyCard({
   onSaveKey: (provider: DecisionProviderId, value: string) => Promise<boolean>;
   onRemoveKey: (provider: DecisionProviderId) => void;
 }): ReactElement {
-  // The draft lives only in this field and is cleared once the node has stored it; it is never rendered anywhere else.
-  const [draft, setDraft] = useState("");
   const name = t(PROVIDER_NAME[provider]);
   const busy = outcome?.status === "pending";
+  const inCredentials = keyLivesInCredentials(provider);
+  const note = inCredentials && source === "environment" ? "settings.decision.key.note.environment.credentials" : KEY_SOURCE_NOTE[source];
+  const [credentialsMissing, setCredentialsMissing] = useState(false);
   return (
     <li
       className="cc-list-item cc-command-row"
@@ -546,12 +598,66 @@ function DecisionKeyCard({
       <div className="cc-list-main">
         <div className="cc-list-text">
           <span className="cc-list-title">{name}</span>
-          <span className="cc-list-subtitle">{fillMessage(t(KEY_SOURCE_NOTE[source]), { variable: KEY_VARIABLE[provider] })}</span>
+          <span className="cc-list-subtitle">{fillMessage(t(note), { variable: KEY_VARIABLE[provider] })}</span>
         </div>
         <span className="cc-badge" data-tone={source === "none" ? undefined : "ok"}>
-          {t(KEY_SOURCE_BADGE[source])}
+          {t(keySourceBadge(provider, source))}
         </span>
       </div>
+      {inCredentials ? (
+        <div className="cc-command-actions" data-decision-key-in-credentials={provider}>
+          <p className="cc-panel-note">{fillMessage(t("settings.decision.key.inCredentials"), { provider: name })}</p>
+          <button
+            type="button"
+            className="cc-action"
+            data-decision-key-go-to-credentials={provider}
+            onClick={() => setCredentialsMissing(focusCredential(DECISION_CREDENTIAL_NAMES[provider]) === "none")}
+          >
+            {t("settings.decision.key.goToCredentials")}
+          </button>
+          {credentialsMissing ? (
+            <p className="cc-panel-note" role="alert" data-decision-credentials-missing={provider}>
+              {t("settings.decision.key.credentialsMissing")}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <DecisionKeyForm
+          t={t}
+          provider={provider}
+          name={name}
+          source={source}
+          busy={busy}
+          onSaveKey={onSaveKey}
+          onRemoveKey={onRemoveKey}
+        />
+      )}
+      <OutcomeLine outcome={outcome} t={t} slot={`key:${provider}`} />
+    </li>
+  );
+}
+
+function DecisionKeyForm({
+  t,
+  provider,
+  name,
+  source,
+  busy,
+  onSaveKey,
+  onRemoveKey,
+}: {
+  t: (key: MessageKey) => string;
+  provider: DecisionProviderId;
+  name: string;
+  source: DecisionCredentialSource;
+  busy: boolean;
+  onSaveKey: (provider: DecisionProviderId, value: string) => Promise<boolean>;
+  onRemoveKey: (provider: DecisionProviderId) => void;
+}): ReactElement {
+  // The draft lives only in this field and is cleared once the node has stored it; it is never rendered anywhere else.
+  const [draft, setDraft] = useState("");
+  return (
+    <>
       <form
         className="cc-search-row"
         onSubmit={(event) => {
@@ -597,7 +703,6 @@ function DecisionKeyCard({
           </button>
         </div>
       ) : null}
-      <OutcomeLine outcome={outcome} t={t} slot={`key:${provider}`} />
-    </li>
+    </>
   );
 }

@@ -23,13 +23,18 @@
  */
 
 import {
+  SLASH_COMMAND_INTENTS,
   type AppIntent,
   type AppIntentDecision,
+  type AppIntentKind,
+  type AppIntentResolution,
   type ColorScheme,
   type NoticeOperationId,
   type OrbProfileName,
   type SettingsTab,
+  type TypedSlashCommand,
   describeAppIntent,
+  intentRequiresConfirmation,
   isPersonOnlyAppIntent,
 } from "@clarkcant/contracts";
 
@@ -399,4 +404,127 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
     default:
       return true;
   }
+}
+
+/**
+ * The intents the page carries out the moment they are asked for, before the node has answered.
+ *
+ * Only going home, for now - the logo, and `/new` typed while a reply is being written: the node never refuses
+ * `nav.home` and never asks to confirm it, and leaving the conversation changes only what the page shows - the
+ * conversation stays in the node's history, and a reply still being written there goes on. Waiting for the answer
+ * instead left a window in which the composer still belonged to the conversation being left: a message sent in it was
+ * checked only as a command there, and the restart that landed after it emptied the composer, so the text was lost
+ * without a word.
+ *
+ * An intent the node may ask the person to confirm can never be one of these, whatever is listed here: carrying it out
+ * before the node has decided would skip the question (`runsAtOnce`).
+ */
+export const INTENTS_RUN_AT_ONCE: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["nav.home"]);
+
+/** Whether `kind` is carried out before the node has answered: listed above, and never one that needs confirming. */
+export function runsAtOnce(kind: AppIntentKind): boolean {
+  return INTENTS_RUN_AT_ONCE.has(kind) && !intentRequiresConfirmation(kind);
+}
+
+/**
+ * The intent a typed command is carried out as before the node answers, if it is one: `/new` is the logo.
+ *
+ * Read from `SLASH_COMMAND_INTENTS`, the same copy the node resolves a typed command through, so the page never goes
+ * home at once on a command the node would read differently. Any other command is decided by the node first.
+ *
+ * A sentence that means the same thing ("start a new conversation") is not read here: only the node knows what a
+ * sentence means, and a second reading in the page would be a classifier that drifts from it. So typed as a sentence
+ * during a reply, going home waits for the node's answer; text typed into the composer after that Enter is kept
+ * through the restart the answer brings (`useTurnSend`). `/new` and the logo are the immediate ways.
+ */
+export function typedCommandRunAtOnce(typed: TypedSlashCommand | undefined): AppIntentKind | undefined {
+  const kind = typed === undefined ? undefined : SLASH_COMMAND_INTENTS[typed.command];
+  return kind !== undefined && runsAtOnce(kind) ? kind : undefined;
+}
+
+export interface RunAtOnceDeps {
+  /** Tells the node; its answer is its record of what the page already did. */
+  ask: () => Promise<AppIntentResolution>;
+  /** The one executor, through the page's own `runIntent`. */
+  run: (decision: AppIntentDecision) => void;
+  /** The node's answer naming the same intent, for a caller that says its read-back (`/new` during a reply). */
+  onRecorded?: (decision: Extract<AppIntentDecision, { kind: "intent" }>) => void;
+  /**
+   * The node could not be told, so its read-back will not come: the caller says what was kept in its place, from what
+   * the page itself knows (`intents.newConversationKept`).
+   */
+  onUnrecorded?: () => void;
+  /**
+   * Called right after the intent ran. The check it returns answers, once the node's answer lands, whether the page is
+   * still on the new conversation that intent started, with nothing sent in it yet. The read-back and `onUnrecorded` are
+   * said only then: a remark about leaving, shown over a message the person has since sent or over another
+   * conversation, would describe something that is no longer on screen.
+   */
+  watchStart?: () => () => boolean;
+}
+
+/**
+ * Carries out an intent in `INTENTS_RUN_AT_ONCE` now and tells the node at the same time, so typing that follows it
+ * lands in the new state. One path for the logo and for `/new`.
+ *
+ * The node's answer is not carried out a second time when it names the same intent, which is what it does: that would
+ * restart again and empty a composer the person has started typing in. Any other answer should not happen (the node
+ * resolves a named `nav.home` and never asks to confirm it); were one to come, the page has already done what was asked
+ * and saying "refused" over the start screen would contradict what is on it, so it is left as a trace for whoever
+ * debugs the node. A request that failed is traced too, and `onUnrecorded` lets the caller say what the node's
+ * read-back would have said: the conversation left behind is kept, and `/sessions` reopens it.
+ *
+ * Either remark is said only while the page is still where the intent left it (`watchStart`); a late one is dropped
+ * with a trace.
+ */
+export function runAppIntentAtOnce(kind: AppIntentKind, deps: RunAtOnceDeps): Promise<void> {
+  deps.run({ kind: "intent", intent: { kind }, requiresConfirmation: false, readBack: "" });
+  const stillThere = deps.watchStart?.() ?? (() => true);
+  const say = (remark: (() => void) | undefined): void => {
+    if (remark === undefined) return;
+    if (stillThere()) remark();
+    else console.info(`the remark about the ${kind} arrived after the page had moved on; it is not shown`);
+  };
+  return deps.ask().then(
+    (decision) => {
+      if (decision.kind === "intent" && decision.intent.kind === kind) {
+        const onRecorded = deps.onRecorded;
+        say(onRecorded === undefined ? undefined : () => onRecorded(decision));
+        return;
+      }
+      console.warn(`the node answered "${decision.kind}" for the ${kind} the page already carried out; the screen is left as it is`);
+    },
+    (cause: unknown) => {
+      console.warn(`the ${kind} the page carried out could not be recorded by the node`, cause);
+      say(deps.onUnrecorded);
+    },
+  );
+}
+
+export interface ClickAppIntentDeps {
+  /** Asks the node what the click means; for a click run at once, the node's record of it. */
+  ask: () => Promise<AppIntentResolution>;
+  /** The one executor, through the page's own `runIntent`. */
+  run: (decision: AppIntentDecision) => void;
+  /** The node could not be asked, so a click that waits for it did nothing. */
+  onLookupFailed: () => void;
+  /** The node could not be told about a click already carried out (`RunAtOnceDeps.onUnrecorded`). */
+  onUnrecorded?: () => void;
+  /** Whether the page is still where a click carried out at once left it (`RunAtOnceDeps.watchStart`). */
+  watchStart?: () => () => boolean;
+}
+
+/**
+ * A click on one of the page's own controls, decided by the node and carried out by the one executor.
+ *
+ * A click that `runsAtOnce` goes through `runAppIntentAtOnce`. Every other click waits for the node's decision.
+ */
+export function clickAppIntent(kind: AppIntentKind, deps: ClickAppIntentDeps): Promise<void> {
+  if (runsAtOnce(kind)) return runAppIntentAtOnce(kind, deps);
+  return deps.ask().then(
+    (decision) => {
+      if (decision.kind !== "none") deps.run(decision);
+    },
+    () => deps.onLookupFailed(),
+  );
 }

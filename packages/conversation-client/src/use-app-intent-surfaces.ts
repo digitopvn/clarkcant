@@ -9,7 +9,7 @@ import {
   requestMinimize,
   requestWindowMode,
 } from "./desktop-compact.ts";
-import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
+import { clickAppIntent, runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import {
   type AppIntentDecision,
   type AppIntentKind,
@@ -83,7 +83,10 @@ export interface AppIntentSurfacesState {
   setIntentNotice: (message: string) => void;
   /** Carry out a decision, whichever way it arrived (click, voice, or a typed command). */
   runIntent: (decision: AppIntentDecision) => void;
-  /** Ask the node what a click means, then do it. `inboxTarget` goes only with `inbox.open`. */
+  /**
+   * Ask the node what a click means, then do it; the logo goes home at once and tells the node at the same time
+   * (`clickAppIntent`). `inboxTarget` goes only with `inbox.open`.
+   */
   clickIntent: (kind: AppIntentKind, extra?: { inboxTarget?: string }) => void;
   /** A command a typed message resolved to, to be carried out once the send that produced it settles. */
   pendingIntent: AppIntentDecision | undefined;
@@ -107,7 +110,17 @@ export interface AppIntentSurfacesDeps {
   t: (key: MessageKey) => string;
   client: GatewayClient;
   conversationId: string | undefined;
+  /**
+   * Whether a reply is being written in the conversation on screen, read when the logo leaves it: what the page says if
+   * the node cannot be told names that reply (`intents.newConversationKeptReplying`).
+   */
+  replying?: boolean;
   restartSession: () => void;
+  /**
+   * Whether the page is still on the new conversation the logo started, with nothing sent in it, when the node's late
+   * answer lands (`TurnSendState.watchNewStart`). Without it, what the page says is never held back.
+   */
+  watchNewStart?: () => () => boolean;
   attachmentInput: RefObject<HTMLInputElement | null>;
   setVoiceOpen: (open: boolean) => void;
   /**
@@ -163,7 +176,9 @@ export interface AppIntentSurfacesDeps {
 export function useAppIntentSurfaces({
   client,
   conversationId,
+  replying = false,
   restartSession,
+  watchNewStart,
   attachmentInput,
   setVoiceOpen,
   openVoice,
@@ -462,19 +477,27 @@ export function useAppIntentSurfaces({
   const clickIntent = useCallback(
     (kind: AppIntentKind, extra?: { inboxTarget?: string }): void => {
       if (client === undefined) return;
-      void client
-        .sendAppIntent({
-          kind,
-          source: "click",
-          ...(conversationId === undefined ? {} : { conversationId }),
-          ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
-        })
-        .then((decision) => {
-          if (decision.kind !== "none") runIntent(decision);
-        })
-        .catch(() => setIntentNotice(t("intents.commandLookupFailed")));
+      // The conversation the click was made in, read now: the logo leaves it before the node has answered.
+      const request = {
+        kind,
+        source: "click" as const,
+        ...(conversationId === undefined ? {} : { conversationId }),
+        ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
+      };
+      // Only the logo is carried out before the node answers. Leaving the start screen for itself leaves nothing behind,
+      // so there is nothing to say when the node could not be told.
+      const leftConversation = kind === "nav.home" && conversationId !== undefined;
+      void clickAppIntent(kind, {
+        ask: () => client.sendAppIntent(request),
+        run: runIntent,
+        onLookupFailed: () => setIntentNotice(t("intents.commandLookupFailed")),
+        ...(leftConversation
+          ? { onUnrecorded: () => setIntentNotice(t(replying ? "intents.newConversationKeptReplying" : "intents.newConversationKept")) }
+          : {}),
+        ...(watchNewStart === undefined ? {} : { watchStart: watchNewStart }),
+      });
     },
-    [client, conversationId, runIntent, setIntentNotice, t],
+    [client, conversationId, replying, runIntent, setIntentNotice, t, watchNewStart],
   );
 
   // A notice is a remark about something that just happened, not a permanent line of text.

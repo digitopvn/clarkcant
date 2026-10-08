@@ -177,16 +177,13 @@ export function gatewayErrorCode(cause: unknown): string | undefined {
 /**
  * A reason fit for a person to read, or `undefined` when the cause is not something to show as-is.
  *
- * `GatewayError.message` is `"${code}: ${message}"`; the code belongs in a log, not in a sentence a person reads,
- * so it is stripped. A schema failure (`ZodError`) stringifies to the whole list of issues — the caller falls back
- * to a fixed sentence and logs the original for whoever reads the console.
+ * A `GatewayError`'s message is the node's sentence alone; its code is never part of it. A schema failure (`ZodError`)
+ * stringifies to the whole list of issues — the caller falls back to a fixed sentence and logs the original for
+ * whoever reads the console.
  */
 export function sanitizeReason(cause: unknown): string | undefined {
   if (!(cause instanceof Error)) return undefined;
   if (cause.name === "ZodError") return undefined;
-  const code = gatewayErrorCode(cause);
-  const prefix = code === undefined ? undefined : `${code}: `;
-  if (prefix !== undefined && cause.message.startsWith(prefix)) return cause.message.slice(prefix.length);
   return cause.message;
 }
 

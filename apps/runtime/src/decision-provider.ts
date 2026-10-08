@@ -1,4 +1,4 @@
-import { DECISION_PROVIDER_IDS as PROVIDER_IDS, type DecisionProviderId } from "@clarkcant/contracts";
+import { DECISION_PROVIDER_IDS as PROVIDER_IDS, type DecisionProviderId, type DecisionReasonCode } from "@clarkcant/contracts";
 
 import { cloudflareDecisionProvider } from "./cloudflare-decision-provider.ts";
 import { openrouterDecisionProvider } from "./openrouter-decision-provider.ts";
@@ -43,6 +43,8 @@ export interface DecisionProviderConnection {
   endpoint: string;
   /** Set when the configuration does not describe an endpoint this node will call. No call is attempted. */
   endpointRefusal: string | undefined;
+  /** The refusal as a code a card words in the person's language; set whenever `endpointRefusal` is. */
+  endpointRefusalCode?: DecisionReasonCode | undefined;
   /** The exact model id the answer must name. */
   model: string;
 }

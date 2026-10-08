@@ -860,17 +860,30 @@ export class GatewayError extends Error {
    * one, carries the state the node holds, which is what lets the caller show it instead of guessing.
    */
   readonly details: Record<string, unknown>;
-  /** The node's sentence without the code in front of it, for a line a person reads rather than a log. */
+  /**
+   * The node's sentence, the same text as `message`. The code is never part of either: it is a fact for the program
+   * (`code`), and a sentence a person reads must not start with it, so any surface that shows `message` shows words.
+   * A wire that hands the refusal on with its code in front, as a widget is told, writes it itself (`codedMessage`).
+   */
   readonly reason: string;
 
   constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
-    super(`${code}: ${message}`);
+    super(message);
     this.name = "GatewayError";
     this.status = status;
     this.code = code;
     this.details = details;
     this.reason = message;
   }
+}
+
+/**
+ * A refusal as a widget's wire carries it, with the node's code in front (`CODE: why`), which is how a widget tells
+ * one refusal from another. Only for a program to read; a person reads `message`.
+ */
+export function codedMessage(cause: unknown): string {
+  if (cause instanceof GatewayError) return `${cause.code}: ${cause.reason}`;
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /** The code a `NodeViewUnreadable` carries. */
@@ -1028,6 +1041,7 @@ export class GatewayClient {
   readonly #fetch: typeof fetch;
   readonly #packageListeners = new Set<() => void>();
   readonly #modelListeners = new Set<() => void>();
+  readonly #credentialListeners = new Set<() => void>();
 
   readonly #appVersion: string | undefined;
   /** The node's version as last asked: a lookup in flight, or one that answered. A failed lookup is never kept. */
@@ -1721,7 +1735,27 @@ export class GatewayClient {
    * length, and says not-found rather than success when there was nothing to forget.
    */
   async deleteCredential(name: string): Promise<{ ok: boolean; names: string[] }> {
-    return this.#call("DELETE", `/credentials/${encodeURIComponent(name)}`);
+    return this.#changingCredentials(this.#call<{ ok: boolean; names: string[] }>("DELETE", `/credentials/${encodeURIComponent(name)}`));
+  }
+
+  /**
+   * Called after this page saves or removes a credential, with no name and never a value.
+   *
+   * A surface that reports a key's state from elsewhere, such as the decision provider's TypeSafe card, reads its view
+   * again then instead of showing what it read before the change. Answers the function that stops listening.
+   */
+  onCredentialsChange(listener: () => void): () => void {
+    this.#credentialListeners.add(listener);
+    return () => {
+      this.#credentialListeners.delete(listener);
+    };
+  }
+
+  #changingCredentials<T>(call: Promise<T>): Promise<T> {
+    return call.then((result) => {
+      for (const listener of this.#credentialListeners) listener();
+      return result;
+    });
   }
 
   /** The providers pi can sign in to, and which are signed in. Never a credential. */
@@ -1732,6 +1766,11 @@ export class GatewayClient {
   /** Starts a provider's own sign-in; the answer is the sign-in to follow with `providerSignIn`. */
   async startProviderSignIn(providerId: string, method: "oauth" | "api_key"): Promise<ProviderSignInView> {
     return this.#call("POST", `/providers/${encodeURIComponent(providerId)}/sign-in`, { method });
+  }
+
+  /** The sign-ins the node is still running or waiting on, so a surface opened again shows the one it left. */
+  async runningProviderSignIns(): Promise<{ signIns: ProviderSignInView[] }> {
+    return this.#call("GET", "/providers/sign-ins");
   }
 
   async providerSignIn(signInId: string): Promise<ProviderSignInView> {
@@ -2715,6 +2754,12 @@ export class GatewayClient {
    * on this side of the wire.
    */
   async putCredential(input: {
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }): Promise<{ names: string[] }> {
+    return this.#changingCredentials(this.#storeCredential(input));
+  }
+
+  async #storeCredential(input: {
     fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
   }): Promise<{ names: string[] }> {
     const response = await this.#fetch(`${this.#baseUrl}/credentials`, {

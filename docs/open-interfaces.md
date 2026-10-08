@@ -196,12 +196,22 @@ The origin stays with the work it started:
   don't carry files, including a command that is refused or declined. Starting over, by a command or the header's
   button, drops them, so they never ride into the new conversation.
 - `/settings` opens the Settings dialog the header's gear opens, and `/settings <tab>` opens it on that tab. A tab is
-  named by its id (`experience`, `ai`, `control`, `extensions`, `devices`, `memory`, `developer`) or by the words a
-  typed "open settings" command accepts (`thiết bị`, `kiểm soát`, `tab ai`, ...). The answer carries the host's own
-  `settings.open` or `settings.tab` decision as `appIntent` (on `/messages/stream`, in the `done` frame), which the
-  page runs through its app-intent executor: the same dialog, not a second one and not stacked on another, with the
+  named by its id (`experience`, `ai`, `control`, `extensions`, `devices`, `memory`, `developer`), by its label as the
+  panel shows it in English or Vietnamese, whole or either side of "&" (`Bộ nhớ`, `giọng nói`, `AI & Routing`,
+  `routing`), or by the other words a typed "open settings" command accepts (`model`, `tab ai`, ...); a typed
+  "open the Bộ nhớ tab" accepts the same names. The answer carries the host's own `settings.open` or `settings.tab`
+  decision as `appIntent` (on `/messages/stream`, in the `done` frame), made by the same app-intent decision a typed
+  "open settings" reaches and recorded as the same `app.intent` audit event (`/new` likewise, as `nav.home`). The page
+  runs it through its app-intent executor: the same dialog, not a second one and not stacked on another, with the
   conversation and the composer's file chips left as they were and focus returned to the composer when it closes. A
-  tab that does not exist opens nothing and is answered with the list of tabs. No model is asked.
+  tab that does not exist opens nothing and is answered with the list of tabs by their labels in the person's
+  language. No model is asked.
+- `POST /app-intents` with `text` reads `/settings`, `/settings <tab>` and `/new` the same way, so the bundled composer
+  sends one typed while a reply is being written there and it opens Settings (or starts over) at once. `/new` does not
+  stop that reply: it goes on in the conversation left behind, which `/sessions` reopens, and the decision's
+  `readBack` says so, as the bundled composer shows. Any other slash command is answered `none` there, because it is
+  answered in the conversation and has to wait for the reply: the bundled composer keeps it in the draft and says so,
+  as it does for any slash command typed before the first message has made the conversation.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A
@@ -548,6 +558,16 @@ After a sign-in on a
 available, and offers that provider's models in the same picker or keeping the model in use; a provider that is not
 listed as signed in yet, or has no models, is said so with a way to check again. A record of the card — a transcript, a
 search result — draws no picker.
+
+A sign-in itself — from a `/login` card or Settings → AI & Routing — goes through person-only routes, which are not in
+`/openapi.json`: `POST /providers/:id/sign-in { method }` (`oauth` or `api_key`) starts the provider's own sign-in, or
+answers with the one already running for that provider; `GET /providers/sign-ins/:id` is where it is (a page to open, a
+code, a question, or how it ended); `POST /providers/sign-ins/:id/answer { value }` hands the person's answer to the
+provider without keeping it; `POST /providers/sign-ins/:id/cancel` ends it; and `POST /providers/:id/sign-out` removes a
+credential pi stored. `GET /providers/sign-ins` answers `{ "signIns": [...] }`, the sign-ins still running or waiting
+(at most one per provider), so a surface opened again — a Settings tab switched back to, a reloaded page — shows the
+sign-in where the person left it instead of offering buttons that would resume it unseen; a `/login` card shows each
+one in its newest row only. A sign-in is in memory and is given up after ten minutes without an answer.
 
 The inbox routes are reachable with the same token but are **not** in `/openapi.json` yet and may change: `GET /inbox`
 (what waits on the person, the notices, the notices snoozed for later, the kinds quieted and the versions skipped),
@@ -1269,7 +1289,10 @@ person's execution mode asked about, confirming an app intent, reporting what th
 issuing a grant, asking for a browser token for a frame
 (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a
 machine client would be asking for a credential to keep), publishing a product report (`POST /feedback/reports/{reportId}/publish`; filing to GitHub on the person's behalf is
-their decision), and recording whether an action whose outcome nobody saw took effect
+their decision), storing or removing a stored credential (`POST /credentials` and `DELETE /credentials/{name}`, like
+`PUT /decision-provider/credential` and its `DELETE`; a key decides whose account the node acts on, and the
+`typesafe` key the generic routes store is the decision provider's key, so they must not be a way around that route;
+removing a credential also forgets the description stored beside it; listing names stays reachable), and recording whether an action whose outcome nobody saw took effect
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
@@ -1283,6 +1306,12 @@ available, and so does `act_on_notice`: it never offers the person's answer abou
 notice's update (`403 PERSON_ONLY` for both, the update route refused as above). `read_inbox` marks every notice's
 title and body as data reported by other work, never instructions, and keeps each on one line. The discovery document
 lists this under `personDecisions`.
+
+A refusal says which surface refused and why. Its body is `{ "code": "PERSON_ONLY", "surface", "message" }`, where
+`surface` is `relay`, `mcp` or `cli-api` and `message` names that surface and the refused method and path (for
+example "the WebSocket relay refused DELETE /credentials/typesafe: storing or removing a stored credential is the
+person's decision ..."); `clarkcant api` prints the same message. A credential route refused on the HTTP gateway because
+the request was marked by a machine surface gets the same body. Clients that match on `code` keep working.
 
 **A package service's own MCP connection.** The node is the MCP client of each package service it runs over stdio.
 When the service's `tools` facet declares `egress`, the node's `initialize` request offers

@@ -436,7 +436,7 @@ Giữ orb + prompt, nhưng suggestion chips nên là **dynamic recent intents** 
 
 Mỗi chip phải cho biết nếu là demo/sample.
 
-Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại.
+Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại. Logo, và `/new` gõ khi một câu trả lời đang được viết, có hiệu lực ngay qua cùng một đường: câu trả lời đó tiếp tục trong hội thoại vừa rời (với `/new`, lời đọc lại của node nói rõ điều này và chỉ tới `/sessions`), và những gì user gõ tiếp theo thuộc về hội thoại mới, không bị đối chiếu với hội thoại cũ hay bị xoá khi bản ghi của node tới. Nếu không báo được cho node, trang tự nói rằng hội thoại vừa rời vẫn được giữ, việc rời đi không dừng câu trả lời của nó, và `/sessions` mở lại nó; lỗi được ghi vết, không hiện thành lỗi tra cứu lệnh. Cả hai lời nhắn này chỉ được nói khi trang vẫn đang ở hội thoại mới và chưa có gì được gửi trong đó; lời nào tới muộn hơn sẽ bị bỏ, chỉ để lại vết. Một câu gõ yêu cầu hội thoại mới khi đang có câu trả lời sẽ chờ node đọc, vì chỉ node đọc câu; nếu ô soạn thảo đã được sửa sau khi nhấn Enter, lần khởi động lại do câu trả lời đó mang tới vẫn giữ nguyên phần chữ đã sửa. Khi được yêu cầu bằng giọng nói, việc về màn hình bắt đầu có hiệu lực ngay khi quyết định của node tới, qua cùng một executor.
 
 ### 6.3 Composer
 
@@ -848,15 +848,21 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   trước khi kết quả tới: `error` là assertive, mọi thay đổi phase khác là
   polite; cùng phase lặp lại, `loading`, hay bất cứ gì đã có trên màn hình lúc
   mount (tải lại trang, cuộn ngược) đều không được thông báo.
-- **Câu trả lời đến muộn và thử lại (helper của hợp đồng, áp dụng dần từng
-  bề mặt).** `settleSurfaceStatus` của hợp đồng bỏ qua câu trả lời cho một lần
-  thử trước và giữ kết quả đầu tiên của một lần thử, nên cả một "vẫn đang chạy"
-  đến muộn lẫn một kết quả đến sau đều không thay được nó; `canRetry` chỉ đề
-  nghị thử lại khi phase là `error` hoặc `partial` và miền nêu rõ `retry` hoặc
-  `check-again`. Hiện chưa miniapp dựng sẵn nào gọi hai helper này: các lần thử
-  lại hôm nay (bấm lại khi dừng task, thử lại khi lưu thông tin xác thực) và câu
-  trả lời đến muộn trên các dòng của thẻ lệnh vẫn theo quy tắc riêng của từng bề
-  mặt, và sẽ chuyển sang các helper này khi những bề mặt đó được làm lại.
+- **Hủy không phải là thất bại.** Một lần đăng nhập do người dùng hủy được đọc
+  là `cancelled`, một câu trả lời mà ứng dụng này không đọc được là `partial`, và
+  một lời từ chối nói lý do của node bằng lời của người dùng, không bao giờ ở
+  dạng `CODE: message`. Client giữ mã của node tách khỏi câu của nó, nên một
+  bề mặt có sẵn hiện lời từ chối thì chỉ hiện lời; chỉ đường truyền tới widget
+  mới đặt mã ở đầu, để chương trình của widget đọc.
+- **Câu trả lời đến muộn và thử lại.** `settleSurfaceStatus` của hợp đồng bỏ
+  qua câu trả lời cho một lần thử trước và giữ kết quả đầu tiên của một lần thử,
+  nên cả một "vẫn đang chạy" đến muộn lẫn một kết quả đến sau đều không thay được
+  nó. Các dòng của thẻ lệnh và thẻ thông tin xác thực đều chốt mọi lần bấm qua
+  helper này, mỗi lần bấm là một lần thử mới; một dòng hiện lần bấm mới nhất
+  trong các nút của nó. Một bề mặt mà lần thử lại có thể trả về đúng câu trả lời
+  cũ sẽ đi qua `pending` trước, nên cùng một thất bại hai lần được nói hai lần.
+  `canRetry` chỉ đề nghị thử lại khi phase là `error` hoặc `partial` và miền nêu
+  rõ `retry` hoặc `check-again`.
 
 ### 8.4 Local vs effect actions
 
@@ -1342,9 +1348,13 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
   hoặc đã tắt — kèm lý do của chính bộ quyết định và việc cần làm, và lần gọi gần nhất kể từ khi node khởi động. Một
   segmented control cho chọn Theo môi trường, TypeSafe Jev, Cloudflare Clef và OpenRouter; Cloudflare có thêm lựa
   chọn model và ô account id, OpenRouter có ô model slug được ghim, chỉ được lưu khi đã nhập slug (router như
-  `openrouter/auto` bị từ chối kèm lý do của node). Mỗi provider có một thẻ key cho biết key đến từ đâu (lưu ở đây,
-  môi trường, hoặc chưa có), với ô mật khẩu, Lưu/Thay và Gỡ cho key lưu ở đây; key đã nhập được xoá khỏi ô sau khi
-  lưu và không bao giờ hiện lại. Mọi thao tác ghi đều đi qua các route decision-provider của node và thẻ vẽ lại từ
+  `openrouter/auto` bị từ chối kèm lý do của node). Mỗi provider có một thẻ key cho biết key đến từ đâu (lưu trên
+  thẻ, lưu trong Thông tin xác thực với TypeSafe, môi trường, hoặc chưa có); thẻ Cloudflare và OpenRouter có ô mật
+  khẩu, Lưu/Thay và Gỡ cho key lưu trên thẻ; key đã nhập được xoá khỏi ô sau khi lưu và không bao giờ hiện lại. Key
+  TypeSafe chỉ có một control: dòng `typesafe` trong danh sách Thông tin xác thực (mục 11.6), nên thẻ TypeSafe chỉ tới
+  đó bằng nút Mở Thông tin xác thực thay vì có ô thứ hai. Nút này đưa focus vào ô key của dòng đó, không bao giờ vào
+  nút Gỡ, và chuyển sang tiêu đề của danh sách khi không tìm thấy dòng. Khi lưu hoặc gỡ một credential ở đó, thẻ đọc
+  lại node, nên không bao giờ hiện trạng thái key đã cũ. Mã lý do mà client chưa biết được diễn đạt thành lý do chung đã dịch, không bao giờ là mã thô. Mọi thao tác ghi đều đi qua các route decision-provider của node và thẻ vẽ lại từ
   câu trả lời; mỗi thay đổi nói rõ là áp dụng từ quyết định tiếp theo, và không có gì đòi khởi động lại.
 - Favorites/recent models.
 - Shortcut order cho model cycling.

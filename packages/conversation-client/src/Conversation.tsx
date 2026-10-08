@@ -204,6 +204,9 @@ export function Conversation({
   /** Bumped when a notice changed from outside the inbox panel (a sentence), so an open panel reads again. */
   const [inboxPanelRefresh, setInboxPanelRefresh] = useState(0);
   const [draft, setDraft] = useState("");
+  /** The draft as last drawn, for a send whose late answer has to know whether it was edited since (`readDraft`). */
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
 
   /**
    * The control that opened the expanded live view.
@@ -275,6 +278,7 @@ export function Conversation({
     send,
     stop,
     restartSession,
+    watchNewStart,
     scroller,
     followsBottomNow,
   } = useTurnSend({
@@ -296,7 +300,10 @@ export function Conversation({
     setDatasets,
     setSnapshots,
     setPendingIntent: (decision) => appIntents.setPendingIntent(decision),
+    runIntent: (decision) => appIntents.runIntent(decision),
+    onNotice: (text) => appIntents.setIntentNotice(text),
     clearDraft: () => setDraft(""),
+    readDraft: () => draftNow.current,
     onSendFailed: (originalText) => setDraft(originalText),
   });
 
@@ -338,7 +345,9 @@ export function Conversation({
     t: localeState.t,
     client,
     conversationId,
+    replying: busy,
     restartSession,
+    watchNewStart,
     attachmentInput,
     setVoiceOpen,
     // Reuses the same path the voice button already takes, so a `voice.open` intent - from a click, a

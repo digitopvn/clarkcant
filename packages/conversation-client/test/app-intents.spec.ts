@@ -1,8 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { type AppIntentDecision, type SettingsTab } from "@clarkcant/contracts";
+import {
+  APP_INTENT_KINDS,
+  CONFIRMATION_REQUIRED_KINDS,
+  SLASH_COMMANDS,
+  SLASH_COMMAND_INTENTS,
+  type AppIntentDecision,
+  type AppIntentResolution,
+  type SettingsTab,
+} from "@clarkcant/contracts";
 
-import { NOT_DESKTOP_SAY, runAppIntent, type AppIntentHost } from "../src/app-intents.ts";
+import {
+  INTENTS_RUN_AT_ONCE,
+  NOT_DESKTOP_SAY,
+  clickAppIntent,
+  runAppIntent,
+  runAppIntentAtOnce,
+  runsAtOnce,
+  typedCommandRunAtOnce,
+  type AppIntentHost,
+} from "../src/app-intents.ts";
 
 /**
  * The one executor.
@@ -292,5 +309,176 @@ describe("what the executor will not do", () => {
       host,
     );
     expect(run.say).toBe("Mở phần cài đặt nhé.");
+  });
+});
+
+describe("a click on the page's own controls", () => {
+  /** A node whose answer arrives only when the test lets it, so a test can act inside the round trip. */
+  function slowNode(answer: () => AppIntentResolution | Error) {
+    let release: () => void = () => undefined;
+    const answered = new Promise<void>((done) => (release = done));
+    const ran: AppIntentDecision[] = [];
+    const lookupFailures: number[] = [];
+    const deps = {
+      ask: async () => {
+        await answered;
+        const value = answer();
+        if (value instanceof Error) throw value;
+        return value;
+      },
+      run: (decision: AppIntentDecision) => ran.push(decision),
+      onLookupFailed: () => lookupFailures.push(1),
+    };
+    return { deps, ran, lookupFailures, release };
+  }
+  const HOME: AppIntentDecision = { kind: "intent", intent: { kind: "nav.home" }, requiresConfirmation: false, readBack: "Going back to the start screen." };
+
+  it("goes home at once, before the node has answered, so what is typed next belongs to the new conversation", async () => {
+    const node = slowNode(() => HOME);
+    const clicked = clickAppIntent("nav.home", node.deps);
+    expect(node.ran).toEqual([{ kind: "intent", intent: { kind: "nav.home" }, requiresConfirmation: false, readBack: "" }]);
+    // The node's answer is its record of the click: carrying it out again would restart a second time and empty a
+    // composer the person has started typing in.
+    node.release();
+    await clicked;
+    expect(node.ran).toHaveLength(1);
+  });
+
+  it("leaves a trace, not a contradiction on screen, if the node ever answered otherwise for a click it already carried out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const node = slowNode(() => ({ kind: "refused", say: "Không được." }));
+      const clicked = clickAppIntent("nav.home", node.deps);
+      node.release();
+      await clicked;
+      // "Refused" said over the start screen would contradict what is on it; the node's answer is logged instead.
+      expect(node.ran.map((decision) => decision.kind)).toEqual(["intent"]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("stays home when the node cannot be asked, keeps a trace, and lets the caller say what was kept in place of the read-back", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const unrecorded: number[] = [];
+      const node = slowNode(() => new Error("Failed to fetch"));
+      const clicked = clickAppIntent("nav.home", { ...node.deps, onUnrecorded: () => unrecorded.push(1) });
+      node.release();
+      await clicked;
+      expect(node.ran).toHaveLength(1);
+      // Not "could not ask the node": the click was carried out, and saying it failed would contradict the screen.
+      expect(node.lookupFailures).toEqual([]);
+      expect(unrecorded).toEqual([1]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("says nothing in place of the read-back when the node did answer, whatever it answered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (const answer of [HOME, { kind: "refused", say: "Không được." } as const]) {
+        const unrecorded: number[] = [];
+        const node = slowNode(() => answer);
+        const going = runAppIntentAtOnce("nav.home", { ...node.deps, onUnrecorded: () => unrecorded.push(1) });
+        node.release();
+        await going;
+        expect(unrecorded, answer.kind).toEqual([]);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hands the node's own record to a caller that says its read-back, and runs it only once", async () => {
+    const recorded: AppIntentDecision[] = [];
+    const node = slowNode(() => HOME);
+    const going = runAppIntentAtOnce("nav.home", { ...node.deps, onRecorded: (decision) => recorded.push(decision) });
+    expect(node.ran).toHaveLength(1);
+    expect(recorded).toEqual([]);
+    node.release();
+    await going;
+    expect(recorded).toEqual([HOME]);
+    expect(node.ran).toHaveLength(1);
+  });
+
+  it("says the read-back or what was kept only while the page is still on the start it made", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      for (const answer of [() => HOME, () => new Error("Failed to fetch")]) {
+        for (const movedOn of [false, true]) {
+          const said: string[] = [];
+          let mark = 0;
+          const node = slowNode(answer);
+          const going = runAppIntentAtOnce("nav.home", {
+            ...node.deps,
+            onRecorded: () => said.push("recorded"),
+            onUnrecorded: () => said.push("unrecorded"),
+            // Read right after the click ran, as the page's own mark is.
+            watchStart: () => {
+              const at = mark;
+              return () => mark === at;
+            },
+          });
+          // The person sent a message, or left again, before the node answered.
+          if (movedOn) mark += 1;
+          node.release();
+          await going;
+          expect(said, `${answer() instanceof Error ? "failed" : "answered"}, moved on: ${String(movedOn)}`).toHaveLength(movedOn ? 0 : 1);
+        }
+      }
+      expect(info).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  it("waits for the node's decision on any other click, and says when it could not ask", async () => {
+    const settings = slowNode(() => ({ kind: "intent", intent: { kind: "settings.open" }, requiresConfirmation: false, readBack: "" }));
+    const opening = clickAppIntent("settings.open", settings.deps);
+    expect(settings.ran).toEqual([]);
+    settings.release();
+    await opening;
+    expect(settings.ran).toHaveLength(1);
+
+    const unreachable = slowNode(() => new Error("Failed to fetch"));
+    const failing = clickAppIntent("settings.open", unreachable.deps);
+    unreachable.release();
+    await failing;
+    expect(unreachable.ran).toEqual([]);
+    expect(unreachable.lookupFailures).toEqual([1]);
+  });
+});
+
+describe("what the page carries out before the node has answered", () => {
+  it("never includes an intent the node may ask the person to confirm", () => {
+    for (const kind of INTENTS_RUN_AT_ONCE) expect(CONFIRMATION_REQUIRED_KINDS.includes(kind), kind).toBe(false);
+    for (const kind of APP_INTENT_KINDS) {
+      if (CONFIRMATION_REQUIRED_KINDS.includes(kind)) expect(runsAtOnce(kind), kind).toBe(false);
+    }
+  });
+
+  it("is /new among the typed commands, the same intent as the logo, and nothing else", () => {
+    expect(typedCommandRunAtOnce({ command: "new", argument: "" })).toBe("nav.home");
+    const others = SLASH_COMMANDS.filter((command) => command !== "new");
+    for (const command of others) expect(typedCommandRunAtOnce({ command, argument: "" }), command).toBeUndefined();
+    expect(typedCommandRunAtOnce(undefined)).toBeUndefined();
+  });
+
+  it("reads a typed command through the node's own copy of what it stands for, whatever follows it", () => {
+    for (const command of SLASH_COMMANDS) {
+      const shared = SLASH_COMMAND_INTENTS[command];
+      for (const argument of ["", "background", "a title"]) {
+        const atOnce = typedCommandRunAtOnce({ command, argument });
+        // Never a command the shared reading does not map, and never to another intent than the one it maps to.
+        if (atOnce !== undefined) expect(atOnce, `/${command} ${argument}`).toBe(shared);
+        if (shared !== undefined && runsAtOnce(shared)) expect(atOnce, `/${command} ${argument}`).toBe(shared);
+      }
+    }
   });
 });

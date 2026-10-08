@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * Signing in to pi's providers from Settings → AI & Routing, as a person does it.
@@ -41,6 +41,13 @@ async function openProviders(page: Page) {
 /** The shared node keeps who is signed in: put `fake-other` back to signed out for the specs after this one. */
 test.afterEach(async ({ request }) => {
   const headers = { authorization: `Bearer ${token()}` };
+  // And no sign-in left running, which the next spec's rows would show again.
+  const running = await request.get(`${GATEWAY}/providers/sign-ins`, { headers });
+  if (running.ok()) {
+    for (const { signInId } of ((await running.json()) as { signIns: { signInId: string }[] }).signIns) {
+      await request.post(`${GATEWAY}/providers/sign-ins/${signInId}/cancel`, { headers, data: {} });
+    }
+  }
   await request.post(`${GATEWAY}/providers/fake-other/sign-out`, { headers, data: {} });
   await request.put(`${GATEWAY}/preferences/experience.language`, { headers, data: { value: "vi" } });
 });
@@ -77,26 +84,63 @@ test("a provider is signed in to with an API key from Settings, the catalogue is
   await expect(other).toHaveAttribute("data-configured", "false", { timeout: 10_000 });
 });
 
+/** Presses Tab until `target` has the focus, as a person reaching it from the keyboard does. */
+async function tabTo(page: Page, target: Locator): Promise<void> {
+  for (let presses = 0; presses < 80; presses += 1) {
+    if (await target.evaluate((element) => element === document.activeElement)) return;
+    await page.keyboard.press("Tab");
+  }
+  throw new Error("Tab never reached the control");
+}
+
 test("an account sign-in is followed with the keyboard alone: the provider's page, then its code", async ({ page }) => {
   const section = await openProviders(page);
   const other = section.locator('[data-provider-id="fake-other"]');
 
+  // Reached with real Tab presses from the tab that opened the section, not by moving the focus for the person.
   const account = other.getByRole("button", { name: "Đăng nhập tài khoản" });
-  await account.focus();
+  await page.locator("#cc-tab-ai").focus();
+  await tabTo(page, account);
   await page.keyboard.press("Enter");
 
   // The provider's own page, opened by the person, never by the app.
   const link = other.locator('.cc-sign-in a[href="https://example.invalid/fake-sign-in"]');
   await expect(link).toBeVisible({ timeout: 10_000 });
+  // The field the provider asks with takes the focus that pressed the button: nothing is lost to the page.
   const code = other.locator('.cc-sign-in input[type="text"]');
-  await expect(code).toBeVisible({ timeout: 10_000 });
-  await code.focus();
+  await expect(code).toBeFocused({ timeout: 10_000 });
   await page.keyboard.type("e2e-oauth-code");
   await page.keyboard.press("Enter");
 
   await expect(other.locator(".cc-sign-in .cc-command-status")).toContainText("Đã đăng nhập", { timeout: 10_000 });
   await expect(other).toHaveAttribute("data-configured", "true", { timeout: 10_000 });
   await expect(page.locator("body")).not.toContainText("e2e-oauth-code");
+  // The answered field is gone, and the focus went on into the row rather than to the page.
+  await expect.poll(() => other.evaluate((row) => row.contains(document.activeElement))).toBe(true);
+});
+
+test("a sign-in left running is shown again when the tab is opened again, and its buttons stay held", async ({ page }) => {
+  const section = await openProviders(page);
+  const other = section.locator('[data-provider-id="fake-other"]');
+  await other.getByRole("button", { name: "Dùng API key" }).click();
+  await expect(other.locator('.cc-sign-in input[type="password"]')).toBeFocused({ timeout: 10_000 });
+
+  // Away to another tab, which takes the section down, and back.
+  await page.locator("#cc-tab-experience").click();
+  await expect(section).toHaveCount(0);
+  await page.locator("#cc-tab-ai").click();
+
+  // The node still runs that sign-in, so the row shows it, rather than offering buttons that would resume it unseen.
+  const again = page.locator('[data-provider-sign-in="true"] [data-provider-id="fake-other"]');
+  await expect(again.locator('.cc-sign-in input[type="password"]')).toBeVisible({ timeout: 10_000 });
+  await expect(again.getByRole("button", { name: "Đăng nhập tài khoản" })).toHaveAttribute("aria-disabled", "true");
+  // Shown again on a tab the person just opened, it does not take the focus from where the person is.
+  await expect(page.locator("#cc-tab-ai")).toBeFocused();
+
+  await again.locator(".cc-sign-in").getByRole("button", { name: "Hủy" }).click();
+  // Cancelled is its own ending, never drawn as a failure.
+  await expect(again.locator(".cc-sign-in [data-sign-in-status='cancelled']")).toHaveAttribute("data-result", "cancelled", { timeout: 10_000 });
+  await expect(again.getByRole("button", { name: "Dùng API key" })).not.toHaveAttribute("aria-disabled", "true");
 });
 
 test("a key from the environment offers no account sign-in pi does not advertise, and no sign-out, and says why", async ({ page }) => {
@@ -131,8 +175,20 @@ test("a node with no pi to sign in through says so, and an unreadable list can b
   const failed = section.locator('[data-provider-sign-in-state="failed"]');
   await expect(failed).toContainText("pi could not list its providers: e2e", { timeout: 10_000 });
   await page.unroute("**/providers/auth");
+  // Held until the section has been seen saying it is reading again: "Try again" is not a press that shows nothing.
+  let release = (): void => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/providers/auth", async (route) => {
+    await released;
+    await route.continue();
+  });
   await failed.getByRole("button", { name: "Thử lại" }).click();
+  await expect(section.locator('[role="status"]')).toContainText("Đang đọc", { timeout: 10_000 });
+  release();
   await expect(section.locator('[data-provider-id="fake-other"]')).toBeVisible({ timeout: 10_000 });
+  await page.unroute("**/providers/auth");
 });
 
 test("on a phone, in English, the rows fit the screen and every way in is reachable", async ({ browser, request }) => {

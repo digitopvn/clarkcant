@@ -8,6 +8,8 @@ import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import { createTask, requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
 import {
   appendMessage,
+  credentialNames,
+  getSecretMetadata,
   latestMessages,
   nextMessageSequence,
   oneRow,
@@ -63,13 +65,13 @@ function token(): string {
 async function request(
   method: string,
   path: string,
-  options: { body?: unknown; authed?: boolean; query?: Record<string, string> } = {},
+  options: { body?: unknown; authed?: boolean; query?: Record<string, string>; headers?: Record<string, string> } = {},
 ): Promise<GatewayResponse> {
   const request_: GatewayRequest = {
     method,
     path,
     query: options.query ?? {},
-    headers: options.authed === false ? {} : { authorization: `Bearer ${token()}` },
+    headers: { ...(options.authed === false ? {} : { authorization: `Bearer ${token()}` }), ...options.headers },
     body: options.body === undefined ? "" : JSON.stringify(options.body),
   };
   return handleRequest(deps, request_);
@@ -1101,6 +1103,41 @@ describe("taking a credential back", () => {
     // apart cannot tell a person why nothing changed.
     const again = await request("DELETE", "/credentials/probe_key");
     expect(again.status).toBe(404);
+  });
+
+  it("forgets the description written beside the value, so nothing still promises a key that is gone", async () => {
+    const owner = services.runtime.identity.ownerPrincipalId;
+    expect((await request("POST", "/credentials", { body: { fields: [{ name: "probe_key", value: "not-a-real-key" }] } })).status).toBe(201);
+    expect(getSecretMetadata(services.runtime.db, owner, "probe_key")).toBeDefined();
+
+    expect((await request("DELETE", "/credentials/probe_key")).status).toBe(200);
+    expect(readCredential(services.runtime.db, owner, "probe_key")).toBeUndefined();
+    expect(getSecretMetadata(services.runtime.db, owner, "probe_key")).toBeUndefined();
+  });
+
+  it("is the person's: a request a machine surface carried can neither store nor remove one, and says which surface refused it", async () => {
+    const owner = services.runtime.identity.ownerPrincipalId;
+    expect((await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "persons-key" }] } })).status).toBe(201);
+    for (const [surface, named] of [
+      ["mcp", "MCP server"],
+      ["relay", "WebSocket relay"],
+      ["cli-api", "clarkcant api"],
+    ] as const) {
+      const headers = { "x-clarkcant-surface": surface };
+      const removed = await request("DELETE", "/credentials/typesafe", { headers });
+      expect(removed.status, surface).toBe(403);
+      expect(removed.body).toMatchObject({ code: "PERSON_ONLY", surface });
+      expect(JSON.stringify(removed.body)).toContain(named);
+      const stored = await request("POST", "/credentials", { headers, body: { fields: [{ name: "typesafe", value: "planted-key" }] } });
+      expect(stored.status, surface).toBe(403);
+      expect(JSON.stringify(stored.body)).not.toContain("planted-key");
+    }
+    // Nothing changed: the person's key is still the one held, with its description.
+    expect(readCredential(services.runtime.db, owner, "typesafe")).toBe("persons-key");
+    expect(credentialNames(services.runtime.db, owner)).toEqual(["typesafe"]);
+    expect(getSecretMetadata(services.runtime.db, owner, "typesafe")).toBeDefined();
+    // Listing stays reachable for a machine surface: names only, as the person's app sees them.
+    expect((await request("GET", "/credentials", { headers: { "x-clarkcant-surface": "mcp" } })).status).not.toBe(403);
   });
 });
 

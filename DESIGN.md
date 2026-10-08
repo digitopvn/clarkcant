@@ -438,7 +438,7 @@ Keep orb + prompt, but the suggestion chips should be **dynamic recent intents**
 
 Each chip must indicate if it's a demo/sample.
 
-The hero disappears once the user starts working, but the logo/home lets them return to it.
+The hero disappears once the user starts working, but the logo/home lets them return to it. The logo, and `/new` typed while a reply is being written, take effect at once through the same path: that reply goes on in the conversation left behind (for `/new`, the node's read-back says so and points to `/sessions`), and what the user types next belongs to the new conversation, never checked against the old one or cleared when the node's record arrives. If the node cannot be told, the page says itself that the conversation left behind is kept, that leaving did not stop its reply, and that `/sessions` reopens it; the failure is traced, not shown as a lookup error. Either remark is said only while the page is still on the new conversation with nothing sent in it; one that arrives later is dropped with a trace. A typed sentence asking for a new conversation during a reply waits for the node's reading, since only the node reads sentences; if the composer was edited after Enter, the restart that answer brings keeps the edited text. Asked for by voice, going home takes effect the moment the node's decision arrives, through the same executor.
 
 ### 6.3 Composer
 
@@ -865,15 +865,20 @@ whether it can be retried, and whether it is still current.
   before the answer arrives: `error` is assertive, any other change of phase is
   polite, and the same phase again, `loading`, or anything already on screen at
   mount (a reload, a scroll back) is not announced.
-- **Late answers and retry (contract helpers, adopted surface by surface).**
-  The contract's `settleSurfaceStatus` drops an answer for an earlier attempt
-  and keeps the first outcome of an attempt, so neither a late "still working"
-  nor a later outcome replaces it; its `canRetry` offers a retry only for
-  `error` or `partial` when the domain names `retry` or `check-again`. No
-  built-in miniapp calls them yet: today's retries (press again on a task stop,
-  try again on a credential) and late answers on command-card rows still follow
-  each surface's own rules, and move onto these helpers as those surfaces are
-  reworked.
+- **A cancel is not a failure.** A sign-in the person cancelled reads
+  `cancelled`, a reply this app cannot read reads `partial`, and a refusal says
+  the node's reason in the person's words, never `CODE: message`. The client
+  keeps the node's code apart from its sentence, so a built-in surface that
+  shows a refusal shows words; only a widget's wire puts the code in front, for
+  the widget's program to read.
+- **Late answers and retry.** The contract's `settleSurfaceStatus` drops an
+  answer for an earlier attempt and keeps the first outcome of an attempt, so
+  neither a late "still working" nor a later outcome replaces it. Command-card
+  rows and the credential card settle every press through it, each press being
+  a new attempt; a row shows its latest press among its buttons. A surface
+  whose retry repeats the same answer passes through `pending` first, so the
+  same failure twice is said twice. `canRetry` offers a retry only for `error`
+  or `partial` when the domain names `retry` or `check-again`.
 
 ### 8.4 Local vs effect actions
 
@@ -1358,9 +1363,13 @@ Don't show contrast debugging to consumers; put it in the Developer section.
   reason and what to do about it, and the last call since the node started. A segmented control offers Follow
   environment, TypeSafe Jev, Cloudflare Clef and OpenRouter; Cloudflare adds its model choice and an account-id field,
   OpenRouter a pinned model-slug field that is saved only once a slug is entered (a router such as `openrouter/auto`
-  is refused with the node's reason). Each provider has a key card that says where its key comes from (saved here, the
-  environment, or none), with a password field, Save/Replace and Remove for a key saved here; a typed key is cleared
-  once stored and never shown back. Every write goes to the node's decision-provider routes and the card redraws from
+  is refused with the node's reason). Each provider has a key card that says where its key comes from (saved on its
+  card, saved in Credentials for TypeSafe, the environment, or none); Cloudflare's and OpenRouter's have a password
+  field, Save/Replace and Remove for a key saved on the card, and a typed key is cleared once stored and never shown
+  back. The TypeSafe key has one control, its `typesafe` row in the Credentials list (11.6), so the TypeSafe card
+  points there with Go to Credentials instead of a second field. The button focuses that row's key field, never a
+  Remove button, and falls back to the list's heading when the row is missing. Saving or removing a credential there
+  makes the card read the node again, so it never shows a stale key state. A reason code the client does not know is worded as a translated generic reason, never as a raw code. Every write goes to the node's decision-provider routes and the card redraws from
   the answer; each change says it applies from the next decision, and nothing asks for a restart.
 - Favorites/recent models.
 - Shortcut order for model cycling.

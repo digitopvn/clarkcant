@@ -500,9 +500,10 @@ widget cô lập nên theo cùng các quy tắc để đọc giống các thẻ 
 
 Quy tắc cuối cùng, và quy tắc chỉ đề nghị thử lại sau một lỗi hoặc một kết quả
 không đầy đủ, là các helper trong hợp đồng (`settleSurfaceStatus` và
-`canRetry`) mà các thẻ dựng sẵn áp dụng dần từng bề mặt. Hiện chưa thẻ dựng sẵn
-nào gọi chúng, nên đừng lấy các thẻ hôm nay làm mẫu cho câu trả lời đến muộn hay
-việc thử lại.
+`canRetry`) mà các thẻ dựng sẵn áp dụng dần từng bề mặt. Các dòng của thẻ lệnh
+và thẻ thông tin xác thực chốt câu trả lời đến muộn qua `settleSurfaceStatus`,
+và là mẫu tham chiếu cho quy tắc đó; hiện chưa thẻ dựng sẵn nào đề nghị thử lại
+qua `canRetry`.
 
 ---
 
