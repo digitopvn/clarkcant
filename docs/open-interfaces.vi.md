@@ -212,9 +212,11 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   trong ô soạn thảo giữ nguyên, và khi đóng thì focus trở về ô soạn thảo. Một tab không tồn tại thì không mở gì cả và
   được trả lời bằng danh sách các tab theo nhãn của chúng trong ngôn ngữ của người dùng. Không model nào được hỏi.
 - `POST /app-intents` với `text` đọc `/settings`, `/settings <tab>` và `/new` theo cùng cách đó, nên ô soạn thảo đi kèm
-  gửi lệnh gõ trong lúc câu trả lời đang được viết tới đó và Settings mở ra (hoặc bắt đầu lại) ngay. Mọi lệnh gạch
-  chéo khác được trả lời `none` ở đó, vì nó được trả lời trong cuộc trò chuyện và phải chờ câu trả lời xong: ô soạn
-  thảo đi kèm giữ nó trong bản nháp và nói rõ điều đó.
+  gửi lệnh gõ trong lúc câu trả lời đang được viết tới đó và Settings mở ra (hoặc bắt đầu lại) ngay. `/new` không dừng
+  câu trả lời đó: nó tiếp tục được viết trong cuộc trò chuyện vừa rời đi, mở lại được bằng `/sessions`, và `readBack`
+  của quyết định nói rõ điều này, như ô soạn thảo đi kèm hiển thị. Mọi lệnh gạch chéo khác được trả lời `none` ở đó,
+  vì nó được trả lời trong cuộc trò chuyện và phải chờ câu trả lời xong: ô soạn thảo đi kèm giữ nó trong bản nháp và
+  nói rõ điều đó, giống như với mọi lệnh gạch chéo gõ trước khi tin nhắn đầu tiên tạo xong cuộc trò chuyện.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
   đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
   không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có

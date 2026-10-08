@@ -207,9 +207,11 @@ The origin stays with the work it started:
   tab that does not exist opens nothing and is answered with the list of tabs by their labels in the person's
   language. No model is asked.
 - `POST /app-intents` with `text` reads `/settings`, `/settings <tab>` and `/new` the same way, so the bundled composer
-  sends one typed while a reply is being written there and it opens Settings (or starts over) at once. Any other slash
-  command is answered `none` there, because it is answered in the conversation and has to wait for the reply: the
-  bundled composer keeps it in the draft and says so.
+  sends one typed while a reply is being written there and it opens Settings (or starts over) at once. `/new` does not
+  stop that reply: it goes on in the conversation left behind, which `/sessions` reopens, and the decision's
+  `readBack` says so, as the bundled composer shows. Any other slash command is answered `none` there, because it is
+  answered in the conversation and has to wait for the reply: the bundled composer keeps it in the draft and says so,
+  as it does for any slash command typed before the first message has made the conversation.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the running turn (a
   steer), interrupts it, or runs in the background. Its `references` are checked before that decision, so a reference
   that is not available is refused with `400 REFERENCE_NOT_AVAILABLE` and the running turn is left as it was. A
