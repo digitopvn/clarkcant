@@ -201,7 +201,8 @@ async function devSmoke(cliEntry, project, scratch) {
   await usingDev(builtin, "dev (catalog)", async () => {
     const page = await fetchText(new URL("catalog-runtime.html", builtin.url).href);
     const src = /<script type="module" src="([^"]+)"/.exec(page.text)?.[1];
-    assert(src === "/runtime/catalog-runtime.js", `the catalog frame loads ${String(src)}, not the bundled runtime`);
+    // Under the nonce: the sandboxed frame's opaque origin is answered only there.
+    assert(/^\/dev\/frame\/[0-9a-f]{32}\/catalog-runtime\.js$/.test(src ?? ""), `the catalog frame loads ${String(src)}, not the bundled runtime`);
     const module = await fetchText(new URL(src, builtin.url).href);
     assert(/javascript/.test(module.type), `the catalog runtime is served as ${module.type}`);
     log(`  dev (catalog ${BUILTIN_WIDGET}): served the frame and its bundled runtime (${String(module.text.length)} bytes)`);

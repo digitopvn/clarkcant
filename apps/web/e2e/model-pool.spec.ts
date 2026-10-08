@@ -92,7 +92,8 @@ test("the statusline names the model the next turn runs and its thinking level, 
 
   const statusline = page.locator("[data-statusline='true']");
   await expect(statusline).toContainText("deepseek-v4-flash");
-  await expect(statusline).toContainText("thinking: mặc định");
+  // No level named: the model thinks at its own default, which the statusline calls auto.
+  await expect(statusline).toContainText("thinking: tự động");
 
   // A switch made from this page is read back at once, without a reload.
   model = { provider: "anthropic", id: "claude-opus-5-5", thinkingLevel: "high" };
