@@ -7,7 +7,7 @@ import { canPickFolder, pickFolderOnDesktop } from "./desktop-compact.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { nodeViewRefusalText } from "./node-view-refusal.ts";
-import { useProviderSignIns } from "./use-provider-sign-ins.ts";
+import { signInFailureReason, useProviderSignIns } from "./use-provider-sign-ins.ts";
 import { useModelPickerPort } from "./use-model-picker-port.ts";
 import type {
   ArtifactOpenState,
@@ -492,7 +492,20 @@ export function useBlockActions({
    * browser page finishing, a code arriving — so the card asks rather than guesses.
    */
   const [commandAction, setCommandAction] = useState<Record<string, CommandActionState>>({});
-  const { signIns, start: startSignIn, answer: answerSignIn, cancel: cancelSignIn, signOut: signOutProvider } = useProviderSignIns(client, setError);
+  const {
+    signIns,
+    start: startSignIn,
+    reattach: reattachSignIns,
+    answer: answerSignIn,
+    cancel: cancelSignIn,
+    signOut: signOutProvider,
+  } = useProviderSignIns(client, setError);
+  /** A `/login` row opened again shows the sign-in the node still runs for its provider, rather than nothing. */
+  const reattachSignIn = useCallback(
+    ({ key, providerId }: { key: string; providerId: string }) =>
+      reattachSignIns((view) => (view.providerId === providerId ? key : undefined)),
+    [reattachSignIns],
+  );
 
   /** The model picker a `/model` card draws and a sign-in offers next. */
   const modelPicker = useModelPickerPort(client, t);
@@ -551,7 +564,7 @@ export function useBlockActions({
               const { [key]: _started, ...rest } = current;
               return rest;
             });
-          }, fail);
+          }, (error: unknown) => settle({ status: "failed", message: signInFailureReason(error) }));
           return;
         case "provider-sign-out":
           settle({ status: "pending" });
@@ -726,6 +739,7 @@ export function useBlockActions({
       signIns,
       onSignInAnswer: answerSignIn,
       onSignInCancel: cancelSignIn,
+      onSignInReattach: reattachSignIn,
       ...(conversationId === undefined ? {} : { onFeedbackPreview: previewFeedback, onFeedbackCreate: createFeedback }),
       feedback,
       answeredFeedbackCards,
@@ -747,6 +761,7 @@ export function useBlockActions({
       previewFeedback,
       answerSignIn,
       cancelSignIn,
+      reattachSignIn,
       developFolder,
       folderEntries,
       commandAction,

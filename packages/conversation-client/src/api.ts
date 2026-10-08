@@ -1734,6 +1734,11 @@ export class GatewayClient {
     return this.#call("POST", `/providers/${encodeURIComponent(providerId)}/sign-in`, { method });
   }
 
+  /** The sign-ins the node is still running or waiting on, so a surface opened again shows the one it left. */
+  async runningProviderSignIns(): Promise<{ signIns: ProviderSignInView[] }> {
+    return this.#call("GET", "/providers/sign-ins");
+  }
+
   async providerSignIn(signInId: string): Promise<ProviderSignInView> {
     return this.#call("GET", `/providers/sign-ins/${encodeURIComponent(signInId)}`);
   }

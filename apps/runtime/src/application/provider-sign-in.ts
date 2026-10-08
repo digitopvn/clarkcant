@@ -120,6 +120,19 @@ export class ProviderSignIns {
     return this.#signIns.get(signInId)?.view;
   }
 
+  /**
+   * The sign-ins still running or waiting for the person, at most one per provider.
+   *
+   * What a surface reads when it opens again — a Settings tab switched back to, a page reloaded — so a sign-in the node
+   * still holds is shown where the person left it, instead of vanishing until a press resumes it unseen.
+   */
+  running(): ProviderSignInView[] {
+    this.#sweep();
+    return [...this.#signIns.values()]
+      .map((signIn) => signIn.view)
+      .filter((view) => view.state === "running" || view.state === "waiting");
+  }
+
   /** Hands the person's answer to the provider. The value goes straight through and is never part of a view. */
   answer(signInId: string, value: string): SignInAnswerOutcome {
     const signIn = this.#signIns.get(signInId);

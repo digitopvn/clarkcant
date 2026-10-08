@@ -255,7 +255,7 @@ describe("the look a theme's identity reaches", () => {
 
     // The primary action is filled with the accent directly, so no recipe reaches it, and the plain one beside it is
     // the elevated surface lightly tinted with the text colour: the two differ in fill.
-    const primary = rules(APP_CSS).find(({ selector }) => selector === '.cc-action[data-emphasis="primary"]:not(:disabled)')?.body ?? "";
+    const primary = rules(APP_CSS).find(({ selector }) => selector === '.cc-action[data-emphasis="primary"]:not(:disabled, [aria-disabled="true"])')?.body ?? "";
     expect(primary).toMatch(/background:\s*var\(--cc-accent\)/);
     expect(primary).toMatch(/border-color:\s*var\(--cc-accent\)/);
     expect(primary).not.toMatch(/var\(--cc-button-/);
