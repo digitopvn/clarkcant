@@ -68,7 +68,8 @@ export function statuslineParts(
 
 	if (input.model !== undefined) {
 		parts.push(input.model.id);
-		// "Default" is what the node reports by naming no level: sessions then think at pi's own default.
+		// The node names no level when none was chosen, and sessions then think at the model's own default. That reads
+		// as "auto": the model decides. It is not an effort a provider is sent, which is why it is not a level here.
 		parts.push(
 			input.model.thinkingLevel === undefined
 				? t("widgets.statusline.thinkingDefault")

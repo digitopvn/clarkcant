@@ -66,6 +66,7 @@ import {
   redactDevSessionView,
   RELAY_LIMITS,
   relayBudget,
+  relayPackagesChanged,
   reviewDetachedBootstrap,
   reviewDetachedBrokerRequest,
   reviewDetachedDevSession,
@@ -1282,10 +1283,12 @@ function registerHandlers() {
 
   /*
    * The shell says the installed packages changed. The detached window re-reads its frame, so a widget whose package was
-   * updated or removed shows what the node now serves; nothing about the change travels with the signal.
+   * updated or removed shows what the node now serves; nothing about the change travels with the signal. A burst of
+   * signals reaches the window once, after it settles, so the re-reads it causes stay inside the read budget.
    */
+  const packagesChanged = relayPackagesChanged({ target: () => detached?.window });
   handle("desktop:notifyPackagesChanged", async () => {
-    detached?.window.webContents.send("detached:packagesChanged");
+    if (detached !== undefined) packagesChanged.signal();
     return { ok: true };
   });
 

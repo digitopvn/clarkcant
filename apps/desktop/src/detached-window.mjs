@@ -166,7 +166,8 @@ export const RELAY_LIMITS = Object.freeze({
   intent: Object.freeze({ maxBytes: 64 * 1024, burst: 10, refillPerSecond: 2, inFlight: 4, timeoutMs: 330_000 }),
   "dev.session": Object.freeze({ burst: 5, refillPerSecond: 1, timeoutMs: 30_000 }),
   artifacts: Object.freeze({ burst: 300, refillPerSecond: 10, timeoutMs: 30_000 }),
-  "artifacts.dialog": Object.freeze({ burst: 5, refillPerSecond: 0.1, inFlight: 1, timeoutMs: 30_000 }),
+  // No time limit of its own: a verb's node calls take its first bucket's (`artifacts`), so one here would never apply.
+  "artifacts.dialog": Object.freeze({ burst: 5, refillPerSecond: 0.1, inFlight: 1 }),
   jobs: Object.freeze({ burst: 60, refillPerSecond: 5, timeoutMs: 30_000 }),
   tokens: Object.freeze({ burst: 10, refillPerSecond: 0.2, inFlight: 2, timeoutMs: 30_000 }),
 });
@@ -342,21 +343,44 @@ export function reviewDetachedSemanticPublish(payload) {
  * instance: the host performs each against the instance it opened the window for, and the node re-checks the grant.
  */
 
-/** The SDK's own patterns and bounds, repeated: the Electron host cannot load TypeScript. */
+/**
+ * The SDK's own patterns and bounds, repeated: the Electron host cannot load TypeScript. `detached-window.spec.ts`
+ * holds each one equal to its source (`ARTIFACT_BRIDGE_LIMITS`, `artifactRequestSchema`, `jobRefWireSchema`,
+ * `tokenRequestSchema` and `TOKEN_BRIDGE_LIMITS` in `@clarkcant/widget-sdk`; `browserTokenSessionSchema` and
+ * `BROWSER_TOKEN_LIMITS` in `@clarkcant/contracts`).
+ */
 export const ARTIFACT_RELAY_LIMITS = Object.freeze({
   chunkBytes: 262_144,
   chunkBase64Chars: Math.ceil(262_144 / 3) * 4,
   maxAccept: 16,
+  acceptMaxChars: 120,
+  mimeTypeMinChars: 3,
+  mimeTypeMaxChars: 120,
   nameMaxChars: 200,
 });
-const ARTIFACT_ID = /^art_[A-Za-z0-9_-]{1,120}$/;
-const JOB_ID = /^job_[A-Za-z0-9_-]{1,120}$/;
-const ACCEPT_TYPE = /^[a-z][a-z0-9.+-]*\/(\*|[a-z0-9][a-z0-9.+-]*)$/;
+export const TOKEN_RELAY_LIMITS = Object.freeze({
+  providerMaxChars: 64,
+  scopes: 16,
+  scopeMaxChars: 128,
+  minTtlSeconds: 30,
+  maxTtlSeconds: 3_600,
+});
+export const RELAY_PATTERNS = Object.freeze({
+  artifactId: /^art_[A-Za-z0-9_-]{1,120}$/,
+  jobId: /^job_[A-Za-z0-9_-]{1,120}$/,
+  acceptType: /^[a-z][a-z0-9.+-]*\/(\*|[a-z0-9][a-z0-9.+-]*)$/,
+  /** A frame's token session: minted by the frame host, one per mounted frame. */
+  tokenSession: /^[A-Za-z0-9_-]{16,128}$/,
+  tokenProvider: /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*$/,
+  tokenScope: /^[A-Za-z0-9][A-Za-z0-9:._/-]*$/,
+});
+const ARTIFACT_ID = RELAY_PATTERNS.artifactId;
+const JOB_ID = RELAY_PATTERNS.jobId;
+const ACCEPT_TYPE = RELAY_PATTERNS.acceptType;
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
-/** A frame's token session: minted by the frame host, one per mounted frame. */
-export const TOKEN_SESSION = /^[A-Za-z0-9_-]{16,128}$/;
-const TOKEN_PROVIDER = /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*$/;
-const TOKEN_SCOPE = /^[A-Za-z0-9][A-Za-z0-9:._/-]*$/;
+export const TOKEN_SESSION = RELAY_PATTERNS.tokenSession;
+const TOKEN_PROVIDER = RELAY_PATTERNS.tokenProvider;
+const TOKEN_SCOPE = RELAY_PATTERNS.tokenScope;
 /** The words the host's dialogs are drawn in, in the person's language (`desktopDialogLabels`). */
 const DIALOG_LABELS = Object.freeze(["filterName", "replaceTitle", "replaceMessage", "replace", "cancel"]);
 
@@ -384,7 +408,7 @@ const RELAY_REQUESTS = Object.freeze({
       if (!Array.isArray(accept) || accept.length > ARTIFACT_RELAY_LIMITS.maxAccept) {
         return `a pick accepts at most ${String(ARTIFACT_RELAY_LIMITS.maxAccept)} types`;
       }
-      if (!accept.every((entry) => typeof entry === "string" && entry.length <= 120 && ACCEPT_TYPE.test(entry))) {
+      if (!accept.every((entry) => typeof entry === "string" && entry.length <= ARTIFACT_RELAY_LIMITS.acceptMaxChars && ACCEPT_TYPE.test(entry))) {
         return "a pick's accepted types are MIME types such as text/plain or image/*";
       }
       if (payload.title !== undefined && !isShortText(payload.title, 120)) return "a pick's title is a short string";
@@ -399,7 +423,7 @@ const RELAY_REQUESTS = Object.freeze({
   "artifacts.create": {
     fields: ["mimeType", "name"],
     check: (payload) => {
-      if (typeof payload.mimeType !== "string" || payload.mimeType.length < 3 || payload.mimeType.length > 120) {
+      if (typeof payload.mimeType !== "string" || payload.mimeType.length < ARTIFACT_RELAY_LIMITS.mimeTypeMinChars || payload.mimeType.length > ARTIFACT_RELAY_LIMITS.mimeTypeMaxChars) {
         return "a new file names its type";
       }
       if (payload.name !== undefined && !isName(payload.name)) return "a file's name is 1 to 200 characters";
@@ -471,17 +495,17 @@ const RELAY_REQUESTS = Object.freeze({
       if (!isPlainObject(request)) return "a token request is an object";
       const unknown = Object.keys(request).filter((key) => !["provider", "scopes", "ttlSeconds"].includes(key));
       if (unknown.length > 0) return `a token request carries fields the host does not accept: ${unknown.join(", ")}`;
-      if (!isShortText(request.provider, 64) || !TOKEN_PROVIDER.test(request.provider)) return "a token request names its provider";
+      if (!isShortText(request.provider, TOKEN_RELAY_LIMITS.providerMaxChars) || !TOKEN_PROVIDER.test(request.provider)) return "a token request names its provider";
       if (
         !Array.isArray(request.scopes) ||
         request.scopes.length < 1 ||
-        request.scopes.length > 16 ||
-        !request.scopes.every((scope) => isShortText(scope, 128) && TOKEN_SCOPE.test(scope))
+        request.scopes.length > TOKEN_RELAY_LIMITS.scopes ||
+        !request.scopes.every((scope) => isShortText(scope, TOKEN_RELAY_LIMITS.scopeMaxChars) && TOKEN_SCOPE.test(scope))
       ) {
-        return "a token request names 1 to 16 scopes";
+        return `a token request names 1 to ${String(TOKEN_RELAY_LIMITS.scopes)} scopes`;
       }
-      if (request.ttlSeconds !== undefined && (!Number.isInteger(request.ttlSeconds) || request.ttlSeconds < 30 || request.ttlSeconds > 3_600)) {
-        return "a token lives 30 to 3600 seconds";
+      if (request.ttlSeconds !== undefined && (!Number.isInteger(request.ttlSeconds) || request.ttlSeconds < TOKEN_RELAY_LIMITS.minTtlSeconds || request.ttlSeconds > TOKEN_RELAY_LIMITS.maxTtlSeconds)) {
+        return `a token lives ${String(TOKEN_RELAY_LIMITS.minTtlSeconds)} to ${String(TOKEN_RELAY_LIMITS.maxTtlSeconds)} seconds`;
       }
       return undefined;
     },
@@ -650,6 +674,40 @@ export async function runRelay(budget, verb, callNode, run) {
   } finally {
     taken.done();
   }
+}
+
+/** How long the package-change signals have to be quiet before the detached window is told to re-read its frame. */
+export const PACKAGES_CHANGED_SETTLE_MS = 500;
+
+/**
+ * The shell's package-change signals, passed on to the detached window once a burst of them has settled.
+ *
+ * Each signal the window hears is a frame read, and the read budget (`frame.read`) refuses past its burst: a run of
+ * installs passed on one by one would have the last read refused and leave the frame a build behind. So every signal
+ * restarts a short wait, and only the last one in a run reaches the window. The window is looked up when the wait ends,
+ * and one closed or destroyed by then hears nothing.
+ *
+ * @param {{
+ *   target: () => ({ isDestroyed: () => boolean, webContents: { isDestroyed: () => boolean, send: (channel: string) => void } } | undefined),
+ *   settleMs?: number,
+ *   timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout },
+ * }} input
+ * @returns {{ signal: () => void }}
+ */
+export function relayPackagesChanged(input) {
+  const timers = input.timers ?? globalThis;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer;
+  const signal = () => {
+    if (timer !== undefined) timers.clearTimeout(timer);
+    timer = timers.setTimeout(() => {
+      timer = undefined;
+      const window = input.target();
+      if (window === undefined || window.isDestroyed() || window.webContents.isDestroyed()) return;
+      window.webContents.send("detached:packagesChanged");
+    }, input.settleMs ?? PACKAGES_CHANGED_SETTLE_MS);
+  };
+  return { signal };
 }
 
 /** Where a redacted folder path stood: the package root, as the diagnostics' own `path` is relative to it. */

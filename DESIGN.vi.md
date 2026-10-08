@@ -36,7 +36,7 @@ AI phải làm ClarkCant đơn giản hơn theo thời gian, không phải phứ
 - Không biến widgets thành một dashboard song song.
 - Mục tiêu không phải là giấu đi, mà là gọi ra được. Mọi thứ user có thể cần — phiên, đăng nhập/đăng xuất provider, model và thinking, cài đặt, chẩn đoán — đều gọi ra được bằng chat, voice hoặc slash command, và hiện thành tin nhắn của agent kèm widget UI (một mini app). Slash command, lời nói và voice cùng quy về một typed action.
 - Câu trả lời nào cần cấu trúc thì được ghép thành mini app: khi được nhờ so sánh benchmark của hai model, Clark nghiên cứu rồi trả lời bằng bảng, biểu đồ và sơ đồ ghép nối thành một bề mặt mạch lạc, không phải một bức tường chữ.
-- Settings là surface phụ, mở trên conversation và đóng lại về đúng vị trí cũ.
+- Settings là surface phụ, mở trên conversation và đóng lại về đúng vị trí cũ. Nút bánh răng, câu "mở cài đặt" gõ hay nói, và `/settings` (`/settings <tab>` cho một tab) đều mở cùng một hộp thoại đó.
 - Marketplace có thể có browser surface, nhưng phải mở từ chat/settings và không trở thành home screen thứ hai.
 - Mọi action quan trọng phải có đường chat và voice tương đương.
 

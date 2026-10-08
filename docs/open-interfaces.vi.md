@@ -200,6 +200,14 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   tin nhắn đã được lưu cùng các tệp. Ô soạn thảo đi kèm giữ lại các chip tệp cho tin nhắn tiếp theo sau bất kỳ lệnh nào,
   với một ghi chú ngắn rằng lệnh không mang theo tệp, kể cả một lệnh bị từ chối hoặc bị huỷ. Bắt đầu lại, bằng lệnh hay
   bằng nút trên thanh đầu trang, sẽ bỏ các chip đó, nên chúng không bao giờ theo sang cuộc trò chuyện mới.
+- `/settings` mở hộp thoại Settings mà nút bánh răng trên thanh đầu trang mở, và `/settings <tab>` mở nó ở tab đó.
+  Một tab được gọi bằng id của nó (`experience`, `ai`, `control`, `extensions`, `devices`, `memory`, `developer`) hoặc
+  bằng những từ mà lệnh gõ "mở cài đặt" chấp nhận (`thiết bị`, `kiểm soát`, `tab ai`, ...). Câu trả lời mang quyết định
+  `settings.open` hoặc `settings.tab` của chính host trong `appIntent` (trên `/messages/stream` là trong frame `done`),
+  và trang chạy quyết định đó qua bộ thực thi app intent của nó: vẫn là hộp thoại đó, không phải hộp thoại thứ hai và
+  không chồng lên hộp thoại khác, cuộc trò chuyện và các chip tệp trong ô soạn thảo giữ nguyên, và khi đóng thì focus
+  trở về ô soạn thảo. Một tab không tồn tại thì không mở gì cả và được trả lời bằng danh sách các tab. Không model nào
+  được hỏi.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào lượt
   đang chạy, ngắt lượt đó, hoặc chạy nền. `references` của nó được kiểm tra trước quyết định đó, nên một tham chiếu
   không còn dùng được bị từ chối với `400 REFERENCE_NOT_AVAILABLE` và lượt đang chạy được giữ nguyên. Một tin nhắn có
