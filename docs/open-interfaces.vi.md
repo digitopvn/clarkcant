@@ -1006,9 +1006,16 @@ những giá trị lúc bắt đầu theo dõi; khi chúng khác nhau, thư mụ
 mục hiện nằm ở đường dẫn đó và dựng nó, giống như khi dựng một thay đổi đã lưu, và ghi id cũ lẫn id mới vào nhật ký.
 
 Một thư mục không có ở đó khi node xem, vì một lần dựng đã xoá nó mà chưa tạo lại, sẽ được tìm lại trong 2 giây trước
-khi phiên dừng. Trong lúc đó không có lần dựng mới nào bắt đầu. Một lần dựng đang chạy khi thư mục biến mất, hoặc một
-lần dựng lại được yêu cầu trong 2 giây đó, sẽ thất bại vì thiếu tệp và phiên vẫn chạy; thư mục được dựng lại khi nó trở
-lại. Một lần dựng cần lâu hơn 2 giây để tạo lại thư mục sẽ làm phiên dừng với lý do `folder-gone`.
+khi phiên dừng. Trong lúc đó không có lần dựng mới nào bắt đầu, và không lần dựng nào bị báo là thất bại: một lần dựng
+đang chạy khi thư mục biến mất, một lần lưu, hoặc một lần dựng lại được yêu cầu trong 2 giây đó sẽ chờ, và thư mục được
+dựng một lần khi nó trở lại. Một lần dựng lại sẽ trả về chính lần dựng đó. Một lần dựng cần lâu hơn 2 giây để tạo lại
+thư mục sẽ làm phiên dừng với lý do `folder-gone`, và một lần dựng lại đang chờ sẽ trả lời rằng thư mục đã không còn.
+
+Một thay đổi mà nền tảng báo cho một thư mục bên trong gói, thay vì cho một tệp, không khởi động lần dựng nào. Windows
+báo một thay đổi như vậy vào lần đầu một lần dựng liệt kê một thư mục vừa được tạo, còn một tệp được thêm, xoá hay lưu
+thì được báo bằng chính tên của nó. Trong khoảng một giây sau khi một thư mục được tạo lại bắt đầu được theo dõi lại,
+một lần dựng thấy các tệp giống hệt lần dựng trước sẽ không được báo: macOS có thể báo những lần ghi đã tạo ra thư mục
+sau khi việc theo dõi bắt đầu. Một lần lưu trong khoảng đó làm thay đổi tệp, nên vẫn được dựng và được báo.
 
 Một thư mục được chọn qua một liên kết hay junction được theo dõi ở đường dẫn thật mà nó dẫn tới lúc phiên bắt đầu. Một
 thư mục được tạo lại chỉ được tính khi đường dẫn của nó vẫn phân giải về đúng đường dẫn thật đó. Trên Windows và macOS,

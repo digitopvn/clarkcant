@@ -66,7 +66,8 @@ export const DEV_ENGINE_REARM_MAX = 30;
  * How long a watched folder may be missing before it counts as gone. A build that deletes its output folder and makes it
  * again (`rm -rf out && build`, `rmdir /s /q out && xcopy src out`) leaves the path empty for a moment, and the old
  * watcher reports the deletion straight away; a folder back at the same real path within this time is watched anew
- * rather than stopping the session. Nothing is built while the folder is missing.
+ * rather than stopping the session. Nothing is built while the folder is missing: a build asked for meanwhile, or one that
+ * fails because the folder went while it ran, is held, and the folder is built once when it is back.
  */
 export const DEV_ENGINE_ROOT_MISSING_GRACE_MS = 2_000;
 /**
@@ -153,7 +154,11 @@ export interface DevEngine {
   /** The newest successful generation. */
   latest(): DevGenerationRecord | undefined;
   lastBuild(): WidgetDevBuild | undefined;
-  /** Build now, after any build already running. */
+  /**
+   * Build now, after any build already running. While a watched folder is being made again, this waits for the build
+   * that runs once it is back (reported through `onBuild` by that build, not twice), or, should it not come back within
+   * the grace, settles with why it was not built.
+   */
   rebuild(trigger?: WidgetDevTrigger): Promise<DevEngineEvent>;
   /** Whether the folder is being watched: false after `close`, after a watch failure, or when watching was not asked for. */
   watching(): boolean;
@@ -256,6 +261,20 @@ function sizeOf(root: string): number {
 }
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
+
+/**
+ * Whether `path` is a folder (not a link to one). A `change` the watcher reports for a folder is about the folder's own
+ * entry, not its files: Windows reports one when a build first lists a folder made a moment ago (its last-access time is
+ * set), so building on it would build the files just built again. A file added, removed or saved in a folder is
+ * reported under the file's own name.
+ */
+function isFolderAt(path: string): boolean {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false;
+  }
+}
 
 /** Holds `root` open where that keeps its file id from being given to a folder made again there; undefined elsewhere. */
 function pinRoot(root: string): number | undefined {
@@ -545,13 +564,98 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     return { kind: "generation", record, build: last };
   };
 
-  // Builds run one at a time, in order: a change that lands during a build is built after it.
-  let queue: Promise<DevEngineEvent> = build("start");
-  const ready = queue;
-  const enqueue = (job: () => Promise<DevEngineEvent>): Promise<DevEngineEvent> => {
-    queue = queue.then(job, job);
-    return queue;
+  /**
+   * A build put off while the watched folder is being made again (`hold`), and those waiting on it: a rebuild or first build
+   * asked for meanwhile settles with the build that runs once the folder is back, or, should it not come back, with why it
+   * was not built.
+   */
+  type Held = { promise: Promise<DevEngineEvent>; settle: (event: DevEngineEvent) => void; failure: DevEngineEvent; trigger?: WidgetDevTrigger };
+  let held: Held | undefined;
+  /** How many absences or re-arms the watched folder has had: a failed build during which this moved failed on a folder being made again. */
+  let disturbances = 0;
+
+  /**
+   * What a build attempt came to: an event to report, with the held build it ends (settled by `done` once the event is
+   * reported, so a rebuild waiting on it sees what that report made of it), or a build held until the folder is back.
+   */
+  type Attempt = { event: DevEngineEvent; ends?: Held } | { held: Promise<DevEngineEvent> };
+  const done = (outcome: Attempt): void => {
+    if ("event" in outcome) outcome.ends?.settle(outcome.event);
   };
+
+  /**
+   * Put a build off while the folder is being made again, rather than building (or reporting a failure from) missing or
+   * half-written files: the build that runs once the folder is back is the one reported. Not while the folder is not
+   * watched: nothing would bring that build about.
+   */
+  const hold = (trigger: WidgetDevTrigger, failure?: DevEngineEvent): Attempt => {
+    if (closed || watcher === undefined) {
+      const event = failure ?? missingBuild(trigger);
+      last = event.build;
+      return { event };
+    }
+    if (held === undefined) {
+      let settle: (event: DevEngineEvent) => void = () => undefined;
+      const promise = new Promise<DevEngineEvent>((resolve) => (settle = resolve));
+      held = { promise, settle, failure: failure ?? missingBuild(trigger) };
+    } else if (failure !== undefined) {
+      held.failure = failure;
+    }
+    // A rebuild asked for meanwhile is built as a rebuild once the folder is back, so it asks again what it would have asked.
+    if (trigger !== "change") held.trigger = trigger;
+    return { held: held.promise };
+  };
+  /** A build that did not run because the folder was missing, as a failure that says so. */
+  const missingBuild = (trigger: WidgetDevTrigger): DevEngineEvent => ({
+    kind: "failed",
+    build: {
+      ok: false,
+      at: now(),
+      trigger,
+      diagnostics: [{ severity: "error", code: "FILES_UNREADABLE", message: "the folder was missing, so it was not built" }],
+    },
+  });
+  /** Settle a held build with the folder's last word on it, when the folder will not be built anymore (gone, or closed). */
+  const releaseHeld = (): void => {
+    const waiting = held;
+    held = undefined;
+    if (waiting === undefined) return;
+    last = waiting.failure.build;
+    waiting.settle(waiting.failure);
+  };
+
+  /**
+   * Whether the watched folder is being made again now: missing within the grace, or already back under a new id (which
+   * is watched anew here, and that re-arm schedules the one build the new folder gets).
+   */
+  const recreating = (): boolean => {
+    if (closed || watcher === undefined) return false;
+    const look = lookAtDevRoot(root, identity, canonical);
+    // Not when watching it anew failed instead: there is nothing to wait for then.
+    if (look.state === "replaced") return rootStillThere();
+    // A build about to read the folder that is there covers a return the next look would otherwise build for.
+    if (look.state === "present") missingSince = undefined;
+    return stillAwaited(look);
+  };
+
+  /** Build, unless the folder is being made again; a build that failed because it was is held rather than reported. */
+  const attempt = async (trigger: WidgetDevTrigger): Promise<Attempt> => {
+    if (recreating()) return hold(trigger);
+    const before = last;
+    const seen = disturbances;
+    const event = await build(held?.trigger ?? trigger);
+    // The counter first: a folder that went and came back while the files were read, and was watched anew meanwhile,
+    // looks present now, so only the counter says this failure was the absence. A look now is still needed for an
+    // absence no look has seen yet, and it is taken only after the build has failed, since it may watch the folder anew.
+    if (event.kind === "failed" && (disturbances !== seen || recreating())) {
+      last = before;
+      return hold(trigger, event);
+    }
+    const ends = held;
+    held = undefined;
+    return ends === undefined ? { event } : { event, ends };
+  };
+  const eventOf = (outcome: Attempt): DevEngineEvent | Promise<DevEngineEvent> => ("event" in outcome ? outcome.event : outcome.held);
 
   /**
    * The folder watched, by identity: a folder deleted and made again at the same path before the next look is a folder
@@ -600,8 +704,35 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     if (rootCheck !== undefined) clearInterval(rootCheck);
     rootCheck = undefined;
     release();
+    releaseHeld();
   };
   const watchFailed = (cause: unknown): void => options.onWatchError?.(cause instanceof Error ? cause : new Error(String(cause)));
+  /**
+   * The moments after the folder is watched anew. A new watcher reports more than the saves made after it: FSEvents on
+   * macOS can deliver the writes that made the folder, from just before the stream started, and Windows reports folders the
+   * first build lists. Until `until`, once the build the re-arm asked for has been reported, a change build is reported
+   * only when it is news, as the catch-up build is; a save made meanwhile changes the files, which is news.
+   */
+  let settling: { until: number; reported: boolean } | undefined;
+  /** Whether a change build starting now is past the first report after a re-arm and inside its settling window. */
+  const settlingNow = (): boolean => {
+    if (settling === undefined) return false;
+    if (performance.now() >= settling.until) {
+      settling = undefined;
+      return false;
+    }
+    return settling.reported;
+  };
+  const reportBuild = (event: DevEngineEvent): void => {
+    if (settling !== undefined) settling.reported = true;
+    options.onBuild?.(event);
+  };
+  /** Whether a build says anything the last one did not: new files, a new failure, or the end of a failure. */
+  const isNews = (before: WidgetDevBuild | undefined, event: DevEngineEvent): boolean =>
+    event.kind === "generation" ||
+    (event.kind === "failed" && !sameFailure(before, event.build)) ||
+    // Files back to the newest generation after a failed build: the failure is over, which is news.
+    (event.kind === "unchanged" && before?.ok === false);
   /** Build after the last change of a burst, and report what it built. */
   const scheduleBuild = (): void => {
     if (timer !== undefined) clearTimeout(timer);
@@ -609,8 +740,20 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       timer = undefined;
       // A folder watched anew by this look has its own build scheduled; building here as well would build it twice.
       if (closed || !rootStillThere() || timer !== undefined) return;
-      void enqueue(() => build("change")).then((event) => {
-        if (!closed) options.onBuild?.(event);
+      void enqueue(async (): Promise<{ outcome: Attempt; report: boolean }> => {
+        const quiet = settlingNow();
+        const before = last;
+        const outcome = await attempt("change");
+        if (!("event" in outcome)) return { outcome, report: false };
+        const report = !quiet || outcome.ends !== undefined || isNews(before, outcome.event);
+        if (!report && before !== undefined) last = before;
+        return { outcome, report };
+      }).then(({ outcome, report }) => {
+        try {
+          if (!closed && report && "event" in outcome) reportBuild(outcome.event);
+        } finally {
+          done(outcome);
+        }
       }, watchFailed);
     }, debounceMs);
     timer.unref();
@@ -618,8 +761,9 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   /** Watch the folder at `root` now, held open where that keeps its id (`pinRoot`). */
   const arm = (): void => {
     pin = pinRoot(root);
-    const next = watch(root, { recursive: true }, (_event, filename) => {
+    const next = watch(root, { recursive: true }, (event, filename) => {
       const name = typeof filename === "string" ? filename : "";
+      if (event === "change" && name !== "" && isFolderAt(join(root, name))) return;
       if (!rootStillThere()) return;
       if (isExcludedRootName(name.split(/[\\/]/)[0] ?? "")) return;
       scheduleBuild();
@@ -646,10 +790,10 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
    *   link or junction is `gone`. More than `DEV_ENGINE_REARM_MAX` of these in a row, with no look between them finding
    *   the folder unchanged, stops watching as a watch failure.
    * - A folder missing from the path (`gone`, not found) counts as gone only once it has been missing for
-   *   `rootMissingGraceMs`: until then no build starts (`rootGone` says not gone either, so a build already running that
-   *   fails on the missing files leaves the caller's session live) and the path is looked at again, and a folder back at
-   *   the same real path is watched anew (`replaced`) and built. Anything else that is `gone` (not a folder, or reached through a link) is
-   *   gone at once.
+   *   `rootMissingGraceMs`: until then no build starts and `rootGone` says not gone either; a build already running that
+   *   fails on the missing files is held rather than reported (`attempt`). The path is looked at again, and a folder back
+   *   at the same real path is watched anew (`replaced`) and built once. Anything else that is `gone` (not a folder, or
+   *   reached through a link) is gone at once.
    * - A folder that could not be looked at this time (`unknown`) is looked at again on the next tick rather than taken as
    *   gone, until it has failed for `rootUnreadableMs` in a row: then watching stops as a watch failure that says why.
    */
@@ -660,7 +804,10 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
   const stillAwaited = (look: DevRootLook): boolean => {
     if (look.state !== "gone" || look.missing !== true || closed || watcher === undefined) return false;
     const at = performance.now();
-    missingSince ??= at;
+    if (missingSince === undefined) {
+      missingSince = at;
+      disturbances += 1;
+    }
     return at - missingSince < missingGraceMs;
   };
   const rootStillThere = (): boolean => {
@@ -679,9 +826,12 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     }
     unreadableSince = undefined;
     if (stillAwaited(look)) return false;
+    const returned = missingSince !== undefined;
     missingSince = undefined;
     if (look.state === "present") {
       rearmsInARow = 0;
+      // Back as the very folder that went (renamed away and back): what changed meanwhile, or a build held, is built now.
+      if (returned) scheduleBuild();
       return true;
     }
     if (look.state === "replaced") {
@@ -698,6 +848,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       }
       process.stderr.write(`widget dev: watching ${root} anew: its file id changed from ${idOf(identity)} to ${idOf(look.identity)}\n`);
       release();
+      disturbances += 1;
       try {
         identity = look.identity;
         arm();
@@ -706,6 +857,7 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
         watchFailed(cause);
         return false;
       }
+      settling = { until: performance.now() + 2 * DEV_ENGINE_WATCH_CATCH_UP_MS + debounceMs, reported: false };
       scheduleBuild();
       // As at the start: a save the new watcher could not see yet (FSEvents starts asynchronously) is built then.
       scheduleCatchUp();
@@ -727,28 +879,45 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
       catchUp = undefined;
       // A change already waiting to build reads the folder anyway; so does the build of a folder this look watched anew.
       if (closed || timer !== undefined || !rootStillThere() || timer !== undefined) return;
-      let news = false;
-      void enqueue(async () => {
+      void enqueue(async (): Promise<{ outcome: Attempt; news: boolean }> => {
         // Read once every build before it has settled, the first one included: a first build slower than the catch-up
         // delay has not set the last build when the timer fires, and its failure would otherwise be news twice.
         const before = last;
-        const event = await build("change");
-        news =
-          event.kind === "generation" ||
-          (event.kind === "failed" && !sameFailure(before, event.build)) ||
-          // Files back to the newest generation after a failed build: the failure is over, which is news.
-          (event.kind === "unchanged" && before?.ok === false);
+        const outcome = await attempt("change");
+        // Held while the folder is made again: the build once it is back is reported by whoever runs it.
+        if (!("event" in outcome)) return { outcome, news: false };
+        // The build a rebuild was held for is reported, whatever it found.
+        const news = outcome.ends !== undefined || isNews(before, outcome.event);
         if (!news && before !== undefined) last = before;
-        return event;
+        return { outcome, news };
       }).then(
-        (event) => {
-          if (!closed && news) options.onBuild?.(event);
+        ({ outcome, news }) => {
+          try {
+            if (!closed && news && "event" in outcome) reportBuild(outcome.event);
+          } finally {
+            done(outcome);
+          }
         },
         watchFailed,
       );
     }, DEV_ENGINE_WATCH_CATCH_UP_MS);
     catchUp.unref();
   };
+
+  // Builds run one at a time, in order: a change that lands during a build is built after it. The first one starts
+  // before anything is watched.
+  let queue: Promise<unknown> = attempt("start");
+  // The first build is not reported through `onBuild`: whoever started the engine reads it here.
+  const ready = (queue as Promise<Attempt>).then((outcome) => {
+    done(outcome);
+    return eventOf(outcome);
+  });
+  const enqueue = <T>(job: () => Promise<T>): Promise<T> => {
+    const next = queue.then(job, job);
+    queue = next;
+    return next;
+  };
+
   if (options.watch !== false) {
     try {
       identity = devRootIdentityOf(root);
@@ -768,13 +937,19 @@ export function startDevEngine(options: DevEngineOptions): DevEngine {
     latest: () => newest,
     lastBuild: () => last,
     rebuild: async (trigger = "rebuild") => {
-      const event = await enqueue(() => build(trigger));
-      if (!closed) options.onBuild?.(event);
-      return event;
+      const outcome = await enqueue(() => attempt(trigger));
+      // Held while the folder is made again: the build that runs once it is back reports itself, and this settles with it.
+      if (!("event" in outcome)) return outcome.held;
+      try {
+        if (!closed) reportBuild(outcome.event);
+      } finally {
+        done(outcome);
+      }
+      return outcome.event;
     },
     watching: () => watcher !== undefined && !closed,
     rootGone: () => {
-      // A build that overlaps a folder being made again fails on its missing files; the folder is not gone for that.
+      // A folder being made again is not gone: a build that overlaps it is held until it is back.
       const look = lookAtDevRoot(root, identity, canonical);
       return look.state === "gone" && !stillAwaited(look);
     },

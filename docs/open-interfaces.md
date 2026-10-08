@@ -998,10 +998,16 @@ file id with the ones it started watching; when they differ, the folder was made
 the folder now at that path and builds it, as it builds a saved change, and logs the old and new ids.
 
 A folder that is missing when the node looks, because a build deleted it and has not made it again yet, is looked for
-again for 2 seconds before the session stops. No build starts meanwhile. A build already running when the folder went,
-or a rebuild asked for in those 2 seconds, fails on the missing files and leaves the session live; the folder is built
-again once it is back. A build that takes longer than 2 seconds to make the folder again stops the session as
-`folder-gone`.
+again for 2 seconds before the session stops. No build starts meanwhile, and none is reported as failed: a build
+already running when the folder went, a save, or a rebuild asked for in those 2 seconds waits, and the folder is built
+once when it is back. A rebuild answers with that build. A build that takes longer than 2 seconds to make the folder
+again stops the session as `folder-gone`, and a rebuild that was waiting answers that the folder was missing.
+
+A change the platform reports for a folder inside the package, rather than for a file, does not start a build. Windows
+reports one the first time a build lists a folder made a moment ago, and a file added, removed or saved is reported
+under its own name. For about a second after a folder made again is watched anew, a build that finds the same files as
+the build before it is not reported: macOS can report the writes that made the folder after the watch began. A save
+made in that time changes the files, so it is built and reported.
 
 A folder chosen through a link or junction is watched at the real path it led to when the session started. A folder
 made again counts only while its path still resolves to that real path. Paths that differ only in case count as the
