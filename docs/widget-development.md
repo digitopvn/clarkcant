@@ -3038,6 +3038,9 @@ deleted or renamed; the node checks for the folder every second, since Windows r
 watch as many folders as it can. After a restart, the folder may no longer be one the session may watch. A build whose
 folder is too large, or holds a link out of it, says so and what to change. Superseded builds are cleaned up as new ones install. The node keeps the build that
 runs and the one a rollback returns to.
+A session that does not install again, or a removal a held file or a closing node left over, is cleaned up at the
+next start of the node, before any folder is watched again. That start also removes builds that no session lists any
+more, when nothing runs them.
 
 ### test
 
@@ -3626,7 +3629,10 @@ it `409 NOT_INSTALLED`. Installing the path again after an edit makes a new copy
 new plan and generation rather than joining the old one; a finished plan is joined only while the running generation's
 snapshot is that plan's artifact. A generation installed from a path before snapshots has no `snapshotDigest` and keeps
 reading its path until it is installed again. A snapshot sweeps `.tmp-*` and `.stale-*` folders older than an hour from
-the cache; nothing else collects unused cache entries yet, for snapshots as for git and npm artifacts.
+the cache. Widget dev sessions remove the snapshots they made once nothing runs, waits on or can roll back to them:
+after each install, and at boot before any folder is watched again, including snapshots that fell off a session's
+list (`orphaned-snapshots.json` in the session store's folder). Nothing else collects unused cache entries yet: a
+snapshot an ordinary install took, and git and npm artifacts, stay.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws

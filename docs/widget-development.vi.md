@@ -3024,6 +3024,9 @@ mỗi giây, vì Windows không báo gì. Cũng có thể node đã theo dõi s�
 thể không còn là thư mục mà phiên được theo dõi. Một lần dựng có thư mục quá lớn, hoặc chứa liên kết trỏ ra ngoài, sẽ nói
 điều đó và cần đổi gì. Các bản dựng đã bị thay thế được dọn dẹp khi bản mới được cài. Node giữ bản dựng đang chạy và bản mà thao tác quay lại bản
 trước sẽ trở về.
+Một phiên không cài lại nữa, hoặc một lần xoá còn sót do tệp bị giữ hay do node đang đóng, được dọn ở lần khởi động kế
+tiếp của node, trước khi thư mục nào được theo dõi lại. Lần khởi động đó cũng xoá các bản dựng không còn phiên nào liệt
+kê, khi không còn gì chạy chúng.
 
 ### test
 
@@ -3610,8 +3613,10 @@ còn nêu đúng phiên bản và digest của generation đó (cùng phiên b�
 nó tạo một plan và generation mới thay vì nhập vào cái cũ; một plan đã xong chỉ được nhập vào khi snapshot của
 generation đang chạy chính là artifact của plan đó. Một generation được cài từ đường dẫn trước khi có snapshot thì không
 có `snapshotDigest` và vẫn đọc đường dẫn của nó cho tới khi được cài lại. Mỗi lần tạo snapshot sẽ dọn các thư mục
-`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache; ngoài ra chưa có gì dọn các mục cache không còn dùng, với snapshot
-cũng như với artifact git và npm.
+`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache. Các phiên widget dev xoá những snapshot chúng đã tạo khi không còn gì
+chạy, chờ hay có thể quay lại chúng: sau mỗi lần cài, và lúc khởi động trước khi thư mục nào được theo dõi lại, kể cả
+những snapshot đã rơi khỏi danh sách của một phiên (`orphaned-snapshots.json` trong thư mục của kho phiên). Ngoài ra
+chưa có gì dọn các mục cache không còn dùng: snapshot của một lần cài thông thường, và artifact git và npm, vẫn được giữ.
 
 `digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw

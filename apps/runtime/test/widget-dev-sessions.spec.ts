@@ -33,7 +33,14 @@ import {
 } from "@clarkcant/core";
 
 import { SNAPSHOT_REMOVAL, createWidgetDevSessions } from "../src/application/widget-dev-sessions.ts";
-import { WIDGET_DEV_STORE_MAX, readDevSessions, writeDevSessions } from "../src/application/widget-dev-store.ts";
+import {
+  WIDGET_DEV_SNAPSHOTS_MAX,
+  WIDGET_DEV_STORE_MAX,
+  readDevSessions,
+  readOrphanedSnapshots,
+  writeDevSessions,
+  writeOrphanedSnapshots,
+} from "../src/application/widget-dev-store.ts";
 import { createDevelopWidgetTool } from "../src/develop-widget-tool.ts";
 import { hostText } from "../src/host-text.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
@@ -1499,6 +1506,184 @@ describe("a widget dev session", () => {
     await services.widgetDev.resume();
     const views = ((await call("GET", "/widget-dev/sessions")).body as { sessions: WidgetDevSessionView[] }).sessions;
     expect(views.find((view) => view.sessionId === "wdev_unreadable")).toMatchObject({ status: "stopped", stopReason: "watch-failed" });
+  });
+});
+
+describe("what widget dev sessions leave in the package cache", () => {
+  const localCache = (): string => join(dir, "node", "package-cache", "local");
+  const folderOf = (digest: string): string => join(localCache(), digest.slice("sha256:".length));
+  /** The snapshot folders in the cache, leaving out a build's own staging folders. */
+  const snapshotFolders = (): string[] => readdirSync(localCache()).filter((name) => /^[0-9a-f]{64}$/.test(name));
+  const isSnapshot = (path: string): boolean => parse(path).dir === resolve(localCache()) && /^[0-9a-f]{64}$/.test(parse(path).base);
+
+  /** A snapshot folder in the cache that a session made once, named by a digest of its own. */
+  function madeSnapshot(seed: number): string {
+    const hex = seed.toString(16).padStart(64, "0");
+    mkdirSync(join(localCache(), hex), { recursive: true });
+    writeFileSync(join(localCache(), hex, "clarkcant.json"), "{}");
+    return `sha256:${hex}`;
+  }
+
+  function changeSession(sessionId: string, change: (stored: ReturnType<typeof readDevSessions>[number]) => ReturnType<typeof readDevSessions>[number]): void {
+    writeDevSessions(
+      join(dir, "node"),
+      readDevSessions(join(dir, "node")).map((stored) => (stored.sessionId === sessionId ? change(stored) : stored)),
+    );
+  }
+
+  /** A restart: a new registry over the same node, resumed from its store. */
+  async function restart(): Promise<void> {
+    await services.widgetDev?.close();
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false, answerPollMs: 20 });
+    await services.widgetDev.resume();
+  }
+
+  it("removes on resume what a session that never installs again left over, keeping what it runs and what a rollback returns to", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    // Every snapshot removal fails for now, as a file held open past its retries makes it fail, so nothing is pruned.
+    removal.starting = (path) => {
+      if (isSnapshot(path)) throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+    };
+    for (const text of ["second", "third", "fourth"]) {
+      writePackage(`<!doctype html><p>${text}</p>\n`);
+      expect((await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).status).toBe(200);
+    }
+    removal.starting = undefined;
+    const stopped = session(await call("DELETE", `/widget-dev/sessions/${started.sessionId}`));
+    expect(stopped).toMatchObject({ status: "stopped", activation: { state: "active", generation: 4 } });
+    expect(snapshotFolders()).toHaveLength(4);
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(4);
+
+    await restart();
+    const running = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    expect(snapshotFolders()).toHaveLength(2);
+    expect(existsSync(folderOf(running))).toBe(true);
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).toHaveLength(2);
+    // What runs is still served from its snapshot.
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`)).activation).toMatchObject({ state: "active", generation: 4 });
+  });
+
+  it("removes at the next boot the snapshots that fell off a session's list past its bound", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    const first = readDevSessions(join(dir, "node"))[0]?.running?.generation.digest ?? "";
+    // The session's list is full: the oldest of what it made comes first.
+    const made = Array.from({ length: WIDGET_DEV_SNAPSHOTS_MAX - 1 }, (_, index) => madeSnapshot(index + 1));
+    changeSession(started.sessionId, (stored) => ({ ...stored, snapshots: [...made, first] }));
+
+    // One more build pushes the oldest off the list. The install prunes what the list still names.
+    writePackage("<!doctype html><p>second</p>\n");
+    expect(session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`)).activation).toMatchObject({ state: "active", generation: 2 });
+    const [oldest] = made;
+    if (oldest === undefined) throw new Error("no snapshot was made");
+    expect(readDevSessions(join(dir, "node"))[0]?.snapshots).not.toContain(oldest);
+    expect(existsSync(folderOf(oldest))).toBe(true);
+    expect(made.slice(1).some((digest) => existsSync(folderOf(digest)))).toBe(false);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([oldest]);
+
+    await restart();
+    expect(existsSync(folderOf(oldest))).toBe(false);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([]);
+    // What runs and what a rollback returns to stay.
+    expect(snapshotFolders()).toHaveLength(2);
+  });
+
+  it("removes at the next boot the snapshots of a session the store forgot to make room", async () => {
+    const at = new Date(Date.UTC(2026, 0, 1)).toISOString();
+    const left = madeSnapshot(1);
+    writeDevSessions(
+      join(dir, "node"),
+      Array.from({ length: WIDGET_DEV_STORE_MAX }, (_, index) => ({
+        sessionId: `wdev_old_${String(index)}`,
+        root: join(dir, "gone", String(index)),
+        status: "stopped" as const,
+        startedAt: at,
+        ...(index === 0 ? { snapshots: [left] } : {}),
+      })),
+    );
+    expect((await call("POST", "/widget-dev/sessions", { root })).status).toBe(201);
+    expect(readDevSessions(join(dir, "node")).some((stored) => stored.sessionId === "wdev_old_0")).toBe(false);
+    expect(existsSync(folderOf(left))).toBe(true);
+
+    await restart();
+    expect(existsSync(folderOf(left))).toBe(false);
+  });
+
+  it("never removes at boot a snapshot that a session runs or waits on, even one no list names", async () => {
+    const started = session(await call("POST", "/widget-dev/sessions", { root }));
+    askEveryInstall();
+    writePackage("<!doctype html><p>second</p>\n", ["https://api.example.com"]);
+    const waiting = session(await call("POST", `/widget-dev/sessions/${started.sessionId}/rebuild`));
+    expect(waiting.activation).toMatchObject({ state: "awaiting-approval", generation: 2 });
+    const stored = readDevSessions(join(dir, "node"))[0];
+    const running = stored?.running?.generation.digest ?? "";
+    const pending = stored?.pending?.generation.digest ?? "";
+    // Both fell off the session's list, and nothing else uses the third.
+    const unused = madeSnapshot(1);
+    changeSession(started.sessionId, ({ snapshots: _forgotten, ...rest }) => rest);
+    writeOrphanedSnapshots(join(dir, "node"), [running, pending, unused]);
+
+    await restart();
+    expect(existsSync(folderOf(running))).toBe(true);
+    expect(existsSync(folderOf(pending))).toBe(true);
+    expect(existsSync(folderOf(unused))).toBe(false);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([running, pending]);
+    expect(session(await call("GET", `/widget-dev/sessions/${started.sessionId}`))).toMatchObject({
+      status: "live",
+      activation: { state: "awaiting-approval", generation: 2 },
+    });
+  });
+
+  it("watches no folder while the boot removes snapshots, so a build that makes the same bytes again keeps its snapshot", async () => {
+    askEveryInstall();
+    const asked = session(await call("POST", "/widget-dev/sessions", { root }));
+    const built = asked.latest?.digest ?? "";
+    expect(existsSync(folderOf(built))).toBe(true);
+    // The session is forgotten, and its build is orphaned with another snapshot; the folder still holds the same files.
+    await services.widgetDev?.close();
+    writeDevSessions(join(dir, "node"), []);
+    const unused = madeSnapshot(1);
+    writeOrphanedSnapshots(join(dir, "node"), [unused, built]);
+
+    let removing = (): void => undefined;
+    const removingStarted = new Promise<void>((done) => {
+      removing = done;
+    });
+    let finish = (): void => undefined;
+    const gate = new Promise<void>((done) => {
+      finish = done;
+    });
+    removal.starting = async (path) => {
+      if (path !== resolve(folderOf(unused))) return;
+      removing();
+      await gate;
+    };
+    services.widgetDev = createWidgetDevSessions(() => services, { watch: false, answerPollMs: 20 });
+    const resuming = services.widgetDev.resume();
+    await removingStarted;
+    // A start made while a removal runs waits for the boot's removals to end before it builds.
+    const starting = call("POST", "/widget-dev/sessions", { root });
+    await new Promise((done) => setTimeout(done, 100));
+    expect(services.widgetDev.list()).toEqual([]);
+    finish();
+    await resuming;
+    const again = session(await starting);
+    expect(again.lastBuild?.ok).toBe(true);
+    expect(again.latest?.digest).toBe(built);
+    expect(existsSync(folderOf(built))).toBe(true);
+    expect(readdirSync(folderOf(built))).toContain("clarkcant.json");
+    expect(existsSync(folderOf(unused))).toBe(false);
+  });
+
+  it("removes nothing at a boot the node is already closing", async () => {
+    await services.widgetDev?.close();
+    const unused = madeSnapshot(1);
+    writeOrphanedSnapshots(join(dir, "node"), [unused]);
+    const sessions = createWidgetDevSessions(() => services, { watch: false });
+    services.widgetDev = sessions;
+    await sessions.close();
+    await sessions.resume();
+    expect(existsSync(folderOf(unused))).toBe(true);
+    expect(readOrphanedSnapshots(join(dir, "node"))).toEqual([unused]);
   });
 });
 
