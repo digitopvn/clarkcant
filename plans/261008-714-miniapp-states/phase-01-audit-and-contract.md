@@ -29,6 +29,14 @@ C cancelled, St stale (live only). `ok` handled, `gap` missing or wrong, `n/a` c
 | Command card rows | n/a | ok | gap | ok | n/a | gap | ok | gap | n/a | main:command-card.tsx:121,125 region mounted with its text; failures polite |
 | Provider sign-in | n/a | n/a | ok | gap | n/a | gap | n/a | gap | n/a | main:command-card.tsx:315 cancelled marked `data-result="failed"`; no signed-in receipt |
 | Question, form, diff, artifact, feedback, marketplace | — | ok | ok | ok | ok | ok | ok | n/a | n/a | covered by `card-state-matrix.spec.ts`; feedback `unknown` already distinct |
+| Terminal session (live) | ok | ok | gap | gap | n/a | gap | ok | n/a | ok | terminal-card.tsx:499-503 ad-hoc badge: running drawn `warn`, idle drawn `ok`, no mark; :558 one polite region, so disconnect/load-failure/kill errors (:561-569, :582) are never assertive; :868 stop failure gets `role=status` in the same render as its text. Snapshot mode (:137-160) says it is a record; panel empty (:890) ok |
+| Project picker | n/a | ok | n/a | n/a | n/a | n/a | ok | n/a | n/a | blocks.tsx:1801-1804 empty roots stated; :1813-1815 read-only root said in words. Snapshot with no actions, so no gap |
+| Changelog | n/a | ok | n/a | n/a | ok | n/a | n/a | n/a | n/a | changelog-card.tsx:63-66 empty (and empty since a version) stated; :128-131 omitted entries counted rather than hidden. Build-embedded snapshot with no actions, so no gap |
+
+Rows added after review use line numbers on the branch after merging `origin/main` at `fa917a0b`. The computer
+session card shares the browser session row: both are drawn by one component (blocks.tsx:2737-2753), so the
+running/stopped badge and the takeover/stop notes apply to both. The running badge is now `pending` (info tone, `◐`)
+where it was `ok`: the session is work in progress, not a finished success.
 
 ## Contract
 
@@ -37,10 +45,12 @@ C cancelled, St stale (live only). `ok` handled, `gap` missing or wrong, `n/a` c
 - Phases: `loading`, `empty`, `pending`, `needs-action`, `success`, `partial`, `error`, `unavailable`, `cancelled`,
   with one tone and one text mark each.
 - Freshness: `snapshot` (never stale) or `live` (`observedAt`, `staleAfterMs`); unreadable time is stale.
-- Next action (`retry`, `check-again`, `sign-in`, `decide`, `grant-permission`, `open-settings`, `none`); `canRetry`
-  only for `error`/`partial` with `retry`/`check-again`.
-- `settleSurfaceStatus`: drops earlier attempts, never reopens an outcome within an attempt, drops older live
-  observations.
+- Next action (`retry`, `check-again`, `sign-in`, `decide`, `grant-permission`, `open-settings`, `reconnect`,
+  `none`); `canRetry` only for `error`/`partial` with `retry`/`check-again`.
+- `settleSurfaceStatus`: drops earlier attempts; within one attempt the first outcome is final (neither a late
+  pending/loading nor a later outcome replaces it); drops older live observations.
+- Connection `revoked`/`denied` read as `unavailable` with `reconnect` as the next step (`CONNECTION_NEXT_ACTION`);
+  `needs_reauth`/`expired` name `sign-in`.
 - `surfaceAnnouncement`: restored, same phase or `loading` is off; `error` assertive; otherwise polite.
 - `reportedValueSchema`: `reported` (value, unit, source `official`/`inferred`, `asOf`, optional stale window),
   `unknown`, `unavailable` (reason required), `unsupported`. Text helpers never print a missing value as zero.
@@ -56,7 +66,9 @@ drawn by CSS with empty alt text) and `LiveNote` (both regions always mounted; c
 - System, task progress/overview badges: phase tones; `blocked` reads `unavailable`.
 - Task summary: phase from outcome and evidence; contradicted/unverified lines; no duration when unreported.
 - Task overview: empty statement.
-- Connection: translated status, last probe with time, sign-in next step for `needs_reauth`/`expired`.
+- Connection: translated status, last probe with time, sign-in next step for `needs_reauth`/`expired`, reconnect
+  next step for `revoked`/`denied` (drawn `unavailable`, no longer danger or neutral).
+- Session (browser and computer): running badge is `pending`/info instead of `ok`.
 - Reconnect: translated status.
 - Approval, credential, task stop, session takeover/stop: outcome notes in `LiveNote`.
 - Metrics: missing value said as "unknown" to screen readers.
@@ -65,12 +77,24 @@ drawn by CSS with empty alt text) and `LiveNote` (both regions always mounted; c
 
 1. `command-card.tsx:121,125`: render the row status through `LiveNote` so the region exists before the answer and a
    failure is assertive; map `settled.status` to a phase (`refused`/`failed` error, `stale`/`unknown` partial).
-2. `command-card.tsx:315`: a cancelled sign-in is marked `data-result="failed"`; map via `SIGN_IN_PHASE` so cancel
-   reads `cancelled`, and add a signed-in receipt after `done`.
-3. `use-block-actions.ts:275`: carry a phase and an attempt in `credentialStatus` instead of a message string; the
-   credential card currently infers the error by comparing to the save-failed message.
+2. `provider-sign-in-panel.tsx:106` (moved there by #726): a cancelled sign-in is marked `data-result="failed"`; map
+   via `SIGN_IN_PHASE` so cancel reads `cancelled`, and add a signed-in receipt after `done`.
+3. `use-block-actions.ts:273-294`: carry a phase and an attempt in `credentialStatus` instead of a message string, and
+   reset it to pending on submit. Today the credential card (`blocks.tsx:1317`) infers the error by comparing the
+   stored message with `t("shell.credential.saveFailed")`: a locale change after a failure turns the failure into
+   `success`, and a second identical failure leaves the DOM unchanged, so nothing is announced.
 4. Settle late action answers with `settleSurfaceStatus` keyed by an attempt counter per row.
 5. Row badges: use `PhaseBadge` with a domain table instead of ad-hoc tones.
+
+## Other follow-ups
+
+6. Staleness across hosts (for #713): `freshnessState` and `readReportedValue` compare the client's clock with an
+   `observedAt`/`asOf` stamped by another host, so clock skew makes a value stale too early or never. Decision: for
+   `/usage` the node decides staleness (same clock as `asOf`) in #713; `asOf` stays for display. `reportedValueText`
+   is English-only with a raw ISO time; #713's visible text needs a localized formatter.
+7. Terminal card (see the audit row): read the terminal machine (idle, running, exited, gone, disconnected,
+   load-failed) through a contract table, draw the badge with `PhaseBadge`, and move the status line and the stop
+   failure onto `LiveNote` so errors are assertive.
 
 ## Validation
 

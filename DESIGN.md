@@ -858,9 +858,15 @@ whether it can be retried, and whether it is still current.
   before the answer arrives: `error` is assertive, any other change of phase is
   polite, and the same phase again, `loading`, or anything already on screen at
   mount (a reload, a scroll back) is not announced.
-- **Late answers.** An answer for an earlier attempt is dropped; within one
-  attempt a late "still working" never reopens an outcome; retry is offered only
-  for `error` or `partial` when the domain names `retry` or `check-again`.
+- **Late answers and retry (contract helpers, adopted surface by surface).**
+  The contract's `settleSurfaceStatus` drops an answer for an earlier attempt
+  and keeps the first outcome of an attempt, so neither a late "still working"
+  nor a later outcome replaces it; its `canRetry` offers a retry only for
+  `error` or `partial` when the domain names `retry` or `check-again`. No
+  built-in miniapp calls them yet: today's retries (press again on a task stop,
+  try again on a credential) and late answers on command-card rows still follow
+  each surface's own rules, and move onto these helpers as those surfaces are
+  reworked.
 
 ### 8.4 Local vs effect actions
 

@@ -842,10 +842,15 @@ nguyên machine của nó; hợp đồng chỉ quyết định một trạng th�
   trước khi kết quả tới: `error` là assertive, mọi thay đổi phase khác là
   polite; cùng phase lặp lại, `loading`, hay bất cứ gì đã có trên màn hình lúc
   mount (tải lại trang, cuộn ngược) đều không được thông báo.
-- **Câu trả lời đến muộn.** Câu trả lời cho một lần thử trước bị bỏ qua; trong
-  cùng một lần thử, một "vẫn đang chạy" đến muộn không bao giờ mở lại một kết
-  quả; chỉ đề nghị thử lại khi phase là `error` hoặc `partial` và miền nêu rõ
-  `retry` hoặc `check-again`.
+- **Câu trả lời đến muộn và thử lại (helper của hợp đồng, áp dụng dần từng
+  bề mặt).** `settleSurfaceStatus` của hợp đồng bỏ qua câu trả lời cho một lần
+  thử trước và giữ kết quả đầu tiên của một lần thử, nên cả một "vẫn đang chạy"
+  đến muộn lẫn một kết quả đến sau đều không thay được nó; `canRetry` chỉ đề
+  nghị thử lại khi phase là `error` hoặc `partial` và miền nêu rõ `retry` hoặc
+  `check-again`. Hiện chưa miniapp dựng sẵn nào gọi hai helper này: các lần thử
+  lại hôm nay (bấm lại khi dừng task, thử lại khi lưu thông tin xác thực) và câu
+  trả lời đến muộn trên các dòng của thẻ lệnh vẫn theo quy tắc riêng của từng bề
+  mặt, và sẽ chuyển sang các helper này khi những bề mặt đó được làm lại.
 
 ### 8.4 Local vs effect actions
 

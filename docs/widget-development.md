@@ -491,6 +491,12 @@ it:
   already there when the widget mounted;
 - drop an answer for an earlier attempt when a newer one is on screen.
 
+The last rule, and the rule that a retry is offered only after a failure or a
+partial result, are helpers in the contract (`settleSurfaceStatus` and
+`canRetry`) that built-in cards adopt one surface at a time. No built-in card
+calls them yet, so do not read today's cards as the reference for late answers
+or retries.
+
 ---
 
 ## 8. Actions, input and read-only cards

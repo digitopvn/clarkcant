@@ -498,6 +498,12 @@ widget cô lập nên theo cùng các quy tắc để đọc giống các thẻ 
 - bỏ qua câu trả lời cho một lần thử cũ khi một lần thử mới hơn đang hiện trên
   màn hình.
 
+Quy tắc cuối cùng, và quy tắc chỉ đề nghị thử lại sau một lỗi hoặc một kết quả
+không đầy đủ, là các helper trong hợp đồng (`settleSurfaceStatus` và
+`canRetry`) mà các thẻ dựng sẵn áp dụng dần từng bề mặt. Hiện chưa thẻ dựng sẵn
+nào gọi chúng, nên đừng lấy các thẻ hôm nay làm mẫu cho câu trả lời đến muộn hay
+việc thử lại.
+
 ---
 
 ## 8. Hành động, nhập liệu và thẻ chỉ đọc
