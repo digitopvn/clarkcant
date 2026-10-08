@@ -1,4 +1,4 @@
-import type { WidgetPerformReport } from "@clarkcant/contracts";
+import { WIDGET_PERFORM_REPORT_WITHIN_MS, type WidgetPerformReport } from "@clarkcant/contracts";
 
 /**
  * What became of an action Clark asked a widget's frame to perform, as far as this node can know.
@@ -35,7 +35,7 @@ export interface WidgetPerformAcks {
  * such by the page rather than the node giving up first; short enough that a page that went away does not hold the
  * model's turn hostage.
  */
-export const WIDGET_PERFORM_TIMEOUT_MS = 8_000;
+export const WIDGET_PERFORM_TIMEOUT_MS = WIDGET_PERFORM_REPORT_WITHIN_MS;
 
 interface Pending {
   report: WidgetPerformReport | undefined;

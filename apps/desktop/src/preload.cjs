@@ -115,6 +115,13 @@ const bridge = {
     return ipcRenderer.invoke("desktop:notifyPackagesChanged");
   },
   /**
+   * Hand Clark's perform for the detached instance to the host: the `widget-perform` request as the node sent it. The
+   * host pushes it to the detached window and reports what its frame answered; a refusal means nothing was pushed.
+   */
+  forwardWidgetPerform(request) {
+    return ipcRenderer.invoke("desktop:forwardWidgetPerform", request);
+  },
+  /**
    * Shrink the window to the voice bar, grow it back, or pin it above other windows.
    *
    * Answers with the bounds and the pin state the window actually has afterwards, not with what was asked for,

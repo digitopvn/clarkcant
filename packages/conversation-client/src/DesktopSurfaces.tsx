@@ -29,10 +29,10 @@ import {
   shellJobTransport,
   shellTokenTransport,
 } from "./frame-host-callbacks.ts";
-import { markFrameDetached } from "./frame-performs.ts";
+import { type DetachedPerformHandoff, markFrameDetached } from "./frame-performs.ts";
 import { shellArtifactFiles, useWidgetArtifactHost } from "./widget-artifacts.tsx";
 import { WidgetDevStatus } from "./widget-dev-status.tsx";
-import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
+import type { AppearanceSnapshot, AttachmentRef, WidgetPerformRequest } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
 import { offscreenPlayback } from "./offscreen-playback.ts";
@@ -229,6 +229,11 @@ interface ShellDetachBridge {
   /** Close the detached window, which hands the instance back. Optional for a shell built before it existed. */
   attachWidget?(): Promise<unknown>;
   onWidgetReattached?(callback: (payload: { instanceRef?: string }) => void): (() => void) | void;
+  /**
+   * Hand Clark's perform for the detached instance to the host, which pushes it to the window and reports what its frame
+   * answered. Optional for a shell built before it existed; such a shell answers the perform as detached.
+   */
+  forwardWidgetPerform?(request: WidgetPerformRequest): Promise<DetachedPerformHandoff>;
 }
 
 function shellDetachBridge(): ShellDetachBridge | undefined {
@@ -314,11 +319,15 @@ export function PinnedLiveSurface({
   const detachedHere = useRef(false);
   /*
    * The same fact as `detachedHere`, for rendering: while the widget is in its own window this surface does not run a
-   * second copy of its frame — two frames would write the same state from two places — and Clark's performs for it are
-   * answered as detached rather than handed to a frame nobody here shows.
+   * second copy of its frame — two frames would write the same state from two places — and Clark's performs for it go
+   * to the window through the host, which reports what the frame there answered.
    */
   const [detachedOpen, setDetachedOpen] = useState(false);
-  useEffect(() => (detachedOpen ? markFrameDetached(instanceId) : undefined), [detachedOpen, instanceId]);
+  useEffect(() => {
+    if (!detachedOpen) return undefined;
+    const forward = shellDetachBridge()?.forwardWidgetPerform;
+    return markFrameDetached(instanceId, forward === undefined ? undefined : (request) => forward(request));
+  }, [detachedOpen, instanceId]);
   /*
    * Whether this surface is between letting the lease go and hearing whether the detached window took it. The
    * periodic re-claim is paused for that stretch too: landing after the release, it would hold the widget again and

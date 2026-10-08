@@ -1,4 +1,4 @@
-import { readNodeView, type SemanticProposal, widgetDevSessionViewSchema } from "@clarkcant/contracts";
+import { readNodeView, type SemanticProposal, type WidgetPerformReport, widgetDevSessionViewSchema } from "@clarkcant/contracts";
 import type { FrameActionOutcome, FrameJobBroker, FrameStateOutcome, FrameTokenOutcome } from "@clarkcant/widget-host/session";
 import type { BrowserToken, JobSnapshot, TokenRequest } from "@clarkcant/widget-sdk";
 
@@ -123,6 +123,13 @@ export interface DetachedFrameBridge {
   };
   /** Told when the installed packages changed, so the window re-reads its frame. Returns the unsubscribe. */
   onPackagesChanged?(listener: () => void): () => void;
+  /**
+   * Told of each action Clark asks the widget to perform, as the host pushes it (`{ performId, action, input }`), so the
+   * window asks its frame. Returns the unsubscribe. Absent in a window whose host cannot forward a perform.
+   */
+  onPerform?(listener: (push: unknown) => void): () => void;
+  /** What the frame answered, for the host to report to the node; the host refuses an id it did not push. */
+  reportPerform?(answer: { performId: string; report: WidgetPerformReport }): Promise<RelayAnswer<object>>;
 }
 
 /** What an answer naming an artifact carries: the node's reference, passed on for the window to parse. */

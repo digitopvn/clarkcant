@@ -78,14 +78,16 @@ runs. Any other caller is sent none, and the perform is refused at once with `FR
 plain `/messages` route, MCP, the relay and `clarkcant api`.
 
 The event's `request` is `{ v: 1, performId, instanceId, actionBindingId, action, input }`. The page hands it to the
-mounted frame and answers `POST /app-intents/widget-perform/{performId}` with one of:
+mounted frame and answers `POST /app-intents/widget-perform/{performId}` with one of the answers below. When the widget
+is open in its own desktop window, the desktop host forwards the perform to that window and posts this answer itself,
+with the same body:
 
 - `{ status: "done", output? }`;
 - `{ status: "refused", by: "page" | "widget", code, message }`;
 - `{ status: "no-answer", message }`.
 
 `by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `FRAME_DETACHED` (the widget is
-open in its own desktop window), `SURFACE_GONE`, `PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
+open in its own desktop window and the desktop host predates forwarding the perform there), `SURFACE_GONE`, `PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
 still answers under its `performId`. A widget's refusal reaches Clark as `WIDGET_REFUSED`, with the widget's code in
 `detail.widgetCode` and its own reason, when it gave one, in `detail.widgetMessage`. Both are the widget's words, not
 the host's: a surface that shows or speaks them quotes them as the widget's.

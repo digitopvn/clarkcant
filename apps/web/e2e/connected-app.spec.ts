@@ -33,7 +33,6 @@ const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const PACKAGE = "com.clarkcant.reference.connected-app";
 const LIST_REF = `${PACKAGE}.list-tasks@1`;
 const CAPABILITIES = [LIST_REF, `${PACKAGE}.update-task@1`];
-const FRAME = "[data-pin-live] [data-widget-frame]";
 /** The ports the reference manifest names for the fake connector. */
 const CONNECTOR_PORT = 8880;
 const CONNECTOR_ADMIN_PORT = 8881;
@@ -111,9 +110,7 @@ async function say(page: Page, text: string): Promise<void> {
  * default, which `place_widget` does not let a model set.
  */
 async function openTasks(page: Page, placement: "place_widget" | "fixture" = "place_widget"): Promise<FrameLocator> {
-  if (placement === "fixture") {
-    await say(page, "widget công việc");
-  } else {
+  if (placement === "place_widget") {
     // A model places a widget's capability buttons once `list` shows them: the node registers a service's capabilities
     // as it starts it, ready or not, and a fresh install may not have reached that yet.
     await expect
@@ -125,17 +122,51 @@ async function openTasks(page: Page, placement: "place_widget" | "fixture" = "pl
         { timeout: 60_000, intervals: [500] },
       )
       .toBe(true);
-    await say(page, "place widget com.clarkcant.reference.connected-app.main@1");
+  }
+  /*
+   * A journey can open the widget twice in one conversation, and the earlier instance and its pin stay on the page while
+   * the new ones render after a round trip each. "The last open button" and "the last pinned frame" can therefore still
+   * be the earlier ones: pressing the earlier button answers ALREADY_PINNED, and reading the earlier frame reads a widget
+   * nobody pressed. So the open button is the instance this placement created, and the frame is the pin that open made.
+   */
+  const instanceIds = new Set(await attributeValues(page, "data-open-live"));
+  await say(page, placement === "fixture" ? "widget công việc" : "place widget com.clarkcant.reference.connected-app.main@1");
+  const instanceId = await newAttributeValue(page, "data-open-live", instanceIds, 20_000);
+  if (placement === "place_widget") {
     await expect(page.getByText(/Fixture: tui gọi place_widget .*Placed /u).last()).toBeVisible({ timeout: 20_000 });
   }
-  const open = page.locator("[data-open-live]").last();
+  const open = page.locator(`[data-open-live="${instanceId}"]`).last();
   await expect(open).toBeVisible({ timeout: 20_000 });
+  const pinIds = new Set(await attributeValues(page, "data-pin-live"));
   await open.click();
-  // A conversation that opened one before keeps it pinned, so the newest frame is the one just opened.
-  await expect(page.locator(FRAME).last()).toHaveAttribute("data-frame-status", "ready", { timeout: 30_000 });
-  const widget = page.locator(`${FRAME} iframe`).last().contentFrame();
+  const pinId = await newAttributeValue(page, "data-pin-live", pinIds, 30_000);
+  const frame = page.locator(`[data-pin-live="${pinId}"] [data-widget-frame="${instanceId}"]`);
+  await expect(frame).toHaveAttribute("data-frame-status", "ready", { timeout: 30_000 });
+  const widget = frame.locator("iframe").contentFrame();
   await expect(widget.locator("#root[data-tasks-announced='true']")).toBeVisible({ timeout: 30_000 });
   return widget;
+}
+
+/** Every value of `attribute` on the page. */
+function attributeValues(page: Page, attribute: string): Promise<string[]> {
+  return page
+    .locator(`[${attribute}]`)
+    .evaluateAll((elements, name) => elements.map((element) => element.getAttribute(name) ?? ""), attribute);
+}
+
+/** The first value of `attribute` that was not on the page before, once one appears. */
+async function newAttributeValue(page: Page, attribute: string, before: ReadonlySet<string>, timeout: number): Promise<string> {
+  let found: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        found = (await attributeValues(page, attribute)).find((value) => value !== "" && !before.has(value));
+        return found;
+      },
+      { message: `a new [${attribute}] on the page`, timeout },
+    )
+    .toBeDefined();
+  return String(found);
 }
 
 /** Wait until the widget's list button can run: the container is up and the connection grants what it needs. */
