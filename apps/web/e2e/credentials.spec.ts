@@ -125,3 +125,67 @@ test("Devices & Voice no longer embeds a key form, and points at the Credentials
   // from the Credentials section.
   await expect(page.locator("[data-settings-key-form='gemini']")).toHaveCount(0);
 });
+
+test("says which key is in use without showing it, and a removed key hands over to the environment's", async ({ page }) => {
+  await openCredentials(page);
+  const typesafe = page.locator("[data-credential-row='typesafe']");
+
+  // Nothing is saved yet, and this node has no TypeSafe key in its environment, so no key is in use to talk about.
+  await expect(typesafe.locator("[data-credential-source-for='typesafe']")).toHaveCount(0);
+
+  await typesafe.locator("[data-credential-field='typesafe']").fill("sk-test-in-use-67890");
+  await typesafe.locator("[data-credential-replace='typesafe']").focus();
+  await page.keyboard.press("Enter");
+  // Replace is held once the draft is handed over; focus goes back to the field instead of falling to the page.
+  await expect(typesafe.locator("[data-credential-field='typesafe']")).toBeFocused();
+  // The node reports the vault as the source, and the row says the key saved here is in use -- never the key itself.
+  await expect(typesafe.locator("[data-credential-source='vault']")).toBeVisible({ timeout: 10_000 });
+  expect((await page.content()).includes("sk-test-in-use-67890")).toBe(false);
+
+  // A node that holds a key in its environment instead: the answer is the node's own shape, only the source differs.
+  await page.route("**/readiness", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { credentials: string[]; sources?: Record<string, string> };
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        credentials: [...new Set([...body.credentials, "typesafe"])],
+        sources: { ...body.sources, typesafe: "environment" },
+      },
+    });
+  });
+  await typesafe.locator("[data-credential-remove='typesafe']").click();
+  // Remove is held once nothing is saved here, so focus lands on the row rather than falling to the page.
+  await expect(typesafe).toBeFocused();
+  await expect(typesafe.locator("[data-credential-status-message='typesafe'][data-surface-phase='success']")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(typesafe.locator("[data-credential-source='environment']")).toBeVisible();
+  // Nothing is saved here any more, so there is nothing for Remove to remove.
+  await expect(typesafe.locator("[data-credential-remove='typesafe']")).toBeDisabled();
+  await expect(typesafe.locator("[data-credential-status='typesafe']")).toHaveAttribute("data-tone", "ok");
+});
+
+test("a failed read says the state is not known and checks again on request", async ({ page }) => {
+  let failReads = true;
+  await page.route("**/readiness", async (route) => {
+    if (failReads) await route.abort("connectionrefused");
+    else await route.fallback();
+  });
+  await openCredentials(page);
+  const section = page.locator("[data-credentials-section='true']");
+
+  await expect(section.locator("[data-credentials-read-error='true']")).toBeVisible({ timeout: 10_000 });
+  // Not "not connected": the node may hold the key, so the badge says it is not known.
+  await expect(section.locator("[data-credential-status='typesafe']")).toHaveAttribute("data-surface-phase", "unavailable");
+
+  failReads = false;
+  await section.locator("[data-credentials-check-again='true']").click();
+  // The button goes away with the failure it was offered for; focus stays on the section.
+  await expect(section).toBeFocused();
+  await expect(section.locator("[data-credential-status='typesafe']")).toHaveAttribute("data-surface-phase", "needs-action", {
+    timeout: 10_000,
+  });
+  await expect(section.locator("[data-credentials-check-again='true']")).toHaveCount(0);
+});
