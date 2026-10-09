@@ -168,8 +168,9 @@ export function CredentialsCard({ t, listing, entries, onCheckAgain, renderRow }
       data-credentials-section="true"
       data-credentials-listing={listing.status}
       tabIndex={-1}
+      aria-labelledby="cc-credentials-heading"
     >
-      <h3>{t("settings.credentials.heading")}</h3>
+      <h3 id="cc-credentials-heading">{t("settings.credentials.heading")}</h3>
       <p className="cc-panel-note">{t("settings.credentials.intro")}</p>
       <LiveNote phase={listing.status === "error" ? "error" : undefined} className="cc-panel-note" data-credentials-read-error="true">
         {listing.status === "error" ? t("settings.credentials.readFailed") : undefined}
@@ -227,13 +228,16 @@ export function CredentialRowView({
       data-credential-row={entry.name}
       aria-busy={busy}
       tabIndex={-1}
+      aria-labelledby={`cc-credential-${entry.name}-label`}
       onSubmit={(event) => {
         event.preventDefault();
+        // Replace is held once the draft is handed over, so focus goes back to the field, ready for another paste.
+        event.currentTarget.querySelector<HTMLInputElement>("[data-credential-field]")?.focus();
         onReplace();
       }}
     >
       <div className="cc-panel-row" data-credential-header={entry.name}>
-        <strong>{t(entry.labelKey)}</strong>
+        <strong id={`cc-credential-${entry.name}-label`}>{t(entry.labelKey)}</strong>
         <PhaseBadge phase={badge.phase} data-credential-status={entry.name}>
           {t(badge.key)}
         </PhaseBadge>

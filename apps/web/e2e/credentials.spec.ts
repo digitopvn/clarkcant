@@ -134,7 +134,10 @@ test("says which key is in use without showing it, and a removed key hands over 
   await expect(typesafe.locator("[data-credential-source-for='typesafe']")).toHaveCount(0);
 
   await typesafe.locator("[data-credential-field='typesafe']").fill("sk-test-in-use-67890");
-  await typesafe.locator("[data-credential-replace='typesafe']").click();
+  await typesafe.locator("[data-credential-replace='typesafe']").focus();
+  await page.keyboard.press("Enter");
+  // Replace is held once the draft is handed over; focus goes back to the field instead of falling to the page.
+  await expect(typesafe.locator("[data-credential-field='typesafe']")).toBeFocused();
   // The node reports the vault as the source, and the row says the key saved here is in use -- never the key itself.
   await expect(typesafe.locator("[data-credential-source='vault']")).toBeVisible({ timeout: 10_000 });
   expect((await page.content()).includes("sk-test-in-use-67890")).toBe(false);

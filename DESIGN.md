@@ -1504,7 +1504,9 @@ Host-owned credential UI:
 
 Each press is said once in a live note (saving or removing, then the outcome), and a second identical failure is said
 again. The section reads the list again whenever this page saves or removes a key anywhere, including a credential card
-in the conversation.
+in the conversation, and after a failed press, since the node may have applied it before its answer was lost. When
+overlapping reads answer out of order, only the newest is applied. A control that goes away or is held during its press
+never drops focus to the page: Replace returns focus to the key field, Remove to its row, Check again to the section.
 
 Never renders the stored value.
 

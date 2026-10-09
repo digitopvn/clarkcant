@@ -1489,7 +1489,10 @@ Host-owned credential UI:
 
 Mỗi lần bấm được nói một lần trong một live note (đang lưu hoặc đang gỡ, rồi kết quả), và một lỗi lặp lại y hệt vẫn
 được nói lại. Mục đọc lại danh sách mỗi khi trang này lưu hoặc gỡ một khoá ở bất kỳ đâu, kể cả thẻ thông tin xác thực
-trong cuộc trò chuyện.
+trong cuộc trò chuyện, và sau một lần bấm thất bại, vì node có thể đã làm xong trước khi câu trả lời bị mất. Khi các
+lần đọc chồng nhau trả lời không theo thứ tự, chỉ kết quả của lần đọc mới nhất được áp dụng. Control nào biến mất hoặc
+bị khoá trong lúc bấm cũng không làm tiêu điểm rơi ra trang: Replace trả tiêu điểm về ô nhập khoá, Remove về dòng của
+nó, Kiểm tra lại về mục.
 
 Không render stored value.
 

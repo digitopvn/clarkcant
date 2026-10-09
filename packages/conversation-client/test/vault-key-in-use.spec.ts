@@ -185,6 +185,23 @@ describe("focus", () => {
     expect(card).toMatch(/<section[^>]*data-credentials-section="true"[^>]*tabindex="-1"/);
     expect(drawRow(FROM_VAULT)).toMatch(/<form[^>]*data-credential-row="typesafe"[^>]*tabindex="-1"/);
   });
+
+  it("names each focus target, so landing on it says where focus is", () => {
+    const card = renderToStaticMarkup(
+      createElement(CredentialsCard, {
+        t: english,
+        listing: FROM_VAULT,
+        entries: [],
+        onCheckAgain: noop,
+        renderRow: () => createElement("div"),
+      }),
+    );
+    expect(card).toMatch(/<section[^>]*aria-labelledby="cc-credentials-heading"/);
+    expect(card).toContain('<h3 id="cc-credentials-heading"');
+    const row = drawRow(FROM_VAULT);
+    expect(row).toMatch(/<form[^>]*aria-labelledby="cc-credential-typesafe-label"/);
+    expect(row).toContain('id="cc-credential-typesafe-label"');
+  });
 });
 
 describe("a press on a row", () => {
