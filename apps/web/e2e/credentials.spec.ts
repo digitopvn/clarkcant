@@ -153,6 +153,8 @@ test("says which key is in use without showing it, and a removed key hands over 
     });
   });
   await typesafe.locator("[data-credential-remove='typesafe']").click();
+  // Remove is held once nothing is saved here, so focus lands on the row rather than falling to the page.
+  await expect(typesafe).toBeFocused();
   await expect(typesafe.locator("[data-credential-status-message='typesafe'][data-surface-phase='success']")).toBeVisible({
     timeout: 10_000,
   });
@@ -177,6 +179,8 @@ test("a failed read says the state is not known and checks again on request", as
 
   failReads = false;
   await section.locator("[data-credentials-check-again='true']").click();
+  // The button goes away with the failure it was offered for; focus stays on the section.
+  await expect(section).toBeFocused();
   await expect(section.locator("[data-credential-status='typesafe']")).toHaveAttribute("data-surface-phase", "needs-action", {
     timeout: 10_000,
   });

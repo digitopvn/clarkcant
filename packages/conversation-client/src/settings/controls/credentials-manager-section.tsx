@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 
 import type { SurfacePhase } from "@clarkcant/contracts";
 
@@ -85,6 +85,25 @@ export function canRemoveCredential(listing: CredentialListing, name: string): b
   return source === undefined || source === "vault";
 }
 
+/** Orders overlapping reads: `begin` starts one and answers whether it is still the newest when its answer arrives. */
+export interface ReadSequence {
+  begin(): () => boolean;
+}
+
+/**
+ * Reads overlap (Check again during a save, a row and a conversation card saving at once). Only the newest read's
+ * answer is applied, so a late answer can never bring back what was true before a change.
+ */
+export function readSequence(): ReadSequence {
+  let latest = 0;
+  return {
+    begin() {
+      const read = ++latest;
+      return () => read === latest;
+    },
+  };
+}
+
 export interface CredentialsSectionProps {
   client: GatewayClient;
   entries: readonly CredentialEntry[];
@@ -93,12 +112,19 @@ export interface CredentialsSectionProps {
 export function CredentialsSection({ client, entries }: CredentialsSectionProps): ReactElement {
   const t = useT();
   const [listing, setListing] = useState<CredentialListing>({ status: "loading" });
+  const reads = useRef<ReadSequence | undefined>(undefined);
 
   const readStatus = (): void => {
-    client
-      .readiness()
-      .then((answer) => setListing({ status: "ready", answer }))
-      .catch(() => setListing({ status: "error" }));
+    reads.current ??= readSequence();
+    const isNewest = reads.current.begin();
+    client.readiness().then(
+      (answer) => {
+        if (isNewest()) setListing({ status: "ready", answer });
+      },
+      () => {
+        if (isNewest()) setListing({ status: "error" });
+      },
+    );
   };
 
   useEffect(() => {
@@ -119,7 +145,9 @@ export function CredentialsSection({ client, entries }: CredentialsSectionProps)
       listing={listing}
       entries={entries}
       onCheckAgain={checkAgain}
-      renderRow={(entry) => <CredentialRow key={entry.name} client={client} entry={entry} listing={listing} />}
+      renderRow={(entry) => (
+        <CredentialRow key={entry.name} client={client} entry={entry} listing={listing} onFailed={readStatus} />
+      )}
     />
   );
 }
@@ -135,7 +163,12 @@ export interface CredentialsCardProps {
 /** The section's frame: heading, what it holds, and a failed read said once with a way to read again. */
 export function CredentialsCard({ t, listing, entries, onCheckAgain, renderRow }: CredentialsCardProps): ReactElement {
   return (
-    <section className="cc-panel-section" data-credentials-section="true" data-credentials-listing={listing.status}>
+    <section
+      className="cc-panel-section"
+      data-credentials-section="true"
+      data-credentials-listing={listing.status}
+      tabIndex={-1}
+    >
       <h3>{t("settings.credentials.heading")}</h3>
       <p className="cc-panel-note">{t("settings.credentials.intro")}</p>
       <LiveNote phase={listing.status === "error" ? "error" : undefined} className="cc-panel-note" data-credentials-read-error="true">
@@ -143,7 +176,15 @@ export function CredentialsCard({ t, listing, entries, onCheckAgain, renderRow }
       </LiveNote>
       {listing.status === "error" ? (
         <div className="cc-chip-row">
-          <button type="button" className="cc-chip" data-credentials-check-again="true" onClick={onCheckAgain}>
+          <button
+            type="button"
+            className="cc-chip"
+            data-credentials-check-again="true"
+            onClick={(event?: { currentTarget: Element }) => {
+              keepFocusOn(event, "[data-credentials-section]");
+              onCheckAgain();
+            }}
+          >
             {t("settings.credentials.checkAgain")}
           </button>
         </div>
@@ -185,6 +226,7 @@ export function CredentialRowView({
       className="cc-credential-form"
       data-credential-row={entry.name}
       aria-busy={busy}
+      tabIndex={-1}
       onSubmit={(event) => {
         event.preventDefault();
         onReplace();
@@ -230,7 +272,11 @@ export function CredentialRowView({
           className="cc-chip"
           disabled={busy || !canRemoveCredential(listing, entry.name)}
           data-credential-remove={entry.name}
-          onClick={onRemove}
+          onClick={(event?: { currentTarget: Element }) => {
+            // Remove is held while the press runs and often stays held after it, so focus moves to the row.
+            keepFocusOn(event, "[data-credential-row]");
+            onRemove();
+          }}
         >
           {t("settings.credentials.remove")}
         </button>
@@ -247,29 +293,44 @@ export function CredentialRowView({
   );
 }
 
+/**
+ * Moves focus from a pressed control that goes away, or is held, with the state it was offered for, to the element
+ * around it that stays, so focus never falls to the page.
+ */
+function keepFocusOn(event: { currentTarget: Element } | undefined, selector: string): void {
+  event?.currentTarget.closest<HTMLElement>(selector)?.focus();
+}
+
 function CredentialRow({
   client,
   entry,
   listing,
+  onFailed,
 }: {
   client: GatewayClient;
   entry: CredentialEntry;
   listing: CredentialListing;
+  /** Reads the list again after a failed press: the node may have applied it before its answer was lost. */
+  onFailed: () => void;
 }): ReactElement {
   const t = useT();
   const [draft, setDraft] = useState("");
   const [outcome, setOutcome] = useState<CredentialRowOutcome | undefined>(undefined);
+  const attempts = useRef(0);
 
   // Each press gets the next attempt; an answer for an earlier press never replaces a newer one.
   const press = (pendingKey: MessageKey, run: () => Promise<MessageKey>, failedKey: MessageKey): void => {
-    const attempt = (outcome?.attempt ?? 0) + 1;
+    const attempt = ++attempts.current;
     setOutcome({ phase: "pending", messageKey: pendingKey, attempt });
     const settle = (next: CredentialRowOutcome): void =>
       setOutcome((current) => (current !== undefined && current.attempt > attempt ? current : next));
     run().then(
       (messageKey) => settle({ phase: "success", messageKey, attempt }),
       // What failed, what's preserved, what to do -- the previous key (if any) is untouched, so the copy says so.
-      () => settle({ phase: "error", messageKey: failedKey, attempt }),
+      () => {
+        settle({ phase: "error", messageKey: failedKey, attempt });
+        onFailed();
+      },
     );
   };
 

@@ -13,6 +13,7 @@ import {
   canRemoveCredential,
   credentialBadge,
   credentialSourceLine,
+  readSequence,
 } from "../src/settings/controls/credentials-manager-section.tsx";
 
 /**
@@ -85,11 +86,9 @@ describe("which key is in use", () => {
     expect(drawRow(OLDER_NODE)).not.toContain("data-credential-source=");
   });
 
-  it("never draws a value, only the name and where the key in use comes from", () => {
-    // The node's answer carries names and sources; nothing a row draws can be a key.
+  it("keeps the field write-only in every state: a masked draft, never a stored value", () => {
     for (const listing of [FROM_VAULT, FROM_ENVIRONMENT, NONE, OLDER_NODE]) {
       expect(drawRow(listing)).toContain('type="password"');
-      expect(drawRow(listing)).toContain('value=""');
     }
   });
 });
@@ -154,6 +153,37 @@ describe("a failed read", () => {
   it("offers nothing to repeat once the node has answered", () => {
     expect(drawCard(FROM_VAULT)).not.toContain("data-credentials-check-again");
     expect(drawCard({ status: "loading" })).not.toContain("data-credentials-check-again");
+  });
+});
+
+describe("overlapping reads", () => {
+  it("applies only the newest read's answer, so a late answer never brings back an earlier state", () => {
+    const reads = readSequence();
+    const beforeTheSave = reads.begin();
+    const afterTheSave = reads.begin();
+    // The read started before the save answers last: it is no longer the newest, so it is dropped.
+    expect(afterTheSave()).toBe(true);
+    expect(beforeTheSave()).toBe(false);
+    // A later read supersedes it in turn.
+    const checkAgain = reads.begin();
+    expect(afterTheSave()).toBe(false);
+    expect(checkAgain()).toBe(true);
+  });
+});
+
+describe("focus", () => {
+  it("gives the section and each row a place for focus to land when the pressed control goes away", () => {
+    const card = renderToStaticMarkup(
+      createElement(CredentialsCard, {
+        t: english,
+        listing: { status: "error" },
+        entries: [],
+        onCheckAgain: noop,
+        renderRow: () => createElement("div"),
+      }),
+    );
+    expect(card).toMatch(/<section[^>]*data-credentials-section="true"[^>]*tabindex="-1"/);
+    expect(drawRow(FROM_VAULT)).toMatch(/<form[^>]*data-credential-row="typesafe"[^>]*tabindex="-1"/);
   });
 });
 
