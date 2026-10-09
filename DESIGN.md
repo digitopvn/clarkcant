@@ -1493,9 +1493,18 @@ Host-owned credential UI:
 
 - name;
 - purpose;
-- connected/not connected;
+- connected/not connected, read from the node's own list of names (`GET /readiness`). A failed read says the state is
+  not known and offers Check again; it is never shown as "not connected";
+- which key is in use, from the node's `sources`, without either value: "In use: the key saved here." or "In use: a
+  key from the node's environment. A key saved here would take its place." Nothing is said when no key is in use or
+  the node does not report a source;
 - Replace;
-- Remove.
+- Remove, available only while a key is saved here (a key from the environment cannot be removed from Settings).
+  Removing says it removed the key saved here, and the row then shows which key, if any, is in use.
+
+Each press is said once in a live note (saving or removing, then the outcome), and a second identical failure is said
+again. The section reads the list again whenever this page saves or removes a key anywhere, including a credential card
+in the conversation.
 
 Never renders the stored value.
 
