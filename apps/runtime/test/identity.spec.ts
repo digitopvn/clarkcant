@@ -2,9 +2,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { bootRuntime, fingerprintOf } from "../src/node.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The node's device key.
@@ -15,9 +16,18 @@ import { bootRuntime, fingerprintOf } from "../src/node.ts";
  * and a node installed before keys existed gains one without becoming a different node.
  */
 
+const created: string[] = [];
+
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "cc-identity-"));
+  const dir = mkdtempSync(join(tmpdir(), "cc-identity-"));
+  created.push(dir);
+  return dir;
 }
+
+// Each test closes its runtime in its own `finally`, so only the directories are left.
+afterEach(async () => {
+  for (const dir of created.splice(0)) await removeTestDirectory(dir);
+});
 
 const FINGERPRINT = /^([0-9a-f]{4}:){7}[0-9a-f]{4}$/;
 

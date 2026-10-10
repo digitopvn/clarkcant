@@ -2,11 +2,18 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { DirectoryEntry } from "@clarkcant/contracts";
 
 import { directoryIndexPath, readDirectoryIndex, searchDirectory, unreadFieldsOf } from "../src/directory-index.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
+
+const created: string[] = [];
+
+afterEach(async () => {
+  for (const dir of created.splice(0)) await removeTestDirectory(dir);
+});
 
 function entry(overrides: Partial<DirectoryEntry> & { packageId: string }): DirectoryEntry {
   return {
@@ -79,7 +86,9 @@ describe("searchDirectory", () => {
 
 describe("readDirectoryIndex", () => {
   function writeIndex(contents: string): string {
-    const path = join(mkdtempSync(join(tmpdir(), "cc-dir-")), "index.json");
+    const dir = mkdtempSync(join(tmpdir(), "cc-dir-"));
+    created.push(dir);
+    const path = join(dir, "index.json");
     writeFileSync(path, contents);
     return path;
   }

@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { installedWidgets } from "../src/installed-widgets.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * What an installed package can contribute to the library.
@@ -13,6 +14,12 @@ import { installedWidgets } from "../src/installed-widgets.ts";
  * widgets" are different facts, and a library that showed the second when it meant the first would be claiming a
  * package is empty when it simply has no bytes here.
  */
+
+const created: string[] = [];
+
+afterEach(async () => {
+  for (const dir of created.splice(0)) await removeTestDirectory(dir);
+});
 
 function writePackage(
   options: {
@@ -24,6 +31,7 @@ function writePackage(
   } = {},
 ): string {
   const root = mkdtempSync(join(tmpdir(), "cc-installed-widgets-"));
+  created.push(root);
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   mkdirSync(join(root, "fixtures"), { recursive: true });
 
