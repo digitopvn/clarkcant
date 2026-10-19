@@ -476,6 +476,7 @@ async function main(): Promise<void> {
         : `container engine: none (${engine.reason}) — the OCI image cannot be built here: ${engine.detail}\n`,
     );
     process.stderr.write("commands require the bearer token stored in the node's identity.json\n");
+    runtimeHandles.loadPackOnceListening();
   };
 
   /*

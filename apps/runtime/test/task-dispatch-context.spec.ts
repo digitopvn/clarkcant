@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +17,7 @@ import { bootRuntime, type Runtime } from "../src/node.ts";
 import { dataClassUnavailable } from "../src/send-boundary.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
 import { runWorkerProcess, type WorkerProcessOptions, type WorkerProcessResult } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * A dispatched task's worker reads what the conversation already holds about its goal.
@@ -33,17 +34,27 @@ const PRINCIPAL: Principal = { principalId: OWNER, kind: "user", nodeId: "node_t
 
 let runtime: Runtime | undefined;
 let scratch: string | undefined;
+const created: string[] = [];
 
-afterEach(() => {
-  runtime?.close();
-  runtime = undefined;
-  if (scratch !== undefined) rmSync(scratch, { recursive: true, force: true });
-  scratch = undefined;
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  created.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  try {
+    runtime?.close();
+  } finally {
+    runtime = undefined;
+    scratch = undefined;
+    for (const dir of created.splice(0)) await removeTestDirectory(dir);
+  }
 });
 
 function setup(goal: string, origin?: TaskRecord["origin"]): { conductor: ConductorDeps; task: TaskRecord } {
-  scratch ??= mkdtempSync(join(tmpdir(), "cc-task-context-folder-"));
-  runtime = bootRuntime({ dataDir: mkdtempSync(join(tmpdir(), "cc-task-context-")), label: "task context test node" });
+  scratch ??= tempDir("cc-task-context-folder-");
+  runtime = bootRuntime({ dataDir: tempDir("cc-task-context-"), label: "task context test node" });
   runtime.db
     .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
     .run(CONVERSATION_ID, runtime.identity.nodeId, AT, AT);
@@ -359,7 +370,7 @@ describe("a dispatched task's context", () => {
 
 describe("a worker process reads its context over the host channel", () => {
   it("asks the host on demand, and reading context is not evidence of anything", async () => {
-    scratch = mkdtempSync(join(tmpdir(), "cc-task-context-script-"));
+    scratch = tempDir("cc-task-context-script-");
     const scriptPath = join(scratch, "script.json");
     writeFileSync(
       scriptPath,
@@ -392,7 +403,7 @@ describe("a worker process reads its context over the host channel", () => {
   }, 25_000);
 
   it("does not offer commands a host that answers only context would refuse", async () => {
-    scratch = mkdtempSync(join(tmpdir(), "cc-task-context-script-"));
+    scratch = tempDir("cc-task-context-script-");
     const scriptPath = join(scratch, "script.json");
     writeFileSync(scriptPath, JSON.stringify([{ callTool: { name: "run_command", params: { command: "node", args: ["--version"] } }, reply: "x" }]), "utf8");
     const outcome = await runWorkerProcess({

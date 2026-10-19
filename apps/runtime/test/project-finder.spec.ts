@@ -20,6 +20,7 @@ import {
   verifyProject,
 } from "../src/project-finder.ts";
 import type { JevTransport } from "../src/jev-selector.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The workspace finder (Phase 11).
@@ -36,6 +37,13 @@ let home: string;
 let db: Database;
 let deps: ProjectFinderDeps;
 let counter = 0;
+const created: string[] = [];
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  created.push(dir);
+  return dir;
+}
 
 function buildTree(): void {
   // A repository: a marker, so it is indexed and not descended into.
@@ -76,7 +84,7 @@ function buildTree(): void {
 }
 
 beforeEach(() => {
-  const dir = mkdtempSync(join(tmpdir(), "clarkcant-finder-"));
+  const dir = tempDir("clarkcant-finder-");
   home = join(dir, "home");
   mkdirSync(home, { recursive: true });
   db = openDatabase({ path: join(dir, "node.sqlite") });
@@ -93,9 +101,12 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
-  db.close();
-  rmSync(home, { recursive: true, force: true });
+afterEach(async () => {
+  try {
+    db.close();
+  } finally {
+    for (const dir of created.splice(0)) await removeTestDirectory(dir);
+  }
 });
 
 describe("the scan", () => {
@@ -124,7 +135,7 @@ describe("the scan", () => {
     // documentation project - and because a directory with a marker is recorded and not descended into, every
     // repository beneath it disappeared from the index, including the one the node itself was running from. A
     // weak marker is a hint, not a boundary.
-    const root = mkdtempSync(join(tmpdir(), "cc-weak-marker-"));
+    const root = tempDir("cc-weak-marker-");
     const container = join(root, "container");
     mkdirSync(join(container, "docs"), { recursive: true });
     mkdirSync(join(container, "my-project"), { recursive: true });
@@ -133,7 +144,6 @@ describe("the scan", () => {
     const outcome = await scanProjects({ roots: [root], ignore: [], maxDepth: 5 });
 
     expect(outcome.projects.map((project) => project.name)).toContain("my-project");
-    rmSync(root, { recursive: true, force: true });
   });
   it("indexes marked directories and refuses to descend into one", async () => {
     buildTree();

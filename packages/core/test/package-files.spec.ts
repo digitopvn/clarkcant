@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { readPackageFile } from "../src/package-files.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Regression coverage for the symlink containment escape reported in issue #93: a package root
@@ -14,20 +15,20 @@ import { readPackageFile } from "../src/package-files.ts";
  * ordinary paths that must keep working.
  */
 describe("readPackageFile", () => {
+  let base: string;
   let packageRoot: string;
   let outside: string;
 
   beforeEach(() => {
-    const base = mkdtempSync(join(tmpdir(), "cc-package-files-"));
+    base = mkdtempSync(join(tmpdir(), "cc-package-files-"));
     packageRoot = join(base, "package");
     outside = join(base, "outside");
     mkdirSync(packageRoot, { recursive: true });
     mkdirSync(outside, { recursive: true });
   });
 
-  afterEach(() => {
-    rmSync(packageRoot, { recursive: true, force: true });
-    rmSync(outside, { recursive: true, force: true });
+  afterEach(async () => {
+    await removeTestDirectory(base);
   });
 
   const entry = () => ({ source: { kind: "local" as const, path: packageRoot } });
