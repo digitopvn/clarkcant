@@ -343,8 +343,10 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     try {
       // Retried, because on Windows a worker being stopped still holds its working directory for a moment. The promise
       // form on purpose: on Windows `rmSync` reports a held directory as `EBUSY` or `EPERM` at once and never runs its
-      // retries, while `rm` waits `retryDelay` longer after each failed attempt (about 1.5 s over five), off the event loop.
-      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // retries, while `rm` waits `retryDelay` longer after each failed attempt, off the event loop. Ten attempts wait about
+      // five seconds in all: a real model's worker runs in this directory, and a machine under load can take longer than
+      // a second or two to let go of it once the worker is stopped.
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     } catch {
       // A temporary directory left behind (it holds the brief, never a key) is not worth replacing the run's own result
       // or error with.

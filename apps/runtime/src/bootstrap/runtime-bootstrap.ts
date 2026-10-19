@@ -121,6 +121,11 @@ export interface RuntimeHandles {
    * superseded snapshot (`WidgetDevSessions.close`). Awaited before the database closes.
    */
   closeWidgetDev: () => Promise<void>;
+  /**
+   * Starts loading the project-work pack in the background. Called once the server listens, so a node that cannot
+   * listen never starts a worker it would cut off as it exits. A no-op on a fixture node, which never spawns a worker.
+   */
+  loadPackOnceListening: () => void;
 }
 
 /**
@@ -562,6 +567,10 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   /*
    * Load the project-work pack, in the background and after the node is listening.
    *
+   * Started by the entry point once the server listens (`loadPackOnceListening` below), not here: a node that cannot
+   * bind its port exits at once, and a worker it had already started would be cut off with its run directory left in
+   * the system temp folder.
+   *
    * The pack's capabilities are registered at boot and used to stay exactly as they were registered:
    * `loaded: false` for the life of the process, with the reason "the pack is declared but no worker
    * has loaded it on this node". That sentence was true only because nothing ever tried. This is the
@@ -576,7 +585,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * Bounded, because a wedged worker must not hold a boot open; and reported rather than thrown,
    * because a node whose pack cannot be loaded is still a node.
    */
-  if (!sessionFixture) {
+  const loadPackOnceListening = (): void => {
+    if (sessionFixture) return;
     void deps.services
       .loadProjectWorkPack({ timeoutMs: 60_000 })
       .then((outcome) => {
@@ -604,7 +614,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
           `project-work pack: not loaded — ${cause instanceof Error ? cause.message : String(cause)}\n`,
         );
       });
-  }
+  };
   process.stderr.write(
     deps.viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"
@@ -639,6 +649,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       updateChecks?.stop();
     },
     closeWidgetDev: () => widgetDev.close(),
+    loadPackOnceListening,
   };
 }
 

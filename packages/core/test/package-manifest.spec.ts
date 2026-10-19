@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { manifestProblems, packageManifestSchema, type PackageManifest } from "@clarkcant/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { readPackage } from "../src/widget-package.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The one manifest a package has.
@@ -78,8 +79,15 @@ function v1Manifest(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
+const created: string[] = [];
+
+afterEach(async () => {
+  for (const dir of created.splice(0)) await removeTestDirectory(dir);
+});
+
 function writePackage(manifest: unknown): string {
   const root = mkdtempSync(join(tmpdir(), "cc-package-manifest-"));
+  created.push(root);
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   writeFileSync(join(root, "clarkcant.json"), JSON.stringify(manifest));
   writeFileSync(

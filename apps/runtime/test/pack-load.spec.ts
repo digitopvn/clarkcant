@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { CapabilityDescriptor, CapabilityRef, Evidence, Instant, RunRecord } from "@clarkcant/contracts";
 import type { WorkerBriefEnvelope } from "@clarkcant/app-worker";
@@ -12,6 +12,7 @@ import { bootRuntime } from "../src/node.ts";
 import { bootNodeServices } from "../src/services.ts";
 import { loadProjectWorkPack } from "../src/pack-load.ts";
 import type { WorkerProcessResult } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * Loading the pack, and the difference between loading it and it working.
@@ -31,9 +32,18 @@ const AT = "2026-09-20T09:00:00.000Z" as Instant;
 const CODE_CHANGE = "project.code.change@1" as CapabilityRef;
 const FILE_READ = "project.file.read@1" as CapabilityRef;
 
+const created: string[] = [];
+
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "cc-pack-load-"));
+  const dir = mkdtempSync(join(tmpdir(), "cc-pack-load-"));
+  created.push(dir);
+  return dir;
 }
+
+// Each test closes its node in its own `finally`, so only the directories are left.
+afterEach(async () => {
+  for (const dir of created.splice(0)) await removeTestDirectory(dir);
+});
 
 interface TestNode {
   runtime: ReturnType<typeof bootRuntime>;

@@ -15,6 +15,7 @@ import {
   rememberMemory,
   type MemoryDeps,
 } from "../src/memory.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * What the node remembers, and what it puts in front of the model.
@@ -30,18 +31,23 @@ const CONVERSATION = "conv_one";
 const OTHER_CONVERSATION = "conv_two";
 const NOW = "2026-09-19T12:00:00.000Z";
 
+let dir: string;
 let db: Database;
 let counter = 0;
 
 beforeEach(() => {
-  const dir = mkdtempSync(join(tmpdir(), "cc-memory-"));
+  dir = mkdtempSync(join(tmpdir(), "cc-memory-"));
   db = openDatabase({ path: join(dir, "node.sqlite") });
   migrate(db);
   counter = 0;
 });
 
-afterEach(() => {
-  db.close();
+afterEach(async () => {
+  try {
+    db.close();
+  } finally {
+    await removeTestDirectory(dir);
+  }
 });
 
 function deps(): MemoryDeps {

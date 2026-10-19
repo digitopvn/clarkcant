@@ -12,6 +12,7 @@ import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createWorkJournal } from "../src/work-journal.ts";
 import { createWorkSupervisor } from "../src/work-supervisor.ts";
 import { RERUN_WINDOW_MS, WORK_RUN_RETENTION_MS, recoverUnfinishedWork, type WorkRecoveryDeps } from "../src/work-recovery.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * What a boot does with the work an earlier process left open.
@@ -29,14 +30,21 @@ const THIS_BOOT = "boot-current";
 const MACHINE = "machine-boot-1";
 
 let runtime: Runtime | undefined;
+const created: string[] = [];
 
-afterEach(() => {
-  runtime?.close();
-  runtime = undefined;
+afterEach(async () => {
+  try {
+    runtime?.close();
+  } finally {
+    runtime = undefined;
+    for (const dir of created.splice(0)) await removeTestDirectory(dir);
+  }
 });
 
 function boot(): Runtime {
-  runtime = bootRuntime({ dataDir: mkdtempSync(join(tmpdir(), "cc-work-recovery-")), label: "work recovery test node" });
+  const dir = mkdtempSync(join(tmpdir(), "cc-work-recovery-"));
+  created.push(dir);
+  runtime = bootRuntime({ dataDir: dir, label: "work recovery test node" });
   runtime.db
     .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
     .run(CONVERSATION_ID, runtime.identity.nodeId, AT, AT);

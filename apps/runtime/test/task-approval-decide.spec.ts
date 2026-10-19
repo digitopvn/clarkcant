@@ -26,6 +26,7 @@ import { getTask, oneRow } from "@clarkcant/storage";
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createTaskDispatcher, decideTaskApprovalForNode } from "../src/task-dispatch.ts";
 import type { WorkerProcessResult } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The route a granted task approval turns back into a run.
@@ -41,8 +42,12 @@ const CONVERSATION_ID = "conv_task_approval_test" as ConversationId;
 const CAPABILITY_REF = "demo.write@1" as CapabilityRef;
 const PRINCIPAL: Principal = { principalId: "user_owner", kind: "user", nodeId: "node_test" as never };
 
+const created: string[] = [];
+
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "cc-task-approval-decide-"));
+  const dir = mkdtempSync(join(tmpdir(), "cc-task-approval-decide-"));
+  created.push(dir);
+  return dir;
 }
 
 interface TestNode {
@@ -143,9 +148,13 @@ function pendingApprovalFor(node: TestNode, taskId: string) {
 
 let node: TestNode | undefined;
 
-afterEach(() => {
-  node?.close();
-  node = undefined;
+afterEach(async () => {
+  try {
+    node?.close();
+  } finally {
+    node = undefined;
+    for (const dir of created.splice(0)) await removeTestDirectory(dir);
+  }
 });
 
 async function vi_flush(): Promise<void> {

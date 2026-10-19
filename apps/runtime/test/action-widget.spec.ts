@@ -306,10 +306,15 @@ beforeEach(() => {
     .run(conversationId, services.runtime.identity.nodeId, AT, AT);
 });
 
+// The directory goes even when closing throws: a setup that failed after making it leaves `services` pointing at the
+// previous test's database, already closed, and a throw here would otherwise skip the removal.
 afterEach(async () => {
-  for (const id of leftRunning) endActionRun(id);
-  services.runtime.db.close();
-  await removeTestDirectory(dir);
+  try {
+    for (const id of leftRunning) endActionRun(id);
+    services.runtime.db.close();
+  } finally {
+    await removeTestDirectory(dir);
+  }
 });
 
 const REF = { id: ACTION.id, version: ACTION.version, packageDigest: definitionDigest(ACTION) };

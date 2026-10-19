@@ -16,6 +16,7 @@ import {
 
 import { rememberMemory } from "../src/memory.ts";
 import { buildSuggestions, withoutContinuePrefix } from "../src/suggestions.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * What the node offers when somebody opens the app.
@@ -29,16 +30,21 @@ const NODE = "node_test";
 const PRINCIPAL = "prin_test";
 const NOW = "2026-09-19T12:00:00.000Z";
 
+let dir: string;
 let db: Database;
 
 beforeEach(() => {
-  const dir = mkdtempSync(join(tmpdir(), "cc-suggestions-"));
+  dir = mkdtempSync(join(tmpdir(), "cc-suggestions-"));
   db = openDatabase({ path: join(dir, "node.sqlite") });
   migrate(db);
 });
 
-afterEach(() => {
-  db.close();
+afterEach(async () => {
+  try {
+    db.close();
+  } finally {
+    await removeTestDirectory(dir);
+  }
 });
 
 function suggest(): ReturnType<typeof buildSuggestions> {

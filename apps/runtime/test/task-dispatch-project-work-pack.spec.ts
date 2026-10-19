@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import { getTask } from "@clarkcant/storage";
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
 import { runWorkerProcess } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The gap this closes: `packs/project-work` declares `project.file.read@1` and
@@ -32,8 +33,12 @@ const PRINCIPAL: Principal = {
   nodeId: "node_test" as never,
 };
 
+const created: string[] = [];
+
 function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  created.push(dir);
+  return dir;
 }
 
 interface TestNode {
@@ -89,13 +94,15 @@ let node: TestNode | undefined;
 let projectRoot: string | undefined;
 let scriptFile: string | undefined;
 
-afterEach(() => {
-  node?.close();
-  node = undefined;
-  if (projectRoot !== undefined) rmSync(projectRoot, { recursive: true, force: true });
-  projectRoot = undefined;
-  if (scriptFile !== undefined) rmSync(scriptFile, { force: true });
-  scriptFile = undefined;
+afterEach(async () => {
+  try {
+    node?.close();
+  } finally {
+    node = undefined;
+    projectRoot = undefined;
+    scriptFile = undefined;
+    for (const dir of created.splice(0)) await removeTestDirectory(dir);
+  }
 });
 
 describe("dispatching project.code.change@1 through the project-work pack", () => {

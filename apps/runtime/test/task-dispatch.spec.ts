@@ -11,6 +11,7 @@ import { getTask } from "@clarkcant/storage";
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createTaskDispatcher, settlingEvidence } from "../src/task-dispatch.ts";
 import type { WorkerProcessResult } from "../src/worker-process.ts";
+import { removeTestDirectory } from "../../../tools/test-cleanup.ts";
 
 /**
  * The dispatch vertical slice.
@@ -37,8 +38,12 @@ const PRINCIPAL: Principal = {
   nodeId: "node_test" as never,
 };
 
+const created: string[] = [];
+
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "cc-task-dispatch-"));
+  const dir = mkdtempSync(join(tmpdir(), "cc-task-dispatch-"));
+  created.push(dir);
+  return dir;
 }
 
 interface TestNode {
@@ -108,9 +113,13 @@ function fakeWorkerResult(
 
 let node: TestNode | undefined;
 
-afterEach(() => {
-  node?.close();
-  node = undefined;
+afterEach(async () => {
+  try {
+    node?.close();
+  } finally {
+    node = undefined;
+    for (const dir of created.splice(0)) await removeTestDirectory(dir);
+  }
 });
 
 describe("dispatching a task runs a worker", () => {
